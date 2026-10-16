@@ -66,7 +66,9 @@ If the file doesn't exist yet, Impulse writes it first. In the editor, the file 
 
 ### When your edits apply
 
-Impulse watches the file. When you save it, from Impulse's editor or any other app, the new values apply to every window within a moment, the theme (`color_scheme`) included.
+Impulse watches the file (and, when it's a symbolic link, the file it points to). When you save it, from Impulse's editor or any other app, the new values apply to every window within a moment, the theme (`color_scheme`) included. Edits made in place, such as by a script or a dotfiles tool, count too.
+
+If you also changed a setting in Impulse that wasn't saved yet, Impulse keeps both: the file as you edited it, with the change made in Impulse on top. Where both changed the same setting, the value from Impulse wins. A notice says so, with **Open File**.
 
 ### Values Impulse can't use
 
@@ -236,11 +238,12 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 
 #### Behavior
 
-| Setting                    | Key                         | Values   | Default | What it does                                                                 |
-| -------------------------- | --------------------------- | -------- | ------- | ---------------------------------------------------------------------------- |
-| Copy on select             | `terminal_copy_on_select`   | on / off | on      | Copy text to the clipboard as soon as you select it in the terminal.         |
-| Scroll to bottom on output | `terminal_scroll_on_output` | on / off | on      | Jump back to the newest output when a program prints.                        |
-| Clickable links            | `terminal_allow_hyperlink`  | on / off | on      | Underline links and file paths under the pointer and open them with ⌘-click. |
+| Setting                    | Key                         | Values                                                                            | Default | What it does                                                                                                                                                   |
+| -------------------------- | --------------------------- | --------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Copy on select             | `terminal_copy_on_select`   | on / off                                                                          | on      | Copy text to the clipboard as soon as you select it in the terminal.                                                                                           |
+| Scroll to bottom on output | `terminal_scroll_on_output` | on / off                                                                          | on      | Jump back to the newest output when a program prints.                                                                                                          |
+| Clickable links            | `terminal_allow_hyperlink`  | on / off                                                                          | on      | Underline links and file paths under the pointer and open them with ⌘-click.                                                                                   |
+| Option as Meta             | `terminal_option_as_meta`   | `off`, `left`, `right`, `both` (Off, Left Option, Right Option, Both Option keys) | `off`   | The chosen Option keys send Esc + the key (Meta-f, Meta-b in the shell) instead of typing ƒ, or @ on some layouts. See [Terminal](terminal.md#the-option-key). |
 
 #### Clipboard
 

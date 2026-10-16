@@ -64,7 +64,9 @@ extension TerminalTab {
     if backend.mode()?.bracketedPaste == true {
       backend.write("\u{1b}[200~" + TerminalTab.bracketedPasteBody(text) + "\u{1b}[201~")
     } else {
-      backend.write(text)
+      // Unbracketed, a control character is a key press: a `\r` from
+      // captured progress output would submit early.
+      backend.write(ShellQuoting.withoutControlCharacters(text))
     }
   }
 
@@ -86,6 +88,8 @@ extension TerminalTab {
     agentFromHooks = false
     agentSession = nil
     agentStatusMessage = nil
+    // Text queued for this agent isn't for whatever runs next.
+    pendingAgentText = []
     agentTickTimer?.invalidate()
     agentTickTimer = nil
     agentTickDeadline = nil
@@ -189,15 +193,17 @@ extension TerminalTab {
   private func agentStateChanged(from before: AgentState, cause: AgentEvent?) {
     let state = agentMachine.state
     recordTurnBoundary(from: before, to: state)
-    if state == .done || state == .idle { flushPendingAgentText() }
+    // Only at a real turn end: a timeout's Idle may be mid-run.
+    if state == .done || (state == .idle && cause != nil) { flushPendingAgentText() }
     if state.wantsUser, let agent {
       if isWatched, state == .done {
         // The user saw it finish; nothing to flag.
         agentMachine.handle(.acknowledged, at: Date())
       } else {
         setAttentionFromAgent()
-        // Notifications and bells already notified on their own.
-        if cause != .bell, !Self.isNotification(cause) {
+        // A bell or program notification that went to the desktop already
+        // said so (one held back or not shown didn't).
+        if !(eventWasNotified && (cause == .bell || Self.isNotification(cause))) {
           let headline =
             state == .needsInput ? "\(agent.displayName) needs your input" : "\(agent.displayName) finished"
           NotificationCenter.default.post(

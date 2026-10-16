@@ -231,9 +231,10 @@ public enum ProjectDetector {
   /// the user's shell, so it's one `sh -c '…'`: the same from bash, zsh or
   /// fish. The task's terminal has `IMPULSE_REPO_ROOT`; credentials come
   /// from the image's own variables, inside the containers (`\$`, left for
-  /// the container's shell). Nil for other databases.
+  /// the container's shell). Nil for other databases, and for a service
+  /// name Compose wouldn't take, which could end the quotes.
   public static func dumpAndLoad(service: String, image: String) -> String? {
-    guard let commands = databaseCommands(image: image) else { return nil }
+    guard isServiceName(service), let commands = databaseCommands(image: image) else { return nil }
     let exec = "docker compose exec -T \(service) sh -c"
     return #"sh -c 'docker compose up -d \#(service) && n=0 && until \#(exec) "\#(commands.ready)"; do n=$((n+1));"#
       + #" if [ $n -ge 120 ]; then echo "\#(service) did not start" >&2; exit 1; fi; sleep 1; done"#
@@ -244,7 +245,7 @@ public enum ProjectDetector {
   /// forever for a database that never starts), so Project Setup can
   /// replace it in a saved setup script.
   public static func earlierDumpAndLoad(service: String, image: String) -> String? {
-    guard databaseCommands(image: image) != nil else { return nil }
+    guard isServiceName(service), databaseCommands(image: image) != nil else { return nil }
     let exec = "docker compose exec -T \(service)"
     if image.lowercased().contains("postg") {
       return #"until \#(exec) sh -c 'pg_isready -U "$POSTGRES_USER"'; do sleep 1; done"#
@@ -255,6 +256,16 @@ public enum ProjectDetector {
     return "until \(exec) sh -c 'mysqladmin ping \(auth) --silent'; do sleep 1; done"
       + " && (cd \"$IMPULSE_REPO_ROOT\" && \(exec) sh -c 'mysqldump \(auth) --all-databases --single-transaction')"
       + " | \(exec) sh -c 'mysql \(auth)'"
+  }
+
+  /// A Compose service name as Compose allows them (`[a-zA-Z0-9._-]+`),
+  /// starting with a letter or digit so `docker compose` doesn't take it
+  /// for an option: nothing a shell reads specially, in or out of quotes,
+  /// in any shell.
+  static func isServiceName(_ name: String) -> Bool {
+    let plain = { (character: Character) in character.isASCII && (character.isLetter || character.isNumber) }
+    guard let first = name.first, plain(first) else { return false }
+    return name.allSatisfy { plain($0) || "._-".contains($0) }
   }
 
   /// How to tell a database image is ready, dump it and load a dump, run

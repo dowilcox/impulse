@@ -459,6 +459,200 @@
       #expect(log("b") == ["didOpen"])
     }
 
+    private static func waitUntil(_ timeout: TimeInterval = 15, _ condition: () -> Bool) -> Bool {
+      let deadline = Date().addingTimeInterval(timeout)
+      while Date() < deadline {
+        if condition() { return true }
+        Thread.sleep(forTimeInterval: 0.02)
+      }
+      return false
+    }
+
+    /// Answers initialize (with `capabilities`), then logs each message's
+    /// method, or its whole body for didChange, to `server.log`; runs
+    /// `onShutdown` and answers on shutdown, and exits on exit.
+    private static func recordingServer(capabilities: String = "{}", onShutdown: String = "") -> String {
+      readBody + #"""
+        log="$(dirname "$0")/server.log"
+        read_body
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":\#(capabilities)}}'
+        while true; do
+          read_body
+          [ -n "$body" ] || exit 0
+          case "$body" in
+            *'"method":"textDocument/didChange"'*) printf '%s\n' "$body" >> "$log" ;;
+            *'"method":"$/cancelRequest"'*) echo "cancel $(printf '%s' "$body" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')" >> "$log" ;;
+            *'"method":"shutdown"'*)
+              \#(onShutdown)
+              echo shutdown >> "$log"
+              id=$(printf '%s' "$body" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+              send "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":null}" ;;
+            *'"method":"exit"'*) exit 0 ;;
+            *) printf '%s\n' "$body" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p' >> "$log" ;;
+          esac
+        done
+        """#
+    }
+
+    private func log(_ workspace: MockWorkspace) -> [String] {
+      ((try? String(contentsOfFile: workspace.root + "/server.log", encoding: .utf8)) ?? "")
+        .split(separator: "\n").map(String.init)
+    }
+
+    @Test func requestsDontWaitForTheirServerToStart() throws {
+      let body = #"""
+        read_msg
+        sleep 1
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+        read_msg
+        read_msg
+        read_msg
+        send '{"jsonrpc":"2.0","id":2,"result":"late"}'
+        sleep 2
+        """#
+      let workspace = try makeWorkspace(scriptBody: body)
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      defer { registry.shutdownAll(deadline: 0.5) }
+
+      let answered = DispatchSemaphore(value: 0)
+      var response: String?
+      let started = Date()
+      registry.request(
+        languageId: "mocklang", fileUri: workspace.fileUri, method: "textDocument/definition", paramsJSON: "{}"
+      ) {
+        response = $0
+        answered.signal()
+      }
+      #expect(Date().timeIntervalSince(started) < 0.5, "it returns while the server starts")
+      #expect(answered.wait(timeout: .now() + 10) == .success)
+      #expect(response == "\"late\"")
+    }
+
+    @Test func aCancelledRequestIsWithdrawn() throws {
+      let workspace = try makeWorkspace(scriptBody: Self.recordingServer())
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      defer { registry.shutdownAll(deadline: 0.5) }
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 1)
+
+      var called = false
+      let request = registry.request(
+        languageId: "mocklang", fileUri: workspace.fileUri, method: "test/slow", paramsJSON: nil
+      ) { _ in called = true }
+      request.cancel()
+      // The initialize request was 1: this one is 2.
+      #expect(Self.waitUntil { log(workspace) == ["initialized", "workspace/didChangeConfiguration", "test/slow", "cancel 2"] })
+      #expect(request.isFinished)
+      #expect(!called)
+    }
+
+    @Test func shutdownStopsAServerThatWontGo() throws {
+      // Answers initialize, then ignores everything (shutdown and exit too).
+      let body = #"""
+        echo $$ > "$(dirname "$0")/pid"
+        read_msg
+        send '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+        exec sleep 30
+        """#
+      let workspace = try makeWorkspace(scriptBody: body)
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 1)
+      let pidText = try String(contentsOfFile: workspace.root + "/pid", encoding: .utf8)
+      let pid = try #require(pid_t(pidText.trimmingCharacters(in: .whitespacesAndNewlines)))
+
+      let started = Date()
+      registry.shutdownAll(deadline: 0.5)
+      #expect(Date().timeIntervalSince(started) < 2, "one deadline, not a wait per server")
+      #expect(Self.waitUntil(5) { kill(pid, 0) == -1 }, "the process is gone")
+    }
+
+    @Test func aStoppedServerIsNoLongerHeard() throws {
+      let uri = "file:///tmp/after-shutdown.mock"
+      let workspace = try makeWorkspace(
+        scriptBody: Self.recordingServer(onShutdown: Self.publish(uri, "too late")))
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      let events = EventCollector(registry)
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 1)
+      let clientKey = "mock@\(workspace.rootUri)"
+      #expect(events.waitFor(type: "initialized") != nil)
+      #expect(registry.isServing(clientKey: clientKey))
+
+      // Its folder isn't trusted any more.
+      registry.shutdownServers { _ in true }
+      #expect(!registry.isServing(clientKey: clientKey))
+      // It publishes on its way out (before answering shutdown).
+      #expect(Self.waitUntil { log(workspace).contains("shutdown") })
+      #expect(events.waitFor(type: "diagnostics", timeout: 1) == nil, "what it sends while stopping is dropped")
+      #expect(events.waitFor(type: "serverExited", timeout: 0.5) == nil)
+    }
+
+    @Test func aServerThatsNoLongerAllowedIsntServing() throws {
+      let workspace = try makeWorkspace(scriptBody: Self.recordingServer())
+      defer { workspace.cleanup() }
+      let registry = makeRegistry(workspace)
+      defer { registry.shutdownAll(deadline: 0.5) }
+      var allowed = true
+      registry.isAllowed = { _ in allowed }
+      #expect(registry.ensureServers(languageId: "mocklang", fileUri: workspace.fileUri) == 1)
+      #expect(registry.isServing(clientKey: "mock@\(workspace.rootUri)"))
+      allowed = false
+      #expect(!registry.isServing(clientKey: "mock@\(workspace.rootUri)"))
+    }
+
+    @Test func changesReachServersAsTheyTakeThem() throws {
+      // Full sync: every change arrives as the whole text.
+      let full = try makeWorkspace(scriptBody: Self.recordingServer(capabilities: #"{"textDocumentSync":1}"#))
+      defer { full.cleanup() }
+      let fullRegistry = makeRegistry(full)
+      defer { fullRegistry.shutdownAll(deadline: 0.5) }
+      fullRegistry.notify(
+        languageId: "mocklang", fileUri: full.fileUri, method: "textDocument/didOpen", paramsJSON: didOpen(full))
+      #expect(Self.waitUntil { log(full).contains("textDocument/didOpen") })
+      let insert = ContentChange(
+        range: ContentChange.Range(
+          start: ContentChange.Position(line: 0, character: 5), end: ContentChange.Position(line: 0, character: 5)),
+        rangeLength: 0, text: " wörld😀")
+      #expect(
+        fullRegistry.didChange(
+          languageId: "mocklang", fileUri: full.fileUri, version: 2, fullText: nil, changes: [insert]))
+      #expect(Self.waitUntil { log(full).contains { $0.contains(#""contentChanges":[{"text":"hello wörld😀"}]"#) } })
+
+      // Incremental sync: the changes themselves, unless there are very many.
+      let incremental = try makeWorkspace(
+        scriptBody: Self.recordingServer(capabilities: #"{"textDocumentSync":2}"#))
+      defer { incremental.cleanup() }
+      let registry = makeRegistry(incremental)
+      defer { registry.shutdownAll(deadline: 0.5) }
+      registry.notify(
+        languageId: "mocklang", fileUri: incremental.fileUri, method: "textDocument/didOpen",
+        paramsJSON: didOpen(incremental))
+      #expect(Self.waitUntil { log(incremental).contains("textDocument/didOpen") })
+      registry.didChange(
+        languageId: "mocklang", fileUri: incremental.fileUri, version: 2, fullText: nil, changes: [insert])
+      #expect(Self.waitUntil { log(incremental).contains { $0.contains(#""text":" wörld😀""#) && $0.contains("range") } })
+      // Replace All: one change per character, from the end back.
+      let many = (0..<100).reversed().map { index in
+        ContentChange(
+          range: ContentChange.Range(
+            start: ContentChange.Position(line: 0, character: UInt32(index)),
+            end: ContentChange.Position(line: 0, character: UInt32(index))),
+          rangeLength: 0, text: "-")
+      }
+      registry.didChange(
+        languageId: "mocklang", fileUri: incremental.fileUri, version: 3, fullText: nil,
+        changes: [ContentChange(range: nil, rangeLength: nil, text: String(repeating: "x", count: 100))] + many)
+      let expected = String(repeating: "-x", count: 100)
+      #expect(Self.waitUntil { log(incremental).contains { $0.contains(#""contentChanges":[{"text":"\#(expected)"}]"#) } })
+
+      // A document that wasn't opened isn't kept, or changed.
+      #expect(
+        !registry.didChange(
+          languageId: "mocklang", fileUri: incremental.fileUri + ".other", version: 2, fullText: nil, changes: [insert]))
+    }
+
     @Test func unknownLanguageHasNoClients() throws {
       let workspace = try makeWorkspace(scriptBody: "exit 0\n")
       defer { workspace.cleanup() }

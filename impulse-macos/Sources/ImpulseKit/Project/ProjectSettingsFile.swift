@@ -84,25 +84,37 @@ public enum ProjectSettingsFile {
   }
 
   /// `existing` with the managed sections replaced by `config`'s, where
-  /// the first of them was; the rest of the file stays as written.
+  /// the first of them was; the rest of the file stays as written. The
+  /// same settings written another way go too (`["scripts"]`, or
+  /// `scripts.setup = …` before any header), so a field emptied on the
+  /// screen doesn't live on in them.
   public static func merging(_ config: ProjectConfig, into existing: String) -> String {
     let blocks = split(existing)
-    var kept: [String] = []
+    var parts: [String] = []
     var insertAt: Int?
     for block in blocks {
       if let header = block.header, managedHeaders.contains(header) {
-        if insertAt == nil { insertAt = kept.count }
-      } else {
-        kept.append(block.text.trimmingCharacters(in: .newlines))
+        if insertAt == nil { insertAt = parts.count }
+        continue
       }
+      let kept = (block.header == nil ? droppingManagedKeys(block.text) : block.text).trimmingCharacters(in: .newlines)
+      // Not an empty start of the file: the sections would go after the
+      // block that follows it.
+      if !kept.isEmpty { parts.append(kept) }
     }
     let managed = text(config).trimmingCharacters(in: .newlines)
-    var parts = kept.filter { !$0.isEmpty }
     if !managed.isEmpty {
       let index = min(insertAt ?? parts.count, parts.count)
       parts.insert(managed, at: index)
     }
     return parts.isEmpty ? "" : parts.joined(separator: "\n\n") + "\n"
+  }
+
+  /// Whether `text` reads as exactly `config`. Project Setup trusts a file
+  /// it saved only then: `merging` keeps what it doesn't manage as
+  /// written, and a setting there would otherwise be trusted unseen.
+  public static func holdsOnly(_ config: ProjectConfig, in text: String) -> Bool {
+    (try? ProjectConfig.parse(text).get()) == config
   }
 
   /// `existing` with `[finish] land` set to `landing`, for Finish Task
@@ -164,19 +176,29 @@ public enum ProjectSettingsFile {
   ]
 
   /// The keys in the managed sections of `text` that Project Setup doesn't
-  /// know, which a rewrite drops (`scripts.lint`), in file order.
+  /// know, which a rewrite drops (`scripts.lint`), in file order. That
+  /// includes ones set before any header (`scripts.lint = …`).
   public static func unknownManagedKeys(_ text: String) -> [String] {
     var unknown: [String] = []
     for block in split(text) {
-      guard let header = block.header, let known = knownKeys[header], let known else { continue }
-      var inString = false
-      for line in block.text.components(separatedBy: "\n").dropFirst() {
-        let startsInString = inString
-        // A line of a multi-line string isn't a key.
-        if line.components(separatedBy: "\"\"\"").count % 2 == 0 || line.components(separatedBy: "'''").count % 2 == 0 {
-          inString.toggle()
+      let lines = block.text.components(separatedBy: "\n")
+      var scanner = StatementScanner()
+      for line in block.header == nil ? lines[...] : lines.dropFirst() {
+        // A line of a multi-line string or array isn't a key.
+        let startsStatement = scanner.isAtStatementStart
+        scanner.scan(line)
+        guard startsStatement, let path = keyPath(of: line) else { continue }
+        var parts = path[...]
+        let header: String
+        if let table = block.header {
+          header = table
+        } else {
+          // Before any header, only dotted keys of the screen's tables.
+          guard let table = parts.first, managedTables.contains(table), parts.count > 1 else { continue }
+          header = table == "actions" ? "[[actions]]" : "[\(table)]"
+          parts = parts.dropFirst()
         }
-        guard !startsInString, let key = firstKey(of: line), !known.contains(key) else { continue }
+        guard let known = knownKeys[header], let known, let key = parts.first, !known.contains(key) else { continue }
         let name = "\(header.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))).\(key)"
         if !unknown.contains(name) { unknown.append(name) }
       }
@@ -184,43 +206,162 @@ public enum ProjectSettingsFile {
     return unknown
   }
 
-  /// The first part of the key a line sets (`ports` in `ports.APP = 1`),
-  /// unquoted; nil for comments, values continued from an earlier line and
-  /// anything else.
-  private static func firstKey(of line: String) -> String? {
-    var rest = Substring(line.trimmingCharacters(in: .whitespaces))
-    var key: Substring
-    if let quote = rest.first, quote == "\"" || quote == "'" {
-      guard let close = rest.dropFirst().firstIndex(of: quote) else { return nil }
-      key = rest[rest.index(after: rest.startIndex)..<close]
-      rest = rest[rest.index(after: close)...]
-    } else {
-      key = rest.prefix { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
-      guard !key.isEmpty else { return nil }
-      rest = rest.dropFirst(key.count)
+  /// The tables the screen manages, by their first name.
+  private static let managedTables = Set(
+    managedHeaders.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).components(separatedBy: ".")[0] })
+
+  /// `text` (the keys before any header) without the statements that set
+  /// the screen's tables as dotted keys or inline values
+  /// (`scripts.setup = …`, `actions = [ … ]`), however many lines each
+  /// spans.
+  private static func droppingManagedKeys(_ text: String) -> String {
+    var kept: [String] = []
+    var scanner = StatementScanner()
+    var dropping = false
+    for line in text.components(separatedBy: "\n") {
+      if scanner.isAtStatementStart {
+        dropping = keyPath(of: line).map { managedTables.contains($0[0]) } ?? false
+      }
+      scanner.scan(line)
+      if !dropping { kept.append(line) }
     }
-    rest = rest.drop { $0 == " " || $0 == "\t" }
-    return rest.first == "=" || rest.first == "." ? String(key) : nil
+    return kept.joined(separator: "\n")
+  }
+
+  /// The parts of the key a line sets, unquoted (`worktrees."ports".APP = 1`
+  /// → worktrees, ports, APP); nil for comments, headers and anything else.
+  private static func keyPath(of line: String) -> [String]? {
+    guard let key = keyPath(Substring(line)), key.rest.first == "=" else { return nil }
+    return key.parts
+  }
+
+  /// A dotted key at the start of `text`, unquoted, and what follows it
+  /// (from its first non-blank character); nil when it doesn't start with
+  /// one.
+  private static func keyPath(_ text: Substring) -> (parts: [String], rest: Substring)? {
+    let blank = { (character: Character) in character == " " || character == "\t" }
+    var rest = text.drop(while: blank)
+    var parts: [String] = []
+    while true {
+      if let quote = rest.first, quote == "\"" || quote == "'" {
+        guard let quoted = quotedKey(rest, quote: quote) else { return nil }
+        parts.append(quoted.key)
+        rest = quoted.rest
+      } else {
+        let bare = rest.prefix { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+        guard !bare.isEmpty else { return nil }
+        parts.append(String(bare))
+        rest = rest.dropFirst(bare.count)
+      }
+      rest = rest.drop(while: blank)
+      guard rest.first == "." else { return (parts, rest) }
+      rest = rest.dropFirst().drop(while: blank)
+    }
+  }
+
+  /// A quoted key at the start of `text` and what follows it. A basic
+  /// string's escapes are read as TOML reads them, so `"scripts"` is
+  /// `scripts`.
+  private static func quotedKey(_ text: Substring, quote: Character) -> (key: String, rest: Substring)? {
+    var rest = text.dropFirst()
+    var key = ""
+    while let character = rest.first {
+      rest = rest.dropFirst()
+      if character == quote { return (key, rest) }
+      guard quote == "\"", character == "\\", let escape = rest.first else {
+        key.append(character)
+        continue
+      }
+      rest = rest.dropFirst()
+      switch escape {
+      case "b": key.append("\u{8}")
+      case "t": key.append("\t")
+      case "n": key.append("\n")
+      case "f": key.append("\u{C}")
+      case "r": key.append("\r")
+      case "u", "U":
+        let digits = rest.prefix(escape == "u" ? 4 : 8)
+        guard let value = UInt32(digits, radix: 16), let scalar = Unicode.Scalar(value) else { return nil }
+        key.unicodeScalars.append(scalar)
+        rest = rest.dropFirst(digits.count)
+      default: key.append(escape)
+      }
+    }
+    return nil
+  }
+
+  /// Where a TOML file's statements start: not inside a multi-line string
+  /// or a value's brackets, which may span lines.
+  private struct StatementScanner {
+    private var multiline: String?
+    private var depth = 0
+
+    var isAtStatementStart: Bool { multiline == nil && depth == 0 }
+
+    mutating func scan(_ line: String) {
+      let characters = Array(line)
+      var index = 0
+      func starts(_ text: String) -> Bool { characters[index...].starts(with: text) }
+      while index < characters.count {
+        if let delimiter = multiline {
+          if starts(delimiter) {
+            multiline = nil
+            index += 3
+          } else {
+            index += delimiter == "\"\"\"" && characters[index] == "\\" ? 2 : 1
+          }
+          continue
+        }
+        if starts("\"\"\"") || starts("'''") {
+          multiline = String(characters[index..<index + 3])
+          index += 3
+          continue
+        }
+        switch characters[index] {
+        case "#": return
+        case "\"":
+          index += 1
+          while index < characters.count, characters[index] != "\"" { index += characters[index] == "\\" ? 2 : 1 }
+        case "'":
+          index += 1
+          while index < characters.count, characters[index] != "'" { index += 1 }
+        case "[", "{": depth += 1
+        case "]", "}": depth = max(0, depth - 1)
+        default: break
+        }
+        index += 1
+      }
+    }
   }
 
   /// The file in blocks: what comes before the first header, then each
-  /// header with the lines under it.
+  /// header with the lines under it. A line inside a multi-line value is
+  /// never a header.
   private static func split(_ text: String) -> [(header: String?, text: String)] {
     var blocks: [(header: String?, text: String)] = [(nil, "")]
+    var scanner = StatementScanner()
     for line in text.components(separatedBy: "\n") {
-      if let header = header(of: line) {
+      if scanner.isAtStatementStart, let header = header(of: line) {
         blocks.append((header, line))
       } else {
         blocks[blocks.count - 1].text += (blocks[blocks.count - 1].text.isEmpty ? "" : "\n") + line
       }
+      scanner.scan(line)
     }
     return blocks
   }
 
-  /// The table header a line starts (`[scripts]`, `[[actions]]`), if any.
+  /// The table header a line starts, as the screen writes it: `[scripts]`
+  /// for `[ "scripts" ]`, `[[actions]]`; nil for any other line.
   private static func header(of line: String) -> String? {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
-    guard trimmed.hasPrefix("["), let close = trimmed.range(of: "]]") ?? trimmed.range(of: "]") else { return nil }
+    guard trimmed.hasPrefix("[") else { return nil }
+    let isArray = trimmed.hasPrefix("[[")
+    if let path = keyPath(trimmed.dropFirst(isArray ? 2 : 1)), path.rest.hasPrefix(isArray ? "]]" : "]") {
+      let name = path.parts.map(key).joined(separator: ".")
+      return isArray ? "[[\(name)]]" : "[\(name)]"
+    }
+    guard let close = trimmed.range(of: "]]") ?? trimmed.range(of: "]") else { return nil }
     return String(trimmed[..<close.upperBound]).replacingOccurrences(of: " ", with: "")
   }
 

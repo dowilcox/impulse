@@ -175,6 +175,7 @@ If the branch hasn't been published yet, the push publishes it (see [Push and pu
 
 - Right after committing, click **Uncommit** in the toast.
 - Any time later, choose **Git ▸ Undo Last Commit** (also in the panel's ⋯ menu and the command palette). The commit is removed (`git reset --soft HEAD~1`) and its changes stay staged. A toast offers **Redo** for about 15 seconds.
+- Both take back only the commit you saw. If another commit landed on top of it meanwhile (an agent's, say), nothing is undone and Impulse says the branch has moved on.
 - If the commit is already on the upstream, Impulse asks first ("Undo a pushed commit?"), because the next push would then have to be a force push.
 
 ## Branches
@@ -246,6 +247,8 @@ A stash saves your uncommitted changes and cleans the working tree, so you can s
   - **Apply**: apply it and keep it in the list.
   - **Pop**: apply it and remove it (with Undo, as above).
   - **Drop**: delete it without applying. There's no confirmation; instead the toast offers **Undo** for about 15 seconds, which stores it again.
+
+  These act on the stash you hovered, even if another stash was made since and its `stash@{n}` number changed. If it's gone from the list, nothing happens and Impulse says so. Undoing a pop takes a safety snapshot first, so edits made since the pop can be brought back too.
 - **Click a stash** to see what's in it, in [Review](review.md) with the stash scope.
 
 ## Fetch, pull and push
@@ -390,7 +393,9 @@ During a rebase, "current" (HEAD) is the branch you're rebasing onto plus the co
 
 1. Impulse saves everything as it is now in a [safety snapshot](#safety-snapshots-and-undo).
 2. It runs `git merge --abort` (or `git cherry-pick --abort`, `git revert --abort`).
-3. If git refuses, which it does once you've edited a file the merge had already changed ("Entry 'link.tsx' not uptodate. Cannot merge."), Impulse resets to the commit you were on and puts back the uncommitted work you had before the merge. When the merge started while Impulse was open (including one an agent started in a terminal), Impulse noted that work at that moment, so it brings back exactly that. Otherwise it keeps every changed file the merge doesn't touch, which can include edits you made while resolving; the toast says so.
+3. If git refuses, which it does once you've edited a file the merge had already changed ("Entry 'link.tsx' not uptodate. Cannot merge."), Impulse resets to the commit you were on and puts back the uncommitted work you had before the merge. When the merge started while Impulse was open (including one an agent started in a terminal), Impulse noted that work at that moment, so it brings back exactly that. Otherwise it keeps every changed file the merge doesn't touch, which can include edits you made while resolving; the toast says so. Impulse notes that work only in [trusted folders](getting-started.md), since doing so runs git commands that can run programs the repository's configuration names.
+
+If something goes wrong after the reset has started (a file can't be put back), the toast says the operation was only partly aborted, gives git's reason, and keeps **Undo** on screen until you dismiss it.
 
 The toast ("Aborted merging") offers **Undo** for 15 seconds. For a merge, Undo starts the merge again, so its conflicts are back, and puts every file back as it was when you chose Abort. For a cherry-pick or revert, Undo puts the files back without restarting it. A rebase uses `git rebase --abort`, which doesn't refuse this way. For a bisect, **Abort** runs `git bisect reset`; drive the bisect itself from the terminal.
 

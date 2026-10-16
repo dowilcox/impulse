@@ -138,8 +138,10 @@ extension MainWindowController {
       let root = self.fileTreeRootPath
       self.settings.sidebarShowHidden = showHidden
       guard !root.isEmpty else { return }
+      let expandedPaths = Self.collectExpandedPaths(self.windowModel.fileTreeNodes)
       DispatchQueue.global(qos: .userInitiated).async {
-        let nodes = FileTreeNode.buildTree(rootPath: root, showHidden: showHidden)
+        let nodes = FileTreeDataController.buildTree(
+          rootPath: root, showHidden: showHidden, expanding: expandedPaths)
         FileTreeNode.refreshGitStatus(nodes: nodes, repoPath: root, dirPath: root)
         DispatchQueue.main.async { [weak self] in
           // The sidebar moved to another folder meanwhile: drop this one.

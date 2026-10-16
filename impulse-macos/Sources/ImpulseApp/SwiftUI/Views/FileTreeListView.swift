@@ -204,9 +204,13 @@ private struct FlatFileRowView: View {
       isHovered = hovering
     }
     .onDrag { [nodePath = node.path] in
-      NSItemProvider(object: nodePath as NSString)
+      // A file URL (what folder rows and terminals take), and the path as
+      // text for anything that only takes text.
+      let provider = NSItemProvider(object: URL(fileURLWithPath: nodePath) as NSURL)
+      provider.registerObject(nodePath as NSString, visibility: .all)
+      return provider
     }
-    .onDrop(of: [.fileURL, .text], isTargeted: $isDropTarget) { providers in
+    .onDrop(of: [.fileURL], isTargeted: $isDropTarget) { providers in
       handleDrop(providers: providers)
     }
     .onTapGesture {
@@ -468,43 +472,36 @@ struct FileTreeRow: View {
 /// Shared logic for handling file drops from Finder or internal tree moves.
 enum FileDropHelper {
   /// Processes drop providers, copying external files or moving internal ones.
+  /// Only file URLs count: dragged text that happens to name a file (a
+  /// path selected in the editor) is not a file to move.
   static func handleDrop(
     providers: [NSItemProvider],
     targetDir: String,
     projectRoot: String,
     onComplete: @escaping () -> Void
   ) {
-    for provider in providers {
-      // Prefer file URL (Finder drops and modern pasteboard).
-      if provider.hasItemConformingToTypeIdentifier("public.file-url") {
-        provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
-          guard let urlData = data as? Data,
-            let url = URL(dataRepresentation: urlData, relativeTo: nil),
-            url.isFileURL
-          else { return }
-          let sourcePath = url.path
-          DispatchQueue.main.async {
-            processFile(
-              source: sourcePath, targetDir: targetDir,
-              projectRoot: projectRoot, onComplete: onComplete)
-          }
-        }
-      } else if provider.hasItemConformingToTypeIdentifier("public.text") {
-        // Fallback for internal drags that only provide text.
-        provider.loadItem(forTypeIdentifier: "public.text", options: nil) { data, _ in
-          guard let pathData = data as? Data,
-            let sourcePath = String(data: pathData, encoding: .utf8),
-            sourcePath.hasPrefix("/"),
-            FileManager.default.fileExists(atPath: sourcePath)
-          else { return }
-          DispatchQueue.main.async {
-            processFile(
-              source: sourcePath, targetDir: targetDir,
-              projectRoot: projectRoot, onComplete: onComplete)
-          }
+    for provider in providers where provider.hasItemConformingToTypeIdentifier("public.file-url") {
+      provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { data, _ in
+        guard let urlData = data as? Data,
+          let url = URL(dataRepresentation: urlData, relativeTo: nil),
+          url.isFileURL
+        else { return }
+        let sourcePath = url.path
+        DispatchQueue.main.async {
+          processFile(
+            source: sourcePath, targetDir: targetDir,
+            projectRoot: projectRoot, onComplete: onComplete)
         }
       }
     }
+  }
+
+  /// `path` is the project folder or inside it (a sibling folder that
+  /// shares its name as a prefix, `app-old` beside `app`, is not).
+  static func isInside(_ path: String, projectRoot: String) -> Bool {
+    let root = (projectRoot as NSString).standardizingPath
+    let path = (path as NSString).standardizingPath
+    return path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/")
   }
 
   /// Moves an internal file or copies an external file to the target directory.
@@ -526,7 +523,7 @@ enum FileDropHelper {
       !destPath.hasPrefix(normalizedSource + "/")
     else { return }
 
-    let isInternal = normalizedSource.hasPrefix((projectRoot as NSString).standardizingPath)
+    let isInternal = isInside(normalizedSource, projectRoot: projectRoot)
 
     // If destination exists, ask to replace (the old one goes to the Trash).
     if fm.fileExists(atPath: destPath) {

@@ -339,7 +339,7 @@ Control-click an item:
 #### Drag and drop
 
 - Drag files or folders onto a folder in the tree to move them there.
-- Drag files from Finder onto a folder (or onto empty space for the top of the tree) to copy them in.
+- Drag files from Finder onto a folder (or onto empty space for the top of the tree) to copy them in. Files from inside the project's folder are moved instead; files from anywhere else, a folder beside it included, are copied.
 
 If an item with the same name is already there, Impulse asks; **Replace** moves the existing one to the Trash first.
 

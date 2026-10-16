@@ -31,9 +31,8 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler, WKNavigationDel
 
     // MARK: - WKNavigationDelegate (warm-up)
 
-    /// While the WebView is warming up (before `claim(...)`), restrict it to
-    /// `file://` and `about:` navigations so a Monaco bug or compromised asset
-    /// can't navigate to an arbitrary URL.
+    /// While the WebView is warming up (before `claim(...)`), it may only
+    /// show the editor page (or about:blank), the same rule as `EditorTab`.
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
@@ -43,11 +42,32 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler, WKNavigationDel
             decisionHandler(.cancel)
             return
         }
-        if url.scheme == "file" || url.scheme == "about" {
+        if EditorAssets.isEditorPage(url) || url.absoluteString == "about:blank" {
             decisionHandler(.allow)
         } else {
             os_log(.info, log: Self.log, "Pool WebView blocked navigation to: %{public}@", url.absoluteString)
             decisionHandler(.cancel)
+        }
+    }
+
+    /// When warming WebViews' content processes ended lately.
+    private var terminations: [Date] = []
+
+    /// The warming WebView's content process ended: drop it and warm another
+    /// (a claimed one would open as a blank page). When it keeps happening,
+    /// wait longer each time (30 s, 1 min, … up to 5 min) instead of
+    /// spinning up page after page.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === warmWebView else { return }
+        warmWebView = nil
+        isReady = false
+        let now = Date()
+        terminations = terminations.filter { now.timeIntervalSince($0) < 600 } + [now]
+        let delay = terminations.count < 2 ? 0 : min(30 * pow(2, Double(terminations.count - 2)), 300)
+        os_log(
+            .error, log: Self.log, "Pre-warmed WebView's content process ended; warming another in %.0f s", delay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.warmUp()
         }
     }
 
@@ -129,7 +149,9 @@ final class EditorWebViewPool: NSObject, WKScriptMessageHandler, WKNavigationDel
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard message.name == "impulse" else { return }
+        guard message.name == "impulse", message.frameInfo.isMainFrame,
+            EditorAssets.isEditorPage(message.frameInfo.request.url)
+        else { return }
         guard let body = message.body as? String,
               let data = body.data(using: .utf8) else { return }
 

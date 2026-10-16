@@ -75,6 +75,11 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   private var changeListener: UUID?
   private var checkpointObserver: NSObjectProtocol?
   private var refreshWork: DispatchWorkItem?
+  /// What changed in the repository since the last refresh started. While
+  /// the review is behind another tab it only collects here.
+  private var pendingChange: RepoWatcher.Change = []
+  /// Highlighting not finished yet, by path.
+  private var highlightJobs: [String: HighlightJob] = [:]
   private var rowsScheduled = false
   private let comments: ReviewCommentStore
   private let queue = DispatchQueue(label: "impulse.review", qos: .userInitiated)
@@ -108,8 +113,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     setupViews()
     wireModel()
     refreshFiles()
-    changeListener = repository.addChangeListener { [weak self] _ in
-      self?.scheduleRefresh()
+    changeListener = repository.addChangeListener { [weak self] change in
+      self?.repositoryChanged(change)
     }
     let root = repository.root
     queue.async { [weak self] in
@@ -157,6 +162,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     guard lines != model.options.contextLines else { return }
     model.options.contextLines = lines
     diffContext.focus = nil
+    cancelHighlights()
     for file in files {
       file.diff = nil
       file.syntax = nil
@@ -252,6 +258,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     model.onToggleWhitespace = { [weak self] in
       guard let self else { return }
       self.model.options.ignoreWhitespace.toggle()
+      self.cancelHighlights()
       for file in self.files {
         file.diff = nil
         file.syntax = nil
@@ -287,6 +294,17 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
     settingsObserver = nil
     refreshWork?.cancel()
+    cancelHighlights()
+  }
+
+  deinit {
+    for job in highlightJobs.values { job.cancel() }
+  }
+
+  /// Back on screen: catch up with what changed while it was hidden.
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    if window != nil, !pendingChange.isEmpty { refreshFiles(after: []) }
   }
 
   func focus() {
@@ -348,6 +366,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   private func setScope(_ scope: DiffScope) {
     model.scope = scope
+    cancelHighlights()
     files = []
     filesByPath = [:]
     diffContext.files = [:]
@@ -372,31 +391,84 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       contextLines: model.options.contextLines, ignoreWhitespace: model.options.ignoreWhitespace)
   }
 
-  private func scheduleRefresh() {
+  /// Every kind of change: a refresh that reads everything again.
+  private static let anyChange: RepoWatcher.Change = [.workingTree, .index, .refs, .operation]
+
+  private func repositoryChanged(_ change: RepoWatcher.Change) {
+    // Fixed commits never change, and edits to files can't change a diff
+    // that doesn't read the working tree.
+    guard !Self.isFixed(model.scope), change != .workingTree || model.scope.includesWorkingTree else { return }
+    pendingChange.formUnion(change)
+    // Behind another tab: refresh once it's shown again.
+    guard window != nil else { return }
     refreshWork?.cancel()
-    let work = DispatchWorkItem { [weak self] in self?.refreshFiles() }
+    let work = DispatchWorkItem { [weak self] in self?.refreshFiles(after: []) }
     refreshWork = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
   }
 
-  private func refreshFiles() {
+  /// Between commits named by their full IDs, which can't move (a commit
+  /// named "HEAD" or by a branch can).
+  private static func isFixed(_ scope: DiffScope) -> Bool {
+    func isObjectID(_ revision: String) -> Bool {
+      (revision.count == 40 || revision.count == 64) && revision.allSatisfy(\.isHexDigit)
+    }
+    switch scope {
+    case .commit(let sha): return isObjectID(sha)
+    case .range(let from, let to): return isObjectID(from) && isObjectID(to)
+    default: return false
+    }
+  }
+
+  /// Re-read the file list, with the diffs on screen and the viewed files'.
+  /// After edits to files alone, a diff is read again only if its file
+  /// changed on disk. Hidden behind another tab, it waits until shown.
+  private func refreshFiles(after change: RepoWatcher.Change = ReviewSurface.anyChange) {
+    pendingChange.formUnion(change)
+    guard window != nil else { return }
+    let change = pendingChange
+    pendingChange = []
+    refreshWork?.cancel()
     generation += 1
     let generation = self.generation
     let root = repoRoot
     let scope = model.scope
     let options = diffOptions
     let viewed = ReviewViewedStore.viewed(root: root, scope: scopeKey)
+    // Diffs on screen are read again with the list; the rest when shown.
+    let shown = Set(files.filter { $0.diff != nil && $0.expanded }.map(\.path))
+    // Diffs that still hold if their file is as it was when they were read.
+    var current: [String: (change: FileChange, signature: FileSignature)] = [:]
+    if change == .workingTree, scope.includesWorkingTree {
+      for file in files where file.diff != nil && !file.stale {
+        if let signature = file.signature { current[file.path] = (file.change, signature) }
+      }
+    }
     model.isLoading = true
     queue.async { [weak self] in
       let result = Result { try GitClient.changedFiles(repoPath: root, scope: scope) }
-      // Read viewed files' diffs now, so ones that changed come back unviewed.
-      var viewedDiffs: [String: FileDiff] = [:]
+      var diffs: [String: (diff: FileDiff, signature: FileSignature?)] = [:]
+      var unchanged = Set<String>()
       if case .success(let changes) = result {
-        for change in changes where viewed[change.path] != nil {
+        // .gitattributes decides how other files diff: while one is
+        // changed, read everything.
+        let attributes = changes.contains { ($0.path as NSString).lastPathComponent == ".gitattributes" }
+        for change in changes {
+          let known = attributes ? nil : current[change.path]
+          // Viewed files are read now, so ones that changed come back unviewed.
+          let wanted = viewed[change.path] != nil || shown.contains(change.path)
+          guard known != nil || wanted else { continue }
+          // Taken before the read, so an edit during it shows next time.
+          let signature = scope.includesWorkingTree ? FileSignature(root: root, path: change.path) : nil
+          if let known, known.change == change, known.signature == signature {
+            unchanged.insert(change.path)
+            continue
+          }
+          guard wanted else { continue }
           if let diff = try? GitClient.fileDiff(
             repoPath: root, path: change.path, oldPath: change.oldPath, scope: scope, options: options)
           {
-            viewedDiffs[change.path] = diff
+            diffs[change.path] = (diff, signature)
           }
         }
       }
@@ -405,8 +477,9 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
         self.model.isLoading = false
         switch result {
         case .success(let changes):
-          self.merge(changes, viewedDiffs: viewedDiffs, viewed: viewed)
+          self.merge(changes, diffs: diffs, unchanged: unchanged, viewed: viewed)
         case .failure(let error):
+          self.cancelHighlights()
           self.files = []
           self.filesByPath = [:]
           self.diffContext.files = [:]
@@ -419,7 +492,10 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
 
   /// Bring the file list in line with `changes`, keeping each file's view
   /// state and showing its previous diff until the new one arrives.
-  private func merge(_ changes: [FileChange], viewedDiffs: [String: FileDiff], viewed: [String: String]) {
+  private func merge(
+    _ changes: [FileChange], diffs: [String: (diff: FileDiff, signature: FileSignature?)],
+    unchanged: Set<String>, viewed: [String: String]
+  ) {
     emptyMessage = Self.emptyMessage(for: model.scope)
     var next: [ReviewFile] = []
     var byPath: [String: ReviewFile] = [:]
@@ -427,8 +503,12 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       let file = filesByPath[change.path] ?? ReviewFile(change: change)
       let isNew = filesByPath[change.path] == nil
       file.change = change
-      file.stale = true
-      if let diff = viewedDiffs[change.path] { apply(diff, to: file) }
+      // Its file is as it was: the diff it has still holds.
+      file.stale = !unchanged.contains(change.path)
+      if let read = diffs[change.path] {
+        apply(read.diff, to: file)
+        file.signature = read.signature
+      }
       if let hash = viewed[change.path] {
         let current = file.diff?.contentHash
         // Marked viewed before its diff had loaded: what's here now is
@@ -448,11 +528,16 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       next.append(file)
       byPath[change.path] = file
     }
+    for (path, job) in highlightJobs where byPath[path] == nil {
+      job.cancel()
+      highlightJobs[path] = nil
+    }
     files = next
     filesByPath = byPath
     diffContext.files = byPath
-    // Diffs already on screen are read again; the rest load when shown.
-    for file in files where file.diff != nil && file.expanded {
+    // Diffs on screen that weren't read with the list (shown since it
+    // started) are read now; the rest load when shown.
+    for file in files where file.diff != nil && file.expanded && file.stale {
       loadDiff(file.path)
     }
     scheduleRows(background: true)
@@ -481,6 +566,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     let options = diffOptions
     let generation = self.generation
     queue.async { [weak self] in
+      let signature = scope.includesWorkingTree ? FileSignature(root: root, path: change.path) : nil
       let result = Result {
         try GitClient.fileDiff(
           repoPath: root, path: change.path, oldPath: change.oldPath, scope: scope, options: options)
@@ -496,6 +582,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
         switch result {
         case .success(let diff):
           self.apply(diff, to: file)
+          file.signature = signature
           // A viewed file whose diff changed is unviewed again.
           let viewed = ReviewViewedStore.viewed(root: root, scope: self.scopeKey)
           if viewed[path] == Self.unknownHash {
@@ -515,11 +602,12 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   }
 
   private func apply(_ diff: FileDiff, to file: ReviewFile) {
-    let previous = file.diff?.contentHash
-    file.diff = diff
+    let previous = file.diff
+    // The same diff again keeps the file's rows as they are.
+    if previous != diff { file.diff = diff }
     file.error = nil
     file.stale = false
-    if previous != diff.contentHash {
+    if previous?.contentHash != diff.contentHash {
       file.selection = nil
       file.syntax = nil
       highlight(file)
@@ -530,49 +618,68 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   }
 
   /// Color the file's lines in the background, old and new sides apart so
-  /// strings and comments don't run across them.
+  /// strings and comments don't run across them. Jobs wait their turn on
+  /// the highlighter's queue; one whose diff was replaced, or whose review
+  /// closed, is dropped there.
   private func highlight(_ file: ReviewFile) {
     guard let diff = file.diff, !diff.isBinary, !diff.tooLarge,
       let language = SyntaxHighlighter.hljsLanguage(diff.language, path: diff.path)
     else { return }
     let hash = diff.contentHash
     let path = file.path
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      var oldLines: [String] = []
-      var newLines: [String] = []
-      var positions: [[(old: Int?, new: Int?)]] = []
-      for hunk in diff.hunks {
-        positions.append(
-          hunk.lines.map { line in
-            var old: Int?
-            var new: Int?
-            if line.kind != .added {
-              old = oldLines.count
-              oldLines.append(line.content)
-            }
-            if line.kind != .removed {
-              new = newLines.count
-              newLines.append(line.content)
-            }
-            return (old, new)
-          })
-      }
-      let highlighter = SyntaxHighlighter.shared
-      guard let oldSpans = highlighter.highlight(lines: oldLines, language: language),
-        let newSpans = highlighter.highlight(lines: newLines, language: language)
-      else { return }
-      let syntax: [[[SyntaxHighlighter.Span]]] = zip(diff.hunks, positions).map { hunk, places in
-        zip(hunk.lines, places).map { line, place in
-          if line.kind == .removed { return place.old.flatMap { oldSpans[safe: $0] } ?? [] }
-          return place.new.flatMap { newSpans[safe: $0] } ?? []
-        }
-      }
+    highlightJobs[path]?.cancel()
+    let job = HighlightJob()
+    highlightJobs[path] = job
+    SyntaxHighlighter.shared.async { [weak self] highlighter in
+      let syntax = job.isCancelled ? nil : Self.syntax(of: diff, language: language, highlighter, job: job)
       DispatchQueue.main.async {
-        guard let self, let file = self.filesByPath[path], file.diff?.contentHash == hash else { return }
+        guard let self, self.highlightJobs[path] === job else { return }
+        self.highlightJobs[path] = nil
+        guard let syntax, let file = self.filesByPath[path], file.diff?.contentHash == hash else { return }
         file.syntax = syntax
         self.diffList.redrawVisibleRows()
       }
     }
+  }
+
+  /// Token spans per hunk and line (on the highlighter's queue); nil when
+  /// there's no grammar, or the job was cancelled meanwhile.
+  private static func syntax(
+    of diff: FileDiff, language: String, _ highlighter: SyntaxHighlighter, job: HighlightJob
+  ) -> [[[SyntaxHighlighter.Span]]]? {
+    var oldLines: [String] = []
+    var newLines: [String] = []
+    var positions: [[(old: Int?, new: Int?)]] = []
+    for hunk in diff.hunks {
+      positions.append(
+        hunk.lines.map { line in
+          var old: Int?
+          var new: Int?
+          if line.kind != .added {
+            old = oldLines.count
+            oldLines.append(line.content)
+          }
+          if line.kind != .removed {
+            new = newLines.count
+            newLines.append(line.content)
+          }
+          return (old, new)
+        })
+    }
+    guard let oldSpans = highlighter.highlightNow(lines: oldLines, language: language), !job.isCancelled,
+      let newSpans = highlighter.highlightNow(lines: newLines, language: language), !job.isCancelled
+    else { return nil }
+    return zip(diff.hunks, positions).map { hunk, places in
+      zip(hunk.lines, places).map { line, place in
+        if line.kind == .removed { return place.old.flatMap { oldSpans[safe: $0] } ?? [] }
+        return place.new.flatMap { newSpans[safe: $0] } ?? []
+      }
+    }
+  }
+
+  private func cancelHighlights() {
+    for job in highlightJobs.values { job.cancel() }
+    highlightJobs = [:]
   }
 
   private func updateOutdated(_ file: ReviewFile) {
@@ -630,7 +737,7 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   }
 
   private func rebuildRows() {
-    diffList.reload(ReviewRowBuilder.rows(files, layout: diffContext.layout))
+    diffList.reload(files)
     navigator.items = files.map { file in
       ReviewNavigatorModel.Item(
         path: file.path, status: file.change.status, viewed: file.viewed,
@@ -1102,6 +1209,18 @@ struct ReviewEmptyView: View {
 
 extension Array {
   fileprivate subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+/// A queued highlight whose result may no longer be wanted.
+private final class HighlightJob: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelled = false
+
+  var isCancelled: Bool { lock.withLock { cancelled } }
+
+  func cancel() {
+    lock.withLock { cancelled = true }
+  }
 }
 
 // MARK: - Header

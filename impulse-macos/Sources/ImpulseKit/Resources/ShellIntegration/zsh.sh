@@ -1,8 +1,8 @@
 # Impulse shell integration for zsh
 zmodload zsh/parameter 2>/dev/null
-# The terminal's secret for the command text this reports, so what programs
-# print can't pass for a command. A shell variable, not exported: programs
-# run here don't see it.
+# The terminal's secret, sent with every mark this reports, so what programs
+# print can't pass for a mark or a command. A shell variable, not exported:
+# programs run here don't see it.
 __impulse_nonce="${__impulse_nonce:-${IMPULSE_SHELL_NONCE:-}}"
 unset IMPULSE_SHELL_NONCE
 __impulse_command_started=""
@@ -38,28 +38,28 @@ __impulse_report_names() {
         __impulse_names_sig="$sig"
         local names="${(k)aliases} ${(k)functions} ${(k)builtins} ${(k)reswords}"
         names="${names//[^[:graph:] ]/}"
-        printf '\e]6973;Names=%s\a' "${names[1,60000]}"
+        printf '\e]6973;Names=%s;Nonce=%s\a' "${names[1,60000]}" "$__impulse_nonce"
     fi
     if [[ "$PATH" != "$__impulse_path_sent" ]]; then
         __impulse_path_sent="$PATH"
-        printf '\e]6973;Path=%s\a' "${PATH//[^[:graph:] ]/}"
+        printf '\e]6973;Path=%s;Nonce=%s\a' "${PATH//[^[:graph:] ]/}" "$__impulse_nonce"
     fi
 }
 __impulse_precmd() {
     local exit_code=$?
     if [ -n "$__impulse_command_started" ]; then
-        printf '\e]133;D;%d\a' "$exit_code"
+        printf '\e]133;D;%d;Nonce=%s\a' "$exit_code" "$__impulse_nonce"
         __impulse_command_started=""
     fi
-    printf '\e]7;file://%s%s\a' "$HOST" "$(__impulse_urlencode "$PWD")"
+    printf '\e]7;file://%s%s;Nonce=%s\a' "$HOST" "$(__impulse_urlencode "$PWD")" "$__impulse_nonce"
     __impulse_report_names
-    printf '\e]133;A\a'
+    printf '\e]133;A;Nonce=%s\a' "$__impulse_nonce"
 }
 __impulse_preexec() {
     local command="$1"
     __impulse_command_started=1
     printf '\e]6973;Command=%s;Nonce=%s\a' "$(__impulse_urlencode "$command")" "$__impulse_nonce"
-    printf '\e]133;C\a'
+    printf '\e]133;C;Nonce=%s\a' "$__impulse_nonce"
 }
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd __impulse_precmd

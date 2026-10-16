@@ -83,9 +83,36 @@
     }
 
     @Test func aPortAsATaskGetsIt() {
-      #expect(ComposeFile.moved(ComposeFile.port("8080:80"), by: 100) == "8180:80")
-      #expect(ComposeFile.moved(ComposeFile.port("127.0.0.1:3306:3306"), by: 200) == "127.0.0.1:3506:3306")
-      #expect(ComposeFile.moved(ComposeFile.port("${APP_PORT:-8000}:8000"), by: 100) == "${APP_PORT:-8000}:8000")
+      #expect(ComposeFile.moved(ComposeFile.port("8080:80"), slot: 1, offset: 100) == "8180:80")
+      #expect(ComposeFile.moved(ComposeFile.port("127.0.0.1:3306:3306"), slot: 2, offset: 100) == "127.0.0.1:3506:3306")
+      #expect(ComposeFile.moved(ComposeFile.port("${APP_PORT:-8000}:8000"), slot: 1, offset: 100) == "${APP_PORT:-8000}:8000")
+      #expect(ComposeFile.moved(ComposeFile.port("65500:80"), slot: 1, offset: 100) == nil, "past 65535")
+      #expect(ComposeFile.moved(ComposeFile.port("8080:80"), slot: Int.max, offset: Int.max) == nil, "no overflow")
+    }
+
+    @Test func numbersThatArentPortsAreReadAsNone() throws {
+      #expect(ComposeFile.port("9223372036854775807:80").host == nil)
+      #expect(ComposeFile.port("99999999999999999999:80").host == nil)
+      #expect(ComposeFile.port("0:80").host == nil)
+      #expect(ComposeFile.port("70000:80").host == nil)
+      #expect(ComposeFile.port("${P:-9223372036854775807}:80").variableDefault == nil)
+      #expect(ComposeFile.port("${P:-70000}:80").variableDefault == nil)
+      #expect(ComposeFile.port("${P:-8000}:80").variableDefault == 8000)
+
+      // A fixed port with no room left isn't published in the task.
+      let file = """
+        services:
+          web:
+            ports:
+              - "65500:80"
+              - "8080:81"
+          admin:
+            ports:
+              - "65535:80"
+        """
+      let override = try #require(ComposeFile.parse(file).override(task: "x", slot: 1, offset: 100))
+      #expect(override.contains("  web:\n    ports: !override\n      - \"8180:81\"\n  admin:\n    ports: !override []\n"))
+      #expect(ComposeFile.parse(file).override(task: "x", slot: Int.max, offset: Int.max) != nil, "no overflow")
     }
 
     @Test func nothingToOverrideWhenTheFileIsReadyAlready() {

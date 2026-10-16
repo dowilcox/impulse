@@ -80,5 +80,37 @@
       #expect(TaskRegistryStore.registry(root: main)?.record(forPath: task)?.slot == record.slot)
       #expect(OverlapMonitor.mergedTasks(root: main) == [TaskRegistry.canonical(task)])
     }
+
+    @Test func aTaskWithACheckedOutSubmoduleIsntArchived() throws {
+      let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("impulse-cleanup-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: folder) }
+      let lib = TaskRegistry.canonical(folder.appendingPathComponent("lib").path)
+      let main = TaskRegistry.canonical(folder.appendingPathComponent("repo").path)
+      for repo in [lib, main] {
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        try git("init", "-q", "-b", "main", in: repo)
+        try "x\n".write(toFile: repo + "/x.txt", atomically: true, encoding: .utf8)
+        try git("add", "-A", in: repo)
+        try git("commit", "-q", "-m", "first", in: repo)
+      }
+      try git("-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "sub", in: main)
+      try git("commit", "-q", "-m", "add sub", in: main)
+      let task = WorktreeTasks.worktreePath(repoRoot: main, branch: "fix")
+      try git("worktree", "add", "-q", "-b", "fix", task, in: main)
+      try git("-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init", in: task)
+      // Work that exists only in the task's copy of the submodule.
+      try "unpushed\n".write(toFile: task + "/sub/unpushed.txt", atomically: true, encoding: .utf8)
+      try git("add", "-A", in: task + "/sub")
+      try git("commit", "-q", "-m", "unpushed", in: task + "/sub")
+      let unpushed = try git("rev-parse", "HEAD", in: task + "/sub")
+
+      guard case .failure = MainWindowController.removeTask(root: task, branch: "fix", dirty: true, archiveScript: nil).result
+      else {
+        Issue.record("expected the archive to refuse")
+        return
+      }
+      #expect(try git("rev-parse", "HEAD", in: task + "/sub") == unpushed)
+    }
   }
 #endif

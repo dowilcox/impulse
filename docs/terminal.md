@@ -57,7 +57,7 @@ The script prints escape sequences that Impulse reads from the output stream:
 | OSC 6973 `Names=`        | At a prompt, when they change    | The shell's aliases, functions, builtins and keywords, for the [unknown-command underline](#syntax-highlighting-and-the-unknown-command-underline).                     |
 | OSC 6973 `Path=`         | At a prompt, when `PATH` changes | The shell's `PATH`; Impulse lists the executables on it in the background.                                                                                              |
 
-The command text carries a secret that is unique to each terminal, so text that a program prints (a log file you `cat`, for example) can't pass itself off as a command and end up in your history.
+Each of these carries a secret that is unique to each terminal, so text that a program prints (a log file you `cat`, for example) can't pass itself off as one: it can't end a block, change the terminal's folder or put a command in your history. A shell with its own integration that sends OSC 133 and OSC 7 without the secret still works, as long as Impulse's integration hasn't run in that terminal. Once it has, marks without the secret are ignored for the rest of the terminal's life, including the ones a remote host's own shell integration sends over `ssh`: commands you run on the remote host don't become blocks of their own.
 
 ### Environment variables in Impulse terminals
 
@@ -323,13 +323,13 @@ Press Tab in the input bar to see what can come next at the cursor: commands, su
 ### Using the menu
 
 1. Type part of a command, such as `git switch f`, and press Tab.
-2. If exactly one candidate matches, Tab inserts it, like a shell's Tab (unless a ghost suggestion is showing, which Tab accepts instead). If several match, a menu opens above the bar. Typing narrows it.
+2. If exactly one candidate matches, Tab inserts it, like a shell's Tab (unless a ghost suggestion from history is showing, which Tab accepts instead). If several match, a menu opens above the bar. Typing narrows it.
 3. Move with ↑ and ↓, then:
    - Press Tab or click a candidate to insert it. A folder ends in `/` and the menu reopens with its contents, so you can keep drilling down.
    - Press Return to insert it and close the menu.
    - Press Esc to close the menu without inserting anything.
 
-Inserted values are quoted for the shell when they need it (a file named `trail notes.md` is inserted as `'trail notes.md'`), and a file gets a trailing space. Typing never opens the menu on its own. It closes when the input bar loses focus, the window moves or resizes, or a command starts.
+Inserted values are escaped for the shell when they need it (a file named `trail notes.md` is inserted as `trail\ notes.md`, as your shell's own Tab would), and a file gets a trailing space. A `~/` or `$HOME/` you typed at the start stays as typed, so it still expands; anything else in the path is escaped, so a folder actually named `~` or `$HOME` goes in as `\~/` or `\$HOME/`. Control characters in a name (the `\r` in `Icon\r`, for example) go in as escapes the shell turns back into them. Ghost suggestions for paths are escaped the same way, and none shows when the escaped name no longer continues what you typed. Typing never opens the menu on its own. It closes when the input bar loses focus, the window moves or resizes, or a command starts.
 
 Each row shows an icon for its kind, the name with the part you typed emphasized, and a note at the right: the option's or subcommand's description, the script's command, a path's git status (`M`, `A`, `?`, …), or `dir` / `file`. The menu shows up to 50 candidates.
 
@@ -357,9 +357,11 @@ Impulse keeps one history of the commands you run in all its terminals, with whe
 
 ### What is recorded
 
-Each command recorded by shell integration is stored when it finishes, with its folder, repository, branch, exit status and duration. Commands that start with a space aren't recorded (the shells' usual way to keep a command out of history). The history lives in `~/Library/Application Support/impulse/history.sqlite3` and keeps your most recent 100,000 runs. It's stored only on your Mac.
+Each command recorded by shell integration is stored when it finishes, with its folder, repository, branch, exit status and duration. Commands that start with a space aren't recorded (the shells' usual way to keep a command out of history). The input bar keeps a leading space you type, so your shell leaves the command out of its own history too. The history lives in `~/Library/Application Support/impulse/history.sqlite3` and keeps your most recent 100,000 runs. It's stored only on your Mac.
 
-To stop recording, turn off **Keep command history** (`terminal_persistent_history`) in Settings ▸ Terminal. Commands already stored stay in the file.
+To stop recording, turn off **Keep command history** (`terminal_persistent_history`) in Settings ▸ Terminal. While it's off, Impulse doesn't read or search the stored history either: ghost suggestions and ↑/↓ use only each terminal's own session, and history search is empty. Commands already stored stay in the file until you run **Clear Command History** in the command palette, which deletes them all (it asks first). After clearing, ghost suggestions and ↑/↓ also leave out what the open terminals ran before, and commands typed with a leading space never show up there either.
+
+**Import Shell History** adds the commands in your zsh, bash and fish history files. Running it again adds only commands that are new since.
 
 ### Searching history
 
@@ -420,10 +422,12 @@ Hints mode lets you open, copy or insert anything on screen without the mouse. P
 
 | Target          | What counts                                                           | Opening it                                      |
 | --------------- | --------------------------------------------------------------------- | ----------------------------------------------- |
-| URLs            | `http://`, `https://` and `file://` addresses                         | Opens in your browser                           |
+| URLs            | `http://`, `https://` and `file://` addresses                         | Opens in your browser; `file://` in the editor  |
 | Ports           | `localhost:3000`, `127.0.0.1:8080`, `0.0.0.0:5173`, `[::1]:4000`      | Opens `http://localhost:<port>` in your browser |
 | File references | Like [file links](#links-and-file-references); only files that exist  | Opens the file in the editor at the line        |
 | Commit SHAs     | 7 to 40 hexadecimal characters with at least one letter and one digit | Opens [History](history.md) at that commit      |
+
+A `file://` address is never launched: a file opens in the editor, and a folder or app is shown in Finder.
 
 Type a label to act on its target:
 
@@ -442,9 +446,9 @@ Hints cover only what's visible on screen. When there's nothing to label, Impuls
 - **Select** text by dragging. Double-click selects a word and triple-click a line. **Select All** (⌘A while the grid has the keyboard, or from the right-click menu) selects the visible screen.
 - **Copy on select** (`terminal_copy_on_select`, on by default) copies a selection to the clipboard as soon as you release the mouse. ⌘C copies the selection too.
 - **Services.** With text selected in the grid, the **Impulse ▸ Services** menu can act on it (Look Up, Search With…, Make New Sticky Note and other services you have).
-- **Programs and the clipboard.** Programs can set the clipboard with OSC 52, as tmux, vim and ssh sessions do (**Programs may set the clipboard**, on by default). Reading the clipboard is off by default (**Programs may read the clipboard**); when you turn it on, Impulse answers the program's request with the clipboard's contents.
+- **Programs and the clipboard.** Programs can set the clipboard with OSC 52, as tmux, vim and ssh sessions do (**Programs may set the clipboard**, on by default). Reading the clipboard is off by default (**Programs may read the clipboard**); when you turn it on, Impulse answers the program's request with the clipboard's contents. A write of more than about 3 MB is ignored.
 - **Pasting** follows the input bar rules: at a prompt, text goes into the input bar; while a program owns the grid, it's sent to the program, as a bracketed paste when the program asks for one. Trailing newlines are removed, and control characters are stripped from bracketed pastes so pasted text can't end the paste early.
-- **Mouse reporting.** When a program turns on mouse reporting (htop, vim with `mouse=a`), clicks, drags and the scroll wheel go to the program instead of selecting text.
+- **Mouse reporting.** When a program turns on mouse reporting (htop, vim with `mouse=a`), clicks, drags and the scroll wheel go to the program instead of selecting text. Hold Shift or Option while you drag to select text anyway.
 
 ## Scrolling and scrollback
 
@@ -486,6 +490,8 @@ Terminals in other tabs, workspaces and windows keep running, and Impulse tells 
 | A program sends a notification | **Allow terminal notifications**                                              | The program's title and message (OSC 9, OSC 99 and OSC 777, as used by build tools and agent CLIs)                                          |
 | A program requests attention   | (always)                                                                      | iTerm2's OSC 1337 `RequestAttention`: `once` bounces the Dock once, `yes` keeps bouncing until you come back, `no` cancels                  |
 
+A program that sends these in a flood beeps at most four times a second, and until you look at the terminal its bells and notifications reach the desktop at most once every five seconds.
+
 You can send your own from a script:
 
 ```sh
@@ -502,6 +508,8 @@ The [`impulse notify`](cli.md) command does the same from any script in an Impul
 - **Desktop notifications.** When Impulse is in the background, these events also post a macOS notification, with the workspace and tab as its subtitle. Click it to bring that terminal forward. macOS asks for permission the first time.
 
 The attention clears when you click into the terminal or its input bar, and its notifications are removed from Notification Center.
+
+A program that rings the bell or sends notifications in a loop beeps at most four times a second, and gets at most one desktop notification every five seconds until you look at the terminal; the latest one held back goes out when the five seconds are up.
 
 For coding agents (working, waiting for input, done), see [Agents](agents.md).
 
@@ -529,9 +537,13 @@ Ports printed in output (`localhost:3000`) can also be opened with [hints](#hint
 
 ![The input bar while npm run dev runs, with the Stop button, and the status bar showing :3000](images/terminal-running.png)
 
+## The Option key
+
+Out of the box, Option types what macOS gives it, as in other Mac apps: ⌥F types ƒ, and on many keyboard layouts Option is how you type `@`, `[`, `{` or `|`. Shells and editors such as Emacs read Meta keys instead (Meta-f and Meta-b move by word in bash and zsh). Set **Option as Meta** (`terminal_option_as_meta`) to **Left Option**, **Right Option** or **Both Option keys**, and those keys send Esc followed by the key: ⌥F sends `Esc f` whatever your layout, ⌥⌫ `Esc Delete` (delete a word) and ⌥↩ `Esc Return`. Choosing one side leaves the other for typing special characters. ⌥ with the arrow keys sends the usual modified arrows either way.
+
 ## Keyboard protocol
 
-Impulse supports the kitty keyboard protocol. When a program asks for it (with `CSI > flags u`), Impulse sends keys in that protocol's unambiguous form, so the program can tell apart keys that a classic terminal sends identically (⌃I and Tab, Esc and ⌥), and it reports key releases, alternate keys and associated text when asked. Typing that goes through macOS input methods (dead keys, accented characters, Japanese or Chinese input) still works. Programs that don't ask get the classic encoding.
+Impulse supports the kitty keyboard protocol. When a program asks for it (with `CSI > flags u`), Impulse sends keys in that protocol's unambiguous form, so the program can tell apart keys that a classic terminal sends identically (⌃I and Tab, Esc and ⌥), and it reports key releases, alternate keys and associated text when asked. Typing that goes through macOS input methods (dead keys, accented characters, Japanese or Chinese input) still works. Programs that don't ask get the classic encoding, where ⇧↩ is a plain Return.
 
 ## Accessibility
 
@@ -563,6 +575,7 @@ All of these are in Settings ▸ Terminal, and in `settings.json` under the keys
 | Copy on select                                            | `terminal_copy_on_select`            | On             |
 | Scroll to bottom on output                                | `terminal_scroll_on_output`          | On             |
 | Clickable links                                           | `terminal_allow_hyperlink`           | On             |
+| Option as Meta                                            | `terminal_option_as_meta`            | Off            |
 | Programs may set the clipboard                            | `terminal_allow_osc52_write`         | On             |
 | Programs may read the clipboard                           | `terminal_allow_osc52_read`          | Off            |
 | Audible bell                                              | `terminal_bell`                      | On             |

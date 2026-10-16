@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ImpulseKit
 import os.log
@@ -70,7 +71,9 @@ struct SessionState: Codable {
     return windows.first
   }
 
-  func save() {
+  /// Write the session file. False when it couldn't be written.
+  @discardableResult
+  func save(to url: URL = Self.filePath()) -> Bool {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
@@ -79,20 +82,51 @@ struct SessionState: Codable {
       data = try encoder.encode(self)
     } catch {
       os_log(.error, "Failed to encode session state: %{public}@", error.localizedDescription)
-      return
+      return false
     }
 
-    let url = Self.filePath()
     do {
       try data.write(to: url, options: .atomic)
       try FileManager.default.setAttributes(
         [.posixPermissions: 0o600],
         ofItemAtPath: url.path
       )
+      return true
     } catch {
       os_log(.error, "Failed to write session state to '%{public}@': %{public}@",
              url.path, error.localizedDescription)
+      return false
     }
+  }
+
+  /// Session writes, one at a time and in order.
+  private static let writeQueue = DispatchQueue(label: "impulse.session.write", qos: .utility)
+
+  /// Save a session and its terminals' output off the main thread
+  /// (`synchronously` waits, at quit). Output files the new session doesn't
+  /// use are removed only once its file is written, so a crash or a failed
+  /// write leaves the previous session whole.
+  static func persist(
+    _ state: SessionState, to url: URL = filePath(),
+    scrollbackDirectory: URL = SessionScrollback.directory, synchronously: Bool = false
+  ) {
+    let work = {
+      var state = state
+      let kept = SessionScrollback.store(&state, in: scrollbackDirectory)
+      guard state.save(to: url) else { return }
+      SessionScrollback.removeFiles(except: kept, in: scrollbackDirectory)
+    }
+    if synchronously {
+      writeQueue.sync(execute: work)
+    } else {
+      writeQueue.async(execute: work)
+    }
+  }
+
+  /// Wait for session writes already under way (the last window's, when
+  /// closing it quits the app).
+  static func finishWriting() {
+    writeQueue.sync {}
   }
 
   /// What the autosave compares to tell whether the session changed: its
@@ -454,8 +488,12 @@ enum SessionScrollback {
     SessionState.filePath().deletingLastPathComponent().appendingPathComponent("scrollback")
   }
 
-  /// Write every in-memory transcript to a file and point the surface at it.
-  static func store(_ state: inout SessionState) {
+  /// Point each terminal at a file holding its in-memory transcript. Files
+  /// are named by their content, so output that hasn't changed since an
+  /// earlier save is already on disk and isn't written again. Returns the
+  /// names of the files the session uses.
+  @discardableResult
+  static func store(_ state: inout SessionState, in directory: URL = directory) -> Set<String> {
     let fm = FileManager.default
     try? fm.createDirectory(
       at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -467,30 +505,43 @@ enum SessionScrollback {
           for p in workspaces[ws].tabs[t].panes.indices {
             var surface = workspaces[ws].tabs[t].panes[p]
             guard let text = surface.transcript, !text.isEmpty else { continue }
-            let name = UUID().uuidString + ".ansi"
+            let data = Data(text.utf8)
+            let name = fileName(for: data)
             let url = directory.appendingPathComponent(name)
-            do {
-              try Data(text.utf8).write(to: url, options: .atomic)
-              try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-              surface.scrollback = name
-              kept.insert(name)
-            } catch {
-              continue
+            if !kept.contains(name), !fm.fileExists(atPath: url.path) {
+              do {
+                try data.write(to: url, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+              } catch {
+                continue
+              }
             }
+            surface.scrollback = name
+            kept.insert(name)
             workspaces[ws].tabs[t].panes[p] = surface
           }
         }
       }
       state.windows[w].workspaces = workspaces
     }
-    // Forget output from earlier saves.
+    return kept
+  }
+
+  /// Forget output from earlier saves: every file but `kept`.
+  static func removeFiles(except kept: Set<String>, in directory: URL = directory) {
+    let fm = FileManager.default
     for name in (try? fm.contentsOfDirectory(atPath: directory.path)) ?? [] where !kept.contains(name) {
       try? fm.removeItem(at: directory.appendingPathComponent(name))
     }
   }
 
+  /// A transcript's file name: a digest of its bytes.
+  static func fileName(for data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + ".ansi"
+  }
+
   /// Read saved output for a session's terminals (off the main thread).
-  static func load(into workspaces: inout [SessionWorkspaceState]) {
+  static func load(into workspaces: inout [SessionWorkspaceState], from directory: URL = directory) {
     for ws in workspaces.indices {
       for t in workspaces[ws].tabs.indices {
         for p in workspaces[ws].tabs[t].panes.indices {

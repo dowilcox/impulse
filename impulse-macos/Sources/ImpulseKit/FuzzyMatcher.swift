@@ -33,22 +33,41 @@ public enum FuzzyMatcher {
   static let gapPenalty = 1
   static let maxStarts = 12
 
+  /// A query prepared once for matching many candidates.
+  struct Query {
+    /// Its UTF-16 code units, lowercased unless it's case-sensitive.
+    let units: [UInt16]
+    let caseSensitive: Bool
+
+    init(_ query: String) {
+      caseSensitive = query.contains { $0.isUppercase }
+      units = caseSensitive ? Array(query.utf16) : query.utf16.map(FuzzyMatcher.lower)
+    }
+  }
+
   /// Score `candidate` against `query`, or nil when it doesn't match.
   /// `isPath` enables the file-name bonus for matches after the last `/`.
   public static func match(_ query: String, in candidate: String, isPath: Bool = false) -> Match? {
-    let q = Array(query.utf16)
-    guard !q.isEmpty else { return Match(score: 0, positions: []) }
-    let c = Array(candidate.utf16)
-    guard c.count >= q.count else { return nil }
+    match(Query(query), in: candidate, isPath: isPath)
+  }
 
-    let caseSensitive = query.contains { $0.isUppercase }
-    let qn = caseSensitive ? q : q.map(lower)
-    let cn = caseSensitive ? c : c.map(lower)
+  static func match(_ query: Query, in candidate: String, isPath: Bool) -> Match? {
+    let qn = query.units
+    guard !qn.isEmpty else { return Match(score: 0, positions: []) }
 
-    // Quick reject: the whole query must appear as a subsequence.
+    // Quick reject, before copying anything: the whole query must appear as
+    // a subsequence (most candidates stop here).
     var qi = 0
-    for ch in cn where qi < qn.count && ch == qn[qi] { qi += 1 }
+    for unit in candidate.utf16 {
+      if (query.caseSensitive ? unit : lower(unit)) == qn[qi] {
+        qi += 1
+        if qi == qn.count { break }
+      }
+    }
     guard qi == qn.count else { return nil }
+
+    let c = Array(candidate.utf16)
+    let cn = query.caseSensitive ? c : c.map(lower)
 
     let fileNameStart = isPath ? (c.lastIndex(of: 0x2F).map { $0 + 1 } ?? 0) : 0
 
@@ -189,16 +208,41 @@ public enum FuzzyMatcher {
     guard !trimmed.isEmpty else {
       return items.prefix(limit).map { ($0, Match(score: 0, positions: [])) }
     }
-    var scored: [(item: T, match: Match, order: Int)] = []
-    scored.reserveCapacity(min(items.count, 4096))
+    return best(matches(items, query: trimmed, isPath: isPath, text: text) ?? [], limit: limit)
+  }
+
+  /// Every item that matches `query` (trimmed), in input order, or nil when
+  /// `shouldStop` returned true (asked every few hundred items, so a
+  /// superseded search over a big list ends early). An empty query matches
+  /// everything. With `best`, this is `rank` in two steps: the matches of a
+  /// query are all a longer query that starts with it can match, so they
+  /// can be searched again instead of the whole list.
+  public static func matches<T>(
+    _ items: [T], query: String, isPath: Bool = false, shouldStop: () -> Bool = { false },
+    text: (T) -> String
+  ) -> [(item: T, match: Match)]? {
+    let prepared = Query(query.trimmingCharacters(in: .whitespaces))
+    var found: [(item: T, match: Match)] = []
+    found.reserveCapacity(min(items.count, 4096))
     for (order, item) in items.enumerated() {
-      if let match = match(trimmed, in: text(item), isPath: isPath) {
-        scored.append((item, match, order))
+      if order % 512 == 0, shouldStop() { return nil }
+      if let match = match(prepared, in: text(item), isPath: isPath) {
+        found.append((item, match))
       }
     }
+    return found
+  }
+
+  /// The `limit` best of `matches` (in input order), best first; equal
+  /// scores keep their input order.
+  public static func best<T>(_ matches: [(item: T, match: Match)], limit: Int = .max)
+    -> [(item: T, match: Match)]
+  {
+    var scored = matches.enumerated().map { (order: $0.offset, entry: $0.element) }
     scored.sort {
-      $0.match.score != $1.match.score ? $0.match.score > $1.match.score : $0.order < $1.order
+      $0.entry.match.score != $1.entry.match.score
+        ? $0.entry.match.score > $1.entry.match.score : $0.order < $1.order
     }
-    return scored.prefix(limit).map { ($0.item, $0.match) }
+    return scored.prefix(limit).map(\.entry)
   }
 }

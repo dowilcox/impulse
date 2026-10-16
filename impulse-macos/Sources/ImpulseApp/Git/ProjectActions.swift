@@ -85,31 +85,81 @@ extension MainWindowController {
     if untrusted.isEmpty { return completion(config) }
     let commands = untrusted.flatMap(\.commands)
     let values = Array(Set(untrusted.flatMap(\.values))).sorted()
-    let list = commands.prefix(8).map { "  \($0)" }.joined(separator: "\n")
-    let more = commands.count > 8 ? "\n  …and \(commands.count - 8) more" : ""
     let name = (root as NSString).lastPathComponent
     let title =
       untrusted.count == 1
       ? "Trust \(Self.displayName(of: untrusted[0], in: loaded)) in \(name)?"
       : "Trust the project settings in \(name)?"
     let what = untrusted.count == 1 ? "It" : "\(ProjectConfig.relativePath) and .git/impulse/project.toml"
-    var message = commands.isEmpty ? "" : "\(what) can run these commands on your Mac:\n\(list)\(more)\n\n"
+    var message = ""
+    if !commands.isEmpty {
+      message = "\(what) can run \(commands.count == 1 ? "the command" : "all \(commands.count) commands") below on your Mac. "
+    }
     if !values.isEmpty {
-      message += "\(commands.isEmpty ? what : "It also") sets \(values.joined(separator: ", ")) in each new task's env file.\n\n"
+      message += "\(commands.isEmpty ? what : "It also") sets \(values.joined(separator: ", ")) in each new task's env file. "
     }
-    gitConfirm(
-      title: title,
-      message: message + "You'll be asked again if the " + (untrusted.count == 1 ? "file changes." : "files change."),
-      confirmTitle: "Trust and Run", destructive: false
-    ) { trusted in
-      guard trusted else { return completion(nil) }
-      var trust = ProjectTrustStore.current
-      for source in untrusted {
-        trust.trust(root: Self.trustKey(for: source, in: loaded, root: root), digest: source.digest)
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = message + "You'll be asked again if the " + (untrusted.count == 1 ? "file changes." : "files change.")
+    alert.addButton(withTitle: "Trust and Run")
+    alert.addButton(withTitle: "Cancel")
+    // Every command it trusts, however many or long: one left out of
+    // sight would run unseen.
+    if !commands.isEmpty { alert.accessoryView = Self.commandList(commands) }
+    presentWhenNoSheet { window in
+      alert.beginSheetModal(for: window) { response in
+        guard response == .alertFirstButtonReturn else { return completion(nil) }
+        var trust = ProjectTrustStore.current
+        for source in untrusted {
+          trust.trust(root: Self.trustKey(for: source, in: loaded, root: root), digest: source.digest)
+        }
+        ProjectTrustStore.current = trust
+        completion(config)
       }
-      ProjectTrustStore.current = trust
-      completion(config)
     }
+  }
+
+  /// The trust prompt's list of commands: all of them, selectable, in a
+  /// box that scrolls once they don't fit.
+  private static func commandList(_ commands: [String]) -> NSView {
+    let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    let text = commands.map(listedCommand).joined(separator: "\n")
+    let lines = text.components(separatedBy: "\n").count
+    let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+    let scroll = NSTextView.scrollableTextView()
+    scroll.frame = NSRect(x: 0, y: 0, width: 440, height: CGFloat(min(max(lines, 2), 14)) * lineHeight + 12)
+    scroll.borderType = .bezelBorder
+    scroll.hasVerticalScroller = true
+    if let view = scroll.documentView as? NSTextView {
+      view.frame.size.width = scroll.contentSize.width
+      view.isEditable = false
+      view.isSelectable = true
+      view.font = font
+      view.textContainerInset = NSSize(width: 4, height: 4)
+      view.string = text
+    }
+    return scroll
+  }
+
+  /// A command as the trust prompt lists it: `$ ` before its first line,
+  /// its other lines indented under it, and characters that would hide
+  /// what it does (control characters, direction overrides, zero-width
+  /// ones) written out as `\u{202E}`.
+  static func listedCommand(_ command: String) -> String {
+    command.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: .newlines).enumerated()
+      .map { index, line in
+        var shown = index == 0 ? "$ " : "  "
+        for scalar in line.unicodeScalars {
+          let category = scalar.properties.generalCategory
+          if scalar != "\t", category == .control || category == .format {
+            shown += "\\u{\(String(scalar.value, radix: 16, uppercase: true))}"
+          } else {
+            shown.unicodeScalars.append(scalar)
+          }
+        }
+        return shown
+      }
+      .joined(separator: "\n")
   }
 
   /// The project's config when every settings file that needs trusting is
@@ -150,9 +200,15 @@ extension MainWindowController {
   }
 
   /// Run a project action in a new terminal (tab, or split right/down).
-  func runProjectAction(_ action: ProjectConfig.Action, root: String) {
-    withTrustedProjectConfig(root: root) { [weak self] _ in
+  /// What runs is the trusted settings' action of that name, not the one
+  /// the palette listed: the file can change in between.
+  func runProjectAction(_ listed: ProjectConfig.Action, root: String) {
+    withTrustedProjectConfig(root: root) { [weak self] config in
       guard let self else { return }
+      guard let action = config.actions.first(where: { $0.name == listed.name }) else {
+        self.toasts.show(Toast(kind: .info, message: "The project settings have no action named \(listed.name) anymore."))
+        return
+      }
       let directory = action.cwd.map { (root as NSString).appendingPathComponent($0) } ?? root
       switch action.open {
       case "right", "down":

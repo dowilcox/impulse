@@ -16,6 +16,10 @@ class TerminalTab: NSView {
   /// Display title for this terminal tab; defaults to the shell name.
   private(set) var tabTitle: String
 
+  /// How the shell running here quotes, for text typed into it for the user
+  /// (paths, completions).
+  private(set) var shellType = LoginShell.defaultShellType()
+
   /// Current working directory reported by the shell via CWD polling.
   private(set) var currentWorkingDirectory: String
   /// What the shell can run (from its integration), for the input bar.
@@ -161,15 +165,12 @@ class TerminalTab: NSView {
         userInfo: ["interactive": interactive]
       )
     }
+    // Only the path: the renderer checks it exists, off the main thread or
+    // not at all where a stat could hang (see `TerminalRenderer.isFile`).
     renderer.resolvePath = { [weak self] candidate in
       guard let self else { return nil }
       let base = self.currentWorkingDirectory.isEmpty ? NSHomeDirectory() : self.currentWorkingDirectory
-      let path = TerminalPathDetector.resolve(candidate, in: base)
-      var isDirectory: ObjCBool = false
-      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-        !isDirectory.boolValue
-      else { return nil }
-      return path
+      return TerminalRenderer.absolutePath(candidate, in: base)
     }
     renderer.onOpenPath = { path, line, column in
       var info: [String: Any] = ["path": path]
@@ -285,6 +286,10 @@ class TerminalTab: NSView {
     case .wakeup:
       break  // Handled by renderer refresh loop.
     case .titleChanged(let title):
+      // Programs resend the same title freely; each change rebuilds the
+      // window's tab model. (A working agent's spinner changes the title
+      // every frame, so the agent misses nothing.)
+      guard title != tabTitle else { return }
       tabTitle = title
       agentEvent(.title(title))
       NotificationCenter.default.post(
@@ -293,21 +298,30 @@ class TerminalTab: NSView {
         userInfo: ["title": title]
       )
     case .resetTitle:
-      tabTitle = LoginShell.defaultShellName()
+      let title = LoginShell.defaultShellName()
+      guard title != tabTitle else { return }
+      tabTitle = title
       NotificationCenter.default.post(
         name: .terminalTitleChanged,
         object: self,
         userInfo: ["title": tabTitle]
       )
     case .bell:
-      agentEvent(.bell)
-      if currentSettings?.terminalBell ?? true {
-        NSSound.beep()
+      // A program can ring thousands of times a second: one beep and one
+      // attention request per interval.
+      let now = Date()
+      var notified = false
+      if now.timeIntervalSince(lastBell) >= Self.bellInterval {
+        lastBell = now
+        if currentSettings?.terminalBell ?? true {
+          NSSound.beep()
+        }
+        if currentSettings?.terminalAttentionOnBell ?? true {
+          requestAttention(.informationalRequest)
+          notified = postDesktopNotification(title: tabTitle, body: "Bell", coalesced: true)
+        }
       }
-      if currentSettings?.terminalAttentionOnBell ?? true {
-        requestAttention(.informationalRequest)
-        postDesktopNotification(title: tabTitle, body: "Bell")
-      }
+      agentEvent(.bell, notified: notified)
     case .childExited(let code):
       hasExited = true
       NotificationCenter.default.post(
@@ -366,6 +380,9 @@ class TerminalTab: NSView {
     case .commandBlockStarted(let block):
       isCommandRunning = true
       currentCommand = block.command
+      currentCommandHidden = hiddenCommandPending
+      hiddenCommandPending = false
+      if currentCommandHidden { hiddenBlocks.insert(block.id) }
       startAgentProbe()
       // Lets the renderer combine "command running" with the raw terminal modes
       // to decide direct interaction (e.g. Claude Code, which runs inline).
@@ -396,7 +413,7 @@ class TerminalTab: NSView {
       lastCommandDurationMs = block.endedAtMs.map { ended in
         ended >= block.startedAtMs ? ended - block.startedAtMs : 0
       }
-      if let command = block.command ?? currentCommand {
+      if let command = block.command ?? currentCommand, !currentCommandHidden {
         CommandHistory.shared.record(
           command: command,
           cwd: block.cwd ?? (currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory),
@@ -431,15 +448,40 @@ class TerminalTab: NSView {
     case .attentionRequest(let value):
       handleAttentionRequest(value)
     case .notification(let title, let body):
-      agentEvent(.notification([title, body].filter { !$0.isEmpty }.joined(separator: " ")))
+      var notified = false
       if currentSettings?.terminalAllowNotifications ?? true {
         requestAttention(.informationalRequest)
         if !title.isEmpty || !body.isEmpty {
-          postDesktopNotification(title: title.isEmpty ? tabTitle : title, body: body)
+          notified = postDesktopNotification(
+            title: title.isEmpty ? tabTitle : title, body: body, coalesced: true)
         }
       }
+      agentEvent(.notification([title, body].filter { !$0.isEmpty }.joined(separator: " ")), notified: notified)
     }
   }
+
+  /// Pass a bell or program notification to the agent, saying whether it
+  /// went to the desktop (then the agent doesn't post its own as well).
+  private func agentEvent(_ event: AgentEvent, notified: Bool) {
+    eventWasNotified = notified
+    agentEvent(event)
+    eventWasNotified = false
+  }
+
+  /// The bell or program notification being handled went to the desktop.
+  private(set) var eventWasNotified = false
+
+  /// The last bell that beeped.
+  private var lastBell = Date.distantPast
+  static let bellInterval: TimeInterval = 0.25
+  /// When the last bell or program notification went to the desktop; nil
+  /// once the terminal has been looked at.
+  private var lastCoalescedNotification: Date?
+  /// The latest one since, held until the interval is up.
+  private var heldNotification: DispatchWorkItem?
+  /// Until the terminal is looked at, at most one bell or program
+  /// notification per this many seconds.
+  static let notificationInterval: TimeInterval = 5
 
   private func setProgress(_ report: TerminalProgress) {
     if agent != nil, (progress.state == .hidden) != (report.state == .hidden) {
@@ -478,12 +520,34 @@ class TerminalTab: NSView {
       body: [command, elapsed].compactMap { $0 }.joined(separator: " · "))
   }
 
-  /// Ask the window to show a desktop notification for this terminal (it
-  /// does when Impulse is in the background).
-  private func postDesktopNotification(title: String, body: String) {
+  /// Ask the window to show a desktop notification for this terminal. It
+  /// only does while Impulse is in the background (in front, the tab's dot
+  /// is enough). `coalesced` ones (bells and the program's own) go out at
+  /// most once per interval until the terminal is seen; the latest held back
+  /// meanwhile goes out when the interval is up. Returns whether one went
+  /// out now.
+  @discardableResult
+  private func postDesktopNotification(title: String, body: String, coalesced: Bool = false) -> Bool {
+    guard !NSApp.isActive else { return false }
+    if coalesced {
+      let now = Date()
+      if let last = lastCoalescedNotification, now.timeIntervalSince(last) < Self.notificationInterval {
+        heldNotification?.cancel()
+        let held = DispatchWorkItem { [weak self] in
+          self?.heldNotification = nil
+          self?.postDesktopNotification(title: title, body: body, coalesced: true)
+        }
+        heldNotification = held
+        DispatchQueue.main.asyncAfter(
+          deadline: .now() + last.addingTimeInterval(Self.notificationInterval).timeIntervalSince(now), execute: held)
+        return false
+      }
+      lastCoalescedNotification = now
+    }
     NotificationCenter.default.post(
       name: .terminalWantsNotification, object: self,
       userInfo: ["title": title, "body": body])
+    return true
   }
 
   /// "8s", "2m 05s", "1h 02m".
@@ -522,9 +586,15 @@ class TerminalTab: NSView {
       cancelAttentionRequest()
       attentionRequestId = NSApp.requestUserAttention(requestType)
     } else {
+      // A flood of notifications needs one bounce, not thousands.
+      let now = Date()
+      guard now.timeIntervalSince(lastAttentionRequest) >= Self.bellInterval else { return }
+      lastAttentionRequest = now
       _ = NSApp.requestUserAttention(requestType)
     }
   }
+
+  private var lastAttentionRequest = Date.distantPast
 
   /// The user is looking at this terminal (key window, focused grid).
   var isWatched: Bool { !shouldSurfaceAttention }
@@ -555,6 +625,9 @@ class TerminalTab: NSView {
   func clearAttention() {
     cancelAttentionRequest()
     setNeedsAttention(false)
+    lastCoalescedNotification = nil
+    heldNotification?.cancel()
+    heldNotification = nil
     agentEvent(.acknowledged)
   }
 
@@ -583,12 +656,16 @@ class TerminalTab: NSView {
     // `isShutdown` instead of calling into freed memory.
     backendToShutdown.beginShutdown()
 
+    // The process tree is read here, so the work below captures nothing of
+    // this view: the last reference to it must not go away off the main
+    // thread.
+    let descendants = pid > 0 ? Self.collectDescendants(of: pid) : []
+    let processes = (descendants + (pid > 0 ? [pid] : [])).map { (pid: $0, started: ProcessInspector.startTime(of: $0)) }
+
     // Send signals and destroy the backend on a background queue so the
     // main thread is never blocked by PTY teardown.
-    DispatchQueue.global(qos: .utility).async { [weak self] in
+    DispatchQueue.global(qos: .utility).async {
       if pid > 0 {
-        let descendants = self?.collectDescendants(of: pid) ?? []
-
         let pgid = getpgid(pid)
         if pgid > 0 {
           killpg(pgid, SIGHUP)
@@ -601,7 +678,7 @@ class TerminalTab: NSView {
         }
 
         if !descendants.isEmpty {
-          self?.escalateKill(shellPid: pid, descendants: descendants)
+          TerminalTab.escalateKill(processes)
         }
       }
       backendToShutdown.finishShutdown()
@@ -615,7 +692,7 @@ class TerminalTab: NSView {
     guard let backend, !backend.isShutdown else { return 0 }
     let pid = backend.childPid()
     guard pid > 0 else { return 0 }
-    return collectDescendants(of: pid).count
+    return Self.collectDescendants(of: pid).count
   }
 
   func runningCloseRiskCommand() -> CloseRiskCommand? {
@@ -634,12 +711,12 @@ class TerminalTab: NSView {
     guard let backend, !backend.isShutdown else { return [] }
     let shell = pid_t(backend.childPid())
     guard shell > 0 else { return [] }
-    return [shell] + collectDescendants(of: shell)
+    return [shell] + Self.collectDescendants(of: shell)
   }
 
   /// Recursively collect all descendant PIDs of a given process using
   /// `proc_listchildpids()`. Returns PIDs in leaf-first order.
-  private func collectDescendants(of pid: pid_t) -> [pid_t] {
+  private static func collectDescendants(of pid: pid_t) -> [pid_t] {
     let count = proc_listchildpids(pid, nil, 0)
     guard count > 0 else { return [] }
 
@@ -662,18 +739,19 @@ class TerminalTab: NSView {
     return result
   }
 
-  /// After a grace period, SIGKILL any descendants still alive and reap zombies.
-  private func escalateKill(shellPid: pid_t, descendants: [pid_t]) {
-    let allPids = descendants + [shellPid]
+  /// After a grace period, SIGKILL whichever of `processes` are still alive
+  /// and reap zombies. A process is only signalled while it's still the one
+  /// that started at `started`: its pid may belong to something else by then.
+  private static func escalateKill(_ processes: [(pid: pid_t, started: UInt64?)]) {
     DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
-      for pid in allPids {
-        if kill(pid, 0) == 0 {
-          kill(pid, SIGKILL)
-        }
-      }
-      for pid in allPids {
+      for process in processes {
+        let started = ProcessInspector.startTime(of: process.pid)
+        // Another process has the pid now (or this one couldn't be told
+        // apart from one).
+        if started != nil, started != process.started { continue }
+        if started != nil { kill(process.pid, SIGKILL) }
         var status: Int32 = 0
-        waitpid(pid, &status, WNOHANG)
+        waitpid(process.pid, &status, WNOHANG)
       }
     }
   }
@@ -743,7 +821,7 @@ class TerminalTab: NSView {
       return
     }
     guard backend.mode()?.bracketedPaste ?? false else {
-      backend.write(payload)
+      backend.write(Self.withoutControlCharacters(payload))
       return
     }
 
@@ -755,6 +833,13 @@ class TerminalTab: NSView {
   /// can end the paste early and run what follows. Removing only the end
   /// marker isn't enough: "ESC[2" + "ESC[200~" + "01~" rejoins into one.
   static func bracketedPasteBody(_ text: String) -> String {
+    withoutControlCharacters(text)
+  }
+
+  /// Text typed into the terminal with no control characters but tab and
+  /// line ends: the line editor would act on them as keys (^U clears what's
+  /// typed, ESC starts a sequence).
+  static func withoutControlCharacters(_ text: String) -> String {
     String(
       String.UnicodeScalarView(
         text.unicodeScalars.filter { scalar in
@@ -861,8 +946,10 @@ class TerminalTab: NSView {
   /// newline so the shell echoes it into the current block.
   func runCommand(_ command: String) {
     agentEvent(.submit)
-    let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
+    guard let trimmed = Self.commandText(command) else { return }
+    // The shells leave a command typed with a leading space out of their
+    // history; so does Impulse (bash doesn't report the space).
+    hiddenCommandPending = trimmed.hasPrefix(" ")
     // The view may be tucked up (prompt hidden below the fold) or scrolled into
     // history; snap to the bottom so the command's output is visible.
     backend?.scrollToBottom()
@@ -874,6 +961,21 @@ class TerminalTab: NSView {
       backend?.write(trimmed + "\n")
     }
   }
+
+  /// A command as the input bar sends it: no control characters, trimmed,
+  /// but with one leading space kept when it was typed with one (HISTCONTROL
+  /// ignorespace, HIST_IGNORE_SPACE, fish). Nil when there's nothing to run.
+  static func commandText(_ command: String) -> String? {
+    let clean = withoutControlCharacters(command)
+    let trimmed = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    return clean.first == " " || clean.first == "\t" ? " " + trimmed : trimmed
+  }
+
+  /// The command just sent from the input bar began with a space.
+  private var hiddenCommandPending = false
+  /// The running command began with a space: it stays out of the history.
+  private var currentCommandHidden = false
 
   /// Send a line to the running program as typed (input for a running
   /// command, password replies): no trimming — spaces can matter, and
@@ -907,7 +1009,8 @@ class TerminalTab: NSView {
     guard backend != nil else { return nil }
     let cwd = currentWorkingDirectory.isEmpty ? nil : currentWorkingDirectory
     let history = suggestionHistory()
-    return { text in InputCompletion.complete(input: text, cwd: cwd, history: history) }
+    let shell = shellType
+    return { text in InputCompletion.complete(input: text, cwd: cwd, history: history, shell: shell) }
   }
 
   /// This session's commands, then everything else Impulse has seen, newest
@@ -917,7 +1020,7 @@ class TerminalTab: NSView {
     if let cache = suggestionHistoryCache, cache.session == sessionHistoryRevision, cache.global == global {
       return cache.commands
     }
-    let session = backend?.recentCommandHistory() ?? []
+    let session = sessionCommands(records: 1000)
     let inSession = Set(session)
     let commands = session + CommandHistory.shared.recentCommands.filter { !inSession.contains($0) }
     suggestionHistoryCache = (sessionHistoryRevision, global, commands)
@@ -980,13 +1083,30 @@ class TerminalTab: NSView {
   /// This session's commands first, then everything else Impulse has seen.
   func recentCommands(limit: Int) -> [String] {
     var seen = Set<String>()
-    let session = backend?.commandHistorySearch(text: "", cwd: nil, limit: limit)
-      .map { $0.record.command } ?? []
+    let session = sessionCommands(records: limit * 4)
     return Array(
       (session + CommandHistory.shared.recentCommands)
         .filter { seen.insert($0).inserted }
         .prefix(limit))
   }
+
+  /// This terminal's own commands (the terminal core keeps them for the
+  /// session), newest first and each once, from its last `records` runs.
+  /// Left out: commands typed with a leading space (the core doesn't keep
+  /// the space) and everything from before Clear Command History.
+  private func sessionCommands(records: Int) -> [String] {
+    guard let backend else { return [] }
+    let clearedAt = CommandHistory.shared.clearedAtMs
+    var seen = Set<String>()
+    return backend.commandHistorySearch(text: "", cwd: nil, limit: records)
+      .map(\.record)
+      .filter { $0.endedAtMs > clearedAt && !hiddenBlocks.contains($0.blockId) }
+      .map(\.command)
+      .filter { seen.insert($0).inserted }
+  }
+
+  /// Blocks whose command was typed with a leading space.
+  private var hiddenBlocks = Set<UInt64>()
 
   /// Type text at the shell prompt (classic mode, where the grid owns input).
   func insertInput(_ text: String) {
@@ -1141,7 +1261,7 @@ class TerminalTab: NSView {
       return false
     }
 
-    let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
+    let paths = urls.map { $0.path.shellEscaped(for: shellType) }.joined(separator: " ")
     guard !paths.isEmpty, let backend else { return false }
 
     writePastePayload(paths, to: backend)
@@ -1203,6 +1323,7 @@ class TerminalTab: NSView {
     renderer.scrollOnOutput = settings.terminalScrollOnOutput
     renderer.allowHyperlinks = settings.terminalAllowHyperlink
     renderer.keybindingOverrides = settings.keybindingOverrides
+    renderer.optionAsMeta = KeyEncoder.OptionAsMeta(setting: settings.terminalOptionAsMeta)
 
     // Copy on select
     setCopyOnSelect(enabled: settings.terminalCopyOnSelect)
@@ -1321,6 +1442,7 @@ class TerminalTab: NSView {
   ) {
     let shellPath = LoginShell.defaultShellPath()
     let shellName = (shellPath as NSString).lastPathComponent
+    shellType = LoginShell.detectShellType(shellPath)
 
     var envDict: [String: String] = [
       "TERM": "xterm-256color",
@@ -1496,9 +1618,10 @@ class TerminalTab: NSView {
     }
   }
 
-  /// Send a text string (e.g. a shell command + newline) to the terminal's PTY.
+  /// Send a text string (e.g. a shell command + newline) to the terminal's
+  /// PTY, without control characters (see `withoutControlCharacters`).
   func sendCommand(_ text: String) {
-    backend?.write(text + "\n")
+    backend?.write(Self.withoutControlCharacters(text) + "\n")
   }
 
   /// Make this terminal the first responder.
@@ -1739,6 +1862,7 @@ struct TerminalSettings {
   var terminalBlocks: Bool = true
   var terminalContextBar: Bool = true
   var keybindingOverrides: [String: String] = [:]
+  var terminalOptionAsMeta: String = "off"
 }
 
 /// Convert a hex color string (e.g. "#DCD7BA" or "#7AA2F740") to a CGColor.

@@ -2,7 +2,9 @@
 // the user, finished — from the signals a terminal can see. Hooks (when the
 // agent is set up to call Impulse) are authoritative; without them the
 // machine combines progress reports (OSC 9;4), notifications, bells, and
-// how output flows relative to the user's typing.
+// how output flows relative to the user's typing. Even with hooks, a long
+// silence ends a turn or a question: one dismissed with Esc never reports
+// that it stopped. State reported with `impulse status` is left alone.
 
 import Foundation
 
@@ -25,8 +27,13 @@ public enum AgentState: String, Codable, Sendable {
 public enum AgentHook: Equatable, Sendable {
   case sessionStarted
   case promptSubmitted
+  /// A tool finished (named, when the hook says). The answer to a pending
+  /// approval, even one given without Return; otherwise no change.
+  case usedTool(String?)
   case stopped
   case notification(String)
+  /// What `impulse status` reported, kept until the next report.
+  case status(AgentState)
 }
 
 public enum AgentEvent: Equatable, Sendable {
@@ -64,13 +71,24 @@ public struct AgentStateMachine: Sendable {
   public var silenceToDone: TimeInterval = 5
   /// With progress reports, wait this long before trusting silence.
   public var silenceWithProgress: TimeInterval = 120
+  /// With hooks, which report the end of a turn, this long without output
+  /// or a report means the turn was interrupted (Esc sends no Stop).
+  public var silenceWithHooks: TimeInterval = 300
+  /// …and this long means a question was dismissed. Much longer: one left
+  /// unanswered while you're away should still say it needs you.
+  public var silenceWhileAsking: TimeInterval = 1800
 
   private var lastOutput: Date?
+  private var lastHook: Date?
   private var streakStart: Date?
   private var lastKeystroke: Date?
   private var progressActive = false
   private var sawProgress = false
   private var hooksActive = false
+  /// The state came from `impulse status`, which reports its own changes.
+  private var reportedByStatus = false
+  /// The tool the pending permission request names ("…to use Bash").
+  private var requestedTool: String?
 
   public init(now: Date = Date()) {
     since = now
@@ -86,12 +104,27 @@ public struct AgentStateMachine: Sendable {
 
     case .hook(let hook):
       hooksActive = true
+      lastHook = now
+      reportedByStatus = false
       switch hook {
       case .sessionStarted: return transition(.idle, at: now)
       case .promptSubmitted: return transition(.working, at: now)
       case .stopped: return transition(.done, at: now)
+      case .usedTool(let tool):
+        // Tools also run in parallel subagents and after Stop (background
+        // tasks): only the one that was waiting for approval answers it.
+        guard state == .needsInput else { return false }
+        if let tool, let requestedTool, requestedTool.caseInsensitiveCompare(tool) != .orderedSame { return false }
+        return transition(.working, at: now)
       case .notification(let text):
-        return transition(Self.isPermissionRequest(text) ? .needsInput : .done, at: now)
+        if Self.isPermissionRequest(text) { return ask(text, at: now) }
+        // Other notifications end a turn only while one runs: Claude Code's
+        // "waiting for your input" reminder comes long after it finished.
+        return state == .working ? transition(.done, at: now) : false
+      case .status(let reported):
+        reportedByStatus = true
+        requestedTool = nil
+        return transition(reported, at: now)
       }
 
     case .acknowledged:
@@ -115,7 +148,7 @@ public struct AgentStateMachine: Sendable {
       return state == .working ? transition(.done, at: now) : false
 
     case .notification(let text):
-      if Self.isPermissionRequest(text) { return transition(.needsInput, at: now) }
+      if Self.isPermissionRequest(text) { return ask(text, at: now) }
       if hooksActive { return false }
       return state == .working || state == .idle ? transition(.done, at: now) : false
 
@@ -149,19 +182,37 @@ public struct AgentStateMachine: Sendable {
   /// Evaluate timeouts. Returns true when `state` changed.
   @discardableResult
   public mutating func tick(at now: Date) -> Bool {
-    guard state == .working, !hooksActive else { return false }
-    let quiet = now.timeIntervalSince(lastOutput ?? since)
-    let limit = progressActive || sawProgress ? silenceWithProgress : silenceToDone
-    guard quiet >= limit else { return false }
+    guard let silenceLimit, now.timeIntervalSince(quietSince) >= silenceLimit else { return false }
     progressActive = false
-    return transition(.done, at: now)
+    // With hooks, a turn that finished would have said so: this one (or its
+    // question) was dismissed, by the user, so there's nothing to flag.
+    return transition(hooksActive ? .idle : .done, at: now)
   }
 
   /// When `tick` next needs to run, if ever.
   public var nextDeadline: Date? {
-    guard state == .working, !hooksActive else { return nil }
-    let limit = progressActive || sawProgress ? silenceWithProgress : silenceToDone
-    return (lastOutput ?? since).addingTimeInterval(limit)
+    silenceLimit.map { quietSince.addingTimeInterval($0) }
+  }
+
+  /// Silence counts from the last output or hook report, or from when
+  /// work started if that's later.
+  private var quietSince: Date { max(lastOutput ?? since, lastHook ?? since, since) }
+
+  /// How long silence may last in this state before it ends; nil: as long
+  /// as it likes.
+  private var silenceLimit: TimeInterval? {
+    switch state {
+    case .working where reportedByStatus: return nil
+    case .working:
+      return hooksActive ? silenceWithHooks : progressActive || sawProgress ? silenceWithProgress : silenceToDone
+    case .needsInput where hooksActive && !reportedByStatus: return silenceWhileAsking
+    default: return nil
+    }
+  }
+
+  private mutating func ask(_ text: String, at now: Date) -> Bool {
+    requestedTool = Self.requestedTool(text)
+    return transition(.needsInput, at: now)
   }
 
   private mutating func transition(_ next: AgentState, at now: Date) -> Bool {
@@ -177,6 +228,14 @@ public struct AgentStateMachine: Sendable {
     let lower = text.lowercased()
     return ["permission", "approve", "approval", "allow ", "confirm", "needs your input", "question"]
       .contains { lower.contains($0) }
+  }
+
+  /// The tool a permission request names: "Claude needs your permission to
+  /// use Bash" → "Bash".
+  static func requestedTool(_ text: String) -> String? {
+    guard let range = text.range(of: "to use ", options: .caseInsensitive) else { return nil }
+    let name = text[range.upperBound...].prefix { !$0.isWhitespace && !".,?!:;".contains($0) }
+    return name.isEmpty ? nil : String(name)
   }
 
   /// Braille spinner glyphs some agents put at the front of the title while

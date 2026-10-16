@@ -33,7 +33,7 @@ public struct HistoryEntry: Equatable, Sendable {
   }
 
   /// Commands worth keeping: not empty, and not hidden with a leading space
-  /// (the shells' "don't record this" convention).
+  /// or tab (the shells' "don't record this" convention).
   public static func shouldRecord(_ command: String) -> Bool {
     guard let first = command.first, first != " ", first != "\t" else { return false }
     return !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -70,6 +70,13 @@ public final class CommandHistoryDatabase: @unchecked Sendable {
   /// Open (creating if needed) the database at `path`; ":memory:" for a
   /// throwaway one. Nil if it can't be opened.
   public init?(path: String) {
+    if path != ":memory:" {
+      // Owner-only from the start: SQLite gives the -wal and -shm files the
+      // database file's mode. Older files were left readable by everyone.
+      let fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+      if fd >= 0 { close(fd) }
+      for suffix in ["", "-wal", "-shm"] { chmod(path + suffix, 0o600) }
+    }
     var handle: OpaquePointer?
     let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
     guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK, let handle else {
@@ -92,17 +99,39 @@ public final class CommandHistoryDatabase: @unchecked Sendable {
         session TEXT
       );
       CREATE INDEX IF NOT EXISTS commands_started ON commands(started_at);
-      CREATE INDEX IF NOT EXISTS commands_command ON commands(command);
+      DROP INDEX IF EXISTS commands_command;
+      CREATE INDEX IF NOT EXISTS commands_command_started ON commands(command, started_at);
       """
     guard sqlite3_exec(handle, schema, nil, nil, nil) == SQLITE_OK else {
       sqlite3_close(handle)
       db = nil
       return nil
     }
-    if path != ":memory:" {
-      try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
-    }
+    Self.migrate(handle)
   }
+
+  /// Version 1: imports used to add every command again each time. Keep one
+  /// row per imported command and time (imported rows have nothing else).
+  private static func migrate(_ handle: OpaquePointer) {
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(handle, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK else { return }
+    let version = sqlite3_step(statement) == SQLITE_ROW ? sqlite3_column_int(statement, 0) : 0
+    sqlite3_finalize(statement)
+    guard version < 1 else { return }
+    sqlite3_exec(
+      handle,
+      """
+      BEGIN;
+      DELETE FROM commands WHERE \(importedRow) AND id NOT IN (
+        SELECT MIN(id) FROM commands WHERE \(importedRow) GROUP BY command, started_at);
+      PRAGMA user_version = 1;
+      COMMIT;
+      """, nil, nil, nil)
+  }
+
+  /// A row from a shell's history file: only the command and when.
+  private static let importedRow =
+    "session IS NULL AND cwd IS NULL AND repo IS NULL AND exit_code IS NULL AND duration_ms IS NULL"
 
   deinit {
     if let db { sqlite3_close(db) }
@@ -138,6 +167,45 @@ public final class CommandHistoryDatabase: @unchecked Sendable {
         _ = sqlite3_step(statement)
       }
       sqlite3_exec(db, "COMMIT", nil, nil, nil)
+    }
+  }
+
+  /// Add commands read from a shell's history file, skipping ones already
+  /// stored with the same time (an earlier import, or twice in the file), so
+  /// importing again adds only what's new. Returns how many were added.
+  @discardableResult
+  public func importEntries(_ entries: [HistoryEntry]) -> Int {
+    queue.sync {
+      guard let db else { return 0 }
+      sqlite3_exec(db, "BEGIN", nil, nil, nil)
+      let sql = """
+        INSERT INTO commands (command, started_at) SELECT ?1, ?2
+        WHERE NOT EXISTS (SELECT 1 FROM commands WHERE command = ?1 AND started_at = ?2)
+        """
+      var statement: OpaquePointer?
+      guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+        sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+        return 0
+      }
+      defer { sqlite3_finalize(statement) }
+      var added = 0
+      for entry in entries where HistoryEntry.shouldRecord(entry.command) {
+        sqlite3_reset(statement)
+        bind(statement, 1, entry.command)
+        sqlite3_bind_double(statement, 2, entry.startedAt.timeIntervalSince1970)
+        if sqlite3_step(statement) == SQLITE_DONE, sqlite3_changes(db) > 0 { added += 1 }
+      }
+      sqlite3_exec(db, "COMMIT", nil, nil, nil)
+      return added
+    }
+  }
+
+  /// Delete every row, and the space they took (so nothing of them is left
+  /// in the file).
+  public func removeAll() {
+    queue.sync {
+      guard let db else { return }
+      sqlite3_exec(db, "DELETE FROM commands; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);", nil, nil, nil)
     }
   }
 

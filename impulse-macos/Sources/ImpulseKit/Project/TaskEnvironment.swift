@@ -20,10 +20,28 @@ public enum TaskEnvironment {
     }
   }
 
+  /// The port numbers there are.
+  public static let portRange = 1...65535
+
+  /// `port` for `slot`: plus `slot` × `offset`. Nil when that isn't a port
+  /// (past 65535, or too big to work out): the slot has no such port.
+  public static func port(_ port: Int, slot: Int, offset: Int) -> Int? {
+    let (amount, overflow) = slot.multipliedReportingOverflow(by: offset)
+    let (moved, overflowAgain) = port.addingReportingOverflow(amount)
+    guard !overflow, !overflowAgain, portRange.contains(moved) else { return nil }
+    return moved
+  }
+
   /// The ports for `slot`: each of the main checkout's ports plus
-  /// `slot` × `offset`. Slot 0 is the main checkout.
-  public static func ports(_ base: [String: Int], slot: Int, offset: Int) -> [String: Int] {
-    base.mapValues { $0 + slot * offset }
+  /// `slot` × `offset`. Slot 0 is the main checkout. Nil when one of them
+  /// isn't a port, so the slot can't be used.
+  public static func ports(_ base: [String: Int], slot: Int, offset: Int) -> [String: Int]? {
+    var ports: [String: Int] = [:]
+    for (name, value) in base {
+      guard let moved = port(value, slot: slot, offset: offset) else { return nil }
+      ports[name] = moved
+    }
+    return ports
   }
 
   /// `template` with `{task}` (the task's folder name), `{task_}` (the same
@@ -32,7 +50,7 @@ public enum TaskEnvironment {
   public static func expand(_ template: String, task: String, slot: Int, ports: [String: Int]) -> String {
     var result = template
     result = result.replacingOccurrences(of: "{task_}", with: underscored(task))
-    result = result.replacingOccurrences(of: "{task}", with: task)
+    result = result.replacingOccurrences(of: "{task}", with: plainName(task))
     result = result.replacingOccurrences(of: "{slot}", with: String(slot))
     for (name, port) in ports {
       result = result.replacingOccurrences(of: "{\(name)}", with: String(port))
@@ -41,9 +59,10 @@ public enum TaskEnvironment {
   }
 
   /// A task's values: its ports, then the `[worktrees.env]` values, each
-  /// sorted by name.
+  /// sorted by name. A port the slot doesn't have (the settings changed
+  /// since the slot was given) is left out.
   public static func values(config: ProjectConfig, task: String, slot: Int) -> [Value] {
-    let ports = ports(config.ports, slot: slot, offset: config.portOffset)
+    let ports = config.ports.compactMapValues { port($0, slot: slot, offset: config.portOffset) }
     return ports.keys.sorted().map { Value($0, String(ports[$0]!)) }
       + config.worktreeEnv.keys.sorted().map {
         Value($0, expand(config.worktreeEnv[$0]!, task: task, slot: slot, ports: ports))
@@ -86,8 +105,15 @@ public enum TaskEnvironment {
   }
 
   /// A value as dotenv needs it: bare when it's simple, double-quoted when
-  /// it has spaces, `#`, quotes or `$`.
+  /// it has spaces, `#`, quotes or `$` (so `${OTHER}` still expands where
+  /// the reader expands it). Line breaks and other control characters are
+  /// dropped: the file holds one value per line.
   static func quoted(_ value: String) -> String {
+    var kept = String.UnicodeScalarView()
+    for scalar in value.unicodeScalars where scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7F) {
+      kept.append(scalar)
+    }
+    let value = String(kept)
     guard value.contains(where: { " \t#\"'$\\".contains($0) }) else { return value }
     let escaped = value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     return "\"\(escaped)\""
@@ -97,6 +123,14 @@ public enum TaskEnvironment {
   /// and underscores becomes an underscore.
   static func underscored(_ name: String) -> String {
     String(name.map { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") ? $0 : "_" })
+  }
+
+  /// A task's folder name as `{task}` gives it: letters, digits, `.`, `_`
+  /// and `-`, anything else as a dash. A branch from a remote can be named
+  /// anything (`feat$(curl …)`), and the name goes into env files and the
+  /// commands that read them.
+  static func plainName(_ name: String) -> String {
+    String(name.map { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) ? $0 : "-" })
   }
 }
 

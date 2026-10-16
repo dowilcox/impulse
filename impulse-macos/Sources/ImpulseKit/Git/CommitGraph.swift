@@ -41,17 +41,34 @@ public struct GraphSegment: Equatable, Hashable, Sendable {
 
 public enum CommitGraph {
   public static func layout(_ commits: [GraphCommit]) -> [GraphRow] {
-    var lanes: [String?] = []
-    var rows: [GraphRow] = []
-    rows.reserveCapacity(commits.count)
+    var layout = Layout()
+    return layout.append(commits)
+  }
 
-    func freeSlot() -> Int {
+  /// Lays history out a page at a time. A row depends only on the commits
+  /// above it, so appending pages gives the same rows as laying out all of
+  /// them at once.
+  public struct Layout: Sendable {
+    /// What each lane is waiting for (the parent its line runs down to).
+    private var lanes: [String?] = []
+
+    public init() {}
+
+    /// The rows for `commits`, which come right after those appended so far.
+    public mutating func append(_ commits: [GraphCommit]) -> [GraphRow] {
+      var rows: [GraphRow] = []
+      rows.reserveCapacity(commits.count)
+      for commit in commits { rows.append(row(for: commit)) }
+      return rows
+    }
+
+    private mutating func freeSlot() -> Int {
       if let index = lanes.firstIndex(where: { $0 == nil }) { return index }
       lanes.append(nil)
       return lanes.count - 1
     }
 
-    for commit in commits {
+    private mutating func row(for commit: GraphCommit) -> GraphRow {
       let before = lanes
       let node = before.firstIndex(where: { $0 == commit.sha }) ?? freeSlot()
 
@@ -88,11 +105,9 @@ public enum CommitGraph {
       }
 
       while let last = lanes.last, last == nil { lanes.removeLast() }
-      rows.append(
-        GraphRow(
-          lane: node, top: top, bottom: bottom,
-          width: max(before.count, lanes.count, node + 1)))
+      return GraphRow(
+        lane: node, top: top, bottom: bottom,
+        width: max(before.count, lanes.count, node + 1))
     }
-    return rows
   }
 }

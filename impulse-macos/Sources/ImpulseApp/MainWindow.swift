@@ -143,10 +143,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   var latestHoverReq: [String: UInt64] = [:]
 
   /// In-flight completion work items per URI, cancelled when a newer request arrives.
-  var completionWorkItems: [String: DispatchWorkItem] = [:]
+  var completionWorkItems: [String: LSPRequestTicket] = [:]
 
   /// In-flight hover work items per URI, cancelled when a newer request arrives.
-  var hoverWorkItems: [String: DispatchWorkItem] = [:]
+  var hoverWorkItems: [String: LSPRequestTicket] = [:]
 
   /// Tracks the latest formatting request ID per URI for deduplication.
   var latestFormattingReq: [String: UInt64] = [:]
@@ -164,27 +164,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   var latestRenameReq: [String: UInt64] = [:]
 
   /// In-flight formatting work items per URI, cancelled when a newer request arrives.
-  var formattingWorkItems: [String: DispatchWorkItem] = [:]
+  var formattingWorkItems: [String: LSPRequestTicket] = [:]
 
   /// In-flight signature help work items per URI, cancelled when a newer request arrives.
-  var signatureHelpWorkItems: [String: DispatchWorkItem] = [:]
+  var signatureHelpWorkItems: [String: LSPRequestTicket] = [:]
 
   /// In-flight references work items per URI, cancelled when a newer request arrives.
-  var referencesWorkItems: [String: DispatchWorkItem] = [:]
+  var referencesWorkItems: [String: LSPRequestTicket] = [:]
 
   /// In-flight code action work items per URI, cancelled when a newer request arrives.
-  var codeActionWorkItems: [String: DispatchWorkItem] = [:]
+  var codeActionWorkItems: [String: LSPRequestTicket] = [:]
   /// Code actions Swift carries out when picked, by token (see
   /// `MonacoCodeAction.commandToken`).
   var lspCodeActions: [String: LspCodeAction] = [:]
 
   /// In-flight rename work items per URI, cancelled when a newer request arrives.
-  var renameWorkItems: [String: DispatchWorkItem] = [:]
+  var renameWorkItems: [String: LSPRequestTicket] = [:]
 
   /// In-flight prepare rename work items per URI, cancelled when a newer request arrives.
-  var prepareRenameWorkItems: [String: DispatchWorkItem] = [:]
+  var prepareRenameWorkItems: [String: LSPRequestTicket] = [:]
 
-  /// Serial queue for dispatching blocking LSP FFI calls off the main thread.
+  /// Serial queue that orders LSP notifications and requests off the main
+  /// thread (answers arrive asynchronously; nothing waits on it).
   let lspQueue: DispatchQueue
 
   /// Set of file URIs for which didOpen has been sent.
@@ -270,7 +271,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
       self.fileTreeCacheInsert(key: self.fileTreeRootPath, nodes: nodes)
     }
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
+      let nodes = FileTreeDataController.buildTree(rootPath: rootPath, showHidden: showHidden)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.fileTreeRootPath == rootPath else { return }
@@ -364,9 +365,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         + " You can undo this right after.",
       confirmTitle: "Replace All", destructive: false
     ) { [weak self] proceed in
-      guard proceed, let self else { return }
-      DispatchQueue.global(qos: .userInitiated).async {
-        var originals: [String: Data] = [:]
+      guard proceed, self != nil else { return }
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        var replaced: [String: (original: Data, written: Data)] = [:]
         var total = 0
         var failed: [String] = []
         for path in targets {
@@ -376,28 +377,70 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
           let result = ProjectReplace.replace(in: text, query: query, with: replacement, caseSensitive: caseSensitive)
           guard result.count > 0 else { continue }
           // In place (not atomic) so permissions and extended attributes stay.
+          let written = Data(result.text.utf8)
           do {
-            try Data(result.text.utf8).write(to: URL(fileURLWithPath: path))
-            originals[path] = data
+            try written.write(to: URL(fileURLWithPath: path))
+            replaced[path] = (data, written)
             total += result.count
           } catch {
             failed.append((path as NSString).lastPathComponent)
           }
         }
         DispatchQueue.main.async {
-          self.reloadEditors(Array(originals.keys))
+          guard let self else { return }
+          self.reloadEditors(Array(replaced.keys))
           self.windowModel.runSearchNow()
-          var message = "Replaced \(total) match\(total == 1 ? "" : "es") in \(originals.count) file\(originals.count == 1 ? "" : "s")"
+          var message = "Replaced \(total) match\(total == 1 ? "" : "es") in \(replaced.count) file\(replaced.count == 1 ? "" : "s")"
           if !failed.isEmpty { message += " (couldn't write \(failed.joined(separator: ", ")))" }
           self.toasts.show(
             Toast(
               kind: failed.isEmpty ? .success : .warning, message: message, actionTitle: "Undo",
-              action: { [weak self] in
-                for (path, data) in originals { try? data.write(to: URL(fileURLWithPath: path)) }
-                self?.reloadEditors(Array(originals.keys))
-                self?.windowModel.runSearchNow()
-              }, lifetime: 20))
+              action: { [weak self] in self?.undoReplaceAll(replaced) }, lifetime: 20))
         }
+      }
+    }
+  }
+
+  /// Put back what Replace All changed, but only in files that still hold
+  /// what it wrote: a file edited since (saved, or with unsaved edits open
+  /// here) keeps the newer edits, and the toast names it.
+  private func undoReplaceAll(_ replaced: [String: (original: Data, written: Data)]) {
+    let edited = Set(replaced.keys.filter { findEditorTab(forPath: $0)?.isModified == true })
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      var restored: [String] = []
+      var skipped: [String] = []
+      var failed: [String] = []
+      for (path, change) in replaced.sorted(by: { $0.key < $1.key }) {
+        guard !edited.contains(path), FileManager.default.contents(atPath: path) == change.written else {
+          skipped.append(path)
+          continue
+        }
+        do {
+          try change.original.write(to: URL(fileURLWithPath: path))
+          restored.append(path)
+        } catch {
+          failed.append(path)
+        }
+      }
+      DispatchQueue.main.async {
+        guard let self else { return }
+        // Open editors show the restored files (clean ones reload).
+        self.reloadEditors(restored)
+        self.windowModel.runSearchNow()
+        guard !skipped.isEmpty || !failed.isEmpty else { return }
+        func names(_ paths: [String]) -> String {
+          let names = paths.map { ($0 as NSString).lastPathComponent }
+          return names.prefix(3).joined(separator: ", ") + (names.count > 3 ? ", …" : "")
+        }
+        var message = "Restored \(restored.count) of \(replaced.count) file\(replaced.count == 1 ? "" : "s")."
+        var details: [String] = []
+        if !skipped.isEmpty {
+          details.append("Changed since, left as they are: \(names(skipped))")
+        }
+        if !failed.isEmpty { details.append("Couldn't write \(names(failed))") }
+        if restored.isEmpty { message = "Nothing was restored." }
+        self.toasts.show(
+          Toast(kind: .warning, message: message, detail: details.joined(separator: ". "), lifetime: 12))
       }
     }
   }
@@ -629,7 +672,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
   /// Whether the terminal's shell is in the foreground waiting for a
   /// command, so a command typed into it reaches the shell and not a
   /// running program.
-  private static func isAtPrompt(_ terminal: TerminalTab) -> Bool {
+  static func isAtPrompt(_ terminal: TerminalTab) -> Bool {
     guard !terminal.isCommandRunning, !terminal.isAltScreen, let backend = terminal.backend else { return false }
     // Without shell integration commands aren't marked; the PTY's
     // foreground process group is the shell's only while it's at its prompt.

@@ -27,6 +27,35 @@ enum LSPDocuments {
   static var shared = LSPOpenDocuments()
 }
 
+/// A language-server request a window waits on (see `enqueueLspRequest`).
+/// Cancelling it before it's sent drops it; after, the server is told to
+/// stop, and its answer is dropped.
+final class LSPRequestTicket {
+  private let lock = NSLock()
+  private var cancelled = false
+  private var cancelSent: (() -> Void)?
+
+  var isCancelled: Bool { lock.withLock { cancelled } }
+
+  func cancel() {
+    let cancelSent = lock.withLock { () -> (() -> Void)? in
+      cancelled = true
+      defer { self.cancelSent = nil }
+      return self.cancelSent
+    }
+    cancelSent?()
+  }
+
+  /// It went to the registry: `cancel` now withdraws it there.
+  fileprivate func sent(cancel: @escaping () -> Void) {
+    let alreadyCancelled = lock.withLock { () -> Bool in
+      if !cancelled { cancelSent = cancel }
+      return cancelled
+    }
+    if alreadyCancelled { cancel() }
+  }
+}
+
 extension MainWindowController {
 
   func applyLspDiagnostics(uri: String, diagnosticsArray: [[String: Any]]) {
@@ -70,15 +99,15 @@ extension MainWindowController {
     let uri = filePathToUri(path)
     let language = editor.lspLanguage
     let params = encodeLspJSON(["textDocument": ["uri": uri]])
-    enqueueLspRequest(DispatchWorkItem { [weak self] in
-      let response = self?.core.lspRequest(
-        languageId: language, fileUri: uri, method: "textDocument/documentSymbol", paramsJson: params)
+    enqueueLspRequest(
+      languageId: language, fileUri: uri, method: "textDocument/documentSymbol", params: params
+    ) { response in
       // An {"error": …} envelope means no server (or it failed): nil.
       let data = response.flatMap { $0.data(using: .utf8) }
       let failed = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] != nil
       let symbols = failed ? nil : data.map(DocumentSymbols.parse)
       DispatchQueue.main.async { completion(symbols) }
-    })
+    }
   }
 
   /// Project-wide symbols matching `query`, from the language server of
@@ -91,14 +120,12 @@ extension MainWindowController {
     let uri = filePathToUri(path)
     let language = editor.lspLanguage
     let params = encodeLspJSON(["query": query])
-    enqueueLspRequest(DispatchWorkItem { [weak self] in
-      let response = self?.core.lspRequest(
-        languageId: language, fileUri: uri, method: "workspace/symbol", paramsJson: params)
+    enqueueLspRequest(languageId: language, fileUri: uri, method: "workspace/symbol", params: params) { response in
       let data = response.flatMap { $0.data(using: .utf8) }
       let failed = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] != nil
       let results = failed ? nil : data.map(DocumentSymbols.parseWorkspace)
       DispatchQueue.main.async { completion(results) }
-    })
+    }
   }
 
   /// Keep every file's diagnostics for the Problems panel, open or not
@@ -123,7 +150,8 @@ extension MainWindowController {
     }
   }
 
-  /// Sends LSP didOpen for a file if not already tracked.
+  /// Sends LSP didOpen for a file if not already tracked. Only files a
+  /// server is configured for are opened (and then mirrored on every edit).
   func lspDidOpenIfNeeded(path: String) {
     let uri = filePathToUri(path)
     guard !lspOpenFiles.contains(uri) else { return }
@@ -133,6 +161,7 @@ extension MainWindowController {
       // editor fires FileOpened via the notification observer.
       return
     }
+    guard core.lspHasServers(languageId: editorTab.lspLanguage, fileUri: uri) else { return }
     // Servers can run the project's code: trusted folders only.
     guard Trust.shared.isTrusted(path) else {
       noteRestrictedFile(path, language: editorTab.lspLanguage)
@@ -172,23 +201,9 @@ extension MainWindowController {
     let whole = LSPDocuments.shared.holders(uri) > 1
 
     let language = editor.lspLanguage
-    let content = editor.content
-    let incrementalChanges = changes.map { change -> [String: Any] in
-      [
-        "range": [
-          "start": [
-            "line": max(Int(change.range.startLine) - 1, 0),
-            "character": max(Int(change.range.startColumn) - 1, 0),
-          ],
-          "end": [
-            "line": max(Int(change.range.endLine) - 1, 0),
-            "character": max(Int(change.range.endColumn) - 1, 0),
-          ],
-        ],
-        "rangeLength": change.rangeLength,
-        "text": change.text,
-      ]
-    }
+    // The whole text only when it's needed: while the copy is held, the
+    // editor's next change copies its text.
+    let fullText = changes.isEmpty || whole ? editor.content : nil
 
     lspQueue.async { [weak self] in
       guard let self else { return }
@@ -196,8 +211,8 @@ extension MainWindowController {
         languageId: language,
         fileUri: uri,
         version: version,
-        fullText: incrementalChanges.isEmpty || whole ? content : nil,
-        changesJson: encodeLspJSON(incrementalChanges)
+        fullText: fullText,
+        changes: fullText == nil ? changes : []
       )
     }
   }
@@ -274,24 +289,16 @@ extension MainWindowController {
     guard let path = editor.filePath else { return }
     let uri = filePathToUri(path)
 
-    // Cancel any previous in-flight completion request for this URI
-    // BEFORE setting the new request ID to prevent a stale callback
-    // from racing against the new one.
+    // Withdraw any previous completion request for this URI BEFORE setting
+    // the new request ID, so a stale answer can't race the new one.
     completionWorkItems[uri]?.cancel()
     latestCompletionReq[uri] = requestId
 
-    let language = editor.lspLanguage
     let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
-
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/completion", paramsJson: params
-        )
-      else { return }
-
+    completionWorkItems[uri] = enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/completion", params: params
+    ) { [weak self] response in
+      guard let self, let response else { return }
       let items = self.parseCompletionResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
@@ -300,8 +307,6 @@ extension MainWindowController {
         editor.resolveCompletions(requestId: requestId, items: items)
       }
     }
-    completionWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a hover request from the editor by forwarding it to the LSP.
@@ -310,21 +315,14 @@ extension MainWindowController {
     let uri = filePathToUri(path)
     latestHoverReq[uri] = requestId
 
-    // Cancel any previous in-flight hover request for this URI.
+    // Withdraw any previous hover request for this URI.
     hoverWorkItems[uri]?.cancel()
 
-    let language = editor.lspLanguage
     let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
-
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/hover", paramsJson: params
-        )
-      else { return }
-
+    hoverWorkItems[uri] = enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/hover", params: params
+    ) { [weak self] response in
+      guard let self, let response else { return }
       let contents = self.parseHoverResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
@@ -332,8 +330,6 @@ extension MainWindowController {
         editor.resolveHover(requestId: requestId, contents: contents)
       }
     }
-    hoverWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a go-to-definition request from the editor.
@@ -350,24 +346,12 @@ extension MainWindowController {
       return
     }
     let uri = filePathToUri(path)
-    let language = editor.lspLanguage
     let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
 
-    enqueueLspRequest(DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/definition", paramsJson: params
-        )
-      else {
-        DispatchQueue.main.async {
-          editor.resolveDefinition(requestId: requestId, uri: nil, line: nil, column: nil)
-        }
-        return
-      }
-
-      guard let def = self.parseDefinitionResponse(response) else {
+    enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/definition", params: params
+    ) { [weak self] response in
+      guard let self, let response, let def = self.parseDefinitionResponse(response) else {
         DispatchQueue.main.async {
           editor.resolveDefinition(requestId: requestId, uri: nil, line: nil, column: nil)
         }
@@ -382,7 +366,7 @@ extension MainWindowController {
         editor.resolveDefinition(
           requestId: requestId, uri: def.uri, line: def.line, column: def.character)
       }
-    })
+    }
   }
 
   /// Handles a formatting request from the editor by forwarding it to the LSP.
@@ -395,21 +379,15 @@ extension MainWindowController {
 
     formattingWorkItems[uri]?.cancel()
 
-    let language = editor.lspLanguage
     let params = encodeLspJSON([
       "textDocument": ["uri": uri],
       "options": ["tabSize": tabSize, "insertSpaces": insertSpaces] as [String: Any],
     ])
 
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/formatting", paramsJson: params
-        )
-      else { return }
-
+    formattingWorkItems[uri] = enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/formatting", params: params
+    ) { [weak self] response in
+      guard let self, let response else { return }
       let edits = self.parseFormattingResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
@@ -417,8 +395,6 @@ extension MainWindowController {
         editor.resolveFormatting(requestId: requestId, edits: edits)
       }
     }
-    formattingWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a signature help request from the editor by forwarding it to the LSP.
@@ -431,18 +407,11 @@ extension MainWindowController {
 
     signatureHelpWorkItems[uri]?.cancel()
 
-    let language = editor.lspLanguage
     let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
-
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/signatureHelp", paramsJson: params
-        )
-      else { return }
-
+    signatureHelpWorkItems[uri] = enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/signatureHelp", params: params
+    ) { [weak self] response in
+      guard let self, let response else { return }
       let signatureHelp = self.parseSignatureHelpResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
@@ -450,8 +419,6 @@ extension MainWindowController {
         editor.resolveSignatureHelp(requestId: requestId, signatureHelp: signatureHelp)
       }
     }
-    signatureHelpWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a references request from the editor by forwarding it to the LSP.
@@ -464,22 +431,16 @@ extension MainWindowController {
 
     referencesWorkItems[uri]?.cancel()
 
-    let language = editor.lspLanguage
     let params = encodeLspJSON([
       "textDocument": ["uri": uri] as [String: Any],
       "position": ["line": line, "character": character],
       "context": ["includeDeclaration": true],
     ])
 
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/references", paramsJson: params
-        )
-      else { return }
-
+    referencesWorkItems[uri] = enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/references", params: params
+    ) { [weak self] response in
+      guard let self, let response else { return }
       let locations = self.parseReferencesResponse(response)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
@@ -487,8 +448,6 @@ extension MainWindowController {
         editor.resolveReferences(requestId: requestId, locations: locations)
       }
     }
-    referencesWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a code action request from the editor by forwarding it to the LSP.
@@ -547,15 +506,10 @@ extension MainWindowController {
       "context": ["diagnostics": diagObjects],
     ])
 
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/codeAction", paramsJson: params
-        )
-      else { return }
-
+    codeActionWorkItems[uri] = enqueueLspRequest(
+      languageId: language, fileUri: uri, method: "textDocument/codeAction", params: params
+    ) { [weak self] response in
+      guard let response else { return }
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.latestCodeActionReq[uri] == requestId else { return }
@@ -565,8 +519,6 @@ extension MainWindowController {
         editor.resolveCodeActions(requestId: requestId, actions: actions)
       }
     }
-    codeActionWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a rename request from the editor by forwarding it to the LSP.
@@ -586,15 +538,10 @@ extension MainWindowController {
       "newName": newName,
     ])
 
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/rename", paramsJson: params
-        )
-      else { return }
-
+    renameWorkItems[uri] = enqueueLspRequest(
+      languageId: language, fileUri: uri, method: "textDocument/rename", params: params
+    ) { [weak self] response in
+      guard let self, let response else { return }
       let workspaceEdit = response.data(using: .utf8)
         .flatMap { try? JSONSerialization.jsonObject(with: $0) }
         .flatMap(WorkspaceEdit.parse)
@@ -605,14 +552,15 @@ extension MainWindowController {
         // Monaco can only edit its own file: anything wider is applied here.
         if let workspaceEdit, !self.isLocalEdit(workspaceEdit, uri: uri) {
           editor.resolveRename(requestId: requestId, edits: [])
-          self.reportWorkspaceEdit(self.applyWorkspaceEdit(workspaceEdit), verb: "Renamed")
+          self.applyWorkspaceEdit(workspaceEdit, root: self.userEditBoundary(forFileUri: uri), title: "Rename") {
+            [weak self] outcome in
+            self?.reportWorkspaceEdit(outcome, verb: "Renamed")
+          }
         } else {
           editor.resolveRename(requestId: requestId, edits: edits)
         }
       }
     }
-    renameWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles a prepare rename request from the editor by forwarding it to the LSP.
@@ -624,31 +572,16 @@ extension MainWindowController {
 
     prepareRenameWorkItems[uri]?.cancel()
 
-    let language = editor.lspLanguage
     let params = encodeLspJSON(positionParams(uri: uri, line: line, character: character))
-
-    let workItem = DispatchWorkItem { [weak self] in
-      guard let self else { return }
-      guard
-        let response = self.core.lspRequest(
-          languageId: language, fileUri: uri,
-          method: "textDocument/prepareRename", paramsJson: params
-        )
-      else {
-        DispatchQueue.main.async {
-          editor.resolvePrepareRename(requestId: requestId, range: nil, placeholder: nil)
-        }
-        return
-      }
-
-      let result = self.parsePrepareRenameResponse(response)
+    prepareRenameWorkItems[uri] = enqueueLspRequest(
+      languageId: editor.lspLanguage, fileUri: uri, method: "textDocument/prepareRename", params: params
+    ) { [weak self] response in
+      let result = response.flatMap { self?.parsePrepareRenameResponse($0) }
       DispatchQueue.main.async {
         editor.resolvePrepareRename(
           requestId: requestId, range: result?.range, placeholder: result?.placeholder)
       }
     }
-    prepareRenameWorkItems[uri] = workItem
-    enqueueLspRequest(workItem)
   }
 
   /// Handles Monaco's request to open a different file (cross-file go-to-definition).
@@ -672,47 +605,57 @@ extension MainWindowController {
     }
   }
 
-  /// Run a request once everything already queued (didOpen, didChange) has
-  /// been sent, then wait for its answer off the LSP queue, so a slow
-  /// server or request doesn't hold up the others.
-  func enqueueLspRequest(_ item: DispatchWorkItem) {
+  /// Send a request once everything already queued (didOpen, didChange) has
+  /// been sent. Nothing waits for the answer: `completion` gets it (on a
+  /// background thread), or nil without language servers. The ticket
+  /// withdraws it; a withdrawn request's answer never arrives.
+  @discardableResult
+  func enqueueLspRequest(
+    languageId: String, fileUri: String, method: String, params: String,
+    completion: @escaping (String?) -> Void
+  ) -> LSPRequestTicket {
+    let ticket = LSPRequestTicket()
+    let core = self.core
     lspQueue.async {
-      guard !item.isCancelled else { return }
-      DispatchQueue.global(qos: .userInitiated).async(execute: item)
+      guard !ticket.isCancelled else { return }
+      let cancel = core.lspRequest(languageId: languageId, fileUri: fileUri, method: method, paramsJson: params) {
+        response in
+        guard !ticket.isCancelled else { return }
+        completion(response)
+      }
+      ticket.sent(cancel: cancel)
     }
+    return ticket
   }
 
   // MARK: LSP Response Parsing
 
+  /// Completion items for Monaco: each with the text and range its
+  /// `textEdit` (or the list's defaults) gives, snippet or not, its
+  /// auto-import edits, and the server's sort and filter text.
   private func parseCompletionResponse(_ json: String) -> [MonacoCompletionItem] {
     guard let data = json.data(using: .utf8),
       let response = try? JSONSerialization.jsonObject(with: data)
     else { return [] }
 
-    let items: [[String: Any]]
-    if let list = response as? [String: Any],
-      let listItems = list["items"] as? [[String: Any]]
-    {
-      items = listItems
-    } else if let array = response as? [[String: Any]] {
-      items = array
-    } else {
-      return []
+    func monacoRange(_ range: LSPRange) -> MonacoRange {
+      MonacoRange(
+        startLine: UInt32(clamping: range.startLine), startColumn: UInt32(clamping: range.startCharacter),
+        endLine: UInt32(clamping: range.endLine), endColumn: UInt32(clamping: range.endCharacter))
     }
-
-    return items.compactMap { item in
-      guard let label = item["label"] as? String else { return nil }
-      let kind = (item["kind"] as? NSNumber)?.intValue ?? 1
-      let insertText = (item["insertText"] as? String) ?? label
-      let detail = item["detail"] as? String
-      let insertTextFormat = (item["insertTextFormat"] as? NSNumber)?.intValue ?? 1
-
-      return MonacoCompletionItem(
-        label: label,
-        kind: lspCompletionKindFromInt(kind),
-        detail: detail,
-        insertText: insertText,
-        insertTextRules: insertTextFormat == 2 ? 4 : nil
+    return LSPCompletion.parse(response).map { item in
+      MonacoCompletionItem(
+        label: item.label,
+        kind: lspCompletionKindFromInt(item.kind),
+        detail: item.detail,
+        insertText: item.text,
+        // Monaco's CompletionItemInsertTextRule.InsertAsSnippet.
+        insertTextRules: item.isSnippet ? 4 : nil,
+        range: item.range.map(monacoRange),
+        replaceRange: item.replaceRange.map(monacoRange),
+        additionalTextEdits: item.additionalTextEdits.map(Self.monacoEdit),
+        sortText: item.sortText,
+        filterText: item.filterText
       )
     }
   }

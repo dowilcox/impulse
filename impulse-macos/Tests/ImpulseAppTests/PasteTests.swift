@@ -14,6 +14,23 @@
       #expect(TerminalTab.bracketedPasteBody("naïve 日本 🚀") == "naïve 日本 🚀")
     }
 
+    @Test func commandsFromTheInputBarHaveNoControlCharacters() {
+      // ^U in a pasted file name would clear the line and run what follows.
+      #expect(TerminalTab.commandText("ls 'x\u{15}touch MARKER;echo '") == "ls 'xtouch MARKER;echo '")
+      #expect(TerminalTab.commandText("echo \u{1b}[31mred\u{9b}") == "echo [31mred")
+      #expect(TerminalTab.commandText("for x in a b\ndo echo $x\ndone\n") == "for x in a b\ndo echo $x\ndone")
+      #expect(TerminalTab.commandText(" \u{7} \n") == nil)
+      #expect(TerminalTab.withoutControlCharacters("a\tb\r\n\u{0}c") == "a\tb\r\nc")
+    }
+
+    @Test func aLeadingSpaceIsKept() {
+      // HIST_IGNORE_SPACE / ignorespace leave such commands out of history.
+      #expect(TerminalTab.commandText("   export TOKEN=x  ") == " export TOKEN=x")
+      #expect(TerminalTab.commandText("\tls") == " ls")
+      #expect(TerminalTab.commandText("ls  ") == "ls")
+      #expect(TerminalTab.commandText(" ls") == " ls")
+    }
+
     @Test func aSentLineEndsEachLineWithOneReturn() {
       #expect(TerminalTab.typedLine("") == "\r")
       #expect(TerminalTab.typedLine(" secret ") == " secret \r")

@@ -42,6 +42,13 @@ final class QuickTerminal {
     }
   }
 
+  /// The Quick Terminal's terminal, if it has this control token (the
+  /// `impulse` CLI and agent hooks run in it too).
+  func terminal(controlToken token: String) -> TerminalTab? {
+    guard let terminal = container?.activeTerminal, terminal.controlToken == token else { return nil }
+    return terminal
+  }
+
   func applyTheme(_ theme: Theme) {
     container?.applyTheme(theme: Self.terminalTheme(theme), dividerColor: theme.bgHighlightColor)
     panel?.backgroundColor = theme.bgColor

@@ -1,7 +1,9 @@
 // Port of `LspClient` from impulse-core/src/lsp.rs: child process with piped
 // stdio, LSP base-protocol framing (`Content-Length` headers), request/id
 // correlation with per-method timeouts, the initialize handshake, server
-// request/notification handling, stderr logging, and exit detection.
+// request/notification handling, stderr logging, and exit detection. Nothing
+// here waits on a server: requests finish from its reader thread (or a
+// timer), and messages go out on a queue of its own.
 
 import Foundation
 
@@ -119,33 +121,74 @@ final class FrameParser {
   }
 }
 
-// MARK: - Pending request
+// MARK: - Requests
 
-private final class PendingRequest {
-  private let semaphore = DispatchSemaphore(value: 0)
+/// A request on its way to a language server. It finishes once: with the
+/// server's answer, a failure, or a timeout. `cancel()` withdraws it (the
+/// server is told with `$/cancelRequest`), and its completion isn't called.
+public final class LSPRequest {
   private let lock = NSLock()
-  private var result: Result<Any, String>?
+  private var completion: ((Result<Any, String>) -> Void)?
+  /// Takes it back from the server it was sent to.
+  private var withdraw: (() -> Void)?
+  private var done = false
 
-  func complete(_ value: Result<Any, String>) {
-    lock.lock()
-    let alreadyCompleted = result != nil
-    if !alreadyCompleted { result = value }
-    lock.unlock()
-    if !alreadyCompleted { semaphore.signal() }
+  init(completion: @escaping (Result<Any, String>) -> Void) {
+    self.completion = completion
   }
 
-  func wait(timeout: TimeInterval) -> Result<Any, String>? {
-    guard semaphore.wait(timeout: .now() + timeout) == .success else { return nil }
+  public var isFinished: Bool {
+    lock.withLock { done }
+  }
+
+  public func cancel() {
+    giveUp(nil)
+  }
+
+  /// It was sent: from now on, giving up on it takes it back from the server.
+  func sent(withdraw: @escaping () -> Void) {
     lock.lock()
-    defer { lock.unlock() }
-    return result
+    let late = done
+    if !late { self.withdraw = withdraw }
+    lock.unlock()
+    if late { withdraw() }
+  }
+
+  /// The answer, or why there is none. Only the first one counts.
+  func finish(_ result: Result<Any, String>) {
+    lock.lock()
+    let completion = done ? nil : self.completion
+    done = true
+    self.completion = nil
+    withdraw = nil
+    lock.unlock()
+    completion?(result)
+  }
+
+  /// Still unanswered after `timeout`: it fails, and the server is told to
+  /// stop working on it.
+  func expire(after timeout: TimeInterval, method: String) {
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { [weak self] in
+      self?.giveUp(.failure("LSP request '\(method)' timed out after \(Int(timeout))s"))
+    }
+  }
+
+  private func giveUp(_ result: Result<Any, String>?) {
+    lock.lock()
+    let completion = done ? nil : self.completion
+    let withdraw = done ? nil : self.withdraw
+    done = true
+    self.completion = nil
+    self.withdraw = nil
+    lock.unlock()
+    withdraw?()
+    if let result { completion?(result) }
   }
 }
 
 // MARK: - Server process
 
-/// One running LSP server (the Rust `LspClient`). Synchronous: `request`
-/// blocks the calling thread with the same per-method timeouts as lsp.rs.
+/// One running LSP server (the Rust `LspClient`).
 final class ServerProcess {
   let serverId: String
   let clientKey: String
@@ -158,19 +201,42 @@ final class ServerProcess {
   private let stderrHandle: FileHandle
   private let onEvent: (LSPEvent) -> Void
 
-  private let writeLock = NSLock()
+  /// Messages go out here, in order, so a server that stops reading holds
+  /// up only its own queue (never the caller, or the reader thread that
+  /// answers the server's requests).
+  private let writeQueue: DispatchQueue
+  /// writeQueue only.
+  private var inputClosed = false
   private let stateLock = NSLock()
-  private var pending: [Int64: PendingRequest] = [:]
+  private var pending: [Int64: LSPRequest] = [:]
   private var nextId: Int64 = 1
   private var exited = false
+  /// Shut down or given up on: nothing it sends reaches the app any more.
+  private var retired = false
+  private var exitWaiters: [() -> Void] = []
+  /// Bytes queued for its input and not written yet.
+  private var queuedBytes = 0
   private var serverCapabilitiesStorage: [String: Any]?
   private var changeSyncKindStorage: Int?
+
+  /// A server this far behind on reading its input is taken as hung and
+  /// stopped (the registry restarts it).
+  static let maxQueuedBytes = 64 * 1024 * 1024
+  /// After the exit notification, how long a server gets to end on its own.
+  static let exitGracePeriod: TimeInterval = 2
 
   /// Whether the process has ended.
   var hasExited: Bool {
     stateLock.lock()
     defer { stateLock.unlock() }
     return exited
+  }
+
+  /// Whether it has been shut down (or given up on).
+  var isRetired: Bool {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return retired
   }
 
   /// Server capabilities from the initialize response (JSON object), if the
@@ -189,19 +255,20 @@ final class ServerProcess {
     return changeSyncKindStorage
   }
 
-  /// Port of `lsp_request_timeout` — same durations as lsp.rs.
+  /// How long a request may take (waiting for its server to start
+  /// included): as long as the editor waits for the same request
+  /// (editor.js), so neither side keeps waiting after the other gave up.
   static func requestTimeout(for method: String) -> TimeInterval {
     switch method {
-    case "textDocument/completion", "textDocument/hover", "textDocument/signatureHelp":
+    case "textDocument/completion", "textDocument/hover", "textDocument/signatureHelp",
+      "textDocument/definition", "textDocument/prepareRename", "textDocument/documentHighlight",
+      "textDocument/inlayHint":
       return 5
-    case "textDocument/definition", "textDocument/declaration",
-      "textDocument/typeDefinition", "textDocument/implementation",
-      "textDocument/references":
-      return 15
-    case "textDocument/rename", "textDocument/prepareRename":
-      return 15
-    case "textDocument/codeAction":
+    case "textDocument/codeAction", "textDocument/formatting":
       return 10
+    case "textDocument/declaration", "textDocument/typeDefinition", "textDocument/implementation",
+      "textDocument/references", "textDocument/rename":
+      return 15
     case "initialize":
       return 30
     case "shutdown":
@@ -214,8 +281,8 @@ final class ServerProcess {
   // MARK: Lifecycle
 
   /// Port of `LspClient::start`: spawn, wire up reader/stderr/exit handling,
-  /// then run the initialize handshake (blocking, 30s timeout). On handshake
-  /// failure the child is stopped.
+  /// then run the initialize handshake (30s timeout), calling `completion`
+  /// once it's done. On handshake failure the child is stopped.
   static func start(
     command: String,
     args: [String],
@@ -223,8 +290,9 @@ final class ServerProcess {
     serverId: String,
     clientKey: String,
     initializationOptions: Any?,
-    onEvent: @escaping (LSPEvent) -> Void
-  ) -> Result<ServerProcess, String> {
+    onEvent: @escaping (LSPEvent) -> Void,
+    completion: @escaping (Result<ServerProcess, String>) -> Void
+  ) {
     lspLog(
       "LSP: starting server '\(command)' with args \(args) for server_id '\(serverId)', root_uri=\(rootUri), key=\(clientKey)"
     )
@@ -233,16 +301,22 @@ final class ServerProcess {
       command: command, args: args, rootUri: rootUri, serverId: serverId,
       clientKey: clientKey, onEvent: onEvent)
     if let error = client.launch() {
-      return .failure("Failed to start LSP server '\(command)': \(error)")
+      completion(.failure("Failed to start LSP server '\(command)': \(error)"))
+      return
     }
 
-    if case .failure(let error) = client.initialize(initializationOptions: initializationOptions) {
-      // Don't leave it running: the next attempt would start another.
-      client.terminate()
-      return .failure(error)
+    client.initialize(initializationOptions: initializationOptions) { result in
+      switch result {
+      case .failure(let error):
+        // Don't leave it running: the next attempt would start another.
+        client.retire()
+        client.terminate()
+        completion(.failure(error))
+      case .success:
+        lspLog("LSP: server '\(command)' initialized successfully for key=\(clientKey)")
+        completion(.success(client))
+      }
     }
-    lspLog("LSP: server '\(command)' initialized successfully for key=\(clientKey)")
-    return .success(client)
   }
 
   private init(
@@ -275,6 +349,7 @@ final class ServerProcess {
     self.stdinHandle = stdinPipe.fileHandleForWriting
     self.stdoutHandle = stdoutPipe.fileHandleForReading
     self.stderrHandle = stderrPipe.fileHandleForReading
+    self.writeQueue = DispatchQueue(label: "impulse.lsp.write", qos: .userInitiated)
   }
 
   /// Returns an error description on spawn failure, nil on success.
@@ -319,6 +394,8 @@ final class ServerProcess {
     exited = true
     let drained = pending
     pending.removeAll()
+    let waiters = exitWaiters
+    exitWaiters.removeAll()
     stateLock.unlock()
 
     // Drain all pending requests so waiting callers get an error instead of
@@ -327,10 +404,17 @@ final class ServerProcess {
       lspLog(
         "Draining \(drained.count) pending LSP request(s) for crashed server '\(commandName)'")
       for (_, waiter) in drained {
-        waiter.complete(.failure("LSP server exited unexpectedly"))
+        waiter.finish(.failure("LSP server exited unexpectedly"))
       }
     }
-    onEvent(.serverExited(clientKey: clientKey, serverId: serverId))
+    emit(.serverExited(clientKey: clientKey, serverId: serverId))
+    for waiter in waiters { waiter() }
+  }
+
+  /// Events reach the registry only while the server serves.
+  private func emit(_ event: LSPEvent) {
+    guard !isRetired else { return }
+    onEvent(event)
   }
 
   // MARK: Reading
@@ -419,9 +503,9 @@ final class ServerProcess {
         stateLock.unlock()
         if let waiter {
           if let errorPair {
-            waiter.complete(.failure("LSP error \(errorPair.code): \(errorPair.message)"))
+            waiter.finish(.failure("LSP error \(errorPair.code): \(errorPair.message)"))
           } else {
-            waiter.complete(.success(message["result"] ?? NSNull()))
+            waiter.finish(.success(message["result"] ?? NSNull()))
           }
         }
       }
@@ -471,13 +555,17 @@ final class ServerProcess {
         sendError(id: id, code: -32602, message: "Missing edit")
         return
       }
-      onEvent(
+      guard !isRetired else {
+        sendResult(id: id, result: ["applied": false, "failureReason": "The language server is shutting down."])
+        return
+      }
+      emit(
         .applyEdit(
           clientKey: clientKey, serverId: serverId, id: id, label: object?["label"] as? String, edit: edit))
     case "window/showMessageRequest":
       // No buttons: show it like a message and answer "dismissed".
       if let object = params as? [String: Any], let text = object["message"] as? String {
-        onEvent(
+        emit(
           .showMessage(
             serverId: serverId, type: JSONUtil.asInt64(object["type"]) ?? 3, message: text))
       }
@@ -491,17 +579,17 @@ final class ServerProcess {
     switch method {
     case "textDocument/publishDiagnostics":
       if let event = Self.parseDiagnosticsEvent(params) {
-        onEvent(event)
+        emit(event)
       }
     case "window/showMessage":
       if let object = params as? [String: Any], let text = object["message"] as? String {
-        onEvent(
+        emit(
           .showMessage(
             serverId: serverId, type: JSONUtil.asInt64(object["type"]) ?? 3, message: text))
       }
     case "$/progress":
       if let event = Self.parseProgress(params, clientKey: clientKey, serverId: serverId) {
-        onEvent(event)
+        emit(event)
       }
     case "window/logMessage", "$/logTrace":
       // log::debug! in Rust — intentionally quiet here.
@@ -609,40 +697,54 @@ final class ServerProcess {
     ])
   }
 
+  /// Queue a message for the server (see `writeQueue`). False when it has
+  /// ended, or has stopped reading.
+  @discardableResult
   private func send(_ message: [String: Any]) -> Bool {
     guard let body = JSONUtil.encodeData(message) else { return false }
     var frame = Data("Content-Length: \(body.count)\r\n\r\n".utf8)
     frame.append(body)
-    writeLock.lock()
-    defer { writeLock.unlock() }
-    do {
-      try stdinHandle.write(contentsOf: frame)
-      return true
-    } catch {
+    stateLock.lock()
+    if exited {
+      stateLock.unlock()
       return false
     }
+    queuedBytes += frame.count
+    let backlog = queuedBytes
+    stateLock.unlock()
+    if backlog > Self.maxQueuedBytes {
+      lspLog("LSP server '\(commandName)' stopped reading its input; stopping it (key=\(clientKey))")
+      terminate()
+      return false
+    }
+    writeQueue.async { [self] in
+      if !inputClosed {
+        // A failed write means it ended: the exit handler deals with that.
+        try? stdinHandle.write(contentsOf: frame)
+      }
+      stateLock.lock()
+      queuedBytes -= frame.count
+      stateLock.unlock()
+    }
+    return true
   }
 
   // MARK: Requests / notifications
 
-  /// Blocking JSON-RPC request with the same per-method timeout table as
-  /// lsp.rs. Safe to call from any non-main thread.
-  func request(method: String, params: Any?) -> Result<Any, String> {
-    switch begin(method: method, params: params) {
-    case .failure(let error):
-      return .failure(error)
-    case .success(let (id, waiter)):
-      return finish(method: method, id: id, waiter: waiter)
-    }
-  }
-
-  private func begin(method: String, params: Any?) -> Result<(Int64, PendingRequest), String> {
+  /// Send `method` as `request`, which the server's answer finishes (see
+  /// `LSPRequest`). Giving up on it forgets it here and tells the server.
+  func send(method: String, params: Any?, as request: LSPRequest) {
     stateLock.lock()
+    if exited {
+      stateLock.unlock()
+      request.finish(.failure("LSP server exited unexpectedly"))
+      return
+    }
     let id = nextId
     nextId += 1
-    let waiter = PendingRequest()
-    pending[id] = waiter
+    pending[id] = request
     stateLock.unlock()
+    request.sent { [weak self] in self?.withdraw(id) }
 
     let message: [String: Any] = [
       "jsonrpc": "2.0",
@@ -654,21 +756,18 @@ final class ServerProcess {
       stateLock.lock()
       pending.removeValue(forKey: id)
       stateLock.unlock()
-      return .failure("failed to write to LSP server stdin")
+      request.finish(.failure("failed to write to LSP server stdin"))
+      return
     }
-    return .success((id, waiter))
   }
 
-  private func finish(method: String, id: Int64, waiter: PendingRequest) -> Result<Any, String> {
-    let timeout = Self.requestTimeout(for: method)
-    if let result = waiter.wait(timeout: timeout) {
-      return result
-    }
-    // Remove the pending request so a late response is ignored.
+  /// A request nobody waits for any more: a late answer is ignored, and the
+  /// server can stop working on it.
+  private func withdraw(_ id: Int64) {
     stateLock.lock()
-    pending.removeValue(forKey: id)
+    let wasPending = pending.removeValue(forKey: id) != nil
     stateLock.unlock()
-    return .failure("LSP request '\(method)' timed out after \(Int(timeout))s")
+    if wasPending { notify(method: "$/cancelRequest", params: ["id": id]) }
   }
 
   @discardableResult
@@ -678,15 +777,14 @@ final class ServerProcess {
 
   /// Port of `did_change_with_changes`: incremental changes are forwarded
   /// only when non-empty and the server advertised incremental sync;
-  /// otherwise the full text is sent as a single change.
-  func didChangeWithChanges(
-    uri: String, version: Int32, fullText: String, changes: [ContentChange]
-  ) -> Bool {
+  /// otherwise the full text is sent as a single change (asked for only
+  /// then).
+  func didChange(uri: String, version: Int32, changes: [ContentChange], fullText: () -> String) -> Bool {
     let useIncremental = !changes.isEmpty && changeSyncKind == 2
     let contentChanges: [[String: Any]] =
       useIncremental
       ? changes.map { $0.toJSONObject() }
-      : [["text": fullText]]
+      : [["text": fullText()]]
     return notify(
       method: "textDocument/didChange",
       params: [
@@ -695,10 +793,17 @@ final class ServerProcess {
       ])
   }
 
+  /// From now on, nothing it sends reaches the app.
+  func retire() {
+    stateLock.lock()
+    retired = true
+    stateLock.unlock()
+  }
+
   /// Stop the process: close its input, SIGTERM, and SIGKILL if it's still
   /// there two seconds later.
   func terminate() {
-    try? stdinHandle.close()
+    closeInput()
     guard process.isRunning else { return }
     process.terminate()
     let pid = process.processIdentifier
@@ -707,23 +812,53 @@ final class ServerProcess {
     }
   }
 
-  /// Port of `LspClient::shutdown`: shutdown request (5s timeout), drain
-  /// pending requests, then the exit notification.
-  func shutdown() {
-    _ = request(method: "shutdown", params: NSNull())
-    stateLock.lock()
-    let drained = pending
-    pending.removeAll()
-    stateLock.unlock()
-    for (_, waiter) in drained {
-      waiter.complete(.failure("LSP server shutting down"))
+  /// Close its input after what's queued for it.
+  private func closeInput() {
+    writeQueue.async { [self] in
+      guard !inputClosed else { return }
+      inputClosed = true
+      try? stdinHandle.close()
     }
-    _ = notify(method: "exit", params: NSNull())
+  }
+
+  /// Port of `LspClient::shutdown`, without waiting for it: retire it, send
+  /// the shutdown request, and once it's answered (or not, within 5 s)
+  /// fail the requests still pending, send exit and close its input. A
+  /// server still running `exitGracePeriod` later is stopped (SIGTERM, then
+  /// SIGKILL). `exited` runs when the process is gone.
+  func shutdown(exited: (() -> Void)? = nil) {
+    stateLock.lock()
+    retired = true
+    let gone = self.exited
+    if let exited, !gone { exitWaiters.append(exited) }
+    stateLock.unlock()
+    if gone {
+      exited?()
+      return
+    }
+    let request = LSPRequest { [self] _ in
+      stateLock.lock()
+      let drained = pending
+      pending.removeAll()
+      stateLock.unlock()
+      for (_, waiter) in drained {
+        waiter.finish(.failure("LSP server shutting down"))
+      }
+      notify(method: "exit", params: NSNull())
+      closeInput()
+      DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.exitGracePeriod) { [self] in
+        terminate()
+      }
+    }
+    send(method: "shutdown", params: NSNull(), as: request)
+    request.expire(after: Self.requestTimeout(for: "shutdown"), method: "shutdown")
   }
 
   // MARK: Initialize handshake
 
-  private func initialize(initializationOptions: Any?) -> Result<Void, String> {
+  private func initialize(
+    initializationOptions: Any?, completion: @escaping (Result<Void, String>) -> Void
+  ) {
     var params: [String: Any] = [
       // lsp-types serializes processId unconditionally; the Rust client left
       // it at its None default.
@@ -739,14 +874,20 @@ final class ServerProcess {
       params["initializationOptions"] = initializationOptions
     }
 
-    let result: Any
-    switch request(method: "initialize", params: params) {
-    case .failure(let error):
-      return .failure(error)
-    case .success(let value):
-      result = value
+    let request = LSPRequest { [self] response in
+      switch response {
+      case .failure(let error):
+        completion(.failure(error))
+      case .success(let result):
+        completion(initialized(result))
+      }
     }
+    send(method: "initialize", params: params, as: request)
+    request.expire(after: Self.requestTimeout(for: "initialize"), method: "initialize")
+  }
 
+  /// The rest of the handshake, once the server answered `initialize`.
+  private func initialized(_ result: Any) -> Result<Void, String> {
     if let object = result as? [String: Any],
       let capabilities = object["capabilities"] as? [String: Any]
     {
@@ -754,6 +895,11 @@ final class ServerProcess {
       serverCapabilitiesStorage = capabilities
       changeSyncKindStorage = Self.textDocumentSyncKind(capabilities)
       stateLock.unlock()
+      // Positions here are UTF-16, the only encoding offered; a server that
+      // picks another anyway puts its columns off on non-ASCII lines.
+      if let encoding = capabilities["positionEncoding"] as? String, encoding != "utf-16" {
+        lspLog("LSP server '\(commandName)' chose position encoding '\(encoding)', not the offered utf-16")
+      }
     }
 
     guard notify(method: "initialized", params: [String: Any]()) else {
@@ -772,7 +918,7 @@ final class ServerProcess {
       return .failure("failed to send workspace/didChangeConfiguration")
     }
 
-    onEvent(.initialized(clientKey: clientKey, serverId: serverId))
+    emit(.initialized(clientKey: clientKey, serverId: serverId))
     return .success(())
   }
 
@@ -829,6 +975,8 @@ final class ServerProcess {
   static let clientCapabilities: [String: Any] = {
     let markupFormats = ["plaintext", "markdown"]
     return [
+      // Monaco's columns and the document copies count UTF-16 code units.
+      "general": ["positionEncodings": ["utf-16"]],
       "workspace": [
         "configuration": true,
         "workspaceFolders": true,
@@ -856,8 +1004,10 @@ final class ServerProcess {
             "snippetSupport": true,
             "documentationFormat": markupFormats,
             "insertReplaceSupport": true,
-          ]
-        ],
+          ],
+          // What `LSPCompletion.parse` fills in from a list's defaults.
+          "completionList": ["itemDefaults": ["editRange", "insertTextFormat"]],
+        ] as [String: Any],
         "hover": [
           "contentFormat": markupFormats
         ],

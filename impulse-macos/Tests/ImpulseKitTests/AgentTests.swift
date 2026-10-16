@@ -151,12 +151,116 @@
       machine.handle(.bell, at: at(2))
       let changed4 = machine.tick(at: at(100))
       #expect(changed4 == false)
-      #expect(machine.nextDeadline == nil)
+      #expect(machine.nextDeadline == at(301), "only a long silence ends a turn")
       #expect(machine.state == .working)
       machine.handle(.hook(.notification("Claude needs your permission to use Edit")), at: at(101))
       #expect(machine.state == .needsInput)
       machine.handle(.hook(.stopped), at: at(120))
       #expect(machine.state == .done)
+    }
+
+    @Test func aToolRunningAnswersItsOwnApproval() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.hook(.notification("Claude needs your permission to use Bash")), at: at(3))
+      #expect(machine.state == .needsInput)
+      // A parallel subagent's edit doesn't answer it.
+      let sibling = machine.handle(.hook(.usedTool("Edit")), at: at(4))
+      #expect(sibling == false)
+      #expect(machine.state == .needsInput)
+      // Approved with a number key, no Return: the command runs, and says so.
+      machine.handle(.keystroke, at: at(5))
+      #expect(machine.state == .needsInput)
+      machine.handle(.hook(.usedTool("Bash")), at: at(6))
+      #expect(machine.state == .working)
+      // A tool the hook doesn't name answers any approval.
+      machine.handle(.hook(.notification("Claude needs your permission to use Write")), at: at(7))
+      machine.handle(.hook(.usedTool(nil)), at: at(8))
+      #expect(machine.state == .working)
+
+      #expect(AgentStateMachine.requestedTool("Claude needs your permission to use Bash") == "Bash")
+      #expect(AgentStateMachine.requestedTool("Allow mcp__docs__read? It wants to use mcp__docs__read.") == "mcp__docs__read")
+      #expect(AgentStateMachine.requestedTool("Claude needs your input") == nil)
+    }
+
+    @Test func toolsAfterTheTurnChangeNothing() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.hook(.stopped), at: at(10))
+      // A background task's tool finishing after Stop.
+      let afterStop = machine.handle(.hook(.usedTool("Bash")), at: at(12))
+      #expect(afterStop == false)
+      #expect(machine.state == .done, "still unseen")
+      machine.handle(.acknowledged, at: at(13))
+      let afterSeen = machine.handle(.hook(.usedTool("Bash")), at: at(14))
+      #expect(afterSeen == false)
+      #expect(machine.state == .idle)
+      #expect(machine.nextDeadline == nil)
+    }
+
+    @Test func aDismissedQuestionEndsAfterAWhile() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.hook(.notification("Claude needs your permission to use Bash")), at: at(2))
+      // Esc on the prompt sends nothing; someone away is still asked for a
+      // good while.
+      let soon = machine.tick(at: at(600))
+      #expect(soon == false)
+      #expect(machine.state == .needsInput)
+      #expect(machine.nextDeadline == at(1802))
+      let later = machine.tick(at: at(1900))
+      #expect(later)
+      #expect(machine.state == .idle)
+    }
+
+    @Test func impulseStatusReportsAreKept() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.status(.working)), at: at(1))
+      #expect(machine.state == .working)
+      #expect(machine.nextDeadline == nil, "a silent wrapper keeps working")
+      let ticked = machine.tick(at: at(5000))
+      #expect(ticked == false)
+      machine.handle(.hook(.status(.needsInput)), at: at(5001))
+      #expect(machine.state == .needsInput)
+      #expect(machine.nextDeadline == nil)
+      machine.handle(.hook(.status(.done)), at: at(5002))
+      #expect(machine.state == .done)
+    }
+
+    @Test func idleRemindersDontFinishATurn() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.hook(.stopped), at: at(10))
+      machine.handle(.acknowledged, at: at(11))
+      #expect(machine.state == .idle)
+      // Claude Code's reminder a minute after the turn.
+      let changed = machine.handle(.hook(.notification("Claude is waiting for your input")), at: at(71))
+      #expect(changed == false)
+      #expect(machine.state == .idle)
+      // Mid-turn, a notification that asks nothing still ends the turn.
+      machine.handle(.hook(.promptSubmitted), at: at(80))
+      machine.handle(.hook(.notification("Claude is waiting for your input")), at: at(90))
+      #expect(machine.state == .done)
+    }
+
+    @Test func aLongSilenceEndsAnInterruptedHookTurn() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      stream(&machine, from: 1, to: 20)
+      // Esc mid-turn: no Stop comes, and the spinner stops.
+      let early = machine.tick(at: at(200))
+      #expect(early == false)
+      let late = machine.tick(at: at(330))
+      #expect(late)
+      #expect(machine.state == .idle, "interrupted, not finished: nothing to flag")
+
+      // Silence from before the turn started doesn't count.
+      var quiet = AgentStateMachine(now: t0)
+      stream(&quiet, from: 0, to: 1)
+      quiet.handle(.hook(.promptSubmitted), at: at(600))
+      let ended = quiet.tick(at: at(601))
+      #expect(ended == false)
+      #expect(quiet.nextDeadline == at(900))
     }
 
     @Test func exitIsFinal() {

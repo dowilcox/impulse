@@ -6,10 +6,14 @@ public enum FileIndex {
   /// repository this asks git (`ls-files`: tracked + untracked, excluding
   /// ignored), which is fast even for large trees; elsewhere it walks the
   /// directory with the same ignore rules as project search. At most `limit`.
-  public static func files(root: String, limit: Int = 200_000) -> [String] {
+  /// Unless `trusted`, git runs nothing the repository's configuration
+  /// names (`GitCLI.restrictedEnvironment`); when that can't be made sure
+  /// of, the folder is walked instead.
+  public static func files(root: String, limit: Int = 200_000, trusted: Bool = false) -> [String] {
     if GitClient.repoRoot(forPath: root) != nil,
+      let environment = trusted ? [String: String]() : GitCLI.restrictedEnvironment(root: root),
       case .success(let result) = GitCLI.run(
-        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], in: root,
+        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], in: root, environment: environment,
         timeout: 15)
     {
       var seen = Set<String>()

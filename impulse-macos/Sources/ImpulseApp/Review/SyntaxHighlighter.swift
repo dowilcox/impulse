@@ -56,17 +56,29 @@ final class SyntaxHighlighter: @unchecked Sendable {
 
   /// Token spans for each of `lines`, highlighted as one text (so strings and
   /// comments spanning lines come out right). nil without a grammar or when
-  /// highlight.js isn't available. Call off the main thread.
+  /// highlight.js isn't available. Call off the main thread; this waits for
+  /// the jobs queued before it, so the app uses `async` instead.
   func highlight(lines: [String], language: String) -> [[Span]]? {
-    queue.sync { () -> [[Span]]? in
-      guard let context = loadContext() else { return nil }
-      let code = lines.joined(separator: "\n")
-      guard let function = context.objectForKeyedSubscript("__impulseHighlight"),
-        let html = function.call(withArguments: [code, language])?.toString(),
-        html != "undefined"
-      else { return nil }
-      return Self.parse(html: html, lineCount: lines.count)
-    }
+    queue.sync { highlightNow(lines: lines, language: language) }
+  }
+
+  /// Run `job` on the highlighter's own queue, after the jobs queued before
+  /// it: JavaScriptCore stays off the main thread, and no thread is held
+  /// waiting for its turn. The job highlights with `highlightNow`.
+  func async(_ job: @escaping (SyntaxHighlighter) -> Void) {
+    queue.async { job(self) }
+  }
+
+  /// `highlight(lines:language:)` from inside a job given to `async`.
+  func highlightNow(lines: [String], language: String) -> [[Span]]? {
+    dispatchPrecondition(condition: .onQueue(queue))
+    guard let context = loadContext() else { return nil }
+    let code = lines.joined(separator: "\n")
+    guard let function = context.objectForKeyedSubscript("__impulseHighlight"),
+      let html = function.call(withArguments: [code, language])?.toString(),
+      html != "undefined"
+    else { return nil }
+    return Self.parse(html: html, lineCount: lines.count)
   }
 
   private func loadContext() -> JSContext? {

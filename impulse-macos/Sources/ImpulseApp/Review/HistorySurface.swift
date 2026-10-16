@@ -14,6 +14,20 @@ final class HistoryModel {
   var path: String?
   private(set) var entries: [LogEntry] = []
   private(set) var rows: [GraphRow] = []
+  /// Rows the list shows (all, or those matching the filter's text): kept
+  /// as entries load and the filter changes, not worked out per redraw.
+  private(set) var visible: [(entry: LogEntry, row: GraphRow?)] = []
+  /// The widest row's lanes, at most 8.
+  private(set) var maxLanes = 1
+  /// Each entry's text the filter matches, lowercased once.
+  @ObservationIgnored private var searchKeys: [SearchKey] = []
+  /// The filter text `visible` holds the matches of.
+  @ObservationIgnored private var visibleText = ""
+  /// The graph laid out so far, continued page by page.
+  @ObservationIgnored private var graph = CommitGraph.Layout()
+  /// What the loaded history starts from (`GitLog.tips`), read before its
+  /// first page: while they stay the same, so does the history.
+  @ObservationIgnored private var tips: [String]?
   private(set) var isLoading = false
   private(set) var reachedEnd = false
   var error: String?
@@ -21,6 +35,7 @@ final class HistoryModel {
   var filter = "" {
     didSet {
       query = HistoryQuery.parse(filter)
+      if Self.searchText(query) != visibleText { updateVisible() }
       scheduleQueryReload()
     }
   }
@@ -75,6 +90,10 @@ final class HistoryModel {
   /// A page of history: (skip, limit).
   /// Reads a page (off the main thread) for a request taken on main.
   @ObservationIgnored var loader: ((Request, Int, Int) -> Result<[LogEntry], GitOperationError>)?
+  /// What a scope's history starts from, and every commit's decorations
+  /// (off the main thread).
+  @ObservationIgnored var tipsLoader: ((GitLog.Scope) -> [String]?)?
+  @ObservationIgnored var decorationsLoader: (() -> [String: [String]]?)?
 
   /// What the menus need: the checked-out branch, the remotes (to tell
   /// `origin/x` from a local `feature/x`) and where tags go.
@@ -91,19 +110,78 @@ final class HistoryModel {
     self.palette = palette
   }
 
-  /// Rows the list shows (all, or those matching the filter's text).
-  var visible: [(entry: LogEntry, row: GraphRow?)] {
-    let text = query.text.trimmingCharacters(in: .whitespaces).lowercased()
+  /// What the filter's text matches, lowercased once per entry.
+  private struct SearchKey {
+    let subject: String
+    let author: String
+    let refs: [String]
+
+    init(_ entry: LogEntry) {
+      subject = entry.subject.lowercased()
+      author = entry.author.lowercased()
+      refs = entry.refs.map { $0.lowercased() }
+    }
+
+    func matches(_ text: String, sha: String) -> Bool {
+      subject.contains(text) || author.contains(text) || sha.hasPrefix(text) || refs.contains { $0.contains(text) }
+    }
+  }
+
+  private static func searchText(_ query: HistoryQuery) -> String {
+    query.text.trimmingCharacters(in: .whitespaces).lowercased()
+  }
+
+  /// The visible rows among `entries`, `rows` and `keys` (parallel).
+  private static func visibleRows(
+    _ entries: ArraySlice<LogEntry>, _ rows: ArraySlice<GraphRow>, _ keys: ArraySlice<SearchKey>, text: String
+  ) -> [(entry: LogEntry, row: GraphRow?)] {
     guard !text.isEmpty else {
       return zip(entries, rows).map { ($0, Optional($1)) }
     }
-    return entries.filter {
-      $0.subject.lowercased().contains(text) || $0.author.lowercased().contains(text)
-        || $0.sha.hasPrefix(text) || $0.refs.contains { $0.lowercased().contains(text) }
-    }.map { ($0, nil) }
+    return zip(entries, keys).filter { $1.matches(text, sha: $0.sha) }.map { ($0.0, nil) }
   }
 
-  var maxLanes: Int { min(rows.map(\.width).max() ?? 1, 8) }
+  private func updateVisible() {
+    visibleText = Self.searchText(query)
+    visible = Self.visibleRows(entries[...], rows[...], searchKeys[...], text: visibleText)
+  }
+
+  /// Show `history` from scratch, its graph laid out again.
+  private func replaceEntries(_ history: [LogEntry]) {
+    graph = CommitGraph.Layout()
+    entries = history
+    rows = graph.append(history.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
+    searchKeys = history.map(SearchKey.init)
+    maxLanes = min(rows.map(\.width).max() ?? 1, 8)
+    updateVisible()
+  }
+
+  /// Add the next page: only its rows are laid out and filtered.
+  private func appendEntries(_ page: [LogEntry]) {
+    let start = entries.count
+    let pageRows = graph.append(page.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
+    entries += page
+    rows += pageRows
+    searchKeys += page.map(SearchKey.init)
+    maxLanes = min(max(maxLanes, pageRows.map(\.width).max() ?? 1), 8)
+    visible += Self.visibleRows(entries[start...], rows[start...], searchKeys[start...], text: visibleText)
+  }
+
+  /// Put the refs from `decorations` on the loaded commits.
+  private func applyDecorations(_ decorations: [String: [String]]) {
+    var updated = entries
+    var changed = false
+    for index in updated.indices {
+      let refs = decorations[updated[index].sha] ?? []
+      guard refs != updated[index].refs else { continue }
+      updated[index].refs = refs
+      searchKeys[index] = SearchKey(updated[index])
+      changed = true
+    }
+    guard changed else { return }
+    entries = updated
+    updateVisible()
+  }
 
   /// The graph only makes sense for unfiltered history.
   var showsGraph: Bool { query == HistoryQuery() }
@@ -127,31 +205,47 @@ final class HistoryModel {
   }
 
   func reload() {
-    entries = []
-    rows = []
+    replaceEntries([])
     reachedEnd = false
+    tips = nil
     applied = Request(scope: scope, path: path, query: query.server)
     loadMore()
     loadSurroundings()
   }
 
-  /// Re-read the commits already loaded (a ref moved: a new tag, a fetch,
-  /// a commit) keeping the selection and scroll position.
+  /// A ref moved (a new tag, a fetch, a commit): bring the loaded commits
+  /// up to date, keeping the selection and scroll position. When the
+  /// history still starts from the same commits, only the decorations are
+  /// read again; otherwise every loaded commit is.
   func refreshInPlace() {
     guard !isLoading, let loader else { return }
     isLoading = true
     let count = max(entries.count, HistorySurface.pageSize)
     let request = applied
+    let loadedTips = tips
+    let tipsLoader = tipsLoader
+    let decorationsLoader = decorationsLoader
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let result = loader(request, 0, count)
+      // Read before the history, so a ref moving meanwhile shows next time.
+      let current = tipsLoader?(request.scope)
+      let decorations = current != nil && current == loadedTips ? decorationsLoader?() : nil
+      let result = decorations == nil ? loader(request, 0, count) : nil
       DispatchQueue.main.async {
         guard let self else { return }
         self.isLoading = false
         guard request == self.applied else { return self.reload() }
-        if case .success(let page) = result, page != self.entries {
-          self.entries = page
-          self.reachedEnd = page.count < count
-          self.rows = CommitGraph.layout(page.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
+        if let decorations {
+          self.tips = current
+          self.applyDecorations(decorations)
+        } else if case .success(let page) = result {
+          self.tips = current
+          if page != self.entries {
+            self.replaceEntries(page)
+            self.reachedEnd = page.count < count
+          }
+        } else {
+          // Not read: the next refresh reads everything again.
+          self.tips = nil
         }
       }
     }
@@ -207,7 +301,10 @@ final class HistoryModel {
     isLoading = true
     let skip = entries.count
     let request = applied
+    let tipsLoader = tipsLoader
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      // Read before the first page, so a ref moving meanwhile shows next time.
+      let tips = skip == 0 ? tipsLoader?(request.scope) : nil
       let result = loader(request, skip, HistorySurface.pageSize)
       DispatchQueue.main.async {
         guard let self else { return }
@@ -221,8 +318,8 @@ final class HistoryModel {
         case .success(let page):
           self.error = nil
           self.reachedEnd = page.count < HistorySurface.pageSize
-          self.entries += page
-          self.rows = CommitGraph.layout(self.entries.map { GraphCommit(sha: $0.sha, parents: $0.parents) })
+          if skip == 0 { self.tips = tips }
+          self.appendEntries(page)
           if let pending = self.pendingReveal {
             if let match = self.entries.first(where: { $0.sha.hasPrefix(pending) || pending.hasPrefix($0.sha) }) {
               self.pendingReveal = nil
@@ -310,6 +407,8 @@ final class HistorySurface: NSView {
     }
     model.onAction = { [weak self] action, entry in self?.perform(action, on: entry) }
     model.onShowCommit = { [weak self] sha in self?.review.show(scope: .commit(sha: sha), focusPath: path) }
+    model.tipsLoader = { GitLog.tips(root: root, scope: $0) }
+    model.decorationsLoader = { try? GitLog.decorations(root: root).get() }
     model.divergenceLoader = { GitLog.divergence(root: root) }
     model.forkPointLoader = { GitLog.forkPoint(root: root) }
     model.userNameLoader = { GitLog.userName(root: root) }
@@ -325,10 +424,23 @@ final class HistorySurface: NSView {
 
   private var refsListener: UUID?
   private var refreshWork: DispatchWorkItem?
+  /// Refs moved while History was behind another tab.
+  private var refreshWhenShown = false
 
   private func scheduleRefresh() {
     refreshWork?.cancel()
-    let work = DispatchWorkItem { [weak self] in self?.model.refreshInPlace() }
+    guard window != nil else {
+      refreshWhenShown = true
+      return
+    }
+    let work = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      if self.window == nil {
+        self.refreshWhenShown = true
+      } else {
+        self.model.refreshInPlace()
+      }
+    }
     refreshWork = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
   }
@@ -437,7 +549,12 @@ final class HistorySurface: NSView {
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    guard window != nil, focusWhenInWindow else { return }
+    guard window != nil else { return }
+    if refreshWhenShown {
+      refreshWhenShown = false
+      model.refreshInPlace()
+    }
+    guard focusWhenInWindow else { return }
     focusWhenInWindow = false
     // After the hosting views are laid out in the window.
     DispatchQueue.main.async { [weak self] in self?.focus() }

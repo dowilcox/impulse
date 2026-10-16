@@ -7,19 +7,23 @@ import Foundation
 import ImpulseKit
 
 public enum ManagedServers {
+  /// The npm packages, each held to one major version (for 0.x, one
+  /// minor) so a reinstall never moves to one that works differently.
+  /// TypeScript stays on 6: 7 is the native compiler, without the tsserver
+  /// that typescript-language-server runs.
   public static let recommendedWebLspPackages: [String] = [
-    "typescript",
-    "typescript-language-server",
-    "intelephense",
-    "vscode-langservers-extracted",
-    "@tailwindcss/language-server",
-    "@vue/language-server",
-    "svelte-language-server",
-    "graphql-language-service-cli",
-    "emmet-ls",
-    "yaml-language-server",
-    "dockerfile-language-server-nodejs",
-    "bash-language-server",
+    "typescript@^6.0.2",
+    "typescript-language-server@^6.0.2",
+    "intelephense@^1.18.5",
+    "vscode-langservers-extracted@^4.10.0",
+    "@tailwindcss/language-server@^0.16.0",
+    "@vue/language-server@^3.3.13",
+    "svelte-language-server@^0.18.4",
+    "graphql-language-service-cli@^3.5.0",
+    "emmet-ls@^0.4.2",
+    "yaml-language-server@^2.0.0",
+    "dockerfile-language-server-nodejs@^0.15.0",
+    "bash-language-server@^5.8.1",
   ]
 
   public static let managedNpmServerCommands: [String] = [
@@ -205,8 +209,11 @@ public enum ManagedServers {
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    // No install scripts: none of these servers needs one (the only ones in
+    // their dependencies print a banner or a version warning), and skipping
+    // them means installing runs no package's code.
     process.arguments =
-      ["npm", "install", "--prefix", root, "--no-audit", "--no-fund"]
+      ["npm", "install", "--prefix", root, "--no-audit", "--no-fund", "--ignore-scripts"]
       + recommendedWebLspPackages
     process.environment = toolEnvironment()
     do {

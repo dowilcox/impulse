@@ -428,7 +428,7 @@ extension MainWindowController {
       let tip = GitClient.resolveCommit(repoPath: main, revision: "refs/heads/\(branch)")
       let merged =
         !branch.isEmpty && base != nil && tip != nil && tip != record?.start
-        && GitOperations.isMerged("refs/heads/\(branch)", into: baseRef, root: main)
+        && GitOperations.isMerged("refs/heads/\(branch)", into: baseRef, root: main, trusted: Trust.shared.isTrusted(main))
       let published = remote.map { GitOperations.resolveRef("refs/remotes/\($0)/\(branch)", root: main) != nil } ?? false
       DispatchQueue.main.async {
         model.mainRoot = main
@@ -568,16 +568,19 @@ extension MainWindowController {
   }
 
   private func finishCheckStep(_ model: TaskFinishModel, proceed: @escaping Proceed, stop: @escaping Stop) {
-    guard let script = model.checkScript else {
-      return proceed(.skipped("No check script. Set one up so Finish can tell the merged code still works."))
-    }
+    let noScript = "No check script. Set one up so Finish can tell the merged code still works."
+    guard model.checkScript != nil else { return proceed(.skipped(noScript)) }
     model.statuses[.check] = .running("Waiting for the project settings to be trusted…")
     trustProjectConfig(root: model.root) { [weak self, weak model] config in
       guard let self, let model else { return }
-      guard config != nil else {
+      guard let config else {
         model.remedy = .skipCheck
         return stop("The project settings weren't trusted, so the check didn't run.", .check, .skipCheck)
       }
+      // The trusted file's script, not the one read when the tab opened:
+      // the file can change in between.
+      model.checkScript = config.checkScript
+      guard let script = config.checkScript else { return proceed(.skipped(noScript)) }
       guard let id = model.workspaceID, self.tabManager.workspace(id) != nil else {
         return stop("The task's workspace was closed.", .check, nil)
       }
@@ -722,55 +725,100 @@ extension MainWindowController {
     guard let id = model.workspaceID, tabManager.workspace(id) != nil else {
       return stop("The task's workspace was closed.", .cleanUp, nil)
     }
+    let root = model.root
+    let trusted = Trust.shared.isTrusted(root)
+    model.statuses[.cleanUp] = .running("Looking at what's left in \(model.name)…")
+    // What removing the folder would delete for good: a repository of its
+    // own stops it; ignored files (.env, node_modules) are asked about, as
+    // Archive Task… does.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self, weak model] in
+      let nested = GitOperations.nestedRepositories(root: root, trusted: trusted)
+      let ignored = GitOperations.ignoredEntryList(root: root, trusted: trusted)
+      DispatchQueue.main.async {
+        guard let self, let model else { return }
+        // One that couldn't be checked counts as there.
+        guard let nested, nested.isEmpty else {
+          return stop("\(Self.nestedRepositoryMessage(nested)) Then Continue.", .cleanUp, nil)
+        }
+        guard let warning = Self.ignoredFilesWarning(ignored, undo: "Restore Task") else {
+          return self.archiveFinishedTask(model, stop: stop)
+        }
+        self.gitConfirm(
+          title: "Archive \(model.name)?",
+          message: "The task's folder is removed. \(warning)",
+          confirmTitle: "Archive", destructive: true
+        ) { [weak self, weak model] confirmed in
+          guard let self, let model else { return }
+          guard confirmed else {
+            return stop("The task wasn't archived, so its ignored files are still there. Continue when you're ready.", .cleanUp, nil)
+          }
+          self.archiveFinishedTask(model, stop: stop)
+        }
+      }
+    }
+  }
+
+  /// Close the task's workspace, archive the task, and delete its branch
+  /// (checked again first: it has to be merged still).
+  private func archiveFinishedTask(_ model: TaskFinishModel, stop: @escaping Stop) {
+    guard let id = model.workspaceID, tabManager.workspace(id) != nil else {
+      return stop("The task's workspace was closed.", .cleanUp, nil)
+    }
     let (root, main, branch, remote, target) = (model.root, model.mainRoot, model.branch, model.remote, model.baseRef)
     let deleteBranch = model.deletesBranch
     let deleteRemote = deleteBranch && model.deletesRemoteBranch && model.isPublished
-    let landed = model.landedCommit.map { " as \($0.prefix(7))" } ?? ""
-    let script = alreadyTrustedProjectConfig(root: root)?.archiveScript
-    model.statuses[.cleanUp] = .running("Closing the task's workspace…")
-    // Closing asks about unsaved files and running processes; the Finish
-    // tab goes with the workspace, so the outcome is a toast.
-    requestCloseWorkspace(
-      id, recordForUndo: false,
-      then: { [weak self] in
-        DispatchQueue.global(qos: .userInitiated).async {
-          let removed = Self.removeTask(root: root, branch: branch, dirty: false, archiveScript: script)
-          var result = removed.result
-          var deleted = false
-          if case .success(var task) = result, deleteBranch,
-            let commit = GitClient.resolveCommit(repoPath: main, revision: "refs/heads/\(branch)"),
-            case .success = GitOperations.deleteBranch(branch, force: true, root: main)
-          {
-            task.deletedBranchCommit = commit
-            deleted = true
-            if deleteRemote, let remote { _ = GitOperations.deleteRemoteBranch(branch, remote: remote, root: main) }
-            result = .success(task)
-          }
-          DispatchQueue.main.async {
-            guard let self else { return }
-            if removed.scriptFailed {
-              self.toasts.show(Toast(kind: .warning, message: "The archive script failed; archived anyway."))
+    let landedCommit = model.landedCommit
+    let landed = landedCommit.map { " as \($0.prefix(7))" } ?? ""
+    confirmArchiveScript(alreadyTrustedProjectConfig(root: root)?.archiveScript, root: root, branch: branch) {
+      [weak self, weak model] script in
+      guard let self, let model else { return }
+      model.statuses[.cleanUp] = .running("Closing the task's workspace…")
+      // Closing asks about unsaved files and running processes; the Finish
+      // tab goes with the workspace, so the outcome is a toast.
+      self.requestCloseWorkspace(
+        id, recordForUndo: false,
+        then: { [weak self] in
+          DispatchQueue.global(qos: .userInitiated).async {
+            let removed = Self.removeTask(root: root, branch: branch, dirty: false, archiveScript: script)
+            var result = removed.result
+            var kept: [String] = []
+            if case .success(var task) = result, deleteBranch {
+              let cleanup = TaskLanding.deleteLandedBranch(
+                branch, mergedInto: [landedCommit, target].compactMap { $0 }, remote: deleteRemote ? remote : nil,
+                root: main, trusted: Trust.shared.isTrusted(main))
+              task.deletedBranchCommit = cleanup.deletedCommit
+              kept = cleanup.kept
+              result = .success(task)
             }
-            switch result {
-            case .failure(let error):
-              self.presentGitError(error, title: "Couldn't archive \(branch)")
-            case .success(let task):
-              self.toasts.dismiss(tag: "clean-up:\(TaskRegistry.canonical(root))")
-              let what = deleted ? "The task is archived and its branch deleted." : "The task is archived; its branch is kept."
-              self.toasts.show(
-                Toast(
-                  kind: .success, message: "Finished \(branch): merged into \(target)\(landed).", detail: what,
-                  actionTitle: "Restore Task", action: { [weak self] in self?.restoreTasks([task]) }, lifetime: 15))
+            DispatchQueue.main.async {
+              guard let self else { return }
+              if removed.scriptFailed {
+                self.toasts.show(Toast(kind: .warning, message: "The archive script failed; archived anyway."))
+              }
+              switch result {
+              case .failure(let error):
+                self.presentGitError(error, title: "Couldn't archive \(branch)")
+              case .success(let task):
+                self.toasts.dismiss(tag: "clean-up:\(TaskRegistry.canonical(root))")
+                let what =
+                  task.deletedBranchCommit != nil
+                  ? "The task is archived and its branch deleted." : "The task is archived; its branch is kept."
+                self.toasts.show(
+                  Toast(
+                    kind: kept.isEmpty ? .success : .warning, message: "Finished \(branch): merged into \(target)\(landed).",
+                    detail: ([what] + kept).joined(separator: " "),
+                    actionTitle: "Restore Task", action: { [weak self] in self?.restoreTasks([task]) }, lifetime: 15))
+              }
             }
           }
-        }
-      },
-      cancelled: { [weak model] in
-        guard let model else { return }
-        model.statuses[.cleanUp] = .failed("The workspace stayed open, so the task wasn't archived. Continue when you're ready.")
-        model.resumeAt = .cleanUp
-        model.isRunning = false
-      })
+        },
+        cancelled: { [weak model] in
+          guard let model else { return }
+          model.statuses[.cleanUp] = .failed("The workspace stayed open, so the task wasn't archived. Continue when you're ready.")
+          model.resumeAt = .cleanUp
+          model.isRunning = false
+        })
+    }
   }
 
   private func applyFinishRemedy(_ remedy: TaskFinishModel.Remedy, model: TaskFinishModel) {

@@ -10,11 +10,12 @@ extension MainWindowController {
 
   /// Closes a whole tab (every pane), after confirming unsaved editors and
   /// running processes. Used by the tab strip's close button and menus.
-  func requestCloseTab(index: Int) {
+  /// `pinConfirmed`: the user already said a pinned tab may close.
+  func requestCloseTab(index: Int, pinConfirmed: Bool = false) {
     guard index >= 0, index < tabManager.tabs.count else { return }
 
     // Confirm before closing pinned tabs
-    if tabManager.pinnedTabs[index] {
+    if tabManager.pinnedTabs[index], !pinConfirmed {
       let alert = NSAlert()
       alert.messageText = "Pinned Tab"
       alert.informativeText = "This tab is pinned. Close anyway?"
@@ -29,9 +30,9 @@ extension MainWindowController {
         guard let self, response == .alertFirstButtonReturn,
           let current = self.tabManager.tabs.firstIndex(where: { $0.view === tabView })
         else { return }
-        // Unpin, then re-enter requestCloseTab for unsaved-changes handling
-        self.tabManager.unpin(index: current)
-        self.requestCloseTab(index: current)
+        // On to unsaved changes and running processes; the tab stays
+        // pinned unless it really closes.
+        self.requestCloseTab(index: current, pinConfirmed: true)
       }
       return
     }
@@ -45,6 +46,7 @@ extension MainWindowController {
         let currentIndex = self.tabManager.tabs.firstIndex(where: { $0.view === tabView })
       else { return }
       for surface in surfaces { self.willCloseSurface(surface) }
+      if pinConfirmed { self.tabManager.unpin(index: currentIndex) }
       self.tabManager.closeTab(index: currentIndex)
     }
   }

@@ -153,6 +153,156 @@
     }
   }
 
+  /// The Rust original, a change at a time over UTF-8 bytes: the reference
+  /// `DocumentText` must agree with.
+  private func referenceApply(_ content: String, _ changes: [ContentChange]) -> String {
+    var content = content
+    for change in changes {
+      guard let range = change.range else {
+        content = change.text
+        continue
+      }
+      let start = DocumentCache.positionToByteOffset(
+        content: content, line: range.start.line, character: range.start.character)
+      let end = DocumentCache.positionToByteOffset(
+        content: content, line: range.end.line, character: range.end.character)
+      var bytes = Array(content.utf8)
+      guard start <= end, end <= bytes.count else { continue }
+      bytes.replaceSubrange(start..<end, with: Array(change.text.utf8))
+      content = String(decoding: bytes, as: UTF8.self)
+    }
+    return content
+  }
+
+  /// splitmix64: the same "random" cases every run.
+  private struct SeededGenerator: RandomNumberGenerator {
+    var state: UInt64
+    mutating func next() -> UInt64 {
+      state &+= 0x9E37_79B9_7F4A_7C15
+      var z = state
+      z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+      z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+      return z ^ (z >> 31)
+    }
+  }
+
+  struct DocumentTextTests {
+    private let pieces = ["a", "b", "é", "😀", "中", " ", "\n", "\r\n"]
+
+    private func randomText(_ rng: inout SeededGenerator, length: Int) -> String {
+      (0..<length).map { _ in pieces.randomElement(using: &rng)! }.joined()
+    }
+
+    /// A position anywhere in `text`, or a little past a line's end or the
+    /// last line.
+    private func randomPosition(_ rng: inout SeededGenerator, in text: String) -> ContentChange.Position {
+      let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+      let line = Int.random(in: 0...(lines.count + 1), using: &rng)
+      let length = line < lines.count ? lines[line].utf16.count : 0
+      return ContentChange.Position(
+        line: UInt32(line), character: UInt32(Int.random(in: 0...(length + 2), using: &rng)))
+    }
+
+    private func before(_ a: ContentChange.Position, _ b: ContentChange.Position) -> Bool {
+      a.line < b.line || (a.line == b.line && a.character < b.character)
+    }
+
+    @Test func multibyteEdits() {
+      var document = DocumentText("é😀x\n中文")
+      document.apply([change(0, 1, 0, 3, "ü")])
+      #expect(document.text == "éüx\n中文")
+      document.apply([change(1, 1, 1, 2, "😀😀")])
+      #expect(document.text == "éüx\n中😀😀")
+      // Inside a surrogate pair: from the pair's start.
+      document.apply([change(1, 2, 1, 3, "")])
+      #expect(document.text == "éüx\n中😀")
+    }
+
+    @Test func crlfEdits() {
+      var document = DocumentText("ab\r\ncd\r\nef")
+      document.apply([change(1, 0, 1, 2, "XY")])
+      #expect(document.text == "ab\r\nXY\r\nef")
+      // Past the end of a line: before its "\n" ("\r" is part of the line).
+      document.apply([change(0, 9, 0, 9, "!")])
+      #expect(document.text == "ab\r!\nXY\r\nef")
+      // Joining lines across a CRLF.
+      document.apply([change(1, 2, 2, 0, "")])
+      #expect(document.text == "ab\r!\nXYef")
+    }
+
+    @Test func editsAfterEditsUseTheMovedLines() {
+      // Each change shifts the lines after it; later changes are placed on
+      // the text as it is then.
+      var document = DocumentText("one\ntwo\nthree\nfour")
+      document.apply([change(0, 3, 0, 3, "\ninserted")])
+      document.apply([change(4, 0, 4, 4, "FOUR")])
+      document.apply([change(2, 0, 3, 0, "")])
+      #expect(document.text == "one\ninserted\nthree\nFOUR")
+    }
+
+    @Test func replaceAllInOneEvent() {
+      // Monaco lists them from the end of the document back.
+      let line = "let foo = foo + 1 // é😀\r\n"
+      let original = String(repeating: line, count: 3000)
+      var changes: [ContentChange] = []
+      for row in (0..<3000).reversed() {
+        changes.append(change(UInt32(row), 10, UInt32(row), 13, "barbaz"))
+        changes.append(change(UInt32(row), 4, UInt32(row), 7, "barbaz"))
+      }
+      var document = DocumentText(original)
+      document.apply(changes)
+      #expect(document.text == original.replacingOccurrences(of: "foo", with: "barbaz"))
+      // And the index after it still finds lines.
+      document.apply([change(2999, 0, 2999, 3, "var")])
+      #expect(document.text.hasSuffix("var barbaz = barbaz + 1 // é😀\r\n"))
+    }
+
+    @Test func multiCursorTypingInOneEvent() {
+      var document = DocumentText("a\nb\nc")
+      document.apply([change(2, 1, 2, 1, "!"), change(1, 1, 1, 1, "!"), change(0, 1, 0, 1, "!")])
+      #expect(document.text == "a!\nb!\nc!")
+    }
+
+    @Test func agreesWithApplyingOneByOne() {
+      var rng = SeededGenerator(state: 42)
+      for _ in 0..<300 {
+        let original = randomText(&rng, length: Int.random(in: 0...60, using: &rng))
+        var document = DocumentText(original)
+        var reference = original
+        // Several events in a row on one document: the line index carries
+        // over from one to the next.
+        for _ in 0..<4 {
+          let changes: [ContentChange]
+          if Bool.random(using: &rng) {
+            // Back to front without overlapping (the one-pass path).
+            let count = Int.random(in: 1...6, using: &rng)
+            let positions = (0..<(count * 2)).map { _ in randomPosition(&rng, in: reference) }
+              .sorted(by: before)
+            changes = stride(from: 0, to: positions.count, by: 2).map { index in
+              ContentChange(
+                range: ContentChange.Range(start: positions[index], end: positions[index + 1]), rangeLength: nil,
+                text: randomText(&rng, length: Int.random(in: 0...4, using: &rng)))
+            }.reversed()
+          } else {
+            // Anywhere, in any order (inverted ranges included).
+            changes = (0..<Int.random(in: 1...4, using: &rng)).map { _ in
+              ContentChange(
+                range: ContentChange.Range(
+                  start: randomPosition(&rng, in: reference), end: randomPosition(&rng, in: reference)),
+                rangeLength: nil, text: randomText(&rng, length: Int.random(in: 0...4, using: &rng)))
+            }
+          }
+          let before = reference
+          document.apply(changes)
+          reference = referenceApply(reference, changes)
+          #expect(
+            document.text == reference,
+            "\(before.debugDescription) + \(changes): \(document.text.debugDescription) ≠ \(reference.debugDescription)")
+        }
+      }
+    }
+  }
+
   struct ContentChangeParsingTests {
     @Test func parsesRangedAndFullChanges() {
       let json = """

@@ -15,7 +15,7 @@ func fail(_ message: String, code: Int32 = 1) -> Never {
   exit(code)
 }
 
-let request: ControlRequest
+var request: ControlRequest
 switch ControlProtocol.request(
   arguments: arguments, environment: environment,
   cwd: FileManager.default.currentDirectoryPath,
@@ -37,6 +37,49 @@ case .failure(let error):
 guard let socketPath = environment[ControlProtocol.socketKey] else {
   if isHook { exit(0) }
   fail("impulse: not running inside an Impulse terminal (IMPULSE_SOCKET isn't set)")
+}
+
+/// The contents of `path` in a new temporary file (same name), for the
+/// editor; up to its 10 MB limit.
+func temporaryCopy(of path: String) -> String {
+  guard let input = FileHandle(forReadingAtPath: path) else { fail("impulse open: couldn't read \(path)") }
+  let limit = 10 * 1024 * 1024
+  let data: Data
+  do {
+    data = try input.read(upToCount: limit + 1) ?? Data()
+  } catch {
+    fail("impulse open: couldn't read \(path)")
+  }
+  guard data.count <= limit else { fail("impulse open: \(path) holds more than 10 MB") }
+  var template = Array((NSTemporaryDirectory() + "impulse-open-XXXXXX").utf8CString)
+  let directory = template.withUnsafeMutableBufferPointer { buffer -> String? in
+    mkdtemp(buffer.baseAddress).map { String(cString: $0) }
+  }
+  guard let directory else { fail("impulse open: couldn't make a temporary file") }
+  let copy = (directory as NSString).appendingPathComponent((path as NSString).lastPathComponent)
+  guard FileManager.default.createFile(atPath: copy, contents: data) else {
+    fail("impulse open: couldn't make a temporary file")
+  }
+  return copy
+}
+
+// A pipe (`impulse open <(git show HEAD:x)`, fish's `psub`), a device, or
+// anything in /dev can only be read here: in the app, /dev/fd/63 would be
+// one of its own files, whatever this one is. What it holds opens from a
+// temporary file instead.
+if request.command == "open", let path = request.arguments["path"] {
+  var info = stat()
+  let type = stat(path, &info) == 0 ? info.st_mode & S_IFMT : S_IFREG
+  var resolved = path
+  if let real = realpath(path, nil) {
+    resolved = String(cString: real)
+    free(real)
+  }
+  let inDev = [path, resolved].contains { $0 == "/dev" || $0.hasPrefix("/dev/") }
+  if inDev || (type != S_IFREG && type != S_IFDIR) {
+    if request.wait { fail("impulse edit: \(path) can't be edited in place; impulse open shows a copy") }
+    request.arguments["path"] = temporaryCopy(of: path)
+  }
 }
 
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)

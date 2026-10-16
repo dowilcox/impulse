@@ -1,7 +1,6 @@
-// Port of the per-registry LSP document cache glue from impulse-ffi:
-// `apply_lsp_content_changes_to_string` and `lsp_position_to_byte_offset`.
-// LSP positions count UTF-16 code units within a line; offsets returned here
-// are UTF-8 byte offsets into the document.
+// The registry's copy of each open document, kept in step with the editor's
+// content changes (the Rust original was `apply_lsp_content_changes_to_string`
+// in impulse-ffi). LSP positions count UTF-16 code units within a line.
 
 import Foundation
 
@@ -94,34 +93,163 @@ public struct ContentChange: Equatable {
   }
 }
 
-public enum DocumentCache {
-  /// Apply changes in order, each to the text the previous one produced (the
-  /// LSP's own semantics, and how Monaco orders an edit's changes: from the
-  /// end of the document backwards). The Rust original applied them in
-  /// reverse, which turned multi-cursor edits into the wrong text. A change
-  /// without a range replaces the whole content; a ranged change replaces
-  /// the UTF-8 byte span when `start <= end` and `end` is within bounds.
-  public static func applyContentChanges(to content: inout String, changes: [ContentChange]) {
-    for change in changes {
-      guard let range = change.range else {
-        content = change.text
-        continue
-      }
-      let start = positionToByteOffset(
-        content: content, line: range.start.line, character: range.start.character)
-      let end = positionToByteOffset(
-        content: content, line: range.end.line, character: range.end.character)
-      let bytes = Array(content.utf8)
-      if start <= end && end <= bytes.count {
-        var newBytes = Array(bytes[0..<start])
-        newBytes.append(contentsOf: Array(change.text.utf8))
-        newBytes.append(contentsOf: bytes[end...])
-        content = String(decoding: newBytes, as: UTF8.self)
-      }
-    }
+/// A document's text as UTF-16 code units (LSP's default position encoding,
+/// and Monaco's), with where each line starts indexed only as far as a
+/// position has needed. A change costs its own size plus moving the text
+/// after it; the index from the change on is worked out again when a later
+/// position asks for it. Lines end at "\n" ("\r" is part of the line, as in
+/// the Rust original).
+public struct DocumentText {
+  private(set) var units: [UInt16]
+  /// Where each line starts, for the lines before `scanned` (every "\n"
+  /// before it is counted).
+  private var lineStarts: [Int] = [0]
+  private var scanned = 0
+
+  public init(_ text: String) {
+    units = Array(text.utf16)
   }
 
-  /// Port of `lsp_position_to_byte_offset`. Iterates Unicode scalars (the
+  public var text: String { String(decoding: units, as: UTF16.self) }
+
+  /// Apply changes in order, each to the text the previous one produced (the
+  /// LSP's own semantics, and how Monaco orders an edit's changes: from the
+  /// end of the document backwards). A change without a range replaces the
+  /// whole text; a ranged one is skipped when its start is after its end.
+  /// Changes that run back to front without overlapping (multi-cursor
+  /// typing, Replace All) are applied in one pass over the text.
+  public mutating func apply(_ changes: [ContentChange]) {
+    var ranged = changes[...]
+    if let last = changes.lastIndex(where: { $0.range == nil }) {
+      self = DocumentText(changes[last].text)
+      ranged = changes[(last + 1)...]
+    }
+    if ranged.count > 1, Self.runBackwards(ranged), applyInOnePass(ranged) { return }
+    for change in ranged { applyOne(change) }
+  }
+
+  /// The UTF-16 offset of an LSP position. Past the end of its line clamps
+  /// to the line's end (before its "\n"), past the last line to the end of
+  /// the text, and inside a surrogate pair to the pair's start.
+  mutating func offset(of position: ContentChange.Position) -> Int {
+    place(position).offset
+  }
+
+  /// `offset(of:)`, and whether the position was a place in the text (not
+  /// clamped to a line's end or the text's, or to a surrogate pair's start).
+  private mutating func place(_ position: ContentChange.Position) -> (offset: Int, exact: Bool) {
+    let line = Int(position.line)
+    while lineStarts.count <= line, scanned < units.count {
+      if units[scanned] == 0x0A { lineStarts.append(scanned + 1) }
+      scanned += 1
+    }
+    guard line < lineStarts.count else { return (units.count, false) }
+    let start = lineStarts[line]
+    let wanted = start + Int(position.character)
+    var offset: Int
+    if line + 1 < lineStarts.count {
+      offset = min(wanted, lineStarts[line + 1] - 1)
+    } else {
+      let limit = min(units.count, wanted)
+      offset = start
+      while offset < limit, units[offset] != 0x0A { offset += 1 }
+    }
+    var exact = offset == wanted
+    if offset > start, offset < units.count, UTF16.isTrailSurrogate(units[offset]),
+      UTF16.isLeadSurrogate(units[offset - 1])
+    {
+      offset -= 1
+      exact = false
+    }
+    return (offset, exact)
+  }
+
+  private mutating func applyOne(_ change: ContentChange) {
+    guard let range = change.range else {
+      self = DocumentText(change.text)
+      return
+    }
+    let start = offset(of: range.start)
+    let end = offset(of: range.end)
+    guard start <= end else { return }
+    units.replaceSubrange(start..<end, with: change.text.utf16)
+    forgetLines(after: start)
+  }
+
+  /// Each change ends at or before the start of the one listed before it,
+  /// so the text before it is as it was: its offsets can all be worked out
+  /// first, and the new text built front to back in one go. Only when every
+  /// position is a place in the text, though (Monaco's always are): a
+  /// change applied before could move what a clamped one lands on. False,
+  /// and nothing done, otherwise.
+  private mutating func applyInOnePass(_ changes: ArraySlice<ContentChange>) -> Bool {
+    var spans: [(start: Int, end: Int, text: String)] = []
+    spans.reserveCapacity(changes.count)
+    var inserted = 0
+    for change in changes {
+      guard let range = change.range else { continue }
+      let start = place(range.start)
+      let end = place(range.end)
+      guard start.exact, end.exact else { return false }
+      spans.append((start.offset, end.offset, change.text))
+      inserted += change.text.utf16.count
+    }
+    guard let first = spans.last else { return true }
+    var result: [UInt16] = []
+    result.reserveCapacity(units.count + inserted)
+    var cursor = 0
+    for span in spans.reversed() {
+      result.append(contentsOf: units[cursor..<span.start])
+      result.append(contentsOf: span.text.utf16)
+      cursor = span.end
+    }
+    result.append(contentsOf: units[cursor...])
+    units = result
+    forgetLines(after: first.start)
+    return true
+  }
+
+  /// Lines starting after `offset` may have moved: they're indexed again
+  /// when a position needs them.
+  private mutating func forgetLines(after offset: Int) {
+    var low = 0
+    var high = lineStarts.count
+    while low < high {
+      let middle = (low + high) / 2
+      if lineStarts[middle] <= offset { low = middle + 1 } else { high = middle }
+    }
+    lineStarts.removeSubrange(low...)
+    scanned = min(scanned, offset)
+  }
+
+  /// Every change has a range from start to end, and ends at or before the
+  /// start of the change listed before it.
+  private static func runBackwards(_ changes: ArraySlice<ContentChange>) -> Bool {
+    func before(_ a: ContentChange.Position, _ b: ContentChange.Position) -> Bool {
+      a.line < b.line || (a.line == b.line && a.character < b.character)
+    }
+    var previousStart: ContentChange.Position?
+    for change in changes {
+      guard let range = change.range, !before(range.end, range.start) else { return false }
+      if let previousStart, before(previousStart, range.end) { return false }
+      previousStart = range.start
+    }
+    return true
+  }
+}
+
+public enum DocumentCache {
+  /// `changes` applied to `content` (see `DocumentText.apply`). The Rust
+  /// original applied them in reverse, which turned multi-cursor edits into
+  /// the wrong text.
+  public static func applyContentChanges(to content: inout String, changes: [ContentChange]) {
+    var document = DocumentText(content)
+    document.apply(changes)
+    content = document.text
+  }
+
+  /// Port of `lsp_position_to_byte_offset` (the documents themselves use
+  /// `DocumentText`, which counts in UTF-16). Iterates Unicode scalars (the
   /// Rust code iterates `char`s), counting UTF-16 code units within the
   /// target line, and returns a UTF-8 byte offset. Positions past the end of
   /// a line clamp to the line end; lines past the end of the document clamp

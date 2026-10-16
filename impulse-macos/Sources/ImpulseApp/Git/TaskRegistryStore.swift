@@ -8,12 +8,15 @@ import ImpulseKit
 enum TaskRegistryStore {
   /// The registry of the repository `root` is in, brought in line with its
   /// worktrees first (tasks removed by hand dropped, older tasks in
-  /// `<repo>.worktrees/` adopted). Nil outside a repository.
+  /// `<repo>.worktrees/` adopted). Nil outside a repository. When git can't
+  /// list the worktrees, the registry is left as it is: an empty list would
+  /// drop every task.
   static func registry(root: String) -> TaskRegistry? {
     guard let common = GitClient.commonGitDirectory(forPath: root) else { return nil }
     let main = MainWindowController.mainCheckoutRoot(of: root)
-    let worktrees = GitOperations.worktrees(root: main).filter { !$0.isBare }.map { ($0.path, $0.branch) }
     let registry = TaskRegistry.load(commonGitDirectory: common)
+    guard let listed = GitOperations.worktreeList(root: main) else { return registry }
+    let worktrees = listed.filter { !$0.isBare }.map { ($0.path, $0.branch) }
     var reconciled = registry
     guard reconciled.reconcile(worktrees: worktrees, repoRoot: main) else { return registry }
     return (try? TaskRegistry.update(commonGitDirectory: common) { stored in
@@ -31,9 +34,11 @@ enum TaskRegistryStore {
   /// accepts (its ports free). `base` is what the New Task sheet's From
   /// held: `origin/main` is split into the remote and its branch, anything
   /// else is kept as typed (empty: the main checkout's branch).
+  /// `fromRemote`: the task is a remote branch's checkout.
   @discardableResult
   static func recordCreated(
-    path: String, branch: String, base: String, root: String, available: @escaping (Int) -> Bool = { _ in true }
+    path: String, branch: String, base: String, root: String, fromRemote: Bool = false,
+    available: @escaping (Int) -> Bool = { _ in true }
   ) -> TaskRecord? {
     guard let common = GitClient.commonGitDirectory(forPath: root) else { return nil }
     let main = MainWindowController.mainCheckoutRoot(of: root)
@@ -48,16 +53,18 @@ enum TaskRegistryStore {
     return try? TaskRegistry.update(commonGitDirectory: common) { registry in
       let record = TaskRecord(
         path: path, branch: branch, base: baseBranch, remote: remote, slot: registry.nextSlot(available: available),
-        start: GitClient.resolveCommit(repoPath: path, revision: "HEAD"))
+        start: GitClient.resolveCommit(repoPath: path, revision: "HEAD"), fromRemote: fromRemote ? true : nil)
       registry.add(record)
       return record
     }
   }
 
-  /// Whether every port of `slot` is free on this Mac.
+  /// Whether every port of `slot` is free on this Mac (false when one is
+  /// past 65535).
   static func portsAreFree(_ config: ProjectConfig?, slot: Int) -> Bool {
     guard let config, !config.ports.isEmpty else { return true }
-    return TaskEnvironment.ports(config.ports, slot: slot, offset: config.portOffset).values.allSatisfy(PortProbe.isFree)
+    guard let ports = TaskEnvironment.ports(config.ports, slot: slot, offset: config.portOffset) else { return false }
+    return ports.values.allSatisfy(PortProbe.isFree)
   }
 
   /// Who a terminal in `directory` belongs to, for its environment

@@ -23,7 +23,7 @@ struct TaskActivity {
     guard let record = TaskRegistryStore.registry(root: root)?.record(forBranch: branch),
       let commit = GitClient.resolveCommit(repoPath: root, revision: "refs/heads/\(branch)")
     else { return nil }
-    let uncommitted = GitClient.snapshot(forPath: record.path)?.changedFileCount ?? 0
+    let uncommitted = GitClient.snapshot(forPath: record.path, lineCounts: false)?.changedFileCount ?? 0
     return TaskActivity(
       record: record, commit: commit, uncommitted: uncommitted,
       lastCommit: GitOperations.commitDate(commit, root: root))

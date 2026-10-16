@@ -1,4 +1,5 @@
 import Foundation
+import ImpulseKit
 import os.log
 
 // MARK: - Sub-Types
@@ -103,9 +104,14 @@ struct CustomKeybinding: Codable {
         args = try c.decodeIfPresent([String].self, forKey: .args) ?? []
     }
 
-    /// What the shortcut runs: `command` as typed, then `args`, quoted.
+    /// What the shortcut runs: `command` as typed, then `args`, quoted for
+    /// the shell terminals run.
     var commandLine: String {
-        ([command.trimmingCharacters(in: .whitespaces)] + args.map(\.shellEscaped))
+        commandLine(for: LoginShell.defaultShellType())
+    }
+
+    func commandLine(for shell: ShellType) -> String {
+        ([command.trimmingCharacters(in: .whitespaces)] + args.map { $0.shellEscaped(for: shell) })
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
@@ -152,6 +158,9 @@ struct Settings: Codable {
     var editorInlayHints: String = "on"
     /// Merge the shell's own completions (fish) into the input bar's menu.
     var terminalShellCompletions: Bool = false
+    /// Which Option keys send Meta (Esc + the key) in the terminal: off,
+    /// left, right or both.
+    var terminalOptionAsMeta: String = "off"
     /// A single click in the file tree shows the file in a preview tab.
     var editorPreviewTabs: Bool = true
     /// Vim keybindings in the editor (monaco-vim).
@@ -281,6 +290,7 @@ struct Settings: Codable {
         case quickTerminalShortcut = "quick_terminal_shortcut"
         case editorInlayHints = "editor_inlay_hints"
         case terminalShellCompletions = "terminal_shell_completions"
+        case terminalOptionAsMeta = "terminal_option_as_meta"
         case editorPreviewTabs = "editor_preview_tabs"
         case editorVimMode = "editor_vim_mode"
         case scratchDirectory = "scratch_directory"
@@ -447,6 +457,7 @@ struct Settings: Codable {
         editorInlayHints = (try? c.decode(String.self, forKey: .editorInlayHints)) ?? d.editorInlayHints
         terminalShellCompletions =
             (try? c.decode(Bool.self, forKey: .terminalShellCompletions)) ?? d.terminalShellCompletions
+        terminalOptionAsMeta = (try? c.decode(String.self, forKey: .terminalOptionAsMeta)) ?? d.terminalOptionAsMeta
         editorPreviewTabs = (try? c.decode(Bool.self, forKey: .editorPreviewTabs)) ?? d.editorPreviewTabs
         editorVimMode = (try? c.decode(Bool.self, forKey: .editorVimMode)) ?? d.editorVimMode
         scratchDirectory = (try? c.decode(String.self, forKey: .scratchDirectory)) ?? d.scratchDirectory
@@ -606,6 +617,15 @@ struct Settings: Codable {
     }
 }
 
+// MARK: - Equality
+
+// Assigning settings that didn't change saves nothing.
+extension Settings: Equatable {}
+extension FormatOnSave: Equatable {}
+extension FileTypeOverride: Equatable {}
+extension CommandOnSave: Equatable {}
+extension CustomKeybinding: Equatable {}
+
 // MARK: - Settings I/O
 
 extension Settings {
@@ -645,6 +665,7 @@ extension Settings {
         case "underline": terminalCursorShape = "underline"
         default: terminalCursorShape = "block"
         }
+        terminalOptionAsMeta = KeyEncoder.OptionAsMeta(setting: terminalOptionAsMeta).rawValue
         windowWidth = max(400, min(10000, windowWidth))
         windowHeight = max(300, min(10000, windowHeight))
     }
@@ -741,10 +762,24 @@ extension Settings {
         }
     }
 
+    /// What became of a save.
+    enum SaveOutcome {
+        /// Written, or the file already held exactly these settings.
+        case saved
+        /// settings.json changed since Impulse last read or wrote it, so
+        /// nothing was written (it would have overwritten that change).
+        case changedOnDisk
+        /// Not written: the file doesn't parse (saves are paused until it's
+        /// fixed), or encoding or writing failed.
+        case failed
+    }
+
     /// Persists the current settings to disk as pretty-printed JSON.
-    /// Encoding and writing happen on a background queue to avoid blocking the
-    /// main thread. File permissions are set to 0600 (owner read/write only).
-    func save(synchronously: Bool = false) {
+    /// Encoding happens here; the write runs on a background queue
+    /// (`synchronously` waits for it, at quit). `completion` gets the
+    /// outcome on the main queue, or inline when synchronous. File
+    /// permissions are set to 0600 (owner read/write only).
+    func save(synchronously: Bool = false, completion: ((SaveOutcome) -> Void)? = nil) {
         guard AppState.persistenceEnabled else { return }
         if Settings.saveBlockedByLoadError {
             let path = Settings.loadWarning?.settingsPath.path ?? Settings.settingsPath().path
@@ -752,6 +787,7 @@ extension Settings {
             os_log(.error,
                    "Skipping settings save to preserve invalid settings file '%{public}@': %{public}@",
                    path, message)
+            completion?(.failed)
             return
         }
 
@@ -762,49 +798,78 @@ extension Settings {
             data = try encoder.encode(self)
         } catch {
             os_log(.error, "Failed to encode settings: %{public}@", error.localizedDescription)
+            completion?(.failed)
             return
         }
         let url = Settings.settingsPath()
-        if let message = Settings.settingsFileChangedSinceLoad(url: url) {
-            os_log(.error,
-                   "Skipping settings save because %{public}@. Open settings.json and reload Impulse before saving settings.",
-                   message)
-            return
-        }
-        let writtenHash = Settings.stableContentHash(data)
-        let write = {
-            if let message = Settings.settingsFileChangedSinceLoad(url: url) {
-                os_log(.error,
-                       "Skipping settings save because %{public}@. Open settings.json and reload Impulse before saving settings.",
-                       message)
-                return
-            }
-            do {
-                // Through a symlink (dotfile managers), not over it.
-                let target = TextFile.target(of: url.path)
-                try data.write(to: URL(fileURLWithPath: target), options: .atomic)
-                // Restrict permissions to owner-only (0600).
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: target)
-                Settings.fileSnapshot = SettingsFileSnapshot(
-                    path: url.path,
-                    contentHash: writtenHash
-                )
-            } catch {
-                os_log(.error, "Failed to write settings to '%{public}@': %{public}@",
-                       url.path, error.localizedDescription)
-            }
-        }
         // Writes go one at a time, in order (two racing saves made the second
         // see the first as an outside change); at quit, wait for the write.
         if synchronously {
-            Settings.writeQueue.sync(execute: write)
+            var outcome = SaveOutcome.failed
+            Settings.writeQueue.sync { outcome = Settings.write(data, to: url) }
+            completion?(outcome)
         } else {
-            Settings.writeQueue.async(execute: write)
+            Settings.writeQueue.async {
+                let outcome = Settings.write(data, to: url)
+                if let completion {
+                    DispatchQueue.main.async { completion(outcome) }
+                }
+            }
+        }
+    }
+
+    /// Write encoded settings unless the file already holds them or changed
+    /// since Impulse last read or wrote it. Runs on `writeQueue`.
+    private static func write(_ data: Data, to url: URL) -> SaveOutcome {
+        let hash = stableContentHash(data)
+        // The same bytes again: no write, and no watcher woken for nothing.
+        if let snapshot = fileSnapshot, snapshot.path == url.path, snapshot.contentHash == hash {
+            return .saved
+        }
+        if let message = settingsFileChangedSinceLoad(url: url) {
+            os_log(.info, "Not saving settings yet because %{public}@", message)
+            return .changedOnDisk
+        }
+        do {
+            // Through a symlink (dotfile managers), not over it.
+            let target = TextFile.target(of: url.path)
+            try data.write(to: URL(fileURLWithPath: target), options: .atomic)
+            // Restrict permissions to owner-only (0600).
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: target)
+            fileSnapshot = SettingsFileSnapshot(path: url.path, contentHash: hash)
+            return .saved
+        } catch {
+            os_log(.error, "Failed to write settings to '%{public}@': %{public}@",
+                   url.path, error.localizedDescription)
+            return .failed
         }
     }
 
     private static let writeQueue = DispatchQueue(label: "impulse.settings.write", qos: .utility)
+
+    /// `theirs` (settings.json as it is now) with the changes made in Impulse
+    /// since `base` (the file as Impulse last read or wrote it) on top, key
+    /// by key. Where both changed the same key, Impulse's value wins.
+    static func merged(_ ours: Settings, onto theirs: Settings, since base: Settings) -> Settings {
+        guard ours != base else { return theirs }
+        func object(_ settings: Settings) -> [String: Any]? {
+            guard let data = try? JSONEncoder().encode(settings) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+        guard let oursObject = object(ours), let baseObject = object(base),
+              var result = object(theirs)
+        else { return ours }
+        for (key, value) in oursObject {
+            let unchanged = baseObject[key].map { (value as AnyObject).isEqual($0) } ?? false
+            if !unchanged { result[key] = value }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: result),
+              var settings = try? JSONDecoder().decode(Settings.self, from: data)
+        else { return ours }
+        settings.validate()
+        return settings
+    }
 
     /// Static variant for callers that don't hold an instance.
     static func save(_ settings: Settings) {
@@ -906,7 +971,8 @@ extension Settings {
             terminalAllowOsc52Read: terminalAllowOsc52Read,
             terminalBlocks: terminalBlocks,
             terminalContextBar: terminalContextBar,
-            keybindingOverrides: keybindingOverrides
+            keybindingOverrides: keybindingOverrides,
+            terminalOptionAsMeta: terminalOptionAsMeta
         )
     }
 }

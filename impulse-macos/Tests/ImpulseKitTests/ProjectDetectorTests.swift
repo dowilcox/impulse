@@ -161,6 +161,16 @@
       #expect(ProjectDetector.earlierDumpAndLoad(service: "db", image: "postgres:17")?.contains("pg_dumpall") == true)
     }
 
+    /// The service name goes into the script's single quotes, which the
+    /// user's shell (bash, zsh or fish) reads: only names Compose allows.
+    @Test func onlyPlainServiceNamesGetDumpAndLoad() {
+      for name in ["db'; touch PWNED; '", "db$(id)", "my db", "db\\", "-p", "db\"x", "db\nx", ""] {
+        #expect(ProjectDetector.dumpAndLoad(service: name, image: "mysql:8.4") == nil, "\(name)")
+        #expect(ProjectDetector.earlierDumpAndLoad(service: name, image: "mysql:8.4") == nil, "\(name)")
+      }
+      #expect(ProjectDetector.dumpAndLoad(service: "mysql_1.db-x", image: "mysql:8.4")?.contains("exec -T mysql_1.db-x sh") == true)
+    }
+
     /// The command as the user's shell hands it to sh: the database's own
     /// variables are left for the container, and the loop gives up.
     @Test func dumpAndLoadRunsUnderSh() throws {

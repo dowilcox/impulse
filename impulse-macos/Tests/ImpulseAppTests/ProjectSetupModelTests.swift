@@ -1,6 +1,7 @@
 #if canImport(Testing)
   import AppKit
   @testable import ImpulseApp
+  @testable import ImpulseKit
   import Testing
 
   struct ProjectSetupModelTests {
@@ -76,6 +77,52 @@
       model.database = .clone
       #expect(model.databaseProblem != nil)
       #expect(model.problemCount == 11)
+    }
+
+    /// Typed or read from a file, numbers that aren't ports never crash
+    /// the screen, and can't be saved.
+    @Test func offsetsAndPortsPastTheLastPortAreProblems() {
+      let model = model()
+      model.ports = [.init(name: "APP_PORT", value: "8000")]
+      for offset in ["0", "-5", "10001", "9223372036854775807", "99999999999999999999", "x"] {
+        model.portOffset = offset
+        #expect(model.offsetProblem == "A whole number from 1 to 10000", "\(offset)")
+        #expect(model.offset == 100)
+      }
+      model.portOffset = "6000"
+      #expect(model.offsetProblem == "Too big: task 10's APP_PORT would be past 65535")
+      model.portOffset = "5754"
+      #expect(model.offsetProblem == "Too big: task 10's APP_PORT would be past 65535")
+      model.portOffset = "5753"
+      #expect(model.offsetProblem == nil, "8000 + 10 × 5753 = 65530")
+      model.portOffset = ""
+      model.ports = [.init(name: "HIGH", value: "65000"), .init(name: "BIG", value: "9223372036854775807")]
+      #expect(model.offsetProblem == "Too big: task 10's HIGH would be past 65535", "the default offset too")
+      #expect(model.problem(port: model.ports[1]) == "Not a port number (1–65535)")
+      _ = model.config()
+
+      // With the override on, the Compose file's fixed ports count too.
+      model.ports = []
+      model.fixedPorts = [.init(service: "web", port: ComposeFile.port("65400:80"))]
+      #expect(model.offsetProblem == nil)
+      model.composeOverride = true
+      #expect(model.offsetProblem == "Too big: task 10's web 65400 would be past 65535")
+    }
+
+    @Test func valuesCantHoldALineBreak() {
+      let model = model()
+      model.values = [
+        .init(name: "APP_NAME", value: "Bob's {task}"), .init(name: "NOTE", value: "a\nb"), .init(name: "DB", value: "app_{task_}"),
+      ]
+      #expect(model.values.map(model.problem(value:)) == [nil, "Can't hold a line break", nil])
+    }
+
+    @Test func theTrustPromptListsCommandsAsTheyAre() {
+      #expect(MainWindowController.listedCommand("npm ci") == "$ npm ci")
+      #expect(MainWindowController.listedCommand("npx tsc --noEmit\nnpm test") == "$ npx tsc --noEmit\n  npm test")
+      #expect(MainWindowController.listedCommand("a\r\nb\rc") == "$ a\n  b\n  c", "no line break hides one")
+      #expect(MainWindowController.listedCommand("echo hi\u{1B}[2K\u{202E}x\u{200B}") == "$ echo hi\\u{1B}[2K\\u{202E}x\\u{200B}")
+      #expect(MainWindowController.listedCommand("a\tb") == "$ a\tb")
     }
   }
 #endif

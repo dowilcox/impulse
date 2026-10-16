@@ -75,6 +75,15 @@ public struct ProjectConfig: Equatable, Sendable {
   public var overlapIgnore: [String] = []
   /// How Finish Task lands work; nil until chosen (the first Finish asks).
   public var landing: Landing?
+  /// What the files set that can't be used, so `ports` and `portOffset`
+  /// leave it out: a port outside 1–65535, an offset outside
+  /// `portOffsets`. Project Setup shows it, to be fixed.
+  public var unusablePorts: [String: Int] = [:]
+  public var unusablePortOffset: Int?
+
+  /// The offsets read. A bigger one is a mistake: a few tasks in, their
+  /// ports would pass 65535.
+  public static let portOffsets = 1...10000
 
   public init(
     actions: [Action] = [], setupScript: String? = nil, archiveScript: String? = nil, worktreeCopy: [String] = []
@@ -225,8 +234,25 @@ public struct ProjectConfig: Equatable, Sendable {
       config.onChange.merge(layer.onChange ?? [:]) { _, later in later }
       if let copy = layer.worktrees?.copy { config.worktreeCopy = copy }
       if let file = layer.worktrees?.envFile, !file.isEmpty { config.envFile = file }
-      if let offset = layer.worktrees?.portOffset, offset > 0 { config.portOffset = offset }
-      config.ports.merge(layer.worktrees?.ports ?? [:]) { _, later in later }
+      // Ports are worked out from these values unasked (the New Task sheet,
+      // a task's summary), before the file is trusted: ones that aren't
+      // ports are kept aside, not used.
+      if let offset = layer.worktrees?.portOffset {
+        if portOffsets.contains(offset) {
+          config.portOffset = offset
+          config.unusablePortOffset = nil
+        } else {
+          config.unusablePortOffset = offset
+        }
+      }
+      for (name, port) in layer.worktrees?.ports ?? [:] {
+        if TaskEnvironment.portRange.contains(port) {
+          config.ports[name] = port
+          config.unusablePorts[name] = nil
+        } else {
+          config.unusablePorts[name] = port
+        }
+      }
       config.worktreeEnv.merge(layer.worktrees?.env ?? [:]) { _, later in later }
       if let clone = layer.worktrees?.clone { config.worktreeClone = clone }
       if let folder = layer.worktrees?.database?.clone { config.databaseFolder = folder.isEmpty ? nil : folder }

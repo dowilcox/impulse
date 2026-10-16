@@ -250,6 +250,10 @@ enum CommandRegistry {
         keywords: ["zsh", "bash", "fish", "history"], icon: .history
       ) { [weak controller] in controller?.importShellHistory() },
       AppCommand(
+        id: "clear_command_history", title: "Clear Command History", category: "Terminal",
+        keywords: ["history", "forget", "delete", "privacy"], icon: .trash2
+      ) { [weak controller] in controller?.clearCommandHistory() },
+      AppCommand(
         id: "switch_workspace", title: "Switch Workspace…", category: "Workspaces",
         keywords: ["project", "folder", "recent"], icon: .folderGit2,
         keybindingId: "switch_workspace"

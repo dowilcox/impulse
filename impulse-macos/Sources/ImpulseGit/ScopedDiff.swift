@@ -130,18 +130,59 @@ extension GitClient {
 
   /// Resolve a revision (branch, tag, sha, `HEAD~2`, ...) to a full commit id.
   public static func resolveCommit(repoPath: String, revision: String) -> String? {
-    guard let repo = try? openRepo(at: repoPath),
-      let commit = try? peelCommit(repo: repo, revision: revision)
-    else { return nil }
-    defer { git_commit_free(commit) }
-    guard let oid = git_commit_id(commit) else { return nil }
-    return oidHex(oid.pointee)
+    resolveCommits(repoPath: repoPath, revisions: [revision])[revision]
+  }
+
+  /// `resolveCommit` for several revisions, opening the repository once.
+  /// Revisions that don't resolve are left out.
+  public static func resolveCommits(repoPath: String, revisions: [String]) -> [String: String] {
+    let resolved = try? withRepo(at: repoPath) { repo -> [String: String] in
+      var ids: [String: String] = [:]
+      for revision in revisions where ids[revision] == nil {
+        guard let commit = try? peelCommit(repo: repo, revision: revision) else { continue }
+        defer { git_commit_free(commit) }
+        if let oid = git_commit_id(commit) { ids[revision] = oidHex(oid.pointee) }
+      }
+      return ids
+    }
+    return resolved ?? [:]
+  }
+
+  /// Remote-tracking branches (`origin/main`) whose tip is `commit` (a full
+  /// id), in one pass over the refs. `<remote>/HEAD` aliases are left out.
+  public static func remoteBranches(at commit: String, repoPath: String) -> [String] {
+    var wanted = git_oid()
+    guard git_oid_fromstr(&wanted, commit) == 0 else { return [] }
+    let found = try? withRepo(at: repoPath) { repo -> [String] in
+      var iterator: OpaquePointer?
+      guard git_reference_iterator_glob_new(&iterator, repo.raw, "refs/remotes/*") == 0, let iterator else {
+        return []
+      }
+      defer { git_reference_iterator_free(iterator) }
+      let prefix = "refs/remotes/"
+      var names: [String] = []
+      var next: OpaquePointer?
+      while git_reference_next(&next, iterator) == 0, let reference = next {
+        defer { git_reference_free(reference) }
+        let name = String(cString: git_reference_name(reference))
+        guard name.hasPrefix(prefix), !name.hasSuffix("/HEAD"),
+          git_reference_type(reference) == GIT_REFERENCE_DIRECT,
+          let target = git_reference_target(reference), git_oid_equal(target, &wanted) == 1
+        else { continue }
+        names.append(String(name.dropFirst(prefix.count)))
+      }
+      return names
+    }
+    return found ?? []
   }
 
   /// The default branch to compare against: the upstream's remote HEAD
   /// (`origin/HEAD` → `origin/main`), else a local `main`/`master`.
   public static func defaultBaseBranch(repoPath: String) -> String? {
-    guard let repo = try? openRepo(at: repoPath) else { return nil }
+    (try? withRepo(at: repoPath) { repo in defaultBaseBranch(repo: repo) }) ?? nil
+  }
+
+  static func defaultBaseBranch(repo: GitRepo) -> String? {
     var ref: OpaquePointer?
     if git_reference_lookup(&ref, repo.raw, "refs/remotes/origin/HEAD") == 0, let symbolic = ref {
       defer { git_reference_free(symbolic) }

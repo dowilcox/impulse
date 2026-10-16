@@ -571,6 +571,22 @@ pub extern "C" fn impulse_terminal_scroll(handle: *mut TerminalHandle, delta: i3
     )
 }
 
+/// How many lines the viewport is scrolled back into the scrollback (0 at
+/// the bottom; 0 for a null handle).
+#[no_mangle]
+pub extern "C" fn impulse_terminal_display_offset(handle: *mut TerminalHandle) -> u32 {
+    ffi_catch(
+        0,
+        AssertUnwindSafe(|| {
+            if handle.is_null() {
+                return 0;
+            }
+            let h = unsafe { &*handle };
+            u32::try_from(h.backend.display_offset()).unwrap_or(u32::MAX)
+        }),
+    )
+}
+
 #[no_mangle]
 pub extern "C" fn impulse_terminal_scroll_to_bottom(handle: *mut TerminalHandle) {
     ffi_catch(

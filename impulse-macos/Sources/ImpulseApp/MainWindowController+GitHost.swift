@@ -125,11 +125,18 @@ extension MainWindowController: GitPanelHost {
 
   func popLatestStash() {
     guard let actions = repositoryActions() else { return }
-    guard !GitOperations.stashList(root: actions.repository.root).isEmpty else {
-      toasts.show(Toast(kind: .info, message: "There are no stashes."))
-      return
+    let root = actions.repository.root
+    // Listing runs git: keep it off the main thread.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let latest = GitOperations.stashList(root: root).first
+      DispatchQueue.main.async {
+        guard let latest else {
+          self?.toasts.show(Toast(kind: .info, message: "There are no stashes."))
+          return
+        }
+        actions.applyStash(0, commit: latest.commit, pop: true)
+      }
     }
-    actions.applyStash(0, pop: true)
   }
 
   /// Show the Changes panel in the left dock (⌃⇧G).

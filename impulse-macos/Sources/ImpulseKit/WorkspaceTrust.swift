@@ -7,11 +7,15 @@ import Foundation
 /// configuration. In a folder that isn't trusted, all of that stays off;
 /// what the user runs themselves (the terminal, git actions) is unaffected.
 ///
-/// Trusting a folder trusts everything inside it. Thread-safe: language
-/// servers ask from background threads.
+/// Trusting a folder trusts everything inside it, except a folder marked
+/// restricted (a task checked out from someone else's branch), which stays
+/// restricted until it's trusted itself. Thread-safe: language servers ask
+/// from background threads.
 public final class WorkspaceTrust: @unchecked Sendable {
   private let lock = NSLock()
   private var folders: Set<String> = []
+  /// Restricted even inside a trusted folder.
+  private var restricted: Set<String> = []
   private var enabled = true
   private let file: URL?
 
@@ -27,6 +31,7 @@ public final class WorkspaceTrust: @unchecked Sendable {
       let stored = try? JSONDecoder().decode(Stored.self, from: data)
     {
       folders = Set(stored.trusted.map(Self.normalize))
+      restricted = Set((stored.restricted ?? []).map(Self.normalize))
       existedBefore = true
     } else {
       existedBefore = file.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
@@ -58,13 +63,32 @@ public final class WorkspaceTrust: @unchecked Sendable {
     lock.withLock { folders.sorted() }
   }
 
+  public var restrictedFolders: [String] {
+    lock.withLock { restricted.sorted() }
+  }
+
+  /// Trust `folder`. A restriction on it goes too; one on a folder inside
+  /// it stays (trusting `~/Code` doesn't trust a checkout of someone else's
+  /// branch there).
   public func trust(_ folder: String) {
     let folder = Self.normalize(folder)
     lock.withLock {
+      restricted.remove(folder)
       guard trustingFolder(of: folder) == nil else { return }
       // Folders inside it are covered now.
       folders = folders.filter { !Self.contains(folder, $0) }
       folders.insert(folder)
+    }
+    save()
+  }
+
+  /// Keep `folder` restricted even inside a trusted folder, until it's
+  /// trusted itself.
+  public func restrict(_ folder: String) {
+    let folder = Self.normalize(folder)
+    lock.withLock {
+      folders = folders.filter { !Self.contains(folder, $0) }
+      restricted.insert(folder)
     }
     save()
   }
@@ -89,7 +113,10 @@ public final class WorkspaceTrust: @unchecked Sendable {
   }
 
   public func revokeAll() {
-    lock.withLock { folders = [] }
+    lock.withLock {
+      folders = []
+      restricted = []
+    }
     save()
   }
 
@@ -112,18 +139,24 @@ public final class WorkspaceTrust: @unchecked Sendable {
     folder == "/" || path == folder || path.hasPrefix(folder + "/")
   }
 
+  /// The trusted folder `path` is in, the innermost one, unless a
+  /// restricted folder at or inside it holds `path`.
   private func trustingFolder(of path: String) -> String? {
-    folders.first { Self.contains($0, path) }
+    guard let folder = folders.filter({ Self.contains($0, path) }).max(by: { $0.count < $1.count }) else {
+      return nil
+    }
+    return restricted.contains { Self.contains($0, path) && Self.contains(folder, $0) } ? nil : folder
   }
 
   private struct Stored: Codable {
     var version = 1
     var trusted: [String]
+    var restricted: [String]?
   }
 
   private func save() {
     guard let file else { return }
-    let stored = Stored(trusted: trustedFolders)
+    let stored = Stored(trusted: trustedFolders, restricted: restrictedFolders)
     guard let data = try? JSONEncoder().encode(stored) else { return }
     try? FileManager.default.createDirectory(
       at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

@@ -11,7 +11,7 @@ public struct LogEntry: Equatable, Sendable {
   public let date: Date
   public let subject: String
   /// Decorations: "HEAD -> main", "origin/main", "tag: v1.0".
-  public let refs: [String]
+  public var refs: [String]
 
   public var shortSha: String { String(sha.prefix(7)) }
 }
@@ -55,6 +55,43 @@ public enum GitLog {
       args.append("--")
     }
     return GitOperations.git(args, in: root, timeout: 60).map { parse($0.stdout) }
+  }
+
+  /// Each decorated commit's refs, as `entries` shows them, read from the
+  /// ref tips alone: when only refs moved, loaded history takes these
+  /// instead of being read again.
+  public static func decorations(root: String) -> Result<[String: [String]], GitOperationError> {
+    GitOperations.git(
+      ["log", "--no-walk=unsorted", "--no-color", "--decorate=short", "--format=%H%x1f%D%x1e", "--all", "--"],
+      in: root, timeout: 60
+    ).map { result in
+      var refs: [String: [String]] = [:]
+      for record in result.stdout.split(separator: "\u{1e}") {
+        let fields = record.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\u{1f}")
+        guard fields.count >= 2, !fields[1].isEmpty else { continue }
+        refs[fields[0]] = parseRefs(fields[1])
+      }
+      return refs
+    }
+  }
+
+  /// The commits (and tag objects) `scope`'s history starts from, sorted.
+  /// While they're the same, so is the history `entries` reads, and only
+  /// decorations can have moved. nil when they can't be read.
+  public static func tips(root: String, scope: Scope) -> [String]? {
+    var args = ["rev-parse"]
+    switch scope {
+    case .head: args.append("HEAD")
+    case .all: args += ["--branches", "--tags", "--remotes", "HEAD"]
+    case .branch(let name): args.append("refs/heads/\(name)")
+    }
+    guard case .success(let result) = GitOperations.git(args + ["--"], in: root) else { return nil }
+    let names = result.stdout.split(separator: "\n").map(String.init).filter { $0 != "--" }
+    return Array(Set(names)).sorted()
+  }
+
+  static func parseRefs(_ field: String) -> [String] {
+    field.isEmpty ? [] : field.components(separatedBy: ", ").filter { !$0.isEmpty }
   }
 
   /// `path` is a folder: on disk, or (once deleted) in history — a pathspec
@@ -159,8 +196,7 @@ public enum GitLog {
         email: fields[3],
         date: Date(timeIntervalSince1970: Double(fields[4]) ?? 0),
         subject: fields[5],
-        refs: fields[6].isEmpty
-          ? [] : fields[6].components(separatedBy: ", ").filter { !$0.isEmpty })
+        refs: parseRefs(fields[6]))
     }
   }
 }

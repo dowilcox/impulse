@@ -168,10 +168,20 @@ public enum FileTreePatcher {
       }
     }
 
+    // When the entries in both lists keep their order, an entry added or
+    // removed ahead of one only shifts its index: the applier keeps the
+    // order of entries a patch doesn't name, so they need no upsert (one
+    // new file at the top of a big folder is one operation, not hundreds).
+    func kept<Value>(_ nodes: [FileTreeNode], in other: [String: Value]) -> [String] {
+      nodes.map(\.id).filter { other[$0] != nil && !replaceIds.contains($0) }
+    }
+    let onlyShifted = kept(beforeNodes, in: afterById) == kept(afterNodes, in: beforeById)
+
     for (index, node) in afterNodes.enumerated() {
       let shouldUpsert: Bool
       if let (beforeIndex, beforeNode) = beforeById[node.id] {
-        shouldUpsert = replaceIds.contains(node.id) || beforeIndex != index || beforeNode != node
+        shouldUpsert =
+          replaceIds.contains(node.id) || beforeNode != node || (!onlyShifted && beforeIndex != index)
       } else {
         shouldUpsert = true
       }

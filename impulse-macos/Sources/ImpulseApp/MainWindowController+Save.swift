@@ -43,18 +43,20 @@ extension MainWindowController {
       // project's own config (prettier runs .prettierrc.js): trusted only.
       let formatter = Trust.shared.isTrusted(path) ? self.resolveFormatOnSave(forPath: path) : nil
       if let fmt = formatter, !fmt.command.isEmpty {
+        editor.beginDiskRewrite()
         self.runExternalCommand(
           command: fmt.command, args: SaveCommand.expandArguments(fmt.args, file: path),
           cwd: (path as NSString).deletingLastPathComponent, timeout: Self.formatterTimeout,
           failure: "Formatter “\(fmt.command)” failed on \((path as NSString).lastPathComponent)."
-        ) { [weak self, weak editor] in
+        ) { [weak self, weak editor] succeeded in
           guard let editor else {
             completion?(true)
             return
           }
-          // The formatter rewrote the file: show its result, unless typing
-          // has moved on since the save (then it's kept, unsaved).
-          editor.adoptDiskChanges(afterSaving: saved) { [weak self, weak editor] in
+          // The formatter rewrote the file: show its result, unless it
+          // failed or typing has moved on since the save (then the buffer
+          // is kept, unsaved).
+          editor.adoptDiskChanges(afterSaving: saved, succeeded: succeeded) { [weak self, weak editor] in
             if let self, let editor { self.postSaveActions(editor: editor, path: path) }
             completion?(true)
           }
@@ -66,8 +68,9 @@ extension MainWindowController {
     }
   }
 
-  /// A formatter that runs longer is stopped (closing and quitting wait
-  /// for it).
+  /// A formatter (or a command on save that reloads the file) that runs
+  /// longer is stopped (closing and quitting wait for it). The editor stops
+  /// waiting for its result a little later (`EditorTab.rewriteMuteLimit`).
   static let formatterTimeout: TimeInterval = 60
 
   /// The file changed on disk since the editor loaded or saved it: save
@@ -123,13 +126,18 @@ extension MainWindowController {
       Self.commandsOnSave.enter()
       if cmd.reloadFile {
         let saved = editor.lastWrittenText ?? editor.content
-        runExternalCommand(command: cmd.command, args: args, cwd: cwd, failure: failure) { [weak editor] in
-          // Show what the command wrote, unless typing has moved on.
-          editor?.adoptDiskChanges(afterSaving: saved)
+        editor.beginDiskRewrite()
+        // It rewrites the file like a formatter, so it gets the same limit.
+        runExternalCommand(
+          command: cmd.command, args: args, cwd: cwd, timeout: Self.formatterTimeout, failure: failure
+        ) { [weak editor] succeeded in
+          // Show what the command wrote, unless it failed or typing has
+          // moved on.
+          editor?.adoptDiskChanges(afterSaving: saved, succeeded: succeeded)
           Self.commandsOnSave.leave()
         }
       } else {
-        runExternalCommand(command: cmd.command, args: args, cwd: cwd, failure: failure) {
+        runExternalCommand(command: cmd.command, args: args, cwd: cwd, failure: failure) { _ in
           Self.commandsOnSave.leave()
         }
       }
@@ -215,7 +223,8 @@ extension MainWindowController {
   }
 
   /// Runs an external command asynchronously. Calls `completion` on the main
-  /// thread when the process finishes.
+  /// thread when the process finishes, with whether it succeeded (ran, exited
+  /// 0 and wasn't stopped for taking too long).
   ///
   /// The command name is validated to be either an absolute path or a plain
   /// executable name (letters, digits, `-`, `_`, `.` only), looked up on the
@@ -225,13 +234,13 @@ extension MainWindowController {
   /// `completion` is still invoked so the caller's control flow continues.
   private func runExternalCommand(
     command: String, args: [String], cwd: String, timeout: TimeInterval? = nil, failure: String,
-    completion: (() -> Void)?
+    completion: ((_ succeeded: Bool) -> Void)?
   ) {
     let refuse = { [weak self] (reason: String) in
       NSLog("Not running command '%@': %@", command, reason)
       DispatchQueue.main.async {
         self?.toasts.show(Toast(kind: .warning, message: failure, detail: reason, lifetime: 10))
-        completion?()
+        completion?(false)
       }
     }
     guard Self.isSafeExternalCommand(command) else {
@@ -267,7 +276,7 @@ extension MainWindowController {
         if let problem {
           self?.toasts.show(Toast(kind: .warning, message: failure, detail: problem, lifetime: 10))
         }
-        completion?()
+        completion?(problem == nil)
       }
     }
   }

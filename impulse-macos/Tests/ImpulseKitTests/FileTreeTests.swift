@@ -67,6 +67,33 @@
         })
     }
 
+    @Test func pureIndexShiftsEmitNoUpserts() {
+      let before = [
+        entry("src", "/repo/src", dir: true),
+        entry("b.rs", "/repo/b.rs", dir: false),
+        entry("c.rs", "/repo/c.rs", dir: false),
+        entry("d.rs", "/repo/d.rs", dir: false),
+      ]
+      let after = [
+        entry("src", "/repo/src", dir: true),
+        entry("a.rs", "/repo/a.rs", dir: false),
+        entry("b.rs", "/repo/b.rs", dir: false),
+        entry("c.rs", "/repo/c.rs", dir: false, status: "M"),
+      ]
+      let patch = FileTreePatcher.buildChildPatch(parentPath: "/repo", before: before, after: after)
+      // b.rs moved from 1 to 2 only because a.rs arrived: no operation.
+      #expect(
+        patch.operations == [
+          .remove(id: "/repo/d.rs"),
+          .upsert(
+            parentId: "/repo", index: 1,
+            node: FileTreePatcher.nodeFromEntry(parentPath: "/repo", entry: after[1])),
+          .upsert(
+            parentId: "/repo", index: 3,
+            node: FileTreePatcher.nodeFromEntry(parentPath: "/repo", entry: after[3])),
+        ])
+    }
+
     @Test func typeReplacementRemovesBeforeUpsert() {
       let patch = FileTreePatcher.buildChildPatch(
         parentPath: "/repo",

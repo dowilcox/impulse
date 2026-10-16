@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import WebKit
 import os.log
 
@@ -37,7 +38,22 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     var filePath: String?
 
     /// Current editor content, kept in sync via `ContentChanged` events.
-    private(set) var content: String = ""
+    private(set) var content: String = "" {
+        didSet { contentGeneration &+= 1 }
+    }
+    /// Bumped whenever `content` is set, to tell whether a copy taken for
+    /// work off the main thread is still current.
+    private var contentGeneration = 0
+    /// `OpenFile` commands Monaco hasn't confirmed yet, and the text the
+    /// last one sent. Content changes arriving meanwhile were made to text
+    /// the open replaces, so they're dropped.
+    private var opensInFlight = 0
+    private var openSentText: String?
+    /// Waiting for Monaco's whole buffer after a change didn't fit the copy.
+    private var isResyncingContent = false
+    /// The settings and theme last sent, to set up a reloaded page.
+    private var editorOptions: EditorOptions?
+    private var editorTheme: MonacoThemeDefinition?
 
     /// Monaco language identifier for the current file.
     private(set) var language: String = "plaintext"
@@ -102,6 +118,35 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var noticedDiskHash: Int?
     /// The text the last successful save wrote.
     private(set) var lastWrittenText: String?
+    /// Formatters and commands on save rewriting the file just saved: the
+    /// watcher leaves their writes to `adoptDiskChanges`, though never past
+    /// `rewritesMutedUntil` (should one not report back).
+    private var pendingRewrites = 0
+    private var rewritesMutedUntil = Date.distantPast
+    /// Longer than the formatters' and reloading commands' own time limit.
+    static let rewriteMuteLimit: TimeInterval = 90
+    private var isRewriting: Bool { pendingRewrites > 0 && Date() < rewritesMutedUntil }
+    /// Bumped whenever what's on disk is recorded (load, save, reload, a
+    /// formatter's result), so a read that started before is known to be
+    /// older; and the latest reload's number, so an older one gives way.
+    private var diskGeneration = 0
+    private var reloadSequence = 0
+    /// When the page's content process ended lately. Past `maxPageReloads`
+    /// in `pageReloadWindow`, the page waits (behind a notice) to be
+    /// reloaded by hand or when the tab is shown again.
+    private var pageTerminations: [Date] = []
+    private static let maxPageReloads = 2
+    private static let pageReloadWindow: TimeInterval = 60
+    private var needsPageReload = false
+    private var stoppedNotice: NSView?
+    /// Files over this size open read-only, and a change on disk shows a
+    /// notice instead of reloading them on every write.
+    static let largeFileSize = 5 * 1024 * 1024
+    /// Larger than that.
+    var isLargeFile = false
+    /// The "changed on disk" notice is up for a large file (until it's
+    /// reloaded).
+    private var largeFileNoticeShown = false
     /// Asked before a save would overwrite changes made on disk since the
     /// buffer was loaded; `proceed(true)` overwrites. Without it, saves
     /// overwrite.
@@ -234,7 +279,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 userInfo: ["command": command, "directory": directory ?? NSHomeDirectory()])
             return
         }
-        guard message.name == "impulse" else { return }
+        // Only from the editor page's main frame.
+        guard message.name == "impulse", message.frameInfo.isMainFrame,
+            EditorAssets.isEditorPage(message.frameInfo.request.url)
+        else { return }
 
         guard let body = message.body as? String,
               let data = body.data(using: .utf8) else {
@@ -282,7 +330,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 sendCommand(.setReadOnly(readOnly: true))
             }
 
-        case .fileOpened:
+        case let .fileOpened(normalized):
+            opensInFlight = max(opensInFlight - 1, 0)
+            if opensInFlight == 0 {
+                // Monaco's text is the buffer now (line endings and all).
+                if let text = normalized ?? openSentText { content = text }
+                openSentText = nil
+            }
             NotificationCenter.default.post(
                 name: .editorFileOpened,
                 object: self,
@@ -290,9 +344,11 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             )
 
         case let .contentChanged(newContent, changes, _):
+            // Typed into text an open on its way replaces.
+            guard opensInFlight == 0 else { return }
             if let newContent {
                 content = newContent
-            } else {
+            } else if !isResyncingContent {
                 applyMonacoContentChanges(changes)
             }
             isModified = true
@@ -492,29 +548,126 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
-        // Only allow file:// navigations (Monaco assets) and about:blank
-        if url.scheme == "file" || url.scheme == "about" {
+        // Only the editor page (and about:blank). Any other file — a dropped
+        // or linked .html from a repository — would run in this web view.
+        if EditorAssets.isEditorPage(url) || url.absoluteString == "about:blank" {
             decisionHandler(.allow)
         } else {
-            os_log(.info, log: Self.log, "Blocked navigation to non-file URL: %{public}@", url.absoluteString)
+            os_log(.info, log: Self.log, "Blocked editor navigation to %{public}@", url.absoluteString)
             decisionHandler(.cancel)
         }
     }
 
+    /// The editor's web content process ended (it crashed, or macOS
+    /// reclaimed it). Load the page again and put the buffer back as this
+    /// side last knew it, unsaved edits and all; the dirty state lives here
+    /// and stays as it was.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        isEditorReady = false
+        opensInFlight = 0
+        openSentText = nil
+        isResyncingContent = false
+        isDiffView = false
+        let now = Date()
+        pageTerminations = pageTerminations.filter { now.timeIntervalSince($0) < Self.pageReloadWindow } + [now]
+        // It keeps ending (a page that can't hold this file?): stop
+        // reloading on its own. The buffer is kept here, and saves still work.
+        guard pageTerminations.count <= Self.maxPageReloads else {
+            os_log(
+                .error, log: Self.log, "Editor web content keeps ending; waiting to reload %{public}@",
+                filePath ?? "an untitled editor")
+            needsPageReload = true
+            showStoppedNotice()
+            return
+        }
+        os_log(
+            .error, log: Self.log, "Editor web content ended; reloading %{public}@",
+            filePath ?? "an untitled editor")
+        reloadPage()
+    }
+
+    /// Load the page again and put the buffer back: settings and theme, the
+    /// text with its cursor (`.ready` sends them, then read-only mode if it
+    /// was on). Commands queued while it was gone are replaced by these.
+    private func reloadPage() {
+        needsPageReload = false
+        stoppedNotice?.removeFromSuperview()
+        stoppedNotice = nil
+        pendingCommands = []
+        if let editorOptions { pendingCommands.append(.updateSettings(options: editorOptions)) }
+        if let editorTheme { pendingCommands.append(.setTheme(theme: editorTheme)) }
+        pendingCommands.append(.openFile(filePath: filePath ?? "", content: content, language: language))
+        if let cursorPosition {
+            pendingCommands.append(.goToPosition(line: cursorPosition.line, column: cursorPosition.column))
+        }
+        loadEditor()
+    }
+
+    @objc private func reloadPageClicked(_ sender: Any?) {
+        reloadPage()
+    }
+
+    /// Covers the dead page: the text is safe, and a button reloads it.
+    private func showStoppedNotice() {
+        guard stoppedNotice == nil, let webView else { return }
+        let label = NSTextField(labelWithString: "This editor stopped working. Your text is kept.")
+        let button = NSButton(title: "Reload Editor", target: self, action: #selector(reloadPageClicked(_:)))
+        let stack = NSStackView(views: [label, button])
+        stack.orientation = .vertical
+        stack.spacing = 10
+        let notice = NSView()
+        notice.wantsLayer = true
+        notice.layer?.backgroundColor = editorTheme.map { NSColor(hex: $0.colors.editorBackground) }?.cgColor
+            ?? NSColor.textBackgroundColor.cgColor
+        if let theme = editorTheme { label.textColor = NSColor(hex: theme.colors.editorForeground) }
+        notice.translatesAutoresizingMaskIntoConstraints = false
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        notice.addSubview(stack)
+        // Inside the web view, so it shows and hides with it.
+        webView.addSubview(notice)
+        NSLayoutConstraint.activate([
+            notice.topAnchor.constraint(equalTo: webView.topAnchor),
+            notice.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
+            notice.leadingAnchor.constraint(equalTo: webView.leadingAnchor),
+            notice.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+            stack.centerXAnchor.constraint(equalTo: notice.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: notice.centerYAnchor),
+        ])
+        stoppedNotice = notice
+    }
+
+    /// Coming back to a tab whose page stopped: try it again.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, needsPageReload { reloadPage() }
+    }
+
     private func applyMonacoContentChanges(_ changes: [MonacoContentChange]) {
-        guard !changes.isEmpty else { return }
-        for change in changes.sorted(by: { $0.rangeOffset > $1.rangeOffset }) {
-            guard
-                let start = String.Index(utf16Offset: Int(change.rangeOffset), in: content),
-                let end = String.Index(
-                    utf16Offset: Int(change.rangeOffset) + Int(change.rangeLength),
-                    in: content
-                ),
-                start <= end
-            else {
-                continue
+        let edits = changes.map {
+            BufferEdits.Change(offset: Int($0.rangeOffset), length: Int($0.rangeLength), text: $0.text)
+        }
+        guard !BufferEdits.apply(edits, to: &content) else { return }
+        os_log(.error, log: Self.log, "Editor change didn't fit the buffer copy; fetching it whole")
+        resyncContent()
+    }
+
+    /// Replace the copy with Monaco's whole buffer. Changes made before it
+    /// answers are in the answer (and dropped meanwhile); later ones arrive
+    /// after it and apply on top.
+    private func resyncContent() {
+        guard isEditorReady, let webView else { return }
+        isResyncingContent = true
+        webView.evaluateJavaScript("editor.getValue()") { [weak self] result, error in
+            guard let self else { return }
+            self.isResyncingContent = false
+            if let text = result as? String {
+                self.content = text
+            } else {
+                os_log(
+                    .error, log: Self.log, "editor.getValue() failed: %{public}@",
+                    error?.localizedDescription ?? "non-string result")
             }
-            content.replaceSubrange(start..<end, with: change.text)
         }
     }
 
@@ -552,14 +705,22 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
 
         guard let webView else { return }
+        var isOpen = false
+        if case .openFile(_, let text, _) = command {
+            isOpen = true
+            opensInFlight += 1
+            openSentText = text
+        }
         webView.callAsyncJavaScript(
             "window.impulseReceiveCommand(msg);",
             arguments: ["msg": jsonString],
             in: nil,
             in: .page,
-            completionHandler: { result in
+            completionHandler: { [weak self] result in
                 if case .failure(let error) = result {
                     os_log(.error, log: Self.log, "callAsyncJavaScript failed: %{public}@", error.localizedDescription)
+                    // No FileOpened is coming for it.
+                    if isOpen, let self { self.opensInFlight = max(self.opensInFlight - 1, 0) }
                 }
             }
         )
@@ -567,25 +728,46 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     // MARK: Public API
 
-    /// Open a file in the editor (`content` as read from disk).
-    func openFile(path: String, content: String, language: String, bom: Bool = false) {
+    /// Open a file in the editor: `content` as read from disk, and the
+    /// file's `stamp` from that same read (nil when it isn't known; then the
+    /// disk is checked against `content` once the watcher is up).
+    func openFile(
+        path: String, content: String, language: String, bom: Bool = false, stamp: TextFile.Stamp? = nil
+    ) {
         self.filePath = path
         self.content = content
         self.language = language
         self.lspLanguage = Self.lspLanguageForPath(path, monacoLanguage: language)
         self.isModified = false
         self.hasBOM = bom
-        recordDiskState(text: content)
+        recordDiskState(hash: content.hashValue, stamp: stamp)
 
         sendCommand(.openFile(filePath: path, content: content, language: language))
         startFileWatching()
+        checkDiskSinceRead(path: path, stamp: stamp)
     }
 
-    /// Remember `text` as what's on disk now (after a load or save).
-    private func recordDiskState(text: String) {
-        diskTextHash = text.hashValue
-        diskStamp = filePath.flatMap(TextFile.stamp)
+    /// The watcher only sees writes from when it starts. One that landed
+    /// between the read and then shows as a stamp that moved: treat it as a
+    /// change on disk.
+    private func checkDiskSinceRead(path: String, stamp: TextFile.Stamp?) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            if let stamp, TextFile.stamp(path) == stamp { return }
+            DispatchQueue.main.async {
+                guard let self, self.filePath == path else { return }
+                self.reloadFromDisk(force: false)
+            }
+        }
+    }
+
+    /// Remember what's on disk now (after a load or save): its text's hash
+    /// and its stamp when it had that text (nil if unknown).
+    private func recordDiskState(hash: Int, stamp: TextFile.Stamp?) {
+        diskTextHash = hash
+        diskStamp = stamp
+        diskGeneration &+= 1
         noticedDiskHash = nil
+        largeFileNoticeShown = false
     }
 
     /// Open a blank untitled editor (no file on disk).
@@ -615,30 +797,10 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
     }
 
-    /// Save the current content to the file at `filePath`.
-    @discardableResult
-    func saveFile() -> Bool {
-        guard let path = filePath else {
-            os_log(.error, log: Self.log, "Cannot save: no file path set")
-            return false
-        }
-
-        let contentToSave = content
-        do {
-            try TextFile.write(contentToSave, bom: hasBOM, to: path)
-            recordDiskState(text: contentToSave)
-            isModified = false
-            return true
-        } catch {
-            os_log(.error, log: Self.log, "Failed to save file %{public}@: %{public}@", path, error.localizedDescription)
-            return false
-        }
-    }
-
-    /// Fetch the latest content from Monaco and then call `completion`.
-    /// This is necessary because content changes are debounced in JS, so
-    /// the Swift `content` property may be stale when a save is triggered
-    /// via the menu (Cmd+S) rather than through Monaco's own save handler.
+    /// Fetch the latest content from Monaco and save it, then call
+    /// `completion`. Monaco's own buffer is what's written; the copy kept
+    /// here is only the fallback when the page can't answer (it's loading,
+    /// or its web content process ended).
     func fetchContentAndSave(completion: @escaping (Bool) -> Void) {
         guard let path = filePath else {
             completion(false)
@@ -646,8 +808,8 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
 
         guard isEditorReady, let webView else {
-            // Editor not ready, save whatever we have
-            completion(saveFile())
+            // Editor not ready: save what we have, still checking the disk.
+            writeCheckingDisk(content, to: path, completion: completion)
             return
         }
 
@@ -688,9 +850,12 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     do {
                         try TextFile.write(text, bom: bom, to: path)
+                        // The stamp right after our write, not whenever main gets to it.
+                        let stamp = TextFile.stamp(path)
+                        let hash = text.hashValue
                         DispatchQueue.main.async {
                             guard let self else { return completion(true) }
-                            self.recordDiskState(text: text)
+                            self.recordDiskState(hash: hash, stamp: stamp)
                             self.lastWrittenText = text
                             // Typing that arrived while writing stays unsaved.
                             if self.content == text { self.isModified = false }
@@ -713,20 +878,57 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
     }
 
-    /// After something rewrote the file we just saved (a formatter, a
-    /// command on save): show its result if the buffer still holds what was
-    /// saved; otherwise keep the newer typing and just note the disk state.
-    func adoptDiskChanges(afterSaving saved: String, completion: (() -> Void)? = nil) {
-        guard let path = filePath else { completion?(); return }
+    /// A formatter or command on save is about to rewrite the file just
+    /// saved: until `adoptDiskChanges` runs, the watcher leaves the file to
+    /// it (a half-written result mustn't replace the buffer).
+    func beginDiskRewrite() {
+        pendingRewrites += 1
+        rewritesMutedUntil = Date().addingTimeInterval(Self.rewriteMuteLimit)
+    }
+
+    /// After something rewrote the file just saved (a formatter, a command
+    /// on save): show its result, as one undoable edit, when it `succeeded`
+    /// and the buffer still holds what was saved. Newer typing is kept
+    /// instead (unsaved). A failed run, or one that emptied the file, isn't
+    /// shown: the buffer keeps the saved text, marked unsaved, and what the
+    /// file holds isn't taken as known (another program may have written it
+    /// meanwhile), so the next save asks before replacing it. Ends a
+    /// `beginDiskRewrite`.
+    func adoptDiskChanges(afterSaving saved: String, succeeded: Bool, completion: (() -> Void)? = nil) {
+        guard let path = filePath else {
+            pendingRewrites = max(pendingRewrites - 1, 0)
+            completion?()
+            return
+        }
+        let buffer = content
+        let generation = contentGeneration
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let disk = TextFile.read(path)
+            let read = TextFile.readStamped(path)
+            let hash = read?.contents.text.hashValue
+            let outcome = read.map {
+                SaveCommand.rewriteOutcome(saved: saved, disk: $0.contents.text, buffer: buffer, succeeded: succeeded)
+            }
             DispatchQueue.main.async {
                 defer { completion?() }
-                guard let self, let disk else { return }
-                if self.content == saved, disk.text != saved {
-                    self.replaceContent(with: disk)
-                } else {
-                    self.recordDiskState(text: disk.text)
+                guard let self else { return }
+                self.pendingRewrites = max(self.pendingRewrites - 1, 0)
+                guard let read, let hash, var outcome else { return }
+                // Typing since the copy was taken: decide with what's there now.
+                if generation != self.contentGeneration {
+                    outcome = SaveCommand.rewriteOutcome(
+                        saved: saved, disk: read.contents.text, buffer: self.content, succeeded: succeeded)
+                }
+                switch outcome {
+                case .adopt:
+                    self.lastWrittenText = read.contents.text
+                    self.replaceContent(with: read.contents, hash: hash, stamp: read.stamp)
+                case .record(let dirty):
+                    // A later command on save starts from what's on disk now.
+                    self.lastWrittenText = read.contents.text
+                    self.recordDiskState(hash: hash, stamp: read.stamp)
+                    if dirty { self.isModified = true }
+                case .keepSavedState:
+                    self.isModified = true
                 }
             }
         }
@@ -734,11 +936,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
 
     /// Apply a Monaco theme to the editor.
     func applyTheme(_ theme: MonacoThemeDefinition) {
+        editorTheme = theme
         sendCommand(.setTheme(theme: theme))
     }
 
     /// Apply editor settings (font, tab size, etc.).
     func applySettings(_ options: EditorOptions) {
+        editorOptions = options
         sendCommand(.updateSettings(options: options))
     }
 
@@ -891,45 +1095,136 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private func handleFileChangeEvent() {
         fileWatchDebounce?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.reloadFromDisk(force: false)
+            guard let self else { return }
+            if self.isLargeFile { self.noteLargeFileChange() } else { self.reloadFromDisk(force: false) }
         }
         fileWatchDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
+    /// A large file isn't read again on every write (a growing log would
+    /// keep the editor busy reloading): when its stamp moves, a notice
+    /// offers to reload it.
+    private func noteLargeFileChange() {
+        guard let path = filePath else { return }
+        startFileWatching()
+        guard !largeFileNoticeShown else { return }
+        let known = diskStamp
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard known == nil || TextFile.stamp(path) != known else { return }
+            DispatchQueue.main.async {
+                guard let self, self.filePath == path, !self.largeFileNoticeShown else { return }
+                self.largeFileNoticeShown = true
+                NotificationCenter.default.post(name: .editorChangedOnDisk, object: self)
+            }
+        }
+    }
+
     /// Bring in what's on disk. A clean buffer reloads; a buffer with unsaved
-    /// edits is left alone and a "changed on disk" notice goes up instead
-    /// (unless `force`, which discards the edits).
+    /// edits (or a large file) is left alone and a "changed on disk" notice
+    /// goes up instead (unless `force`, which discards the edits). The file
+    /// is read and compared off the main thread.
     func reloadFromDisk(force: Bool) {
         guard let path = filePath else { return }
-        // Re-arm the watcher whatever happens: after an atomic write
-        // (temp → rename) the old descriptor watches a deleted inode.
-        defer { startFileWatching() }
-        guard let disk = TextFile.read(path) else { return }
-        if disk.text == content {
-            recordDiskState(text: disk.text)
+        // Re-arm the watcher first: after an atomic write (temp → rename)
+        // the old descriptor watches a deleted inode, and a write from here
+        // on has to be seen.
+        startFileWatching()
+        // A formatter or command on save is rewriting it: its result is
+        // `adoptDiskChanges`'s to take or leave.
+        if !force, isRewriting { return }
+        let buffer = content
+        let generation = contentGeneration
+        let diskState = diskGeneration
+        reloadSequence &+= 1
+        let sequence = reloadSequence
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Too large for the editor: not even read.
+            if let size = TextFile.stamp(path)?.size, size > TabManager.maxEditorFileSize {
+                DispatchQueue.main.async {
+                    guard let self, self.filePath == path else { return }
+                    self.diskTooLarge(force: force)
+                }
+                return
+            }
+            guard let read = TextFile.readStamped(path) else { return }
+            let hash = read.contents.text.hashValue
+            let matchesBuffer = read.contents.text == buffer
+            DispatchQueue.main.async {
+                guard let self, self.filePath == path else { return }
+                if read.contents.text.utf8.count > TabManager.maxEditorFileSize {
+                    return self.diskTooLarge(force: force)
+                }
+                if !force {
+                    // A newer read is on its way, with the later disk.
+                    guard sequence == self.reloadSequence else { return }
+                    // What's on disk was recorded since this read began (a
+                    // save, a formatter's result), so it may be older: read
+                    // again, unless it's what was recorded.
+                    if diskState != self.diskGeneration {
+                        if hash != self.diskTextHash { self.reloadFromDisk(force: false) }
+                        return
+                    }
+                }
+                // Typing since the copy was taken: compare with what's there now.
+                let matches = generation == self.contentGeneration ? matchesBuffer : read.contents.text == self.content
+                self.takeDiskRead(read.contents, hash: hash, stamp: read.stamp, matchesBuffer: matches, force: force)
+            }
+        }
+    }
+
+    private func takeDiskRead(
+        _ disk: TextFile.Contents, hash: Int, stamp: TextFile.Stamp?, matchesBuffer: Bool, force: Bool
+    ) {
+        if matchesBuffer {
+            recordDiskState(hash: hash, stamp: stamp)
             if force { isModified = false }
             return
         }
-        // Unchanged since we last saw it (a touch, or our own save).
-        if !force, disk.text.hashValue == diskTextHash { return }
-        if isModified && !force {
-            guard noticedDiskHash != disk.text.hashValue else { return }
-            noticedDiskHash = disk.text.hashValue
-            NotificationCenter.default.post(name: .editorChangedOnDisk, object: self)
-            return
+        // It grew large while open: from now on it's treated like a file
+        // opened that large.
+        let grewLarge = !isLargeFile && disk.text.utf8.count > Self.largeFileSize
+        if !force {
+            // Unchanged since we last saw it (a touch, or our own save).
+            if hash == diskTextHash || isRewriting { return }
+            if grewLarge { becomeLargeFile() }
+            if isModified || isLargeFile {
+                guard noticedDiskHash != hash else { return }
+                noticedDiskHash = hash
+                largeFileNoticeShown = isLargeFile
+                NotificationCenter.default.post(name: .editorChangedOnDisk, object: self)
+                return
+            }
         }
-        replaceContent(with: disk)
+        replaceContent(with: disk, hash: hash, stamp: stamp)
+        if grewLarge { becomeLargeFile() }
     }
 
-    /// Show `disk` as the buffer (a fresh Monaco model; the window resyncs
-    /// the language server when it reports FileOpened).
-    private func replaceContent(with disk: TextFile.Contents) {
+    /// Read-only, and changes on disk show a notice instead of reloading.
+    /// (A buffer with unsaved edits stays editable, so they can be saved.)
+    private func becomeLargeFile() {
+        isLargeFile = true
+        if !isModified { setReadOnly(true) }
+    }
+
+    /// The file on disk is now too large for the editor: the buffer stays
+    /// as it is, and a notice says so (once, or whenever asked to reload).
+    private func diskTooLarge(force: Bool) {
+        if !isLargeFile { becomeLargeFile() }
+        guard force || !largeFileNoticeShown else { return }
+        largeFileNoticeShown = true
+        NotificationCenter.default.post(name: .editorChangedOnDisk, object: self, userInfo: ["tooLarge": true])
+    }
+
+    /// Show `disk` as the buffer. Monaco edits the open file in place, as
+    /// one step Undo takes back, keeping the cursor and scroll; the window
+    /// resyncs the language server when it reports FileOpened.
+    private func replaceContent(with disk: TextFile.Contents, hash: Int, stamp: TextFile.Stamp?) {
         guard let path = filePath else { return }
         content = disk.text
         hasBOM = disk.bom
         isModified = false
-        recordDiskState(text: disk.text)
+        recordDiskState(hash: hash, stamp: stamp)
         sendCommand(.openFile(filePath: path, content: disk.text, language: language))
         // Force WebView repaint immediately — WKWebView may defer visual updates
         // when the view isn't first responder (e.g. user is focused elsewhere).
@@ -1133,22 +1428,6 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             wv.configuration.userContentController.removeScriptMessageHandler(forName: "impulse")
             wv.navigationDelegate = nil
         }
-    }
-}
-
-private extension String.Index {
-    init?(utf16Offset: Int, in string: String) {
-        guard utf16Offset >= 0,
-              let utf16Index = string.utf16.index(
-                string.utf16.startIndex,
-                offsetBy: utf16Offset,
-                limitedBy: string.utf16.endIndex
-              ),
-              let index = String.Index(utf16Index, within: string)
-        else {
-            return nil
-        }
-        self = index
     }
 }
 

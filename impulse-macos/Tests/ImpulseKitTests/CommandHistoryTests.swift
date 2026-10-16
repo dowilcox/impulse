@@ -66,6 +66,62 @@
       #expect(reopened.recent(limit: 5).map(\.entry.command) == ["echo kept"])
     }
 
+    @Test func importingAgainAddsOnlyWhatsNew() throws {
+      let db = try database()
+      let first = ShellHistoryImport.bash("#1700000000\nls\n#1700000001\nmake\nplain\nplain\n")
+      #expect(db.importEntries(first) == 3)  // the second `plain` (same time) is the same entry
+      #expect(db.importEntries(first) == 0)
+      let more = ShellHistoryImport.bash("#1700000000\nls\n#1700000001\nmake\nplain\n#1700000002\ngit push\n")
+      #expect(db.importEntries(more) == 1)
+      #expect(db.count == 4)
+      // A command that ran in a terminal is a separate row.
+      db.insert([HistoryEntry(command: "ls", cwd: "/a", startedAt: at(1_700_000_000), session: "s")])
+      #expect(db.count == 5)
+    }
+
+    @Test func removesEverything() throws {
+      let db = try database()
+      db.insert([HistoryEntry(command: "echo hi", startedAt: at(1))])
+      db.importEntries([HistoryEntry(command: "ls", startedAt: at(2))])
+      db.removeAll()
+      #expect(db.count == 0)
+      #expect(db.recent(limit: 10).isEmpty)
+    }
+
+    @Test func filesAreOwnerOnly() throws {
+      let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("impulse-history-\(UUID().uuidString).sqlite3").path
+      defer {
+        for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+      }
+      // An older file, readable by everyone.
+      FileManager.default.createFile(atPath: path, contents: nil, attributes: [.posixPermissions: 0o644])
+      let db = try #require(CommandHistoryDatabase(path: path))
+      db.insert([HistoryEntry(command: "echo secret", startedAt: at(1))])
+      for suffix in ["", "-wal", "-shm"] where FileManager.default.fileExists(atPath: path + suffix) {
+        let mode = try FileManager.default.attributesOfItem(atPath: path + suffix)[.posixPermissions] as? Int
+        #expect(mode == 0o600, "\(suffix)")
+      }
+      #expect(FileManager.default.fileExists(atPath: path + "-wal"))
+    }
+
+    @Test func importsCRLFAndInvalidUTF8() {
+      #expect(ShellHistoryImport.bash("#1700000000\r\nls -la\r\nmake\r\n").map(\.command) == ["ls -la", "make"])
+      #expect(ShellHistoryImport.bash("#1700000000\r\nls\r\n")[0].startedAt == at(1_700_000_000))
+      #expect(ShellHistoryImport.zsh(Data(": 1700000000:0;git log\r\nplain\r\n".utf8)).map(\.command) == ["git log", "plain"])
+      #expect(
+        ShellHistoryImport.fish("- cmd: git status\r\n  when: 1700000000\r\n").first?.startedAt == at(1_700_000_000))
+      // One bad byte costs its line's character, not the file.
+      var data = Data("ls\necho ".utf8)
+      data.append(contentsOf: [0xFF, 0x0A])
+      data.append(contentsOf: Data("make\n".utf8))
+      #expect(ShellHistoryImport.bash(data).map(\.command) == ["ls", "echo \u{FFFD}", "make"])
+      var fish = Data("- cmd: a".utf8)
+      fish.append(0xC3)
+      fish.append(contentsOf: Data("\n- cmd: b\n".utf8))
+      #expect(ShellHistoryImport.fish(fish).map(\.command) == ["a\u{FFFD}", "b"])
+    }
+
     @Test func importsZshHistory() {
       var data = Data(": 1700000000:0;git log\n: 1700000100:3;echo one \\\n two\nplain\n".utf8)
       // A metafied "é" (0xC3 0xA9 → 0xC3 0x83 0x89).

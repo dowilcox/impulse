@@ -36,6 +36,18 @@ final class FileTreeDataController {
     // Subdirectory watchers — keyed by path
     private var subdirWatchers: [String: (fd: Int32, source: DispatchSourceFileSystemObject)] = [:]
 
+    /// At most this many expanded folders get a watcher of their own (each
+    /// holds a file descriptor); past it, an FSEvents stream on the root
+    /// covers the rest.
+    private static let maxSubdirWatchers = 64
+    private var overflowStream: FSEventStreamRef?
+
+    /// Bumped whenever the whole tree is replaced, so a background load
+    /// finishing for an older tree doesn't refresh the sidebar.
+    private var treeGeneration = 0
+    /// Folders whose children are being listed in the background.
+    private var loadingNodes = Set<ObjectIdentifier>()
+
     // Git badges are refreshed by the window when its repository's
     // RepoWatcher reports changes (see GitRepositoryState), not by polling.
 
@@ -69,25 +81,25 @@ final class FileTreeDataController {
     func updateTree(nodes: [FileTreeNode], rootPath: String, skipGitRefresh: Bool = false) {
         let expandedPaths = collectExpandedPaths(rootNodes)
         let incomingExpanded = collectExpandedPaths(nodes)
-        let savedPaths = loadExpandedPaths(forRoot: rootPath)
+        let savedPaths = Self.savedExpandedPaths(forRoot: rootPath)
         let allExpanded = expandedPaths.union(incomingExpanded).union(savedPaths)
 
         self.rootPath = rootPath
         self.rootNodes = nodes
+        treeGeneration += 1
 
         // Start root watcher first — this stops all previous watchers.
         startWatching(path: rootPath)
 
+        // Expanded folders not loaded yet fill in once listed (off main);
+        // that refreshes git status for them too.
         if !allExpanded.isEmpty {
             applyExpansionState(allExpanded, to: rootNodes)
         }
 
         rebuildNodeIndex()
+        syncSubdirectoryWatchers()
 
-        // Batch-set up subdirectory watchers for all expanded directories.
-        watchExpandedSubdirectories(rootNodes)
-
-        // Children loaded during expansion restore skipped git status — refresh now.
         if !skipGitRefresh {
             refreshGitStatus()
         }
@@ -129,7 +141,7 @@ final class FileTreeDataController {
         for node in rootNodes {
             collapseRecursively(node)
         }
-        stopAllSubdirWatchers()
+        syncSubdirectoryWatchers()
         saveExpandedPaths()
     }
 
@@ -148,8 +160,7 @@ final class FileTreeDataController {
     /// resync the subdirectory watchers to the new expansion set.
     func persistCurrentExpandedPaths() {
         saveExpandedPaths()
-        stopAllSubdirWatchers()
-        watchExpandedSubdirectories(rootNodes)
+        syncSubdirectoryWatchers()
     }
 
     /// Rebuild the tree from disk, preserving expansion state. Heavy work
@@ -172,6 +183,7 @@ final class FileTreeDataController {
 
         DispatchQueue.global(qos: .utility).async {
             let newNodes = FileTreeNode.buildTree(rootPath: root, showHidden: hidden)
+            Self.loadExpanded(expandedPaths, in: newNodes, showHidden: hidden)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.isRefreshingTree = false
@@ -188,9 +200,10 @@ final class FileTreeDataController {
                 }
 
                 self.rootNodes = newNodes
+                self.treeGeneration += 1
                 self.applyExpansionState(expandedPaths, to: self.rootNodes)
                 self.rebuildNodeIndex()
-                self.watchExpandedSubdirectories(self.rootNodes)
+                self.syncSubdirectoryWatchers()
                 self.onTreeRefreshed?(self.rootNodes)
                 NotificationCenter.default.post(name: .impulseFileTreeChanged, object: nil)
                 // Single git status refresh after expansion restoration ensures
@@ -220,21 +233,90 @@ final class FileTreeDataController {
         }
     }
 
-    /// Re-apply a set of expanded paths to a (freshly built) tree, loading
-    /// children for each expanded directory. The retired NSOutlineView did
-    /// this implicitly through `expandItem` + the expand delegate; the
-    /// headless tree loads children synchronously here, exactly like the old
-    /// bulk-restore path did on the main thread.
+    /// Re-apply a set of expanded paths to the tree. Folders whose children
+    /// are loaded open right away; the others are listed off the main
+    /// thread and filled in when that's done.
     private func applyExpansionState(_ paths: Set<String>, to nodes: [FileTreeNode]) {
+        var unloaded: [FileTreeNode] = []
+        markExpanded(paths, in: nodes, unloaded: &unloaded)
+        loadChildren(of: unloaded, expanding: paths)
+    }
+
+    private func markExpanded(_ paths: Set<String>, in nodes: [FileTreeNode], unloaded: inout [FileTreeNode]) {
         for node in nodes where node.isDirectory && paths.contains(node.path) {
-            if !node.isLoaded {
-                node.loadChildren(showHidden: showHidden)
-            }
             node.isExpanded = true
             if let children = node.children {
-                applyExpansionState(paths, to: children)
+                markExpanded(paths, in: children, unloaded: &unloaded)
+            } else {
+                unloaded.append(node)
             }
         }
+    }
+
+    /// List folders in the background (and the expanded folders inside
+    /// them), then put their children in place on main.
+    private func loadChildren(of nodes: [FileTreeNode], expanding paths: Set<String>) {
+        let nodes = nodes.filter { loadingNodes.insert(ObjectIdentifier($0)).inserted }
+        guard !nodes.isEmpty else { return }
+        let folders = nodes.map(\.path)
+        let hidden = showHidden
+        let generation = treeGeneration
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Fresh nodes: nothing on screen changes until they're in place.
+            let loaded = folders.map { path -> [FileTreeNode] in
+                let children = FileTreeNode.buildChildren(path: path, showHidden: hidden)
+                Self.loadExpanded(paths, in: children, showHidden: hidden)
+                return children
+            }
+            DispatchQueue.main.async { [weak self] in
+                var filled = false
+                for (node, children) in zip(nodes, loaded) {
+                    self?.loadingNodes.remove(ObjectIdentifier(node))
+                    // Loaded meanwhile (expanded by hand): keep that.
+                    guard node.children == nil else { continue }
+                    node.children = children
+                    filled = true
+                }
+                guard let self, filled, self.treeGeneration == generation else { return }
+                self.treeDidChange(filesChanged: false)
+            }
+        }
+    }
+
+    /// A root's top-level nodes with the folders open there already listed
+    /// (those saved for the root, and `expanding`, the tree on screen), so
+    /// `updateTree` shows them filled in rather than open and empty until a
+    /// background listing lands. Call it off the main thread.
+    static func buildTree(rootPath: String, showHidden: Bool, expanding: Set<String> = []) -> [FileTreeNode] {
+        let nodes = FileTreeNode.buildTree(rootPath: rootPath, showHidden: showHidden)
+        loadExpanded(expanding.union(savedExpandedPaths(forRoot: rootPath)), in: nodes, showHidden: showHidden)
+        return nodes
+    }
+
+    /// Open the expanded folders among `nodes`, listing their children (and
+    /// theirs). For nodes nothing shows yet: it runs off the main thread.
+    private static func loadExpanded(_ paths: Set<String>, in nodes: [FileTreeNode], showHidden: Bool) {
+        guard !paths.isEmpty else { return }
+        for node in nodes where node.isDirectory && paths.contains(node.path) {
+            node.isExpanded = true
+            if node.children == nil {
+                node.loadChildren(showHidden: showHidden)
+            }
+            loadExpanded(paths, in: node.children ?? [], showHidden: showHidden)
+        }
+    }
+
+    /// Children were added or replaced: refresh the lookup, the watchers,
+    /// the sidebar and git badges. `filesChanged`: it came from the disk
+    /// (a search re-runs), not from listing a folder that was opened.
+    private func treeDidChange(filesChanged: Bool) {
+        rebuildNodeIndex()
+        syncSubdirectoryWatchers()
+        onTreeRefreshed?(rootNodes)
+        if filesChanged {
+            NotificationCenter.default.post(name: .impulseFileTreeChanged, object: nil)
+        }
+        refreshGitStatus()
     }
 
     // MARK: Expansion Persistence
@@ -243,18 +325,18 @@ final class FileTreeDataController {
 
     /// Per-root UserDefaults key so switching projects doesn't clobber
     /// expansion state.
-    private func expandedPathsKey(forRoot root: String) -> String {
-        "\(Self.expandedPathsKeyPrefix).\(root)"
+    private static func expandedPathsKey(forRoot root: String) -> String {
+        "\(expandedPathsKeyPrefix).\(root)"
     }
 
     /// Save the current set of expanded paths to UserDefaults.
     private func saveExpandedPaths() {
         let paths = collectExpandedPaths(rootNodes)
-        UserDefaults.standard.set(Array(paths), forKey: expandedPathsKey(forRoot: rootPath))
+        UserDefaults.standard.set(Array(paths), forKey: Self.expandedPathsKey(forRoot: rootPath))
     }
 
-    /// Load the saved set of expanded paths from UserDefaults.
-    private func loadExpandedPaths(forRoot root: String) -> Set<String> {
+    /// Load the saved set of expanded paths from UserDefaults (any thread).
+    private static func savedExpandedPaths(forRoot root: String) -> Set<String> {
         let paths = UserDefaults.standard.stringArray(forKey: expandedPathsKey(forRoot: root)) ?? []
         return Set(paths)
     }
@@ -291,11 +373,9 @@ final class FileTreeDataController {
 
     }
 
-    /// Start watching an expanded subdirectory. Capped at 64 file descriptors
-    /// to avoid exhausting the per-process FD limit on deeply nested trees.
+    /// Start watching an expanded subdirectory.
     private func watchSubdirectory(_ path: String) {
         guard subdirWatchers[path] == nil else { return }
-        guard subdirWatchers.count < 64 else { return }
 
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else { return }
@@ -305,8 +385,17 @@ final class FileTreeDataController {
             eventMask: [.write, .rename, .delete, .link],
             queue: .main
         )
-        source.setEventHandler { [weak self] in
-            self?.handleFileSystemEvent(path: path)
+        source.setEventHandler { [weak self, weak source] in
+            guard let self else { return }
+            // The folder itself went (or moved): this descriptor watches
+            // nothing now. The next sync opens one on whatever is there.
+            if let source, !source.data.isDisjoint(with: [.delete, .rename]) {
+                source.cancel()
+                if self.subdirWatchers[path]?.source === source {
+                    self.subdirWatchers[path] = nil
+                }
+            }
+            self.handleFileSystemEvent(path: path)
         }
         source.setCancelHandler { [fd] in
             close(fd)
@@ -315,14 +404,37 @@ final class FileTreeDataController {
         source.resume()
     }
 
-    /// Set up watchers for all currently expanded subdirectories in a batch.
-    private func watchExpandedSubdirectories(_ nodes: [FileTreeNode]) {
-        for node in nodes {
-            if node.isDirectory && node.isExpanded {
-                watchSubdirectory(node.path)
-                if let children = node.children {
-                    watchExpandedSubdirectories(children)
-                }
+    /// Watch exactly the expanded folders: new ones get a watcher, collapsed
+    /// or removed ones lose theirs, and the rest keep the one they have.
+    /// Past the cap, an FSEvents stream on the root covers the others.
+    private func syncSubdirectoryWatchers() {
+        var wanted: [String] = []
+        expandedFolders(rootNodes, into: &wanted)
+        let wantedSet = Set(wanted)
+        for (path, entry) in subdirWatchers where !wantedSet.contains(path) {
+            entry.source.cancel()
+            subdirWatchers[path] = nil
+        }
+        var overflow = false
+        for path in wanted where subdirWatchers[path] == nil {
+            guard subdirWatchers.count < Self.maxSubdirWatchers else {
+                overflow = true
+                break
+            }
+            watchSubdirectory(path)
+        }
+        if overflow {
+            startOverflowStream()
+        } else {
+            stopOverflowStream()
+        }
+    }
+
+    private func expandedFolders(_ nodes: [FileTreeNode], into paths: inout [String]) {
+        for node in nodes where node.isDirectory && node.isExpanded {
+            paths.append(node.path)
+            if let children = node.children {
+                expandedFolders(children, into: &paths)
             }
         }
     }
@@ -333,6 +445,66 @@ final class FileTreeDataController {
             entry.source.cancel()
         }
         subdirWatchers.removeAll()
+        stopOverflowStream()
+    }
+
+    // MARK: Overflow Stream
+
+    /// Holds the controller weakly for the FSEvents callback.
+    private final class StreamTarget {
+        weak var controller: FileTreeDataController?
+        init(_ controller: FileTreeDataController) { self.controller = controller }
+    }
+
+    /// Folder-level FSEvents for the whole root, for the expanded folders
+    /// beyond the watcher cap.
+    private func startOverflowStream() {
+        guard overflowStream == nil, !rootPath.isEmpty else { return }
+        var context = FSEventStreamContext(
+            version: 0, info: Unmanaged.passRetained(StreamTarget(self)).toOpaque(),
+            retain: nil, release: { info in
+                guard let info else { return }
+                Unmanaged<StreamTarget>.fromOpaque(info).release()
+            }, copyDescription: nil)
+        let callback: FSEventStreamCallback = { _, info, _, eventPaths, _, _ in
+            guard let info,
+                  let controller = Unmanaged<StreamTarget>.fromOpaque(info).takeUnretainedValue().controller
+            else { return }
+            let paths = unsafeBitCast(eventPaths, to: NSArray.self).compactMap { $0 as? String }
+            controller.handleOverflowEvents(paths)
+        }
+        guard
+            let stream = FSEventStreamCreate(
+                nil, callback, &context, [rootPath] as CFArray,
+                FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.3,
+                UInt32(kFSEventStreamCreateFlagUseCFTypes))
+        else { return }
+        FSEventStreamSetDispatchQueue(stream, .main)
+        FSEventStreamStart(stream)
+        overflowStream = stream
+    }
+
+    private func stopOverflowStream() {
+        guard let stream = overflowStream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        overflowStream = nil
+    }
+
+    /// Changed folders reported by the overflow stream: refresh the loaded
+    /// ones that have no watcher of their own.
+    private func handleOverflowEvents(_ paths: [String]) {
+        // FSEvents reports real paths (symlinks resolved, /private/var).
+        let realRoot = TextFile.target(of: rootPath)
+        for reported in paths {
+            var path = reported
+            while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+            guard path.hasPrefix(realRoot + "/") else { continue }
+            let treePath = rootPath + path.dropFirst(realRoot.count)
+            guard subdirWatchers[treePath] == nil, nodeByPath[treePath]?.isLoaded == true else { continue }
+            handleFileSystemEvent(path: treePath)
+        }
     }
 
     /// Stop the current filesystem watcher and close the file descriptor.
@@ -445,66 +617,84 @@ final class FileTreeDataController {
             applyExpansionState(expandedPaths, to: rootNodes)
         }
 
-        guard changed else { return }
-        rebuildNodeIndex()
-        stopAllSubdirWatchers()
-        watchExpandedSubdirectories(rootNodes)
-        onTreeRefreshed?(rootNodes)
-        NotificationCenter.default.post(name: .impulseFileTreeChanged, object: nil)
-        refreshGitStatus()
+        guard changed else {
+            // A folder whose watcher went with it may be back.
+            syncSubdirectoryWatchers()
+            return
+        }
+        treeDidChange(filesChanged: true)
     }
 
     private func applyFileTreePatch(_ patch: ImpulseCore.FileTreePatch) -> Bool {
-        if patch.parent_id == stableNodeID(rootPath) {
-            var children = rootNodes
-            applyFileTreeOperations(patch.operations, to: &children)
-            rootNodes = children
+        if patch.parent_id == Self.stableNodeID(rootPath) {
+            rootNodes = Self.applying(patch.operations, to: rootNodes)
             return true
         }
 
         guard let parent = nodeByPath[patch.parent_id],
               parent.isDirectory,
-              parent.children != nil else {
+              let children = parent.children else {
             return false
         }
 
-        var children = parent.children ?? []
-        applyFileTreeOperations(patch.operations, to: &children)
-        parent.children = children
+        parent.children = Self.applying(patch.operations, to: children)
         return true
     }
 
-    private func applyFileTreeOperations(
+    /// The children after a patch's operations: removed ones go, upserted
+    /// ones land at their indices (in ascending order), and the rest keep
+    /// their order. One pass with lookups by id, so a big folder costs the
+    /// same however many entries the patch names.
+    static func applying(
         _ operations: [ImpulseCore.FileTreeOperation],
-        to children: inout [FileTreeNode]
-    ) {
-        let removedIDs = Set(operations.compactMap { operation -> String? in
-            if case .remove(let id) = operation { return id }
-            return nil
-        })
-
+        to children: [FileTreeNode]
+    ) -> [FileTreeNode] {
+        var removedIDs = Set<String>()
+        var upserts: [(index: Int, node: ImpulseCore.FileTreePatchNode)] = []
         for operation in operations {
             switch operation {
             case .remove(let id):
-                if let index = children.firstIndex(where: { stableNodeID($0.path) == id }) {
-                    children.remove(at: index)
-                }
-            case .upsert(_, let index, let patchNode):
-                let existingIndex = children.firstIndex {
-                    stableNodeID($0.path) == patchNode.id
-                }
-                let existing = existingIndex.map { children.remove(at: $0) }
-                let node = nodeForUpsert(
-                    patchNode,
-                    existing: existing,
-                    preserveExisting: !removedIDs.contains(patchNode.id)
-                )
-                children.insert(node, at: min(index, children.count))
+                removedIDs.insert(id)
+            case .upsert(_, let index, let node):
+                upserts.append((index, node))
             }
         }
+        let upsertedIDs = Set(upserts.map(\.node.id))
+        var existing: [String: FileTreeNode] = [:]
+        var kept: [FileTreeNode] = []
+        kept.reserveCapacity(children.count)
+        for child in children {
+            let id = stableNodeID(child.path)
+            if removedIDs.contains(id) { continue }
+            if upsertedIDs.contains(id) {
+                existing[id] = child
+            } else {
+                kept.append(child)
+            }
+        }
+
+        upserts.sort { $0.index < $1.index }
+        var result: [FileTreeNode] = []
+        result.reserveCapacity(kept.count + upserts.count)
+        var next = 0
+        for (index, patchNode) in upserts {
+            // Kept children fill the places before this one.
+            while result.count < index, next < kept.count {
+                result.append(kept[next])
+                next += 1
+            }
+            // A removed-and-upserted id was replaced: a new node.
+            result.append(nodeForUpsert(
+                patchNode,
+                existing: existing[patchNode.id],
+                preserveExisting: !removedIDs.contains(patchNode.id)
+            ))
+        }
+        result.append(contentsOf: kept[next...])
+        return result
     }
 
-    private func nodeForUpsert(
+    private static func nodeForUpsert(
         _ patchNode: ImpulseCore.FileTreePatchNode,
         existing: FileTreeNode?,
         preserveExisting: Bool
@@ -518,7 +708,7 @@ final class FileTreeDataController {
         return FileTreeNode.fromPatchNode(patchNode)
     }
 
-    private func stableNodeID(_ path: String) -> String {
+    private static func stableNodeID(_ path: String) -> String {
         var id = path
         while id.count > 1 && (id.hasSuffix("/") || id.hasSuffix("\\")) {
             id.removeLast()

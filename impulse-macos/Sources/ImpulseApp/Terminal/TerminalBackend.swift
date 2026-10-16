@@ -818,6 +818,13 @@ final class TerminalBackend {
         ImpulseCore.terminalScrollToBottom(handle: handle)
     }
 
+    /// Lines the viewport is scrolled back into the scrollback (0 = live
+    /// bottom), read from the terminal itself.
+    func displayOffset() -> Int32 {
+        guard let handle, !isShutdown else { return 0 }
+        return Int32(clamping: ImpulseCore.terminalDisplayOffset(handle: handle))
+    }
+
     func scrollToCommandBlock(id: UInt64) -> Bool {
         guard let handle, !isShutdown else { return false }
         return ImpulseCore.terminalScrollToCommandBlock(handle: handle, blockId: id)
@@ -921,25 +928,30 @@ final class TerminalBackend {
         finishShutdown()
     }
 
-    /// First half of shutdown, on the main thread: every method checks
-    /// `isShutdown` first, so from here on a caller still holding this
-    /// backend (a tick in progress) can't reach the handle while
-    /// `finishShutdown()` frees it elsewhere.
+    /// First half of shutdown, on the main thread: the handle moves out of
+    /// `handle` (which only the main thread touches) for `finishShutdown()`
+    /// to free elsewhere, so a caller still holding this backend (a tick in
+    /// progress) finds nothing to reach.
     func beginShutdown() {
         guard let handle, !isShutdown else { return }
         ImpulseCore.terminalSetWakeupCallback(handle: handle, callback: nil, context: nil)
         wakeBox?.release()
         wakeBox = nil
         isShutdown = true
+        self.handle = nil
+        handleToDestroy = handle
     }
 
     /// Second half: free the terminal (joins its reader thread; may block,
-    /// so it can run off the main thread).
+    /// so it can run off the main thread, after `beginShutdown()`).
     func finishShutdown() {
-        guard let handle else { return }
-        self.handle = nil
+        guard let handle = handleToDestroy else { return }
+        handleToDestroy = nil
         ImpulseCore.terminalDestroy(handle: handle)
     }
+
+    /// The handle `beginShutdown()` took, until `finishShutdown()` frees it.
+    private var handleToDestroy: OpaquePointer?
 }
 
 // MARK: - Errors

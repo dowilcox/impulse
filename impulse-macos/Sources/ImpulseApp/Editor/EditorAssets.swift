@@ -16,6 +16,16 @@ enum EditorAssets {
     return url
   }()
 
+  /// The editor page itself (Monaco's host page).
+  static let editorPage: URL? = monacoDirectory?.appendingPathComponent("editor.html")
+
+  /// `url` is the editor page (any #fragment or ?query aside). Editor web
+  /// views only ever show that page, and only it may talk to the app.
+  static func isEditorPage(_ url: URL?) -> Bool {
+    guard let url, url.isFileURL, let editorPage else { return false }
+    return url.standardizedFileURL.path == editorPage.standardizedFileURL.path
+  }
+
   /// Install the bundled JetBrains Mono and Inter fonts into ~/Library/Fonts
   /// so the terminal renderer can use them, mirroring the Rust
   /// `install_user_fonts`. Existing files are never overwritten. Safe to call

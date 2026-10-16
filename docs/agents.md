@@ -60,13 +60,16 @@ Without hooks, Impulse infers the state from what a terminal can see:
 
 With [hooks](#agent-hooks) installed, the agent tells Impulse directly and the guesses above are switched off (Return and permission-style notifications still count):
 
-| Hook event                       | State                                                                        |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| `SessionStart` (Claude Code)     | **Idle**                                                                     |
-| `UserPromptSubmit` (Claude Code) | **Working**                                                                  |
-| `Notification` (Claude Code)     | **Needs your input** when it asks for permission or input, else **Finished** |
-| `Stop` (Claude Code)             | **Finished**                                                                 |
-| Turn complete (Codex)            | **Finished**                                                                 |
+| Hook event                                            | State                                                                                                                                                                                                                                           |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SessionStart` (Claude Code)                          | **Idle**                                                                                                                                                                                                                                        |
+| `UserPromptSubmit` (Claude Code)                      | **Working**                                                                                                                                                                                                                                     |
+| `PostToolUse` (Claude Code, shell commands and edits) | **Working** when it's the tool a permission request was waiting on, so a prompt answered with a number key shows it working again. Tools that finish at other times (in parallel subagents, or background tasks after the turn) change nothing. |
+| `Notification` (Claude Code)                          | **Needs your input** when it asks for permission or input; otherwise **Finished** if it was working. Claude Code's reminder that it's waiting, a minute after a turn, changes nothing.                                                          |
+| `Stop` (Claude Code)                                  | **Finished**                                                                                                                                                                                                                                    |
+| Turn complete (Codex)                                 | **Finished**                                                                                                                                                                                                                                    |
+
+A turn you interrupt (Esc in Claude Code) sends no `Stop`, and neither does a question you dismiss. So even with hooks, 5 minutes without output or a hook event while **Working**, or 30 minutes while it **Needs your input**, puts the agent back to **Idle**, without a notification. A state reported with [`impulse status`](cli.md#impulse-status) stays until the next report.
 
 ## Where the status shows
 
@@ -160,7 +163,7 @@ You can hand code, files and command output to an agent without copying and past
 
 The editor, file tree and command-block actions pick the agent for you: one in the active workspace that's waiting for you, else any agent in the active workspace, else any agent in the window (never the terminal the command block came from). If no agent is running in the window, Impulse says so. Review, Problems and conflicts list the running agents so you choose one.
 
-Text is pasted into the agent's prompt without pressing Return, so you can read it and add to it first. A toast says "Sent to Claude Code. Review it in its prompt, then press Return." with a **Show** button that takes you there. If the agent is in the middle of a turn (working or waiting on a question), the text is queued instead ("Queued for Claude Code; it's sent when the current turn ends.") and pasted when the turn ends.
+Text is pasted into the agent's prompt without pressing Return, so you can read it and add to it first. A toast says "Sent to Claude Code. Review it in its prompt, then press Return." with a **Show** button that takes you there. If the agent is in the middle of a turn (working or waiting on a question), the text is queued instead ("Queued for Claude Code; it's sent when the current turn ends.") and pasted when the turn ends. If the agent exits first, the queued text is dropped rather than pasted into whatever runs next.
 
 For the details of each source, see [Editor](editor.md), [Terminal](terminal.md), [Review](review.md) and [Git](git.md).
 
@@ -231,6 +234,8 @@ The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environ
 
 Before writing, Impulse saves the previous version of the file beside it as `<file>.impulse-backup`. If the file is a symlink (as with many dotfile managers), Impulse writes through the link.
 
+If the file changed after the sheet showed its preview (a running agent rewrote its settings, say), **Install Hooks** writes nothing. The sheet makes the preview again from the file as it is now and says "The file changed since this preview, so nothing was written. Check the change again."
+
 ### What gets written
 
 - **Claude Code, All projects:** `~/.claude/settings.json`.
@@ -261,12 +266,12 @@ Impulse rewrites the file pretty-printed with its keys sorted. Hooks that are al
 
 In a repository with [tasks](tasks.md), Impulse's Claude Code hooks also tell the agent about the other workspaces, which it otherwise can't see. Each can be turned off in Settings ▸ Terminal ▸ Agents.
 
-| When                                                                                                                                                                       | The agent is told                                                                                                                                                                                        | Setting                   |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| A session starts                                                                                                                                                           | A short summary: which workspace it's in, the others with their agents, uncommitted files and the files they share with it, and to run `impulse tasks` before merging a branch or making sweeping edits. | `agent_hook_task_summary` |
-| It edits a file that another workspace also changes                                                                                                                        | "Impulse: src/lib/units.ts is also changed in the task fix-elevation, where Claude Code is working…" Once per file.                                                                                      | `agent_hook_shared_files` |
-| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code stops and asks you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-by-hand).                                                                        | `agent_hook_merge_guard`  |
-| Its `git pull`, merge or checkout brought in a changed lock file or `Dockerfile`                                                                                           | Which files changed, and the commands from the project's [`[on_change]` rules](project-config.md#when-files-change) to run before testing.                                                               | `agent_hook_dependencies` |
+| When                                                                                                                                                                       | The agent is told                                                                                                                                                                                                                                                     | Setting                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| A session starts                                                                                                                                                           | A short summary: which workspace it's in, the others with their agents, uncommitted files and the files they share with it, and to run `impulse tasks` before merging a branch or making sweeping edits.                                                              | `agent_hook_task_summary` |
+| It edits a file that another workspace also changes                                                                                                                        | "Impulse: src/lib/units.ts is also changed in the task fix-elevation, where Claude Code is working…" Once per file.                                                                                                                                                   | `agent_hook_shared_files` |
+| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code stops and asks you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-by-hand).                                                                                                                                     | `agent_hook_merge_guard`  |
+| Its `git pull`, merge or checkout brought in a changed lock file or `Dockerfile`                                                                                           | Which files changed, and the commands from the project's [`[on_change]` rules](project-config.md#when-files-change) to run before testing. Until you've trusted the project settings, only the well-known dependency files it changed, and to reinstall dependencies. | `agent_hook_dependencies` |
 
 Nothing is written into your repository or its instruction files (`CLAUDE.md`, `AGENTS.md`): it all goes through the hooks. Codex only tells Impulse when a turn ends, so it gets none of this; it can still run `impulse tasks`.
 

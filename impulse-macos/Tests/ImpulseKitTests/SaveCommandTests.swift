@@ -40,5 +40,44 @@
       #expect(summary.count == SaveCommand.maxSummaryLength)
       #expect(summary.hasSuffix("…"))
     }
+
+    @Test func onlyASuccessfulNonEmptyRewriteIsAdopted() {
+      #expect(SaveCommand.shouldAdopt(rewritten: "let a = 1\n", saved: "let a=1", succeeded: true))
+      // Failed or stopped: whatever it left behind isn't shown.
+      #expect(!SaveCommand.shouldAdopt(rewritten: "let a", saved: "let a=1", succeeded: false))
+      // Emptied a file that had text.
+      #expect(!SaveCommand.shouldAdopt(rewritten: "", saved: "let a=1", succeeded: true))
+      #expect(!SaveCommand.shouldAdopt(rewritten: " \n\n", saved: "let a=1", succeeded: true))
+      // A blank file may stay blank.
+      #expect(SaveCommand.shouldAdopt(rewritten: "", saved: "\n", succeeded: true))
+    }
+
+    @Test func aGoodResultIsShownUnlessTypingMovedOn() {
+      #expect(SaveCommand.rewriteOutcome(saved: "a=1", disk: "a = 1", buffer: "a=1", succeeded: true) == .adopt)
+      #expect(
+        SaveCommand.rewriteOutcome(saved: "a=1", disk: "a = 1", buffer: "a=12", succeeded: true)
+          == .record(dirty: true))
+    }
+
+    @Test func untouchedFileIsRecordedAndOnlyNewerTypingIsDirty() {
+      #expect(SaveCommand.rewriteOutcome(saved: "x", disk: "x", buffer: "x", succeeded: true) == .record(dirty: false))
+      #expect(SaveCommand.rewriteOutcome(saved: "x", disk: "x", buffer: "x", succeeded: false) == .record(dirty: false))
+      #expect(SaveCommand.rewriteOutcome(saved: "x", disk: "x", buffer: "xy", succeeded: true) == .record(dirty: true))
+    }
+
+    @Test func formatterThenReloadingCommandLeavesACleanBufferClean() {
+      // The formatter's result F is shown; the command's "saved" may still
+      // be the text from before formatting, and it changed nothing.
+      #expect(SaveCommand.rewriteOutcome(saved: "S", disk: "F", buffer: "F", succeeded: true) == .record(dirty: false))
+    }
+
+    @Test func aFailedRunsLeftoversKeepTheSavedDiskState() {
+      // Whether the formatter half-wrote the file or another program wrote
+      // to it meanwhile, it isn't taken as known: the next save asks.
+      #expect(
+        SaveCommand.rewriteOutcome(saved: "a=1", disk: "written by an agent", buffer: "a=1", succeeded: false)
+          == .keepSavedState)
+      #expect(SaveCommand.rewriteOutcome(saved: "a=1", disk: "", buffer: "a=1", succeeded: true) == .keepSavedState)
+    }
   }
 #endif

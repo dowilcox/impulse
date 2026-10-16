@@ -478,8 +478,8 @@ private struct WorkspaceTabRow: View {
     .frame(height: 24)
     .rowBackground(selected: selected, hovered: hovering)
     .contentShape(Rectangle())
-    .simultaneousGesture(TapGesture().onEnded { model.onTabSelected?(tab.index) })
-    .simultaneousGesture(TapGesture(count: 2).onEnded { model.onKeepTab?(tab.index) })
+    .simultaneousGesture(TapGesture().onEnded { model.withTab(tab.id) { model.onTabSelected?($0) } })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { model.withTab(tab.id) { model.onKeepTab?($0) } })
     .onHover { hovering = $0 }
     .contextMenu { TabContextMenu(model: model, tab: tab) }
     .help(tab.directory ?? tab.title)
@@ -511,7 +511,7 @@ private struct WorkspaceTabRow: View {
   private func trailing(selected: Bool) -> some View {
     ZStack {
       if hovering && !tab.isPinned {
-        Button(action: { model.onTabClosed?(tab.index) }) {
+        Button(action: { model.withTab(tab.id) { model.onTabClosed?($0) } }) {
           Icon(.x, size: 10, strokeWidth: 2.2)
             .foregroundStyle(chrome.textSecondary)
             .frame(width: 16, height: 16)

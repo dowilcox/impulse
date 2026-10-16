@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use serde::Serialize;
 
 const MAX_COMMAND_BLOCKS: usize = 10_000;
@@ -74,7 +76,7 @@ pub(crate) struct CommandBlockTracker {
     /// Added to grid coordinates so absolute rows stay monotonic.
     row_base: i64,
     current: Option<TerminalCommandBlock>,
-    completed: Vec<TerminalCommandBlock>,
+    completed: VecDeque<TerminalCommandBlock>,
     completed_output_bytes: usize,
     /// Bumped whenever block boundaries or prompt marks change, so callers
     /// can cache anything derived from them (the viewport overlay).
@@ -232,11 +234,7 @@ impl CommandBlockTracker {
     }
 
     pub(crate) fn blocks(&self) -> Vec<TerminalCommandBlock> {
-        let mut blocks = self.completed.clone();
-        if let Some(current) = &self.current {
-            blocks.push(current.clone());
-        }
-        blocks
+        self.iter_blocks().cloned().collect()
     }
 
     /// Every block, oldest first, without output.
@@ -304,14 +302,14 @@ impl CommandBlockTracker {
 
     fn push_completed(&mut self, block: TerminalCommandBlock) {
         self.completed_output_bytes += block.output.len();
-        self.completed.push(block);
-        if self.completed.len() > MAX_COMMAND_BLOCKS {
-            let excess = self.completed.len() - MAX_COMMAND_BLOCKS;
-            for block in self.completed.drain(0..excess) {
-                self.completed_output_bytes = self
-                    .completed_output_bytes
-                    .saturating_sub(block.output.len());
-            }
+        self.completed.push_back(block);
+        while self.completed.len() > MAX_COMMAND_BLOCKS {
+            let Some(block) = self.completed.pop_front() else {
+                break;
+            };
+            self.completed_output_bytes = self
+                .completed_output_bytes
+                .saturating_sub(block.output.len());
         }
         while self.completed_output_bytes > MAX_COMPLETED_BLOCK_OUTPUT_BYTES {
             let Some(block) = self
@@ -342,27 +340,26 @@ fn append_plain_text_output(
     stripper: &mut PlainTextStripper,
     bytes: &[u8],
 ) {
-    if block.output.len() >= MAX_BLOCK_OUTPUT_BYTES {
+    if stripper.full {
         return;
     }
 
-    let text = stripper.push(bytes);
-    if text.is_empty() {
-        return;
-    }
+    stripper.push(bytes, &mut block.output);
 
-    let remaining = MAX_BLOCK_OUTPUT_BYTES - block.output.len();
-    if text.len() <= remaining {
-        block.output.push_str(&text);
-        return;
+    if block.output.len() > MAX_BLOCK_OUTPUT_BYTES {
+        let mut end = MAX_BLOCK_OUTPUT_BYTES;
+        while end > 0 && !block.output.is_char_boundary(end) {
+            end -= 1;
+        }
+        block.output.truncate(end);
+        stripper.full = true;
     }
-
-    let mut end = remaining;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    block.output.push_str(&text[..end]);
 }
+
+/// Longest stretch of a line that `\r` and backspace can go back over, in
+/// characters. A line that long has wrapped many times on screen, where
+/// `\r` only goes back to the start of its last row.
+const MAX_LINE_CHARS: usize = 16 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum StripState {
@@ -378,50 +375,192 @@ enum StripState {
 /// Terminal output → plain text, across reads: an escape sequence or a
 /// UTF-8 character split between two reads carries over to the next one
 /// instead of leaking its tail (`08mfoo`) or turning into U+FFFD.
+///
+/// The line being written stays editable, as on screen: `\r` and backspace
+/// move back over it, new text overwrites, and erase in line (CSI K) clears
+/// it, so a progress bar reads as its last state, not `10%20%100%`.
 #[derive(Debug, Default)]
 pub(crate) struct PlainTextStripper {
     state: StripState,
     /// The start of a UTF-8 character the last read cut off.
     pending: Vec<u8>,
+    /// The first parameter of the CSI sequence being read.
+    csi_param: u32,
+    /// The CSI has a private marker, more parameters or intermediates, so
+    /// it isn't a plain erase in line.
+    csi_other: bool,
+    /// The unfinished line and the cursor's column in it.
+    line: Vec<char>,
+    column: usize,
+    /// How much of the output is finished lines; `line` follows them.
+    finished_len: usize,
+    /// How many of `line`'s characters the output shows, and the first of
+    /// those changed since: an edit at the end is appended, one further
+    /// back redraws from there.
+    shown: usize,
+    stale_from: usize,
+    /// The output reached its limit; nothing more is added.
+    full: bool,
 }
 
 impl PlainTextStripper {
-    pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
-        let mut out = std::mem::take(&mut self.pending);
-        out.reserve(bytes.len());
+    /// Feed output, appending to `out`, which ends with the unfinished line
+    /// as it stands.
+    pub(crate) fn push(&mut self, bytes: &[u8], out: &mut String) {
+        let mut text = std::mem::take(&mut self.pending);
+        text.reserve(bytes.len());
         for &byte in bytes {
             self.state = match self.state {
                 StripState::Normal => match byte {
-                    0x1b => StripState::Escape,
-                    b'\n' | b'\t' => {
-                        out.push(byte);
+                    0x1b => {
+                        self.write(&mut text, out);
+                        StripState::Escape
+                    }
+                    b'\n' => {
+                        self.write(&mut text, out);
+                        self.end_line(out, true);
                         StripState::Normal
                     }
-                    b'\r' | 0x08 | 0x00..=0x07 | 0x0b..=0x1f | 0x7f => StripState::Normal,
+                    b'\r' => {
+                        self.write(&mut text, out);
+                        self.column = 0;
+                        StripState::Normal
+                    }
+                    0x08 => {
+                        self.write(&mut text, out);
+                        self.column = self.column.saturating_sub(1);
+                        StripState::Normal
+                    }
+                    b'\t' => {
+                        text.push(byte);
+                        StripState::Normal
+                    }
+                    0x00..=0x1f | 0x7f => StripState::Normal,
                     _ => {
-                        out.push(byte);
+                        text.push(byte);
                         StripState::Normal
                     }
                 },
-                StripState::Escape => match byte {
-                    b'[' => StripState::Csi,
-                    b']' | b'P' | b'^' | b'_' => StripState::Osc,
-                    b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => StripState::SkipOne,
-                    _ => StripState::Normal,
+                StripState::Escape => self.escape(byte),
+                StripState::Csi => match byte {
+                    b'0'..=b'9' => {
+                        self.csi_param = self
+                            .csi_param
+                            .saturating_mul(10)
+                            .saturating_add(u32::from(byte - b'0'));
+                        StripState::Csi
+                    }
+                    0x40..=0x7e => {
+                        if byte == b'K' && !self.csi_other {
+                            self.erase_in_line();
+                        }
+                        StripState::Normal
+                    }
+                    0x18 | 0x1a => StripState::Normal,
+                    0x1b => StripState::Escape,
+                    _ => {
+                        self.csi_other = true;
+                        StripState::Csi
+                    }
                 },
-                StripState::Csi if (0x40..=0x7e).contains(&byte) => StripState::Normal,
-                StripState::Csi => StripState::Csi,
                 StripState::Osc => match byte {
-                    0x07 => StripState::Normal,
+                    0x07 | 0x18 | 0x1a => StripState::Normal,
                     0x1b => StripState::OscEscape,
                     _ => StripState::Osc,
                 },
-                StripState::OscEscape | StripState::SkipOne => StripState::Normal,
+                // The ESC that ends a string also starts the next sequence.
+                StripState::OscEscape => self.escape(byte),
+                StripState::SkipOne => StripState::Normal,
             };
         }
-        let keep = incomplete_utf8_tail(&out);
-        self.pending = out.split_off(out.len() - keep);
-        String::from_utf8_lossy(&out).into_owned()
+        let keep = incomplete_utf8_tail(&text);
+        self.pending = text.split_off(text.len() - keep);
+        self.write(&mut text, out);
+        self.show(out);
+    }
+
+    /// Bring the end of `out` up to date with `line`.
+    fn show(&mut self, out: &mut String) {
+        let current = self.stale_from.min(self.shown).min(self.line.len());
+        if current < self.shown {
+            let bytes: usize = self.line[..current].iter().map(|c| c.len_utf8()).sum();
+            out.truncate(self.finished_len + bytes);
+        }
+        out.extend(&self.line[current..]);
+        self.shown = self.line.len();
+        self.stale_from = self.shown;
+    }
+
+    /// Finish the line (with `\n`, or without when it's only too long).
+    fn end_line(&mut self, out: &mut String, newline: bool) {
+        self.show(out);
+        if newline {
+            out.push('\n');
+        }
+        self.finished_len = out.len();
+        self.line.clear();
+        self.column = 0;
+        self.shown = 0;
+        self.stale_from = 0;
+    }
+
+    /// The state after ESC and `byte`.
+    fn escape(&mut self, byte: u8) -> StripState {
+        match byte {
+            b'[' => {
+                self.csi_param = 0;
+                self.csi_other = false;
+                StripState::Csi
+            }
+            b']' | b'P' | b'X' | b'^' | b'_' => StripState::Osc,
+            b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => StripState::SkipOne,
+            0x1b => StripState::Escape,
+            _ => StripState::Normal,
+        }
+    }
+
+    /// Write `text` (UTF-8) at the cursor, over what's there.
+    fn write(&mut self, text: &mut Vec<u8>, out: &mut String) {
+        if text.is_empty() {
+            return;
+        }
+        for c in String::from_utf8_lossy(text).chars() {
+            if self.column >= MAX_LINE_CHARS {
+                // Kept, but out of reach of `\r` from here on.
+                self.end_line(out, false);
+            }
+            if self.column < self.line.len() {
+                self.line[self.column] = c;
+                self.stale_from = self.stale_from.min(self.column);
+            } else {
+                self.line.resize(self.column, ' ');
+                self.line.push(c);
+            }
+            self.column += 1;
+        }
+        text.clear();
+    }
+
+    /// CSI K: 0 clears from the cursor to the end, 1 from the start through
+    /// the cursor, 2 the whole line. The cursor stays.
+    fn erase_in_line(&mut self) {
+        let first_changed = match self.csi_param {
+            0 => {
+                self.line.truncate(self.column);
+                self.column
+            }
+            1 => {
+                let end = (self.column + 1).min(self.line.len());
+                self.line[..end].fill(' ');
+                0
+            }
+            2 => {
+                self.line.clear();
+                0
+            }
+            _ => return,
+        };
+        self.stale_from = self.stale_from.min(first_changed);
     }
 }
 
@@ -458,9 +597,111 @@ mod tests {
             b"\xA5\xE6",
             b"\x9C\xAC\n",
         ] {
-            text.push_str(&stripper.push(chunk));
+            stripper.push(chunk, &mut text);
         }
         assert_eq!(text, "ok foo 日本\n");
+    }
+
+    #[test]
+    fn carriage_returns_and_backspaces_overwrite_the_line() {
+        let mut tracker = CommandBlockTracker::new();
+        tracker.command_started_at(10, None);
+        // A progress bar redrawn in place, across reads.
+        tracker.observe_output(b"10%\r20%");
+        assert_eq!(tracker.blocks()[0].output, "20%");
+        tracker.observe_output(b"\r100%\ndone");
+        assert_eq!(tracker.blocks()[0].output, "100%\ndone");
+        // Backspace moves back one; what follows overwrites.
+        tracker.observe_output(b"x\x08!\r\n");
+        tracker.observe_output(b"abc\x08\x08X\n");
+        assert_eq!(tracker.blocks()[0].output, "100%\ndone!\naXc\n");
+    }
+
+    #[test]
+    fn erase_in_line_clears_what_a_shorter_redraw_leaves() {
+        let mut tracker = CommandBlockTracker::new();
+        tracker.command_started_at(10, None);
+        tracker.observe_output(b"Compiling something long\r\x1b[2K");
+        tracker.observe_output(b"Building 3/9\r\x1b[K Done\n");
+        tracker.observe_output(b"abcdef\x08\x08\x08\x1b[1Kx\x1b[0K\n");
+        // Other CSIs (colors, private modes) leave the line alone.
+        tracker.observe_output(b"\x1b[?25lred\x1b[31;1m!\x1b[0m\x1b[?25h\n");
+        let block = tracker.command_ended_at(0, 20, None).unwrap();
+        assert_eq!(block.output, " Done\n   x\nred!\n");
+    }
+
+    #[test]
+    fn output_reads_the_same_however_it_is_split() {
+        let mut stream = Vec::new();
+        for i in 0..50 {
+            stream.extend_from_slice(format!("step {i}/50 é\r").as_bytes());
+            if i % 7 == 0 {
+                stream.extend_from_slice(b"\x1b[2Kdone \xE6\x97\xA5\x08\x08x\x1b[K\n");
+            }
+            if i % 11 == 0 {
+                stream.extend_from_slice(b"\x1b[31mlong\x1b[0m line\x08\x08\x08\x1b[1K!\r");
+            }
+            if i % 5 == 0 {
+                stream.extend_from_slice(b"\n");
+            }
+        }
+        stream.extend_from_slice("tail é\x08!".as_bytes());
+        let read = |size: usize| {
+            let mut tracker = CommandBlockTracker::new();
+            tracker.command_started_at(10, None);
+            for chunk in stream.chunks(size) {
+                tracker.observe_output(chunk);
+            }
+            tracker.blocks().pop().unwrap().output
+        };
+        let whole = read(stream.len());
+        assert!(
+            whole.starts_with("donex\n      !ne\nstep 5/50 é\n"),
+            "{whole:?}"
+        );
+        assert!(
+            whole.ends_with("\nstep 45/50 é\ndonex\ntail !"),
+            "{whole:?}"
+        );
+        for size in [1, 2, 3, 5, 64] {
+            assert_eq!(read(size), whole, "reads of {size}");
+        }
+    }
+
+    #[test]
+    fn a_very_long_line_is_kept_whole() {
+        let mut tracker = CommandBlockTracker::new();
+        tracker.command_started_at(10, None);
+        let long = "a".repeat(40_000);
+        for chunk in long.as_bytes().chunks(4096) {
+            tracker.observe_output(chunk);
+        }
+        tracker.observe_output(b"\n");
+        assert_eq!(tracker.blocks()[0].output, format!("{long}\n"));
+
+        // `\r` only goes back over the last stretch of it, as over the last
+        // row on screen.
+        tracker.observe_output("b".repeat(20_000).as_bytes());
+        tracker.observe_output(b"\rc\n");
+        let tail = format!(
+            "{}c{}\n",
+            "b".repeat(MAX_LINE_CHARS),
+            "b".repeat(20_000 - MAX_LINE_CHARS - 1)
+        );
+        assert_eq!(tracker.blocks()[0].output, format!("{long}\n{tail}"));
+    }
+
+    #[test]
+    fn the_oldest_blocks_go_past_the_limit() {
+        let mut tracker = CommandBlockTracker::new();
+        for i in 0..(MAX_COMMAND_BLOCKS as u64 + 5) {
+            tracker.command_started_at(i, None);
+            tracker.observe_output(b"x\n");
+            tracker.command_ended_at(0, i, None);
+        }
+        let summaries = tracker.summaries();
+        assert_eq!(summaries.len(), MAX_COMMAND_BLOCKS);
+        assert_eq!(summaries[0].id, TerminalBlockId(6));
     }
 
     #[test]

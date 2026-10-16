@@ -1,8 +1,11 @@
 //! Minimal OSC byte-stream scanner.
 //!
-//! Watches a byte stream for OSC escape sequences and emits events.
-//! Does NOT modify or buffer the byte stream — all bytes pass through
-//! unchanged. alacritty_terminal ignores unsupported OSCs harmlessly.
+//! Watches a byte stream for OSC escape sequences and emits events. It
+//! follows vte's state machine, so it agrees with alacritty's parser on
+//! where each OSC starts and ends. All bytes pass through to the parser
+//! unchanged, except an OSC over its size limit: the scanner reports it (see
+//! `OscSkip`) so the caller can make the parser abandon it and drop the rest,
+//! since vte buffers an OSC without bound.
 
 /// This machine's host name. Read each time: macOS can rename the host
 /// (network changes) while the app runs, and shells report the new name.
@@ -78,28 +81,52 @@ pub(crate) struct OscEventSpan {
     pub(crate) end_offset: usize,
 }
 
-/// Scanner state machine.
+/// Bytes of the most recently scanned chunk that must not reach the parser:
+/// the part of an OSC past its size limit, through its terminator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OscSkip {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    /// The OSC went over its limit at `start` (rather than continuing from
+    /// the last chunk): the parser, which has its start, must abandon it.
+    pub(crate) abort: bool,
+}
+
+/// Scanner state machine (vte's, reduced to what finds OSCs).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Normal,
     Escape,    // Saw ESC (0x1B), expecting ']' for OSC
     OscBody,   // Inside OSC payload, collecting until BEL or ST
-    OscEscape, // Saw ESC inside an OSC payload, expecting '\' for ST
+    OscEscape, // Saw ESC inside an OSC payload: ST if '\', else a new escape
+    OscSkip,   // An OSC over its size limit, dropped until it ends
 }
 
-/// Maximum OSC payload size before we reset (prevents unbounded growth).
+/// Longest OSC payload, unless one of the limits below applies. Longer ones
+/// are dropped whole.
 const MAX_OSC_LEN: usize = 4096;
 /// Impulse's own OSC 6973 payloads can be larger (the shell's command names).
 const MAX_IMPULSE_OSC_LEN: usize = 64 * 1024;
+/// Window titles (OSC 0/1/2). alacritty keeps up to 4096 of them on its
+/// title stack (CSI 22 t), so each must stay small.
+pub(crate) const MAX_TITLE_OSC_LEN: usize = 1024;
+/// OSC 52 clipboard writes (base64, so about 3 MB of text).
+pub(crate) const MAX_CLIPBOARD_OSC_LEN: usize = 4 * 1024 * 1024;
 /// At most this many names from one OSC 6973;Names.
 const MAX_SHELL_NAMES: usize = 20_000;
 
 /// Scans a byte stream for OSC sequences used by Impulse.
 pub struct OscScanner {
     state: State,
+    /// The OSC's payload, kept up to what Impulse parses.
     buf: Vec<u8>,
+    /// The OSC's whole length so far, as vte stores it.
+    osc_len: usize,
     events: Vec<OscEvent>,
     event_spans: Vec<OscEventSpan>,
+    skips: Vec<OscSkip>,
+    /// Where the skip in progress began in this chunk, and whether it aborts.
+    skip_start: Option<(usize, bool)>,
     escape_start_offset: Option<usize>,
     osc_start_offset: Option<usize>,
     /// OSC 99 notifications still being assembled, by id.
@@ -108,6 +135,11 @@ pub struct OscScanner {
     /// (6973;Command=) must carry it: anything a program prints (`cat` of a
     /// log or a hostile file) can't put commands into history.
     nonce: Option<String>,
+    /// A mark carrying the nonce has arrived: the shell integration is
+    /// running, so every other mark (OSC 133, 7, 6973 Names/Path) must carry
+    /// it too. Until then they're taken without it, so a shell with its own
+    /// integration keeps working.
+    nonce_seen: bool,
 }
 
 /// A kitty (OSC 99) notification arriving in chunks.
@@ -122,16 +154,21 @@ impl OscScanner {
         Self {
             state: State::Normal,
             buf: Vec::with_capacity(256),
+            osc_len: 0,
             events: Vec::new(),
             event_spans: Vec::new(),
+            skips: Vec::new(),
+            skip_start: None,
             escape_start_offset: None,
             osc_start_offset: None,
             kitty_pending: Vec::new(),
             nonce: None,
+            nonce_seen: false,
         }
     }
 
-    /// A scanner that trusts command text only with `nonce` (see `nonce`).
+    /// A scanner that trusts shell-integration marks only with `nonce` (see
+    /// `nonce` and `nonce_seen`).
     pub fn with_nonce(nonce: Option<String>) -> Self {
         Self {
             nonce,
@@ -145,6 +182,10 @@ impl OscScanner {
             self.escape_start_offset = None;
             self.osc_start_offset = None;
         }
+        if self.state == State::OscSkip {
+            // Still dropping an oversized OSC from the last chunk.
+            self.skip_start = Some((0, false));
+        }
 
         for (offset, &b) in bytes.iter().enumerate() {
             match self.state {
@@ -154,50 +195,126 @@ impl OscScanner {
                         self.escape_start_offset = Some(offset);
                     }
                 }
-                State::Escape => {
-                    if b == b']' {
-                        self.state = State::OscBody;
-                        self.buf.clear();
-                        self.osc_start_offset = self.escape_start_offset.take();
-                    } else {
-                        // Not an OSC sequence, back to normal.
-                        self.state = State::Normal;
-                        self.escape_start_offset = None;
-                    }
-                }
-                State::OscBody => {
-                    if b == 0x07 {
-                        // BEL terminates the OSC sequence.
+                State::Escape => self.escape_byte(b),
+                State::OscBody => match b {
+                    // BEL terminates the OSC sequence.
+                    0x07 => {
                         self.dispatch_osc(offset + 1);
                         self.state = State::Normal;
-                    } else if b == 0x1B {
-                        self.state = State::OscEscape;
-                    } else if self.buf.len() < MAX_OSC_LEN
-                        || (self.buf.len() < MAX_IMPULSE_OSC_LEN && self.buf.starts_with(b"6973;"))
-                    {
-                        self.buf.push(b);
-                    } else {
-                        // Overflow, reset.
-                        self.buf.clear();
-                        self.state = State::Normal;
-                        self.osc_start_offset = None;
                     }
-                }
+                    0x1B => self.state = State::OscEscape,
+                    // CAN and SUB cancel it.
+                    0x18 | 0x1A => self.cancel_osc(),
+                    // vte ignores other C0 controls inside an OSC.
+                    0x00..=0x1F => {}
+                    _ => {
+                        self.osc_len += 1;
+                        if self.osc_len > self.osc_limit() {
+                            self.cancel_osc();
+                            self.state = State::OscSkip;
+                            self.skip_start = Some((offset, true));
+                        } else if self.buf.len() < self.kept_len() {
+                            self.buf.push(b);
+                        }
+                    }
+                },
                 State::OscEscape => {
                     if b == b'\\' {
                         self.dispatch_osc(offset + 1);
+                        self.state = State::Normal;
                     } else {
+                        // The ESC ended the OSC and begins a new sequence, as
+                        // in vte: `ESC ]` here opens the next OSC.
                         self.dispatch_osc(offset);
+                        self.state = State::Escape;
+                        self.escape_start_offset = offset.checked_sub(1);
+                        self.escape_byte(b);
                     }
-                    self.state = State::Normal;
                 }
+                State::OscSkip => match b {
+                    0x07 => self.end_skip(offset + 1, State::Normal),
+                    // Not dropped: the parser takes these as it would at the
+                    // end of an OSC (ESC starting the next sequence).
+                    0x1B => {
+                        self.end_skip(offset, State::Escape);
+                        self.escape_start_offset = Some(offset);
+                    }
+                    0x18 | 0x1A => self.end_skip(offset, State::Normal),
+                    _ => {}
+                },
             }
         }
+
+        if let Some((start, abort)) = self.skip_start.take() {
+            self.skips.push(OscSkip {
+                start,
+                end: bytes.len(),
+                abort,
+            });
+        }
+    }
+
+    /// A byte after ESC, outside an OSC. Like vte, another ESC or a C0
+    /// control (other than CAN/SUB) keeps the escape open, so `ESC ESC ]`
+    /// still starts an OSC.
+    fn escape_byte(&mut self, b: u8) {
+        match b {
+            b']' => {
+                self.state = State::OscBody;
+                self.buf.clear();
+                self.osc_len = 0;
+                self.osc_start_offset = self.escape_start_offset.take();
+            }
+            0x18 | 0x1A | 0x20..=0x7E => {
+                self.state = State::Normal;
+                self.escape_start_offset = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// The longest the current OSC may be, by its number.
+    fn osc_limit(&self) -> usize {
+        let buf = self.buf.as_slice();
+        if buf.starts_with(b"6973;") {
+            MAX_IMPULSE_OSC_LEN
+        } else if buf.starts_with(b"52;") {
+            MAX_CLIPBOARD_OSC_LEN
+        } else if buf.starts_with(b"0;") || buf.starts_with(b"1;") || buf.starts_with(b"2;") {
+            MAX_TITLE_OSC_LEN
+        } else {
+            MAX_OSC_LEN
+        }
+    }
+
+    /// How much of the current OSC to keep for parsing.
+    fn kept_len(&self) -> usize {
+        if self.buf.starts_with(b"6973;") {
+            MAX_IMPULSE_OSC_LEN
+        } else {
+            MAX_OSC_LEN
+        }
+    }
+
+    /// Drop the OSC in progress without an event.
+    fn cancel_osc(&mut self) {
+        self.buf.clear();
+        self.state = State::Normal;
+        self.osc_start_offset = None;
+        self.escape_start_offset = None;
+    }
+
+    fn end_skip(&mut self, end: usize, next: State) {
+        if let Some((start, abort)) = self.skip_start.take() {
+            self.skips.push(OscSkip { start, end, abort });
+        }
+        self.state = next;
     }
 
     /// Drain all events emitted since the last drain.
     pub fn drain_events(&mut self) -> Vec<OscEvent> {
         self.event_spans.clear();
+        self.skips.clear();
         std::mem::take(&mut self.events)
     }
 
@@ -206,13 +323,18 @@ impl OscScanner {
         std::mem::take(&mut self.event_spans)
     }
 
+    /// The oversized-OSC bytes of the last chunk (see `OscSkip`).
+    pub(crate) fn drain_skips(&mut self) -> Vec<OscSkip> {
+        std::mem::take(&mut self.skips)
+    }
+
     fn dispatch_osc(&mut self, end_offset: usize) {
-        let event = if self.buf.starts_with(b"99;") {
-            let payload = self.buf[3..].to_vec();
-            self.parse_kitty_notification(&payload)
-        } else {
-            self.parse_osc()
+        let buf = std::mem::take(&mut self.buf);
+        let event = match buf.strip_prefix(b"99;") {
+            Some(payload) => self.parse_kitty_notification(payload),
+            None => self.parse_osc(&buf),
         };
+        self.buf = buf;
         if let Some(event) = event {
             self.events.push(event.clone());
             self.event_spans.push(OscEventSpan {
@@ -226,44 +348,77 @@ impl OscScanner {
         self.buf.clear();
     }
 
-    fn parse_osc(&self) -> Option<OscEvent> {
-        if self.buf.is_empty() {
+    /// Whether a shell-integration mark carrying `nonce` may be trusted.
+    /// Command text (`required`) always needs it; other marks need it once
+    /// one carrying it has arrived. A wrong nonce is never trusted.
+    fn trusts(&mut self, nonce: Option<&[u8]>, required: bool) -> bool {
+        let Some(expected) = self.nonce.as_deref() else {
+            return true;
+        };
+        match nonce.filter(|nonce| !nonce.is_empty()) {
+            Some(nonce) if nonce == expected.as_bytes() => {
+                self.nonce_seen = true;
+                true
+            }
+            Some(_) => false,
+            None => !required && !self.nonce_seen,
+        }
+    }
+
+    fn parse_osc(&mut self, buf: &[u8]) -> Option<OscEvent> {
+        if buf.is_empty() {
             return None;
         }
 
-        // Check for OSC 7 (CWD): "7;file://..."
-        if self.buf.starts_with(b"7;") {
-            return Self::parse_osc7(&self.buf[2..]).map(OscEvent::CwdChanged);
+        // OSC 7 (CWD): "7;file://host/path[;Nonce=...]"
+        if let Some(payload) = buf.strip_prefix(b"7;") {
+            let (payload, nonce) = split_nonce(payload);
+            if !self.trusts(nonce, false) {
+                return None;
+            }
+            return Self::parse_osc7(payload).map(OscEvent::CwdChanged);
         }
 
-        // Check for OSC 133 (shell integration): "133;X" or "133;D;code"
-        if self.buf.starts_with(b"133;") && self.buf.len() >= 5 {
-            return match self.buf[4] {
-                b'A' => Some(OscEvent::PromptStart),
-                b'B' => None, // Prompt end. Not currently exposed to frontends.
-                b'C' => Some(OscEvent::CommandStart),
-                b'D' => {
-                    let code = if self.buf.len() > 6 && self.buf[5] == b';' {
-                        std::str::from_utf8(&self.buf[6..])
-                            .ok()
-                            .and_then(|s| s.parse::<i32>().ok())
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    Some(OscEvent::CommandEnd(code))
+        // OSC 133 (shell integration): "133;X[;params]", "133;D;code[;params]"
+        if let Some(payload) = buf.strip_prefix(b"133;") {
+            let mut params = payload.split(|&b| b == b';');
+            let kind = params.next().unwrap_or_default();
+            let (mut code, mut nonce) = (0, None);
+            for (index, param) in params.enumerate() {
+                if let Some(value) = param.strip_prefix(b"Nonce=") {
+                    nonce = Some(value);
+                } else if index == 0 {
+                    code = std::str::from_utf8(param)
+                        .ok()
+                        .and_then(|s| s.parse::<i32>().ok())
+                        .unwrap_or(0);
                 }
-                _ => None,
+            }
+            let event = match kind {
+                b"A" => Some(OscEvent::PromptStart),
+                b"B" => None, // Prompt end. Not currently exposed to frontends.
+                b"C" => Some(OscEvent::CommandStart),
+                b"D" => Some(OscEvent::CommandEnd(code)),
+                _ => return None,
+            };
+            return if self.trusts(nonce, false) {
+                event
+            } else {
+                None
             };
         }
 
-        if let Some(payload) = self.buf.strip_prefix(b"6973;Command=") {
+        if let Some(payload) = buf.strip_prefix(b"6973;Command=") {
             return self
                 .parse_impulse_command(payload)
                 .map(OscEvent::CommandText);
         }
 
-        if let Some(payload) = self.buf.strip_prefix(b"6973;Names=") {
+        if let Some(payload) = buf.strip_prefix(b"6973;Names=") {
+            let (payload, nonce) = split_nonce(payload);
+            if !self.trusts(nonce, false) {
+                return None;
+            }
             let text = std::str::from_utf8(payload).ok()?;
             let names = text
                 .split_whitespace()
@@ -274,28 +429,32 @@ impl OscScanner {
             return Some(OscEvent::ShellNames(names));
         }
 
-        if let Some(payload) = self.buf.strip_prefix(b"6973;Path=") {
+        if let Some(payload) = buf.strip_prefix(b"6973;Path=") {
+            let (payload, nonce) = split_nonce(payload);
+            if !self.trusts(nonce, false) {
+                return None;
+            }
             let text = std::str::from_utf8(payload).ok()?;
             let path: String = text.chars().filter(|c| !c.is_control()).collect();
             return Some(OscEvent::ShellPath(path));
         }
 
-        if self.buf.starts_with(b"21337;") {
-            return Self::parse_session_status(&self.buf[6..]);
+        if let Some(payload) = buf.strip_prefix(b"21337;") {
+            return Self::parse_session_status(payload);
         }
 
-        if self.buf.starts_with(b"1337;") {
-            return Self::parse_iterm2_attention(&self.buf[5..]).map(OscEvent::AttentionRequest);
+        if let Some(payload) = buf.strip_prefix(b"1337;") {
+            return Self::parse_iterm2_attention(payload).map(OscEvent::AttentionRequest);
         }
 
         // OSC 9;4 is the ConEmu progress protocol, not a notification. It must
         // be matched before the generic OSC 9 notification below.
-        if self.buf == b"9;4" || self.buf.starts_with(b"9;4;") {
-            return Self::parse_progress(&self.buf[3..]);
+        if buf == b"9;4" || buf.starts_with(b"9;4;") {
+            return Self::parse_progress(&buf[3..]);
         }
 
-        if self.buf.starts_with(b"9;") {
-            if let Ok(body) = std::str::from_utf8(&self.buf[2..]) {
+        if let Some(payload) = buf.strip_prefix(b"9;") {
+            if let Ok(body) = std::str::from_utf8(payload) {
                 return Some(OscEvent::Notification {
                     title: "Terminal".to_string(),
                     body: Self::sanitize_text(body),
@@ -303,8 +462,8 @@ impl OscScanner {
             }
         }
 
-        if self.buf.starts_with(b"777;") {
-            return Self::parse_rxvt_notify(&self.buf[4..])
+        if let Some(payload) = buf.strip_prefix(b"777;") {
+            return Self::parse_rxvt_notify(payload)
                 .map(|(title, body)| OscEvent::Notification { title, body });
         }
 
@@ -461,16 +620,14 @@ impl OscScanner {
 
     /// `<percent-encoded command>[;Nonce=<nonce>]`. The encoding leaves no
     /// raw `;` in the command.
-    fn parse_impulse_command(&self, payload: &[u8]) -> Option<String> {
+    fn parse_impulse_command(&mut self, payload: &[u8]) -> Option<String> {
         let text = std::str::from_utf8(payload).ok()?;
         let (encoded, nonce) = match text.split_once(';') {
             Some((encoded, rest)) => (encoded, rest.strip_prefix("Nonce=")),
             None => (text, None),
         };
-        if let Some(expected) = &self.nonce {
-            if nonce != Some(expected.as_str()) {
-                return None;
-            }
+        if !self.trusts(nonce.map(str::as_bytes), true) {
+            return None;
         }
         let decoded = Self::url_decode(encoded)?;
         Some(Self::sanitize_text(&decoded))
@@ -539,6 +696,19 @@ impl OscScanner {
 impl Default for OscScanner {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// `payload[;Nonce=value]` → (payload, value). The last `;Nonce=` counts,
+/// so a payload containing one (a PATH entry) stays whole.
+fn split_nonce(payload: &[u8]) -> (&[u8], Option<&[u8]>) {
+    const MARKER: &[u8] = b";Nonce=";
+    match payload
+        .windows(MARKER.len())
+        .rposition(|window| window == MARKER)
+    {
+        Some(at) => (&payload[..at], Some(&payload[at + MARKER.len()..])),
+        None => (payload, None),
     }
 }
 
@@ -976,5 +1146,172 @@ mod tests {
         assert!(scanner.drain_events().is_empty());
         scanner.scan(b"\x1b]133;A\x07");
         assert_eq!(scanner.drain_events(), vec![OscEvent::PromptStart]);
+    }
+
+    #[test]
+    fn an_oversized_osc_is_dropped_through_its_terminator() {
+        let mut scanner = OscScanner::new();
+        let mut chunk = b"ab\x1b]2;".to_vec();
+        chunk.extend(std::iter::repeat_n(b'x', MAX_TITLE_OSC_LEN + 10));
+        let bel = chunk.len();
+        chunk.extend_from_slice(b"\x07cd");
+        scanner.scan(&chunk);
+        // The payload starts at 4 ("2;" counts); the byte past the limit
+        // begins the skip, which takes the BEL too (it would ring otherwise).
+        assert_eq!(
+            scanner.drain_skips(),
+            vec![OscSkip {
+                start: 4 + MAX_TITLE_OSC_LEN,
+                end: bel + 1,
+                abort: true
+            }]
+        );
+        assert!(scanner.drain_event_spans().is_empty());
+    }
+
+    #[test]
+    fn a_skip_carries_over_to_the_next_chunk_and_ends_at_esc() {
+        let mut scanner = OscScanner::new();
+        let mut chunk = b"\x1b]".to_vec();
+        chunk.extend(std::iter::repeat_n(b'y', MAX_OSC_LEN + 5));
+        scanner.scan(&chunk);
+        assert_eq!(
+            scanner.drain_skips(),
+            vec![OscSkip {
+                start: 2 + MAX_OSC_LEN,
+                end: chunk.len(),
+                abort: true
+            }]
+        );
+        // ESC ends it (and isn't dropped): here it opens the next OSC.
+        scanner.scan(b"yyy\x1b]133;A\x07");
+        assert_eq!(
+            scanner.drain_skips(),
+            vec![OscSkip {
+                start: 0,
+                end: 3,
+                abort: false
+            }]
+        );
+        let spans = scanner.drain_event_spans();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].event, OscEvent::PromptStart);
+        assert_eq!(spans[0].start_offset, Some(3));
+    }
+
+    #[test]
+    fn clipboard_writes_and_impulse_marks_have_room() {
+        let mut scanner = OscScanner::new();
+        let mut chunk = b"\x1b]52;c;".to_vec();
+        chunk.extend(std::iter::repeat_n(b'A', 100_000));
+        chunk.push(0x07);
+        scanner.scan(&chunk);
+        assert!(scanner.drain_skips().is_empty());
+        // A title that long is dropped.
+        let mut title = b"\x1b]0;".to_vec();
+        title.extend(std::iter::repeat_n(b'A', 100_000));
+        title.push(0x07);
+        scanner.scan(&title);
+        assert_eq!(scanner.drain_skips().len(), 1);
+    }
+
+    #[test]
+    fn an_esc_that_ends_an_osc_can_open_the_next() {
+        // vte ends the title at ESC and reads `]` as a new OSC.
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]0;title\x1b]133;A\x07");
+        let spans = scanner.drain_event_spans();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].event, OscEvent::PromptStart);
+        assert_eq!(spans[0].start_offset, Some(9));
+    }
+
+    #[test]
+    fn repeated_esc_and_c0_controls_keep_an_escape_open() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b\x1b]133;A\x07");
+        scanner.scan(b"\x1b\n]133;C\x07");
+        // Inside the OSC, C0 controls other than BEL/CAN/SUB/ESC are ignored.
+        scanner.scan(b"\x1b]133;\r\nD;2\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![
+                OscEvent::PromptStart,
+                OscEvent::CommandStart,
+                OscEvent::CommandEnd(2)
+            ]
+        );
+        // Anything else after ESC is another sequence.
+        scanner.scan(b"\x1b(]133;A\x07");
+        assert!(scanner.drain_events().is_empty());
+    }
+
+    #[test]
+    fn can_and_sub_cancel_an_osc() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]133;A\x18");
+        // The rest is plain text, not the OSC's continuation.
+        scanner.scan(b"133;C\x07");
+        scanner.scan(b"\x1b]133;A\x1a;D\x07");
+        assert!(scanner.drain_events().is_empty());
+        scanner.scan(b"\x1b\x18]133;A\x07");
+        assert!(scanner.drain_events().is_empty());
+        scanner.scan(b"\x1b]133;C\x07");
+        assert_eq!(scanner.drain_events(), vec![OscEvent::CommandStart]);
+    }
+
+    #[test]
+    fn marks_need_the_nonce_once_the_integration_sent_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().to_string_lossy().to_string();
+        let mut scanner = OscScanner::with_nonce(Some("s3cret".into()));
+        // A shell with its own integration (no nonce) works...
+        scanner.scan(b"\x1b]133;A\x07\x1b]133;C\x07\x1b]133;D;1\x07");
+        scanner.scan(format!("\x1b]7;file://{cwd}\x07").as_bytes());
+        assert_eq!(
+            scanner.drain_events(),
+            vec![
+                OscEvent::PromptStart,
+                OscEvent::CommandStart,
+                OscEvent::CommandEnd(1),
+                OscEvent::CwdChanged(cwd.clone()),
+            ]
+        );
+        // ...but a wrong nonce never does.
+        scanner.scan(b"\x1b]133;A;Nonce=guess\x07");
+        assert!(scanner.drain_events().is_empty());
+
+        // Impulse's integration: every mark carries the nonce.
+        scanner.scan(b"\x1b]133;A;Nonce=s3cret\x07\x1b]133;D;2;Nonce=s3cret\x07");
+        scanner.scan(format!("\x1b]7;file://{cwd};Nonce=s3cret\x07").as_bytes());
+        scanner.scan(b"\x1b]6973;Names=ll gst;Nonce=s3cret\x07");
+        scanner.scan(b"\x1b]6973;Path=/bin:/a;Nonce=x;Nonce=s3cret\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![
+                OscEvent::PromptStart,
+                OscEvent::CommandEnd(2),
+                OscEvent::CwdChanged(cwd.clone()),
+                OscEvent::ShellNames(vec!["ll".into(), "gst".into()]),
+                OscEvent::ShellPath("/bin:/a;Nonce=x".into()),
+            ]
+        );
+
+        // From then on, output can't forge marks.
+        scanner.scan(b"\x1b]133;A\x07\x1b]133;C\x07\x1b]133;D;1\x07\x1b]133;D;1;aid=1\x07");
+        scanner.scan(format!("\x1b]7;file://{cwd}\x07").as_bytes());
+        scanner.scan(b"\x1b]6973;Names=evil\x07\x1b]6973;Path=/tmp\x07");
+        scanner.scan(b"\x1b]6973;Path=/tmp;Nonce=\x07");
+        assert!(scanner.drain_events().is_empty());
+    }
+
+    #[test]
+    fn command_end_reads_its_code_beside_other_params() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b]133;D;130;aid=7\x07\x1b]133;D;;aid=7\x07\x1b]133;Dx\x07");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::CommandEnd(130), OscEvent::CommandEnd(0)]
+        );
     }
 }

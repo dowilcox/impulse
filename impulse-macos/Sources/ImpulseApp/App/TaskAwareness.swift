@@ -81,9 +81,11 @@ extension MainWindowController {
   }
 
   /// `impulse tasks [--json]` and `impulse tasks wait <task>`.
-  func handleTasksCommand(_ request: ControlRequest, cwd: String, reply: @escaping (ControlResponse) -> Void) {
+  func handleTasksCommand(
+    _ request: ControlRequest, cwd: String, caller: ControlCaller, reply: @escaping (ControlResponse) -> Void
+  ) {
     if let name = request.arguments["wait"] {
-      return waitForTask(name, cwd: cwd, reply: reply)
+      return waitForTask(name, cwd: cwd, caller: caller, reply: reply)
     }
     taskListing(cwd: cwd) { listing in
       guard let listing else { return reply(ControlResponse(ok: false, message: "Not in a git repository.")) }
@@ -91,8 +93,11 @@ extension MainWindowController {
     }
   }
 
-  /// Answer once the task's agents stop working (checked every 2 seconds).
-  private func waitForTask(_ name: String, cwd: String, reply: @escaping (ControlResponse) -> Void) {
+  /// Answer once the task's agents stop working (checked every 2 seconds),
+  /// or stop checking when the caller gives up.
+  private func waitForTask(
+    _ name: String, cwd: String, caller: ControlCaller, reply: @escaping (ControlResponse) -> Void
+  ) {
     DispatchQueue.global(qos: .userInitiated).async {
       let registry = GitClient.repoRoot(forPath: cwd).flatMap { TaskRegistryStore.registry(root: $0) }
       let task = registry?.tasks.first { ($0.path as NSString).lastPathComponent == name || $0.branch == name }
@@ -104,11 +109,12 @@ extension MainWindowController {
           (AppDelegate.shared?.agents(inFolder: task.path) ?? []).contains { $0.state == .working || $0.state == .needsInput }
         }
         guard busy() else { return reply(ControlResponse(ok: true, message: "\(name): no agent is working.")) }
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
+        let timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
           guard !busy() else { return }
           timer.invalidate()
           reply(ControlResponse(ok: true, message: "\(name): its agent stopped working."))
         }
+        caller.onHangUp = { timer.invalidate() }
       }
     }
   }
@@ -131,9 +137,15 @@ extension MainWindowController {
     case ("PostToolUse", "Bash"?):
       guard settings.agentHookDependencies, let command = args["toolCommand"], GitCommandInspector.movesHead(command)
       else { return completion(nil) }
-      DispatchQueue.global(qos: .userInitiated).async {
-        let note = Self.dependencyNote(cwd: cwd)
-        DispatchQueue.main.async { completion(note.map { AgentHookReply.context($0) }) }
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let change = Self.dependencyChange(cwd: cwd)
+        DispatchQueue.main.async { [weak self] in
+          guard let self, let change else { return completion(nil) }
+          // Commands go to the agent only from settings the user trusts.
+          let config = self.alreadyTrustedProjectConfig(root: change.root)
+          let note = Self.dependencyNote(changed: change.changed, trusted: config)
+          completion(note.map { AgentHookReply.context($0) })
+        }
       }
 
     case ("PreToolUse", "Bash"?):
@@ -172,15 +184,21 @@ extension MainWindowController {
       + "Two workspaces changing the same file will conflict when merged: keep your changes there focused, or check with the user."
   }
 
-  /// After the agent's own git command moved HEAD (just now) and brought
-  /// dependency files with it: which, and what to run.
-  private static func dependencyNote(cwd: String) -> String? {
+  /// The files the agent's own git command changed when it moved HEAD
+  /// (just now), in the repository at `root`. Off the main thread.
+  private static func dependencyChange(cwd: String) -> (root: String, changed: [String])? {
     guard let root = GitClient.repoRoot(forPath: cwd), let move = GitOperations.lastHeadMove(root: root),
       abs(move.time.timeIntervalSinceNow) < 120, DependencyChanges.move(reflog: move.subject) != .ownCommit
     else { return nil }
-    let changed = GitOperations.changedPaths(from: move.from, to: move.to, root: root)
-    let settings = (try? loadProjectConfig(root: root)?.config.get()) ?? ProjectConfig()
-    let rules = DependencyChanges.matches(rules: settings.onChange, changed: changed)
+    return (root, GitOperations.changedPaths(from: move.from, to: move.to, root: root))
+  }
+
+  /// Which dependency files came with that change, and what to run. The
+  /// project's `[on_change]` commands are named only from `trusted`
+  /// settings: an untrusted file's text mustn't reach the agent as
+  /// Impulse's advice.
+  private static func dependencyNote(changed: [String], trusted: ProjectConfig?) -> String? {
+    let rules = DependencyChanges.matches(rules: trusted?.onChange ?? [:], changed: changed)
     let known = DependencyChanges.knownChanged(changed)
     guard !rules.isEmpty || !known.isEmpty else { return nil }
     let files = Array(Set(rules.map(\.file) + known)).sorted().joined(separator: ", ")

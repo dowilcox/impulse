@@ -2,9 +2,10 @@
 // plus the LSP glue from impulse-ffi/src/lib.rs). Foundation only.
 //
 // The public surface (`LSPRegistry`, `ManagedServers`, `DocumentCache`,
-// `LSPConfig`) mirrors the synchronous FFI call surface the app uses today
-// (`impulse_lsp_*` functions), including the exact JSON envelopes emitted by
-// `impulse_lsp_poll_event` and the managed-status JSON.
+// `LSPConfig`) mirrors the FFI call surface the app used (`impulse_lsp_*`
+// functions), including the exact JSON envelopes emitted by
+// `impulse_lsp_poll_event` and the managed-status JSON; requests answer
+// through a completion instead of blocking.
 
 import Foundation
 

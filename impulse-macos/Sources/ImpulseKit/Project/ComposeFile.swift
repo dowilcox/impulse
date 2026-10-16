@@ -127,15 +127,17 @@ public struct ComposeFile: Equatable, Sendable {
   }
 
   static func port(_ raw: String) -> Port {
-    // [ip:]host:container[/protocol]; the host part may be a variable.
+    // [ip:]host:container[/protocol]; the host part may be a variable. A
+    // number that isn't a port is read as none.
+    let number = { (text: String) in Int(text).flatMap { TaskEnvironment.portRange.contains($0) ? $0 : nil } }
     if let match = raw.range(of: #"^\$\{([A-Za-z_][A-Za-z0-9_]*)(:?-([0-9]+))?\}:"#, options: .regularExpression) {
       let head = String(raw[match])
       let name = head.dropFirst(2).prefix(while: { $0.isLetter || $0.isNumber || $0 == "_" })
       let digits = head.contains("-") ? head.split(separator: "-").last.map { $0.filter(\.isNumber) } : nil
-      return Port(raw: raw, host: nil, variable: String(name), variableDefault: digits.flatMap { Int($0) })
+      return Port(raw: raw, host: nil, variable: String(name), variableDefault: digits.flatMap { number(String($0)) })
     }
     let parts = raw.split(separator: "/").first.map { $0.split(separator: ":").map(String.init) } ?? []
-    let host = parts.count >= 2 ? Int(parts[parts.count - 2]) : nil
+    let host = parts.count >= 2 ? number(parts[parts.count - 2]) : nil
     return Port(raw: raw, host: host, variable: nil, variableDefault: nil)
   }
 
@@ -181,7 +183,8 @@ public struct ComposeFile: Equatable, Sendable {
   /// The override file that lets a task's stack run beside the main
   /// checkout's: containers renamed (`app` → `app-fix-elevation`) and fixed
   /// host ports moved by `slot` × `offset`. Ports read from variables are
-  /// kept: the task's env file moves them. Nil when nothing needs
+  /// kept: the task's env file moves them. A fixed port that would move
+  /// past 65535 isn't published in the task. Nil when nothing needs
   /// overriding. Needs Compose 2.24 or later (`!override`).
   public func override(task: String, slot: Int, offset: Int) -> String? {
     var lines: [String] = []
@@ -189,10 +192,9 @@ public struct ComposeFile: Equatable, Sendable {
       var body: [String] = []
       if let name = service.containerName { body.append("    container_name: \(name)-\(task)") }
       if service.ports.contains(where: { $0.host != nil }) {
-        body.append("    ports: !override")
-        for port in service.ports {
-          body.append("      - \"\(Self.moved(port, by: slot * offset))\"")
-        }
+        let ports = service.ports.compactMap { Self.moved($0, slot: slot, offset: offset) }
+        body.append(ports.isEmpty ? "    ports: !override []" : "    ports: !override")
+        body += ports.map { "      - \"\($0)\"" }
       }
       guard !body.isEmpty else { continue }
       lines.append("  \(service.name):")
@@ -209,17 +211,19 @@ public struct ComposeFile: Equatable, Sendable {
   }
 
   /// `port` as a task's override writes it: a fixed host port moved by
-  /// `amount` (`8000:8000` → `8100:8000`), anything else as written.
-  public static func moved(_ port: Port, by amount: Int) -> String {
-    port.host.map { moving(port.raw, from: $0, by: amount) } ?? port.raw
+  /// `slot` × `offset` (`8000:8000` → `8100:8000` in slot 1), anything else
+  /// as written. Nil when the moved port would be past 65535.
+  public static func moved(_ port: Port, slot: Int, offset: Int) -> String? {
+    guard let host = port.host else { return port.raw }
+    return TaskEnvironment.port(host, slot: slot, offset: offset).map { moving(port.raw, to: $0) }
   }
 
   /// `8000:8000` → `8100:8000`, `127.0.0.1:8000:8000` → `127.0.0.1:8100:8000`.
-  private static func moving(_ raw: String, from host: Int, by amount: Int) -> String {
+  private static func moving(_ raw: String, to host: Int) -> String {
     var parts = raw.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
     let index = parts.count - 2
     guard index >= 0 else { return raw }
-    parts[index] = String(host + amount)
+    parts[index] = String(host)
     return parts.joined(separator: ":")
   }
 }

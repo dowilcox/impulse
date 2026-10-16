@@ -48,5 +48,29 @@
       #expect(spans[1].contains { $0.token == .comment })
       #expect(highlighter.highlight(lines: ["x"], language: "no-such-language") == nil)
     }
+
+    /// Jobs run in turn on the highlighter's own queue, off the main thread.
+    @Test func asyncJobsRunInTurnOffTheMainThread() async throws {
+      let script = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("vendor/highlight/highlight.min.js")
+      try #require(FileManager.default.fileExists(atPath: script.path))
+      let highlighter = SyntaxHighlighter()
+      highlighter.scriptURL = script
+      let results = await withCheckedContinuation { continuation in
+        var order: [Int] = []
+        for job in 0..<3 {
+          highlighter.async { highlighter in
+            order.append(job)
+            guard job == 2 else { return }
+            let spans = highlighter.highlightNow(lines: ["let x = 1"], language: "swift")
+            continuation.resume(returning: (order, Thread.isMainThread, spans))
+          }
+        }
+      }
+      #expect(results.0 == [0, 1, 2])
+      #expect(!results.1)
+      #expect(results.2?.first?.contains { $0.token == .keyword } == true)
+    }
   }
 #endif

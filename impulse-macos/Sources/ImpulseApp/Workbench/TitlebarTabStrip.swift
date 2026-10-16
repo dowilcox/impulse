@@ -104,8 +104,8 @@ struct TitlebarTabStrip: View {
       }
     }
     .contentShape(Rectangle())
-    .simultaneousGesture(TapGesture().onEnded { model.onTabSelected?(tab.index) })
-    .simultaneousGesture(TapGesture(count: 2).onEnded { model.onKeepTab?(tab.index) })
+    .simultaneousGesture(TapGesture().onEnded { model.withTab(tab.id) { model.onTabSelected?($0) } })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { model.withTab(tab.id) { model.onKeepTab?($0) } })
     .onHover { hoveredId = $0 ? tab.id : (hoveredId == tab.id ? nil : hoveredId) }
     .contextMenu { TabContextMenu(model: model, tab: tab) }
     .help(tabHelp(tab))
@@ -143,7 +143,7 @@ struct TitlebarTabStrip: View {
   private func trailingAccessory(_ tab: TabDisplayInfo, selected: Bool, hovered: Bool) -> some View {
     ZStack {
       if hovered && !tab.isPinned {
-        Button(action: { model.onTabClosed?(tab.index) }) {
+        Button(action: { model.withTab(tab.id) { model.onTabClosed?($0) } }) {
           Icon(.x, size: 11, strokeWidth: 2.2)
             .foregroundStyle(chrome.textSecondary)
             .frame(width: 16, height: 16)
@@ -187,7 +187,7 @@ struct TitlebarTabStrip: View {
       .onChanged { value in
         if draggedId == nil {
           draggedId = tab.id
-          model.onTabSelected?(tab.index)
+          model.withTab(tab.id) { model.onTabSelected?($0) }
         }
         dragOffset = value.translation.width
       }
@@ -226,27 +226,33 @@ struct TitlebarTabStrip: View {
       }
     }
     if target != source {
-      // Infos carry global tab indexes (the strip shows one workspace).
-      model.onTabMoved?(
-        model.tabDisplayInfos[source].index, model.tabDisplayInfos[target].index)
+      // Moves take global tab indexes (the strip shows one workspace),
+      // looked up now in case a tab closed during the drag.
+      let targetID = model.tabDisplayInfos[target].id
+      model.withTab(draggedId) { from in
+        model.withTab(targetID) { to in model.onTabMoved?(from, to) }
+      }
     }
   }
 }
 
 /// A tab's context menu, in the titlebar strip and in the sidebar's tab rows.
+/// Its actions find the tab by id when chosen: tabs can close or move while
+/// the menu is open.
 struct TabContextMenu: View {
   var model: WindowModel
   let tab: TabDisplayInfo
 
   var body: some View {
-    Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { model.onTabPinToggled?(tab.index) }
-    Button("Close Tab") { model.onTabClosed?(tab.index) }
+    let selected = model.selectedTabInfo
+    Button(tab.isPinned ? "Unpin Tab" : "Pin Tab") { model.withTab(tab.id) { model.onTabPinToggled?($0) } }
+    Button("Close Tab") { model.withTab(tab.id) { model.onTabClosed?($0) } }
     Divider()
-    if tab.index != model.selectedTabIndex {
-      Button("Move into Current Tab, Right") { model.onJoinTab?(tab.index, false) }
-      Button("Move into Current Tab, Below") { model.onJoinTab?(tab.index, true) }
+    if let selected, tab.id != selected.id, tab.workspaceID == selected.workspaceID {
+      Button("Move into Current Tab, Right") { model.withTab(tab.id) { model.onJoinTab?($0, false) } }
+      Button("Move into Current Tab, Below") { model.withTab(tab.id) { model.onJoinTab?($0, true) } }
       Divider()
-    } else if tab.paneCount > 1 {
+    } else if tab.id == selected?.id, tab.paneCount > 1 {
       Button("Even Out Panes") { model.onPaneCommand?("equalize_panes") }
       Button("Move Pane to New Tab") { model.onPaneCommand?("move_pane_to_tab") }
       Divider()

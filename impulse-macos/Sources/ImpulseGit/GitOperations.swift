@@ -58,7 +58,13 @@ public enum PatchTarget: Sendable {
 
 public enum GitOperations {
   /// Extra environment for every git invocation (tests pin identity/config).
-  nonisolated(unsafe) public static var environment: [String: String] = [:]
+  /// Locked: parallel tests set it while other threads run git.
+  public static var environment: [String: String] {
+    get { environmentLock.withLock { storedEnvironment } }
+    set { environmentLock.withLock { storedEnvironment = newValue } }
+  }
+  private static let environmentLock = NSLock()
+  nonisolated(unsafe) private static var storedEnvironment: [String: String] = [:]
 
   /// Local commands can legitimately take a long time (an LFS smudge during
   /// a switch, a slow hook), and stopping one partway leaves a half-updated
@@ -223,9 +229,30 @@ public enum GitOperations {
     }
   }
 
-  /// Undo the last commit, keeping its changes staged.
-  public static func uncommit(root: String) -> GitResult {
-    void(git(["reset", "--soft", "HEAD~1"], in: root))
+  /// Undo the last commit, keeping its changes staged. With
+  /// `expectedHead`, only while HEAD is still that commit: one made since
+  /// (an agent's) isn't the one to take back.
+  public static func uncommit(expectedHead: String? = nil, root: String) -> GitResult {
+    guard let expectedHead else { return void(git(["reset", "--soft", "HEAD~1"], in: root)) }
+    let moved = GitOperationError.stale("The branch has moved on from \(expectedHead.prefix(7)), so nothing was undone.")
+    guard resolveRef("HEAD", root: root) == expectedHead else { return .failure(moved) }
+    // What `reset --soft HEAD~1` refuses, refused alike.
+    let unmerged = (try? git(["ls-files", "-u"], in: root).get())?.stdout.isEmpty == false
+    if resolveRef("MERGE_HEAD", root: root) != nil || unmerged {
+      return .failure(.invalid("A commit can't be undone in the middle of a merge."))
+    }
+    guard let parent = resolveRef("\(expectedHead)^", root: root) else {
+      return .failure(.invalid("\(expectedHead.prefix(7)) is the first commit; there's none before it to go back to."))
+    }
+    // `reset --soft HEAD~1` as one compare-and-swap: HEAD moves only while
+    // it's still `expectedHead` (the index and files stay as they are), and
+    // ORIG_HEAD and the reflog say what reset would.
+    let commands = "update HEAD \(parent) \(expectedHead)\nupdate ORIG_HEAD \(expectedHead)\n"
+    let updated = git(["update-ref", "-m", "reset: moving to HEAD~1", "--stdin"], in: root, stdin: Data(commands.utf8))
+    if case .failure(let error) = updated {
+      return .failure(resolveRef("HEAD", root: root) == expectedHead ? error : moved)
+    }
+    return .success(())
   }
 
   /// Full message of the HEAD commit (for amend).
@@ -257,6 +284,20 @@ public enum GitOperations {
 
   public static func deleteBranch(_ name: String, force: Bool = false, root: String) -> GitResult {
     void(git(["branch", force ? "-D" : "-d", "--end-of-options", name], in: root))
+  }
+
+  /// Delete branch `name` only while it still points at `commit`, in one
+  /// step (a compare-and-swap), so a commit made to it meanwhile isn't
+  /// lost. Its settings (the upstream) go too, as with `branch -D`.
+  public static func deleteBranch(_ name: String, at commit: String, root: String) -> GitResult {
+    if worktrees(root: root).contains(where: { $0.branch == name }) {
+      return .failure(.invalid("\(name) is checked out in a worktree."))
+    }
+    if case .failure(let error) = git(["update-ref", "-d", "refs/heads/\(name)", commit], in: root) {
+      return .failure(resolveRef("refs/heads/\(name)", root: root) == commit ? error : .stale("\(name) has moved."))
+    }
+    _ = git(["config", "--remove-section", "branch.\(name)"], in: root)
+    return .success(())
   }
 
   public struct BranchInfo: Equatable, Sendable {
@@ -334,25 +375,37 @@ public enum GitOperations {
     public let index: Int
     public let message: String
     public let branch: String?
+    /// The stash's commit: which stash this is, wherever it moves in the
+    /// list.
+    public var commit = ""
   }
 
   public static func stashList(root: String) -> [StashEntry] {
-    guard case .success(let result) = git(["stash", "list", "--format=%gd%x00%gs"], in: root)
+    guard case .success(let result) = git(["stash", "list", "--format=%gd%x00%H%x00%gs"], in: root)
     else { return [] }
     return result.stdout.split(separator: "\n").compactMap { line in
-      let parts = line.split(separator: "\0", maxSplits: 1).map(String.init)
-      guard parts.count == 2,
+      let parts = line.split(separator: "\0", maxSplits: 2).map(String.init)
+      guard parts.count == 3,
         let open = parts[0].firstIndex(of: "{"), let close = parts[0].firstIndex(of: "}"),
         let index = Int(parts[0][parts[0].index(after: open)..<close])
       else { return nil }
       // "WIP on main: abc123 subject" / "On main: message"
       var branch: String?
-      if let colon = parts[1].firstIndex(of: ":") {
-        let prefix = parts[1][..<colon]
+      if let colon = parts[2].firstIndex(of: ":") {
+        let prefix = parts[2][..<colon]
         branch = prefix.split(separator: " ").last.map(String.init)
       }
-      return StashEntry(index: index, message: parts[1], branch: branch)
+      return StashEntry(index: index, message: parts[2], branch: branch, commit: parts[1])
     }
+  }
+
+  /// The stash the user picked, as the list has it now: the one at
+  /// `commit` wherever it moved to, or (without one) whatever is at
+  /// `index`. Nil when it's gone.
+  public static func stashEntry(index: Int, commit: String?, root: String) -> StashEntry? {
+    let list = stashList(root: root)
+    if let commit, !commit.isEmpty { return list.first { $0.commit == commit } }
+    return list.first { $0.index == index }
   }
 
   public static func stash(
@@ -524,10 +577,14 @@ public enum GitOperations {
   /// Whether `branch`'s work is in `base`: its commits are (a merge or a
   /// fast-forward), or merging it would change nothing (a squash merge,
   /// whose commits never look merged). Can miss a branch whose lines `base`
-  /// has since changed again.
-  public static func isMerged(_ branch: String, into base: String, root: String) -> Bool {
+  /// has since changed again. Unless `trusted`, the merge runs no driver or
+  /// filter the repository's configuration names (one that's needed counts
+  /// as a conflict, so the branch isn't merged).
+  public static func isMerged(_ branch: String, into base: String, root: String, trusted: Bool = false) -> Bool {
     if case .success = git(["merge-base", "--is-ancestor", branch, base], in: root) { return true }
-    guard case .success(let merged) = git(["merge-tree", "--write-tree", "--no-messages", base, branch], in: root),
+    guard let env = trusted ? environment : GitCLI.restrictedEnvironment(root: root, base: environment),
+      case .success(let merged) = GitCLI.run(
+        ["merge-tree", "--write-tree", "--no-messages", base, branch], in: root, environment: env, timeout: 600),
       case .success(let baseTree) = git(["rev-parse", "\(base)^{tree}"], in: root)
     else { return false }
     let tree = merged.stdout.split(separator: "\n").first.map(String.init) ?? ""
@@ -569,10 +626,9 @@ public enum GitOperations {
   /// The paths that differ between two commits (renames as a deletion and
   /// an addition).
   public static func changedPaths(from: String, to: String, root: String) -> [String] {
-    guard case .success(let result) = git(["diff", "--name-only", "--no-renames", from, to, "--"], in: root) else {
-      return []
-    }
-    return result.stdout.split(separator: "\n").map(String.init)
+    guard case .success(let result) = git(["diff", "--name-only", "-z", "--no-renames", from, to, "--"], in: root)
+    else { return [] }
+    return result.stdout.split(separator: "\0").map(String.init)
   }
 
   /// When `revision` was committed (committer date); nil when it doesn't
@@ -741,6 +797,15 @@ public enum GitOperations {
     void(git(["push", remote, "--delete", "refs/heads/\(name)"], in: root, timeout: 600))
   }
 
+  /// Delete a branch on `remote` only while the remote still has it at
+  /// `commit` (a lease): the server refuses when someone pushed to it since.
+  public static func deleteRemoteBranch(_ name: String, remote: String, at commit: String, root: String) -> GitResult {
+    void(
+      git(
+        ["push", "--force-with-lease=refs/heads/\(name):\(commit)", remote, ":refs/heads/\(name)"], in: root,
+        timeout: 600))
+  }
+
   /// Delete a tag on `remote` (the local tag is left alone).
   public static func deleteRemoteTag(_ name: String, remote: String, root: String) -> GitResult {
     void(git(["push", remote, "--delete", "refs/tags/\(name)"], in: root, timeout: 600))
@@ -885,8 +950,14 @@ public enum GitOperations {
   }
 
   public static func worktrees(root: String) -> [Worktree] {
+    worktreeList(root: root) ?? []
+  }
+
+  /// `worktrees`, or nil when git couldn't list them (rather than "there
+  /// are none").
+  public static func worktreeList(root: String) -> [Worktree]? {
     guard case .success(let result) = git(["worktree", "list", "--porcelain"], in: root) else {
-      return []
+      return nil
     }
     var list: [Worktree] = []
     for block in result.stdout.components(separatedBy: "\n\n") where !block.isEmpty {

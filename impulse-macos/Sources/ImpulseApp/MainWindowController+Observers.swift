@@ -64,7 +64,7 @@ extension MainWindowController {
           let container = self.tabManager.selectedTerminal,
           let terminal = container.activeTerminal
         {
-          terminal.sendCommand("cd \(dir.shellEscaped)")
+          terminal.sendCommand("cd \(dir.shellEscaped(for: terminal.shellType))")
         }
       }
     )
@@ -226,10 +226,19 @@ extension MainWindowController {
         guard let self, let editor = notification.object as? EditorTab, self.tabManager.ownsEditor(editor),
           let path = editor.filePath
         else { return }
+        // It grew past what the editor can hold: offer the pager instead.
+        if notification.userInfo?["tooLarge"] as? Bool == true {
+          self.tabManager.showTooLargeToEdit(path)
+          return
+        }
+        let name = (path as NSString).lastPathComponent
+        // A large file isn't reloaded on its own; anything else only waits
+        // when it has unsaved edits.
         self.toasts.show(
           Toast(
-            kind: .warning,
-            message: "\((path as NSString).lastPathComponent) changed on disk while you have unsaved edits.",
+            kind: editor.isModified ? .warning : .info,
+            message: editor.isModified
+              ? "\(name) changed on disk while you have unsaved edits." : "\(name) changed on disk.",
             actionTitle: "Reload",
             action: { [weak editor] in editor?.reloadFromDisk(force: true) }, lifetime: 20))
       }
@@ -428,8 +437,13 @@ extension MainWindowController {
           self.tabManager.ownsTerminal(terminal)
         else { return }
         if let dir = notification.userInfo?["directory"] as? String {
-          self.settings.lastDirectory = dir
           let isSelected = self.tabManager.selectedTerminal?.activeTerminal === terminal
+          // Where the next launch starts: the terminal in front, not one
+          // cd-ing in the background. Assigning saves settings.json, and
+          // every prompt reports its directory, so only when it moved.
+          if isSelected, self.settings.lastDirectory != dir {
+            self.settings.lastDirectory = dir
+          }
           if dir == self.fileTreeRootPath || !self.followsActiveDirectory || !isSelected {
             // Same directory — just refresh git status (a command
             // may have changed git state without changing CWD).
@@ -585,7 +599,8 @@ extension MainWindowController {
       }
     )
 
-    // Terminal title changed — update tab titles
+    // Terminal title changed — update tab titles (coalesced: an agent's
+    // spinner changes the title many times a second).
     notificationObservers.append(
       nc.addObserver(forName: .terminalTitleChanged, object: nil, queue: .main) {
         [weak self] notification in
@@ -766,13 +781,13 @@ extension MainWindowController {
       }
     )
 
-    // Editor content changed — refresh tab labels and notify LSP
+    // Editor content changed — notify LSP. The tab's "*" comes from
+    // .editorDirtyStateChanged, which fires only when it flips.
     notificationObservers.append(
       nc.addObserver(forName: .editorContentChanged, object: nil, queue: .main) {
         [weak self] notification in
         guard let self else { return }
         guard let editor = self.ownedEditor(from: notification) else { return }
-        self.tabManager.refreshSegmentLabels()
         let changes = notification.userInfo?["changes"] as? [MonacoContentChange] ?? []
         self.lspDidChange(editor: editor, changes: changes)
       }

@@ -305,16 +305,37 @@ final class ImpulseCore {
     func initializeLsp(rootUri: String) {
         shutdownLsp()
         lspRegistry = LSPRegistry(rootUri: rootUri)
-        // Servers only run for files in trusted folders.
+        // Servers only run for files in trusted folders, and work inside them.
         lspRegistry?.isAllowed = { uri in
           !DebugSnapshot.withoutLanguageServers && (FileURI.toPath(uri).map(Trust.shared.isTrusted) ?? false)
+        }
+        lspRegistry?.trustedFolder = { uri in
+          guard Trust.shared.isEnabled, let path = FileURI.toPath(uri) else { return nil }
+          return Trust.shared.trustingFolder(path)
         }
         lspRegistry?.onEventsAvailable = lspEventsAvailable
     }
 
-    /// Whether a language has a configured server.
-    func lspHasServers(languageId: String) -> Bool {
-        lspRegistry?.hasServers(languageId: languageId) ?? false
+    /// Whether a language has a configured server (in a file's project,
+    /// when given).
+    func lspHasServers(languageId: String, fileUri: String? = nil) -> Bool {
+        lspRegistry?.hasServers(languageId: languageId, fileUri: fileUri) ?? false
+    }
+
+    /// Whether the server with this client key still runs in a trusted
+    /// folder (so its edits may apply).
+    func lspIsServing(clientKey: String) -> Bool {
+        lspRegistry?.isServing(clientKey: clientKey) ?? false
+    }
+
+    /// The project root (a path) of a server, by client key.
+    func lspRootPath(clientKey: String) -> String? {
+        lspRegistry?.rootPath(clientKey: clientKey)
+    }
+
+    /// The project root (a path) a file's servers work in.
+    func lspRootPath(fileUri: String) -> String? {
+        lspRegistry?.rootPath(forFileUri: fileUri)
     }
 
     /// Stop the servers whose project root (a path) matches.
@@ -327,19 +348,23 @@ final class ImpulseCore {
         didSet { lspRegistry?.onEventsAvailable = lspEventsAvailable }
     }
 
-    /// Ensures LSP servers are running for the given language and file
-    /// using the instance registry.
+    /// Sends an LSP request; `completion` gets (on a background thread) the
+    /// result JSON or an `{"error": …}` envelope, nil without a registry.
+    /// Nothing waits for the answer. Returns what cancels it (the server is
+    /// told, and `completion` isn't called).
     @discardableResult
-    func lspEnsureServers(languageId: String, fileUri: String) -> Int32 {
-        guard let reg = lspRegistry else { return -1 }
-        return Int32(reg.ensureServers(languageId: languageId, fileUri: fileUri))
-    }
-
-    /// Sends a synchronous LSP request using the instance registry.
-    func lspRequest(languageId: String, fileUri: String, method: String, paramsJson: String) -> String? {
-        guard let reg = lspRegistry else { return nil }
-        return reg.request(
-            languageId: languageId, fileUri: fileUri, method: method, paramsJSON: paramsJson)
+    func lspRequest(
+        languageId: String, fileUri: String, method: String, paramsJson: String,
+        completion: @escaping (String?) -> Void
+    ) -> () -> Void {
+        guard let reg = lspRegistry else {
+            completion(nil)
+            return {}
+        }
+        let request = reg.request(
+            languageId: languageId, fileUri: fileUri, method: method, paramsJSON: paramsJson,
+            completion: completion)
+        return { request.cancel() }
     }
 
     /// Answers a request a language server sent (`workspace/applyEdit`).
@@ -356,13 +381,26 @@ final class ImpulseCore {
             ? 0 : -1
     }
 
-    /// Sends a capability-aware textDocument/didChange using the instance registry.
+    /// Sends a capability-aware textDocument/didChange using the instance
+    /// registry: Monaco's changes (one-based) as LSP ones, or `fullText`.
     @discardableResult
-    func lspDidChange(languageId: String, fileUri: String, version: Int32, fullText: String?, changesJson: String) -> Int32 {
+    func lspDidChange(
+        languageId: String, fileUri: String, version: Int32, fullText: String?, changes: [MonacoContentChange]
+    ) -> Int32 {
         guard let reg = lspRegistry else { return -1 }
+        func position(_ line: UInt32, _ column: UInt32) -> ContentChange.Position {
+            ContentChange.Position(line: max(line, 1) - 1, character: max(column, 1) - 1)
+        }
+        let lspChanges = changes.map { change in
+            ContentChange(
+                range: ContentChange.Range(
+                    start: position(change.range.startLine, change.range.startColumn),
+                    end: position(change.range.endLine, change.range.endColumn)),
+                rangeLength: change.rangeLength, text: change.text)
+        }
         return reg.didChange(
             languageId: languageId, fileUri: fileUri, version: version,
-            fullText: fullText, changesJSON: changesJson)
+            fullText: fullText, changes: lspChanges)
             ? 0 : -1
     }
 
@@ -372,7 +410,8 @@ final class ImpulseCore {
         return reg.pollEvent()
     }
 
-    /// Shuts down all running LSP servers and releases the instance registry.
+    /// Shuts down all running LSP servers (together, giving them two seconds
+    /// in all) and releases the instance registry.
     func shutdownLsp() {
         lspRegistry?.shutdownAll()
         lspRegistry = nil
@@ -594,6 +633,11 @@ final class ImpulseCore {
     /// Scrolls the terminal viewport by `delta` lines (negative = up).
     static func terminalScroll(handle: OpaquePointer, delta: Int32) {
         impulse_terminal_scroll(UnsafeMutableRawPointer(handle), delta)
+    }
+
+    /// Lines the viewport is scrolled back into the scrollback (0 = bottom).
+    static func terminalDisplayOffset(handle: OpaquePointer) -> UInt32 {
+        impulse_terminal_display_offset(UnsafeMutableRawPointer(handle))
     }
 
     /// Scrolls the terminal viewport to the bottom (most recent output).

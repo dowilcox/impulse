@@ -54,6 +54,57 @@
       #expect(!trust.isTrusted(app))
     }
 
+    @Test func aRestrictedFolderStaysRestrictedInsideATrustedOne() throws {
+      let dir = try scratch()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      let code = dir.appendingPathComponent("Code").path
+      let task = code + "/app/src"
+      let trust = WorkspaceTrust(file: nil)
+      trust.trust(code)
+      trust.restrict(task)
+      #expect(!trust.isTrusted(task))
+      #expect(!trust.isTrusted(task + "/main.rs"))
+      #expect(trust.trustingFolder(task) == nil)
+      #expect(trust.isTrusted(code + "/app"), "only the restricted folder")
+      #expect(trust.isTrusted(code + "/other"))
+
+      // Trusting the folder above again doesn't lift it.
+      trust.trust(code)
+      #expect(!trust.isTrusted(task))
+      // Trusting it does.
+      trust.trust(task)
+      #expect(trust.isTrusted(task))
+      #expect(trust.restrictedFolders.isEmpty)
+    }
+
+    @Test func aFolderInsideARestrictedOneCanBeTrusted() throws {
+      let dir = try scratch()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      let code = dir.appendingPathComponent("Code").path
+      let trust = WorkspaceTrust(file: nil)
+      trust.trust(code)
+      trust.restrict(code + "/app")
+      trust.trust(code + "/app/src")
+      #expect(trust.isTrusted(code + "/app/src"))
+      #expect(!trust.isTrusted(code + "/app"))
+      #expect(trust.revoke(code + "/app/src") == nil, "restricted again, not trusted from above")
+    }
+
+    @Test func restrictionsAreKeptBetweenLaunches() throws {
+      let dir = try scratch()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      let file = dir.appendingPathComponent("data/trusted-folders.json")
+      let code = dir.appendingPathComponent("Code").path
+      let first = WorkspaceTrust(file: file)
+      first.trust(code)
+      first.restrict(code + "/other")
+      let second = WorkspaceTrust(file: file)
+      #expect(second.isTrusted(code + "/app"))
+      #expect(!second.isTrusted(code + "/other"))
+      second.revokeAll()
+      #expect(WorkspaceTrust(file: file).restrictedFolders.isEmpty)
+    }
+
     @Test func turnedOffTrustsEverything() {
       let trust = WorkspaceTrust(file: nil)
       #expect(!trust.isTrusted("/somewhere/else"))

@@ -173,7 +173,9 @@ extension MainWindowController {
             uri: URL(fileURLWithPath: other).absoluteString,
             edits: [LSPTextEdit(startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 0, newText: "edited ")]),
         ])
-        reportWorkspaceEdit(applyWorkspaceEdit(edit), verb: "Renamed")
+        applyWorkspaceEdit(edit, root: fileTreeRootPath, title: "Rename") { [weak self] outcome in
+          self?.reportWorkspaceEdit(outcome, verb: "Renamed")
+        }
       } else if action.hasPrefix("git-peek="), let line = Int(action.dropFirst(9)) {
         // What clicking the change mark at that line does.
         tabManager.selectedEditor?.webView?.evaluateJavaScript("renderGitPeek(gitHunkAtLine(\(line)))")

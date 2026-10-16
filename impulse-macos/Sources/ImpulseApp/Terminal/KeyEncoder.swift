@@ -4,11 +4,63 @@ import ImpulseKit
 /// Translates NSEvent key events into terminal escape byte sequences.
 struct KeyEncoder {
 
+    /// Which Option keys act as Meta (`terminal_option_as_meta`): they send
+    /// Esc + the key, as readline's Meta-f and Meta-b expect, instead of
+    /// typing the character macOS gives them (ƒ, or @ on a German layout).
+    enum OptionAsMeta: String, CaseIterable {
+        case off, left, right, both
+
+        init(setting: String) {
+            self = OptionAsMeta(rawValue: setting.lowercased()) ?? .off
+        }
+
+        /// Device-dependent bits of NSEvent.ModifierFlags that tell the two
+        /// Option keys apart (NX_DEVICELALTKEYMASK, NX_DEVICERALTKEYMASK).
+        private static let leftOptionBit: UInt = 0x20
+        private static let rightOptionBit: UInt = 0x40
+
+        /// Whether an Option key held in `flags` is Meta.
+        func applies(to flags: NSEvent.ModifierFlags) -> Bool {
+            guard flags.contains(.option), self != .off else { return false }
+            let left = flags.rawValue & Self.leftOptionBit != 0
+            let right = flags.rawValue & Self.rightOptionBit != 0
+            switch self {
+            case .off: return false
+            case .both: return true
+            // An event that doesn't say which side (a synthesized one)
+            // follows the setting.
+            case .left: return left || !right
+            case .right: return right || !left
+            }
+        }
+    }
+
+    /// Esc + the key's own character when its Option key is Meta (⌥F sends
+    /// Esc f on every layout; ⌥⇧F Esc F; ⌃⌥F Esc ⌃F), or nil for keys that
+    /// don't type a character (arrows, Return, Delete: see
+    /// `encodeForDoCommand`) and when Option isn't Meta.
+    static func metaBytes(for event: NSEvent, optionAsMeta: OptionAsMeta) -> [UInt8]? {
+        let flags = event.modifierFlags
+        guard !flags.contains(.command), optionAsMeta.applies(to: flags),
+            let characters = event.charactersIgnoringModifiers, characters.unicodeScalars.count == 1,
+            let scalar = characters.unicodeScalars.first,
+            scalar.value >= 0x20, scalar.value != 0x7F, !(0xF700...0xF8FF).contains(scalar.value)
+        else { return nil }
+        if flags.contains(.control) {
+            guard let control = controlByte(for: scalar) else { return nil }
+            return [0x1B, control]
+        }
+        return [0x1B] + Array(String(scalar).utf8)
+    }
+
     /// Encode a key event triggered by an NSTextInputClient `doCommand(by:)` selector.
     /// Handles special keys (arrows, Home/End, PageUp/Down, F-keys, Tab/Return/etc.)
-    /// and meta-prefix encoding for Option+ASCII combinations that reach doCommand.
+    /// and ⌃ keys; Return, Tab, Delete and Esc get an Esc in front when their
+    /// Option key is Meta.
     /// Returns an empty array for events that should be handled by the menu system (Cmd+).
-    static func encodeForDoCommand(event: NSEvent, appCursor: Bool, appKeypad: Bool) -> [UInt8] {
+    static func encodeForDoCommand(
+        event: NSEvent, appCursor: Bool, appKeypad: Bool, optionAsMeta: OptionAsMeta = .off
+    ) -> [UInt8] {
         let flags = event.modifierFlags
         let hasCmd = flags.contains(.command)
         let hasCtrl = flags.contains(.control)
@@ -20,17 +72,17 @@ struct KeyEncoder {
         let keyCode = event.keyCode
         let modParam = modifierParam(shift: hasShift, alt: hasOption, ctrl: hasCtrl)
         let anyMod = modParam > 1
+        let meta: [UInt8] = optionAsMeta.applies(to: flags) ? [0x1B] : []
 
-        if (keyCode == 36 || keyCode == 76) && hasShift && !hasCtrl {
-            return csiBytes("13;2u")
-        }
-
+        // Shift+Return is a plain Return: shells read the kitty form
+        // (CSI 13;2u) as text. Programs that want it apart ask for the
+        // kitty protocol, which keyDown handles before this.
         switch keyCode {
-        case 36, 76: return [0x0D]
-        case 51: return [0x7F]
+        case 36, 76: return meta + [0x0D]
+        case 51: return meta + [0x7F]
         case 48:
-            return hasShift ? csiBytes("Z") : [0x09]
-        case 53: return [0x1B]
+            return hasShift ? csiBytes("Z") : meta + [0x09]
+        case 53: return meta + [0x1B]
 
         case 126: return arrowBytes(letter: "A", appCursor: appCursor, modParam: modParam, anyMod: anyMod)
         case 125: return arrowBytes(letter: "B", appCursor: appCursor, modParam: modParam, anyMod: anyMod)
@@ -59,25 +111,14 @@ struct KeyEncoder {
         default: break
         }
 
-        if hasCtrl, let chars = event.charactersIgnoringModifiers?.lowercased(), chars.count == 1 {
-            let c = chars.unicodeScalars.first!.value
-            if c >= 0x61 && c <= 0x7A {
-                return [UInt8(c - 0x60)]
-            }
-            switch c {
-            case 0x5B: return [0x1B]
-            case 0x5D: return [0x1D]
-            case 0x5C: return [0x1C]
-            default: break
-            }
+        if hasCtrl, let characters = event.charactersIgnoringModifiers, characters.unicodeScalars.count == 1,
+            let scalar = characters.unicodeScalars.first, let control = controlByte(for: scalar)
+        {
+            return meta + [control]
         }
 
-        if hasOption,
-           let chars = event.charactersIgnoringModifiers,
-           chars.count == 1,
-           let scalar = chars.unicodeScalars.first,
-           scalar.value < 0x80 {
-            return [0x1B] + Array(chars.utf8)
+        if let bytes = metaBytes(for: event, optionAsMeta: optionAsMeta) {
+            return bytes
         }
 
         if let chars = event.characters, !chars.isEmpty {
@@ -87,32 +128,35 @@ struct KeyEncoder {
         return []
     }
 
-    /// Encode committed text arriving via NSTextInputClient `insertText(_:replacementRange:)`
-    /// when a meta-prefix should be applied. Returns nil to signal the caller should write
-    /// the text directly (composed dead keys, IME output, multi-character strings).
-    ///
-    /// Returns `\e` + ASCII byte only when Option was held AND the text is a single plain
-    /// ASCII character — the shape readline/emacs expect for Meta-f, Meta-b, etc.
-    static func encodeMetaForInsertText(text: String, event: NSEvent?) -> Data? {
-        guard let event, event.modifierFlags.contains(.option) else { return nil }
-        guard text.count == 1, let scalar = text.unicodeScalars.first, scalar.value < 0x80 else {
-            return nil
-        }
-        var data = Data([0x1B])
-        data.append(contentsOf: Array(text.utf8))
-        return data
+    static func encode(
+        event: NSEvent, appCursor: Bool, appKeypad: Bool, optionAsMeta: OptionAsMeta = .off
+    ) -> [UInt8] {
+        encodeForDoCommand(event: event, appCursor: appCursor, appKeypad: appKeypad, optionAsMeta: optionAsMeta)
     }
 
-    static func encode(event: NSEvent, appCursor: Bool, appKeypad: Bool) -> [UInt8] {
-        encodeForDoCommand(event: event, appCursor: appCursor, appKeypad: appKeypad)
+    /// The control character ⌃ makes of a key: ⌃A–⌃Z, ⌃[ (Esc), ⌃\ and ⌃].
+    private static func controlByte(for scalar: Unicode.Scalar) -> UInt8? {
+        var c = scalar.value
+        if c >= 0x41 && c <= 0x5A { c += 0x20 }
+        switch c {
+        case 0x61...0x7A: return UInt8(c - 0x60)
+        case 0x5B: return 0x1B
+        case 0x5C: return 0x1C
+        case 0x5D: return 0x1D
+        default: return nil
+        }
     }
 
     /// The key, modifiers and typed text of `event` for the kitty keyboard
     /// protocol (nil for keys it doesn't describe, which keep the legacy path).
-    static func kittyKey(for event: NSEvent) -> (
+    /// Option is the protocol's Alt where it's Meta, or beside ⌃ or ⌘;
+    /// otherwise it types characters, which go through the input manager as
+    /// text.
+    static func kittyKey(for event: NSEvent, optionAsMeta: OptionAsMeta = .off) -> (
         key: KittyKeyboard.Key, modifiers: KittyKeyboard.Modifiers, text: String?
     )? {
         let flags = event.modifierFlags
+        let optionIsMeta = optionAsMeta.applies(to: flags)
         var modifiers: KittyKeyboard.Modifiers = []
         if flags.contains(.shift) { modifiers.insert(.shift) }
         if flags.contains(.option) { modifiers.insert(.alt) }
@@ -130,12 +174,10 @@ struct KeyEncoder {
         if let key = functional[event.keyCode] {
             return (key, modifiers, nil)
         }
-        // Option typing a character (å, ∫) or starting a dead key (´) keeps
-        // the legacy path: composing, special characters, and the meta keys
-        // Cocoa's word bindings send.
-        if modifiers.subtracting(.shift) == [.alt],
-            event.characters.map({ $0.isEmpty || $0.unicodeScalars.contains { $0.value >= 0x80 } }) ?? true
-        {
+        // Option alone types a character here (å, or @ on a German layout)
+        // or starts a dead key (´): the legacy path composes it and sends the
+        // text. Beside ⌃ it can't type anything, so it's Alt (⌃⌥F is C-M-f).
+        if flags.contains(.option), !optionIsMeta, modifiers.isDisjoint(with: [.control, .superKey]) {
             return nil
         }
         // The key's own character without modifiers, and with Shift.
@@ -144,7 +186,8 @@ struct KeyEncoder {
             let base = unmodified.lowercased().unicodeScalars.first, base.value >= 0x20, base.value != 0x7F
         else { return nil }
         let shifted = event.characters(byApplyingModifiers: .shift)?.unicodeScalars.first
-        return (.text(base: base, shifted: shifted), modifiers, event.characters)
+        // What Option makes of the key (ƒ) isn't text it types.
+        return (.text(base: base, shifted: shifted), modifiers, flags.contains(.option) ? nil : event.characters)
     }
 
     private static func modifierParam(shift: Bool, alt: Bool, ctrl: Bool) -> Int {

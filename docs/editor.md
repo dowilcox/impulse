@@ -17,15 +17,21 @@ Every file opens in its own editor tab. A file that's already open in the window
 | The menu bar                      | File ▸ Open… (⌘O) opens a file in a tab, or a folder as a workspace.                                                                                                                                        |
 | Finder                            | Choose **Open With ▸ Impulse** on a source file.                                                                                                                                                            |
 | Search results, Problems, symbols | Click a result to open the file at that spot.                                                                                                                                                               |
+| An open editor                    | Drop files on it from the file tree or Finder. Each opens in its own tab.                                                                                                                                   |
 
 **New File** (⌘N) opens an empty, untitled editor. The first time you save it, a Save panel asks where to put it (starting in the current folder), and the editor then picks the language from the file name.
 
 Some files don't open as text:
 
 - **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tiff`, `.tif`) open in an image tab. See [Image tabs](#image-tabs).
-- **Binary files** (anything with a NUL byte in its first 8 KB, or over 10 MB) don't open. A message offers **Open in Default App**.
+- **Binary files** (anything with a NUL byte in its first 8 KB) don't open. A message offers **Open in Default App**, or **Reveal in Finder** for a file that would run when opened (a program, a script, an app, a `.command` or an installer).
 - **Files that aren't UTF-8** don't open either, so a save can't overwrite them with the wrong encoding. The same **Open in Default App** button appears.
-- **Files over 5 MB** open read-only, so the editor stays responsive.
+- **Files over 10 MB** don't open: a message says the file is too large for the editor and offers **View in Terminal**, which pages through it with `less` in a new terminal tab.
+- **Files over 5 MB** open read-only, so the editor stays responsive. They aren't reloaded on every write either: when one changes on disk, "_file_ changed on disk." appears with a **Reload** button.
+
+The same limits apply when an open file grows: past 5 MB it turns read-only (unless it has unsaved changes) and stops reloading on its own, and past 10 MB the editor keeps what it shows and offers **View in Terminal** instead.
+
+If an editor's page crashes, it reloads with your text, unsaved changes included. If it keeps crashing, it stops trying and says "This editor stopped working. Your text is kept." with a **Reload Editor** button; it also tries again when you come back to the tab. Saving still works meanwhile.
 
 Text files that start with a UTF-8 byte-order mark keep it when you save.
 
@@ -116,7 +122,7 @@ When a tab has several modified editors in split panes, you're asked about each 
 
 Agents, git and other tools often rewrite files you have open. Impulse watches every open file:
 
-- If the editor has no unsaved changes, it reloads the new contents.
+- If the editor has no unsaved changes, it reloads the new contents as one edit: the cursor, selection and scroll stay where they were, and ⌘Z brings back what you had before the reload.
 - If you have unsaved changes, it leaves your buffer alone and shows "_file_ changed on disk while you have unsaved edits." with a **Reload** button, which discards your edits and loads the disk version.
 - If you then save anyway, a sheet says the file changed on disk and offers **Save Anyway** (your version replaces theirs), **Reload from Disk** (theirs replaces yours) or **Cancel**.
 
@@ -158,8 +164,9 @@ How these commands run:
 - The command runs **in the saved file's folder**, with the arguments you gave. `{file}` in an argument is replaced with the saved file's full path (also inside a longer argument, such as `--stdin-filepath={file}`); without it, Impulse doesn't add the path, so use arguments that tell your tool what to work on (`.` for the folder, for instance).
 - There's no shell: no pipes, `&&`, globbing or `~`. The command must be a plain program name or an absolute path. A relative path such as `./node_modules/.bin/prettier` isn't run.
 - A plain program name is looked up in your login shell's `PATH`, the same one language servers get, so Homebrew, npm and other tools you can run in a terminal are found even when you open Impulse from the Dock.
-- Output isn't shown while a command works. If a command fails (exits with an error, or can't be started), a notification names it and the file, with the first line of its error output, for example "Formatter “prettier” failed on forecast.ts." and "[error] src/forecast.ts: SyntaxError: Unexpected token (12:3)". The file stays as you saved it.
-- A formatter that runs for more than a minute is stopped. Closing a tab with **Save & Close** and quitting wait for the formatter to finish. Quitting also waits, up to 10 seconds, for commands on save that are still running.
+- Output isn't shown while a command works. If a command fails (exits with an error, or can't be started), a notification names it and the file, with the first line of its error output, for example "Formatter “prettier” failed on forecast.ts." and "[error] src/forecast.ts: SyntaxError: Unexpected token (12:3)".
+- The editor shows a formatter's result (or a command's, with **Reload** ticked) as one edit that ⌘Z takes back. When the command fails, is stopped, or leaves the file empty, the editor doesn't show what it left in the file: it keeps the text you saved, marked unsaved. Since the file may now hold the command's leftovers, or another program's change made while it ran, saving again asks before replacing it.
+- A formatter, or a command on save with **Reload** ticked, that runs for more than a minute is stopped. Closing a tab with **Save & Close** and quitting wait for the formatter to finish. Quitting also waits, up to 10 seconds, for commands on save that are still running.
 - If you keep typing while a formatter runs, your newer text is kept (and stays unsaved) instead of the formatter's result.
 - Formatters and commands on save run only in [trusted folders](getting-started.md), because they run a project's own tools and configuration.
 
@@ -205,7 +212,7 @@ Other languages (Go, Ruby, Java and so on) get Monaco's syntax highlighting but 
 2. Run **Install Web LSP Servers** from the command palette (⇧⌘P), or open Settings ▸ Language Servers and click **Install All**.
 3. Wait for the "Language servers installed" message. Files you open afterwards get their servers.
 
-The packages go into `~/Library/Application Support/impulse/lsp`. Run the command again to update them. A server found on your `PATH` is used before the managed copy.
+The packages go into `~/Library/Application Support/impulse/lsp`. Run the command again to update them. Updates stay within each package's current major version, so a reinstall never brings a version that works differently (TypeScript stays on 6: TypeScript 7 no longer includes the `tsserver` that `typescript-language-server` runs). The packages' install scripts don't run: none of these servers needs one. A server found on your `PATH` is used before the managed copy.
 
 Settings ▸ Language Servers lists the managed servers, then `rust-analyzer`, `pyright`, `clangd` and `sourcekit-lsp` under "From your system", each with a check mark and the path where it was found, or "Not installed".
 
@@ -218,12 +225,14 @@ Language servers can run a project's own code (TypeScript plugins, build scripts
 ### How servers run
 
 - A server starts the first time you open a file in its language, in the background, so the file opens without waiting. Opening more files of the same project reuses it, across all windows.
-- Each server works on one project root: the nearest folder above the file that contains one of `Cargo.toml`, `package.json`, `tsconfig.json`, `jsconfig.json`, `pnpm-workspace.yaml`, `yarn.lock`, `package-lock.json`, `bun.lockb`, `turbo.json`, `nx.json`, `go.mod`, `pyproject.toml`, `setup.py`, `composer.json`, `Gemfile`, `deno.json`, `deno.jsonc` or `Package.swift`, or failing that, the nearest folder with a `.git`. In a monorepo, each package gets its own server.
+- Each server works on one project root: the nearest folder above the file that contains one of `Cargo.toml`, `package.json`, `tsconfig.json`, `jsconfig.json`, `pnpm-workspace.yaml`, `yarn.lock`, `package-lock.json`, `bun.lockb`, `turbo.json`, `nx.json`, `go.mod`, `pyproject.toml`, `setup.py`, `composer.json`, `Gemfile`, `deno.json`, `deno.jsonc` or `Package.swift`, or failing that, the nearest folder with a `.git`. In a monorepo, each package gets its own server. The root is never above the trusted folder the file is in: if you trust only part of a project, its servers work in that part, and with nothing that marks a root inside it, in the trusted folder itself.
 - Long-running work a server reports (indexing, loading a project) shows in the status bar with its progress.
 - Messages a server wants you to see (errors, warnings and information) appear as notifications.
 - If a server isn't installed, you're told once, for example: "LSP server 'typescript-language-server' requires 'typescript-language-server' but it is not installed. Install them with "Install Web LSP Servers" in the command palette or Settings → Language Servers." Impulse looks for it again (at most every 15 seconds) as you keep working in the file, so once you install it, it starts without a restart.
 - If a server crashes, you see "The _name_ language server stopped unexpectedly. Impulse restarts it." It comes back after a short delay that grows if it keeps crashing, and is told about the files you have open.
 - Untitled files have no language server until you save them.
+- A request a server doesn't answer in time is given up on, and the server is told to stop working on it: after 5 seconds for completions, hover, signature help, go to definition, highlights, inlay hints and checking where a rename starts, 10 for formatting and code actions, and 15 for the rest (the editor stops waiting at the same time). A newer request of the same kind for the same file (completions as you type, say) replaces the one still waiting.
+- When you quit, every server is asked to shut down at once; any still running two seconds later is stopped.
 
 ### Adding or replacing servers
 
@@ -286,13 +295,15 @@ Each editor tab only edits its own file, so when a rename or code action changes
 
 - Files open in an editor (in any window) are changed in the editor, as one undo step each, and stay unsaved until you save them.
 - Files that aren't open are rewritten on disk.
-- Files the change creates, moves or deletes are handled too; deleted files go to the Trash.
+- Files the change creates, moves or deletes are handled too; deleted files go to the Trash. A folder is only deleted with what's in it when the server asks for that.
 
 When more than one file changed, a notification such as "Renamed in 6 files" appears with an **Undo** button that reverts the whole change: open editors undo their step (if it's still their latest change) and files on disk go back to what they were (if nothing has changed them since). A change limited to the current file undoes with ⌘Z like any edit.
 
-Impulse refuses a change that would go wrong, and tells you why: when a file changed while the server was working on it ("…changed while the language server was working on it. Try again."), or when the change would move or delete a file you have open ("Close _file_ first: the change moves or removes it.").
+Before a change creates, moves or deletes files, or changes files outside where it's expected to, Impulse asks: "Apply “_change_”?" lists what it would do, and nothing happens unless you click **Apply**. A rename or code action you pick may change any file in the file's repository without asking (or in the trusted folder it's in, when only part of the repository is trusted or there's no repository), so renaming something another package or crate uses doesn't ask. A change a server makes on its own stays within the server's project root (see [How servers run](#how-servers-run)). If the window closes before you answer, the change isn't made.
 
-Servers sometimes make changes on their own (for example after you pick a code action that runs a server command). Those are applied the same way.
+Impulse refuses a change that would go wrong, and tells you why: when a file changed while the server was working on it ("…changed while the language server was working on it. Try again."), when the change would move, replace or delete a file you have open, or a folder with one open in it ("Close _file_ first: the change moves, replaces or removes it."), or when it would delete a folder that isn't empty without the server asking for its contents to go too ("_folder_ isn't empty.").
+
+Servers sometimes make changes on their own (for example after you pick a code action that runs a server command). Those are applied the same way, as long as the server is still running in a trusted folder: once a folder is restricted, its servers' changes are refused.
 
 ### Problems
 
@@ -335,7 +346,7 @@ To replace:
 3. Click **Replace All** (or press Return in the replace field). A sheet asks you to confirm: "Replace in 4 files?"
 4. Click **Replace All** in the sheet.
 
-Every occurrence is replaced in every file the search covers, with the case setting you chose. When the list stopped at 500 matches, Impulse searches again for the files past it before asking, so the sheet's count includes them. Files you have open with unsaved changes are skipped (the sheet says how many); other open files reload with the change. A notification reports how many matches were replaced, and its **Undo** button, available for 20 seconds, puts every file back.
+Every occurrence is replaced in every file the search covers, with the case setting you chose. When the list stopped at 500 matches, Impulse searches again for the files past it before asking, so the sheet's count includes them. Files you have open with unsaved changes are skipped (the sheet says how many); other open files reload with the change. A notification reports how many matches were replaced, and its **Undo** button, available for 20 seconds, puts the files back. A file changed since the replace (saved again, or edited and unsaved in this window) keeps its newer changes, and a notice names the files Undo left alone.
 
 For a quick search without the panel, type `%` and the text in the palette. See [Command palette](command-palette.md).
 
@@ -354,12 +365,14 @@ The preview renders GitHub-flavored Markdown, including tables, strikethrough an
 
 Raw HTML in the Markdown isn't rendered: it's left out of the preview, and unsafe link targets are removed. This is deliberate, so a repository's README can't run anything in Impulse. Files over 1 MB aren't previewed.
 
-**Run buttons.** Code blocks marked as shell (`bash`, `sh`, `shell`, `zsh`, `fish`, `console`, `shell-session` or `terminal`) get a **▶ Run** button. Clicking it runs the block in a terminal:
+**Run buttons.** Code blocks marked as shell (`bash`, `sh`, `shell`, `zsh`, `fish`, `console`, `shell-session` or `terminal`) get a **▶ Run** button. Clicking it sends the block to a terminal:
 
-- If the block has lines starting with `$ `, only those lines run, without the `$ `. Otherwise every line runs.
-- If the preview is in a tab that's split with a terminal, the command runs in that terminal. Otherwise a new terminal opens below the editor, in the Markdown file's folder, and runs it.
+- If the block has lines starting with `$ `, only those lines are sent, without the `$ `. Otherwise every line is.
+- These blocks wrap instead of scrolling sideways, so you see the whole command. Control characters (escape sequences and the like) are left out.
+- It goes to a terminal in the same tab (split with the preview) that's waiting at its shell prompt. If there isn't one, for example because the terminal is running an agent or vim, a new terminal opens below the editor, in the Markdown file's folder.
+- A one-line command in a [trusted folder](getting-started.md) runs right away. Otherwise (the folder isn't trusted, the block has several lines, or the command could hide part of itself, with a long run of spaces or invisible characters) it's put in the terminal's input bar for you to check, and runs when you press Return. With the input bar turned off, it's copied to the clipboard instead.
 
-For example, a `trailhead` README block containing `$ npm install` and `$ npm run dev` runs those two commands in order.
+For example, a `trailhead` README block containing `$ npm install` and `$ npm run dev` puts those two commands in the input bar, and they run in order when you press Return.
 
 ### SVG
 

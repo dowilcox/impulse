@@ -1,19 +1,25 @@
 // Port of `LspRegistry` from impulse-core/src/lsp.rs plus the FFI facade
 // from impulse-ffi/src/lib.rs: per-language server lifecycle (start-failure
 // cooldown, concurrent-start dedupe), the per-registry document cache, the
-// bounded event queue, and the poll-shaped synchronous call surface the app
-// uses (`impulse_lsp_ensure_servers` / `_request` / `_notify` /
-// `_did_change` / `_poll_event` / `_shutdown_all`).
+// bounded event queue, and the poll-shaped call surface the app uses
+// (`impulse_lsp_ensure_servers` / `_request` / `_notify` / `_did_change` /
+// `_poll_event` / `_shutdown_all`). Requests don't block: they complete from
+// the server's reader thread, or when they time out.
 
 import Foundation
+import ImpulseKit
 
 public final class LSPRegistry {
   /// Port of `START_RETRY_COOLDOWN`.
   public static let startRetryCooldown: TimeInterval = 15
   /// Port of `LSP_EVENT_CHANNEL_CAPACITY`.
   static let eventQueueCapacity = 10_000
-  /// 50 iterations * 120ms sleep = ~6s waiting for a concurrent start.
-  static let maxStartingWaitIterations = 50
+  /// More changes than this in one edit (Replace All) go to servers as the
+  /// whole text: applying thousands of edits one at a time costs a server
+  /// more than reading the text once.
+  static let maxIncrementalChanges = 64
+  /// Request completions run here (short work: nothing waits on it).
+  private static let callbackQueue = DispatchQueue.global(qos: .userInitiated)
 
   /// A fixed configuration (tests); otherwise it comes from the lsp.json
   /// files, per project, re-read when they change (see `config(forFileUri:)`).
@@ -31,15 +37,25 @@ public final class LSPRegistry {
   /// By a file's folder: its configuration and when that was worked out.
   private var resolvedConfigs: [String: (at: Date, config: LSPConfig)] = [:]
 
+  /// A file's project root is looked for again at most this often.
+  var rootRecheckInterval: TimeInterval = 30
+  /// Leaf lock.
+  private let rootsLock = NSLock()
+  /// By file: its project root, and the root markers and time it was found
+  /// with (so an edit doesn't walk up the folders every time).
+  private var roots: [String: (markers: [String], at: Date, root: String)] = [:]
+
   private let stateLock = NSLock()
   private var clients: [String: ServerProcess] = [:]
   private var failedUntil: [String: Date] = [:]
   private var starting: Set<String> = []
+  /// By client key: what waits for a start in progress.
+  private var startWaiters: [String: [(ServerProcess?) -> Void]] = [:]
   /// Recent crashes per client, for the restart backoff.
   private var crashes: [String: (count: Int, last: Date)] = [:]
   private var isShutDown = false
   /// Servers start here, so notifications (and the app's LSP queue behind
-  /// them) never wait the up to 30 s an initialize handshake can take.
+  /// them) never wait for a process launch.
   private let startQueue = DispatchQueue(
     label: "impulse.lsp.start", qos: .userInitiated, attributes: .concurrent)
 
@@ -69,7 +85,7 @@ public final class LSPRegistry {
   private struct TrackedDocument {
     var languageId: String
     var version: Int32
-    var text: String
+    var text: DocumentText
   }
   private let documentsLock = NSLock()
   private var documents: [String: TrackedDocument] = [:]
@@ -86,6 +102,11 @@ public final class LSPRegistry {
   /// code, so the app allows only trusted folders. Unset: every file.
   public var isAllowed: ((String) -> Bool)?
 
+  /// The trusted folder a file (by URI) is in, when trust applies: its
+  /// servers' project root stays inside it, so trusting a folder never
+  /// makes an untrusted one above it a server's root. Nil: no limit.
+  public var trustedFolder: ((String) -> String?)?
+
   /// Whether any server is configured for a language (in a file's project
   /// when given, else by the global configuration).
   public func hasServers(languageId: String, fileUri: String? = nil) -> Bool {
@@ -94,15 +115,40 @@ public final class LSPRegistry {
   }
 
   /// Shut down the servers whose project root (a path) matches, e.g. those
-  /// in a folder that isn't trusted any more.
+  /// in a folder that isn't trusted any more. Project roots are worked out
+  /// again, since what's trusted bounds them.
   public func shutdownServers(where matches: @escaping (String) -> Bool) {
+    rootsLock.withLock { roots.removeAll() }
     stateLock.lock()
     let stopping = clients.filter { _, client in FileURI.toPath(client.rootUri).map(matches) ?? false }
     for key in stopping.keys { clients.removeValue(forKey: key) }
     stateLock.unlock()
     for client in stopping.values {
-      startQueue.async { client.shutdown() }
+      client.shutdown()
     }
+  }
+
+  /// Whether the server with this client key is still running, and still
+  /// allowed where it works: only then may what it asks for (its edits)
+  /// be carried out.
+  public func isServing(clientKey: String) -> Bool {
+    stateLock.lock()
+    let client = clients[clientKey]
+    stateLock.unlock()
+    guard let client, !client.isRetired, !client.hasExited else { return false }
+    return isAllowed?(client.rootUri) != false
+  }
+
+  /// The project root (a path) of the server with this client key.
+  public func rootPath(clientKey: String) -> String? {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return clients[clientKey].flatMap { FileURI.toPath($0.rootUri) }
+  }
+
+  /// The project root (a path) a file's servers work in.
+  public func rootPath(forFileUri fileUri: String) -> String? {
+    FileURI.toPath(projectRoot(forFileUri: fileUri))
   }
 
   /// Servers for files without a project root of their own work in
@@ -219,30 +265,91 @@ public final class LSPRegistry {
     stateLock.unlock()
     for client in stopping.values {
       lspLog("LSP server '\(client.serverId)' configuration changed; restarting it")
-      startQueue.async { client.shutdown() }
+      client.shutdown()
     }
+  }
+
+  /// The project root (URI) a file's servers work in (see
+  /// `LSPConfig.detectProjectRoot`), inside the trusted folder the file is
+  /// in. Kept per file for `rootRecheckInterval` (or until its root
+  /// markers change, or `recheck`).
+  func projectRoot(forFileUri fileUri: String, config: LSPConfig? = nil, recheck: Bool = false) -> String {
+    let markers = (config ?? self.config(forFileUri: fileUri)).rootMarkers
+    rootsLock.lock()
+    if !recheck, let cached = roots[fileUri], cached.markers == markers,
+      Date().timeIntervalSince(cached.at) < rootRecheckInterval
+    {
+      rootsLock.unlock()
+      return cached.root
+    }
+    rootsLock.unlock()
+    let ceiling = trustedFolder?(fileUri)
+    let root =
+      LSPConfig.detectProjectRoot(fileUri: fileUri, markers: markers, within: ceiling)
+      ?? ceiling.flatMap(FileURI.fromPath) ?? fallbackRootUri
+    rootsLock.lock()
+    // Files that were only asked about (never opened) don't pile up.
+    if roots.count >= 2048 { roots.removeAll() }
+    roots[fileUri] = (markers, Date(), root)
+    rootsLock.unlock()
+    return root
   }
 
   // MARK: Public facade (mirrors the FFI surface)
 
   /// Port of `impulse_lsp_ensure_servers`: ensures LSP servers are running
   /// for the given language and file, returning the number of clients
-  /// started/found.
+  /// started/found. Blocks until their starts finish (tests).
   @discardableResult
-  public func ensureServers(languageId: String, fileUri: String) -> Int {
-    return getClients(languageId: languageId, fileUri: fileUri).count
+  func ensureServers(languageId: String, fileUri: String) -> Int {
+    let done = DispatchSemaphore(value: 0)
+    var count = 0
+    withClients(languageId: languageId, fileUri: fileUri) { clients in
+      count = clients.count
+      done.signal()
+    }
+    done.wait()
+    return count
   }
 
-  /// Port of `impulse_lsp_request`: blocking JSON-RPC request against the
-  /// first LSP server for the language. Returns the result JSON, or an
-  /// `{"error": "..."}` envelope exactly like the FFI. Safe to call from any
-  /// non-main thread.
-  public func request(languageId: String, fileUri: String, method: String, paramsJSON: String?) -> String {
+  /// Port of `impulse_lsp_request`: a JSON-RPC request to the first server
+  /// for the language that supports it, started first if it isn't running.
+  /// `completion` gets (on a background thread) the result JSON, or an
+  /// `{"error": "..."}` envelope exactly like the FFI. Nothing waits in the
+  /// meantime; the request gives up after its method's timeout (see
+  /// `ServerProcess.requestTimeout`), and `cancel()` on what's returned
+  /// withdraws it (completion isn't called then).
+  @discardableResult
+  public func request(
+    languageId: String, fileUri: String, method: String, paramsJSON: String?,
+    completion: @escaping (String) -> Void
+  ) -> LSPRequest {
     let params = paramsJSON.flatMap { JSONUtil.parse($0) }
-    guard let client = client(for: method, params: params, languageId: languageId, fileUri: fileUri) else {
-      return "{\"error\":\"no LSP client available\"}"
+    let request = LSPRequest { result in
+      Self.callbackQueue.async { completion(Self.encodeResponse(result)) }
     }
-    return Self.encodeResponse(client.request(method: method, params: params))
+    request.expire(after: ServerProcess.requestTimeout(for: method), method: method)
+    withClients(languageId: languageId, fileUri: fileUri) { clients in
+      guard !request.isFinished else { return }
+      guard let client = Self.client(for: method, params: params, among: clients) else {
+        request.finish(.failure("no LSP client available"))
+        return
+      }
+      client.send(method: method, params: params, as: request)
+    }
+    return request
+  }
+
+  /// `request`, waiting for the answer (tests).
+  func request(languageId: String, fileUri: String, method: String, paramsJSON: String?) -> String {
+    let done = DispatchSemaphore(value: 0)
+    var response = ""
+    request(languageId: languageId, fileUri: fileUri, method: method, paramsJSON: paramsJSON) {
+      response = $0
+      done.signal()
+    }
+    done.wait()
+    return response
   }
 
   /// Answer a request a server sent (by its client key and request id).
@@ -256,8 +363,7 @@ public final class LSPRegistry {
   /// The first server that can answer: several can serve one language
   /// (typescript + eslint + tailwind), and only some support each request.
   /// A command goes to the server that registered it.
-  private func client(for method: String, params: Any?, languageId: String, fileUri: String) -> ServerProcess? {
-    let clients = getClients(languageId: languageId, fileUri: fileUri)
+  private static func client(for method: String, params: Any?, among clients: [ServerProcess]) -> ServerProcess? {
     if method == "workspace/executeCommand", let command = (params as? [String: Any])?["command"] as? String,
       let owner = clients.first(where: {
         let provider = $0.serverCapabilities?["executeCommandProvider"] as? [String: Any]
@@ -289,13 +395,19 @@ public final class LSPRegistry {
   /// LSP server for the language (each needs didOpen/didClose to answer
   /// about the document), updating the document cache on didOpen/didClose.
   /// Servers that aren't running yet start in the background and get the
-  /// open documents when they're ready. Returns true when at least one send
+  /// open documents when they're ready. A document no server is configured
+  /// for (or allowed to see) isn't kept. Returns true when at least one send
   /// succeeded.
   @discardableResult
   public func notify(languageId: String, fileUri: String, method: String, paramsJSON: String?) -> Bool {
     let params = paramsJSON.flatMap { JSONUtil.parse($0) } ?? NSNull()
     documentsLock.lock()
     defer { documentsLock.unlock() }
+    if method == "textDocument/didOpen",
+      resolveServerIds(languageId: languageId, fileUri: fileUri).isEmpty || isAllowed?(fileUri) == false
+    {
+      return false
+    }
     updateDocumentCache(method: method, params: params)
     var clients = runningClients(languageId: languageId, fileUri: fileUri)
     switch method {
@@ -311,6 +423,7 @@ public final class LSPRegistry {
       detachedLock.lock()
       detached.removeValue(forKey: fileUri)
       detachedLock.unlock()
+      rootsLock.withLock { _ = roots.removeValue(forKey: fileUri) }
     default:
       syncDocument(fileUri)
     }
@@ -321,38 +434,55 @@ public final class LSPRegistry {
     return ok
   }
 
-  /// Port of `impulse_lsp_did_change`: updates the document cache (full text
-  /// or incremental changes applied via `DocumentCache`), then sends
-  /// capability-aware didChange to every client for the language. Returns
-  /// true when at least one notification succeeded.
+  /// Port of `impulse_lsp_did_change`: updates the copy of an open document
+  /// (to `fullText`, or with the incremental `changes`), then sends
+  /// capability-aware didChange to every client for the language: the
+  /// changes to servers that take them (unless there are more than
+  /// `maxIncrementalChanges`), the whole text to the others. Returns true
+  /// when at least one notification succeeded; false for a document that
+  /// isn't open.
   @discardableResult
   public func didChange(
-    languageId: String, fileUri: String, version: Int32, fullText: String?,
-    changesJSON: String?
+    languageId: String, fileUri: String, version: Int32, fullText: String?, changes: [ContentChange]
   ) -> Bool {
-    let changes = changesJSON.flatMap { ContentChange.parseArray($0) } ?? []
-
     documentsLock.lock()
     defer { documentsLock.unlock() }
+    guard documents[fileUri] != nil else { return false }
     // Before the change: a server that gets the document now gets the text
     // the change applies to.
     syncDocument(fileUri)
-    var text = documents[fileUri]?.text ?? ""
+    // In place: the text isn't copied.
     if let fullText {
-      text = fullText
+      documents[fileUri]?.text = DocumentText(fullText)
     } else {
-      DocumentCache.applyContentChanges(to: &text, changes: changes)
+      documents[fileUri]?.text.apply(changes)
     }
-    documents[fileUri] = TrackedDocument(
-      languageId: documents[fileUri]?.languageId ?? languageId, version: version, text: text)
+    documents[fileUri]?.version = version
 
+    let incremental = fullText == nil && changes.count <= Self.maxIncrementalChanges ? changes : []
+    var whole: String?
+    let wholeText = { () -> String in
+      if let whole { return whole }
+      let text = self.documents[fileUri]?.text.text ?? ""
+      whole = text
+      return text
+    }
     var ok = false
     for client in runningClients(languageId: languageId, fileUri: fileUri) {
-      ok =
-        client.didChangeWithChanges(
-          uri: fileUri, version: version, fullText: text, changes: changes) || ok
+      ok = client.didChange(uri: fileUri, version: version, changes: incremental, fullText: wholeText) || ok
     }
     return ok
+  }
+
+  /// `didChange` with the changes as a JSON array of
+  /// `TextDocumentContentChangeEvent` (none when it doesn't parse).
+  @discardableResult
+  public func didChange(
+    languageId: String, fileUri: String, version: Int32, fullText: String?, changesJSON: String?
+  ) -> Bool {
+    didChange(
+      languageId: languageId, fileUri: fileUri, version: version, fullText: fullText,
+      changes: changesJSON.flatMap { ContentChange.parseArray($0) } ?? [])
   }
 
   /// Port of `impulse_lsp_poll_event`: next queued event as the same JSON
@@ -377,16 +507,24 @@ public final class LSPRegistry {
     return nil
   }
 
-  /// Port of `LspRegistry::shutdown_all` — shuts down every running server.
-  public func shutdownAll() {
-    let snapshot: [ServerProcess]
+  /// Port of `LspRegistry::shutdown_all`: shuts every running server down,
+  /// all at once, and waits up to `deadline` for them to go; any still
+  /// running then are stopped (SIGTERM), without waiting further.
+  public func shutdownAll(deadline: TimeInterval = 2) {
     stateLock.lock()
     isShutDown = true
-    snapshot = Array(clients.values)
+    let snapshot = Array(clients.values)
     stateLock.unlock()
 
+    let group = DispatchGroup()
     for client in snapshot {
-      client.shutdown()
+      group.enter()
+      client.shutdown(exited: { group.leave() })
+    }
+    if group.wait(timeout: .now() + deadline) == .timedOut {
+      for client in snapshot where !client.hasExited {
+        client.terminate()
+      }
     }
   }
 
@@ -419,7 +557,7 @@ public final class LSPRegistry {
       else { return }
       documents[uri] = TrackedDocument(
         languageId: document["languageId"] as? String ?? "",
-        version: (document["version"] as? NSNumber)?.int32Value ?? 1, text: text)
+        version: (document["version"] as? NSNumber)?.int32Value ?? 1, text: DocumentText(text))
     case "textDocument/didClose":
       guard let object = params as? [String: Any],
         let document = object["textDocument"] as? [String: Any],
@@ -437,8 +575,8 @@ public final class LSPRegistry {
   /// and their diagnostics for it are cleared; running servers that serve
   /// it but don't have it get it.
   private func syncDocument(_ uri: String, recheck: Bool = false) {
-    guard let document = documents[uri] else { return }
-    let serving = servingKeys(languageId: document.languageId, fileUri: uri, recheck: recheck)
+    guard let languageId = documents[uri]?.languageId else { return }
+    let serving = servingKeys(languageId: languageId, fileUri: uri, recheck: recheck)
     let opened = openIn[uri] ?? []
     let stale = opened.subtracting(serving)
     let opening = serving.subtracting(opened).compactMap(runningClient)
@@ -455,8 +593,10 @@ public final class LSPRegistry {
       enqueue(.diagnostics(uri: uri, version: nil, diagnostics: []))
     }
     reattach(uri, to: Set(opening.map(\.clientKey)))
+    guard !opening.isEmpty, let document = documents[uri] else { return }
+    let params = Self.didOpenParams(uri: uri, document: document)
     for client in opening {
-      client.notify(method: "textDocument/didOpen", params: Self.didOpenParams(uri: uri, document: document))
+      client.notify(method: "textDocument/didOpen", params: params)
     }
   }
 
@@ -478,7 +618,7 @@ public final class LSPRegistry {
   private func servingKeys(languageId: String, fileUri: String, recheck: Bool) -> Set<String> {
     guard isAllowed?(fileUri) != false else { return [] }
     let config = self.config(forFileUri: fileUri, recheck: recheck)
-    let rootUri = LSPConfig.detectProjectRoot(fileUri: fileUri, markers: config.rootMarkers) ?? fallbackRootUri
+    let rootUri = projectRoot(forFileUri: fileUri, config: config, recheck: recheck)
     return Set(Self.serverIds(languageId: languageId, config: config).map { Self.clientKey(serverId: $0, rootUri: rootUri) })
   }
 
@@ -507,7 +647,7 @@ public final class LSPRegistry {
   private static func didOpenParams(uri: String, document: TrackedDocument) -> [String: Any] {
     [
       "textDocument": [
-        "uri": uri, "languageId": document.languageId, "version": document.version, "text": document.text,
+        "uri": uri, "languageId": document.languageId, "version": document.version, "text": document.text.text,
       ] as [String: Any]
     ]
   }
@@ -528,58 +668,99 @@ public final class LSPRegistry {
     return []
   }
 
-  private func detectRootUri(fileUri: String) -> String {
-    LSPConfig.detectProjectRoot(fileUri: fileUri, markers: config(forFileUri: fileUri).rootMarkers)
-      ?? fallbackRootUri
-  }
-
   static func clientKey(serverId: String, rootUri: String) -> String {
     "\(serverId)@\(rootUri)"
   }
 
   /// The servers for a file that are up now; the others start in the
-  /// background (see `startInBackground`).
+  /// background (see `availability`).
   private func runningClients(languageId: String, fileUri: String) -> [ServerProcess] {
     let serverIds = resolveServerIds(languageId: languageId, fileUri: fileUri)
     if serverIds.isEmpty || isAllowed?(fileUri) == false {
       return []
     }
-    let rootUri = detectRootUri(fileUri: fileUri)
-    var out: [ServerProcess] = []
-    for serverId in serverIds {
-      stateLock.lock()
-      let client = clients[Self.clientKey(serverId: serverId, rootUri: rootUri)]
-      stateLock.unlock()
-      if let client {
-        out.append(client)
-      } else {
-        startInBackground(serverId: serverId, rootUri: rootUri)
+    let rootUri = projectRoot(forFileUri: fileUri)
+    return serverIds.compactMap { serverId in
+      if case .running(let client) = availability(serverId: serverId, rootUri: rootUri, onStart: nil) {
+        return client
       }
+      return nil
     }
-    return out
   }
 
-  /// Start a server off the caller's thread (unless it's running, starting,
-  /// or in its retry cooldown). It gets the open documents once it's up.
-  private func startInBackground(serverId: String, rootUri: String) {
+  /// The servers for a file, once each has started (or failed to): `body`
+  /// runs right away when none is starting, else (on a background thread)
+  /// when the last start finishes. Nothing waits in the meantime.
+  private func withClients(languageId: String, fileUri: String, _ body: @escaping ([ServerProcess]) -> Void) {
+    let serverIds = resolveServerIds(languageId: languageId, fileUri: fileUri)
+    guard !serverIds.isEmpty, isAllowed?(fileUri) != false else { return body([]) }
+    let rootUri = projectRoot(forFileUri: fileUri)
+    let lock = NSLock()
+    var found = [ServerProcess?](repeating: nil, count: serverIds.count)
+    let group = DispatchGroup()
+    var waiting = false
+    for (index, serverId) in serverIds.enumerated() {
+      group.enter()
+      let now = availability(serverId: serverId, rootUri: rootUri) { client in
+        lock.withLock { found[index] = client }
+        group.leave()
+      }
+      switch now {
+      case .running(let client):
+        lock.withLock { found[index] = client }
+        group.leave()
+      case .unavailable:
+        group.leave()
+      case .starting:
+        waiting = true
+      }
+    }
+    guard waiting else { return body(found.compactMap { $0 }) }
+    group.notify(queue: Self.callbackQueue) {
+      body(lock.withLock { found }.compactMap { $0 })
+    }
+  }
+
+  private enum Availability {
+    case running(ServerProcess)
+    /// Shut down, or in its retry cooldown.
+    case unavailable
+    case starting
+  }
+
+  /// A server now: running, unavailable, or starting (started here if
+  /// nobody has), in which case `onStart` gets it (or nil, when the start
+  /// fails) once the start finishes.
+  private func availability(
+    serverId: String, rootUri: String, onStart: ((ServerProcess?) -> Void)?
+  ) -> Availability {
     let key = Self.clientKey(serverId: serverId, rootUri: rootUri)
     stateLock.lock()
-    if isShutDown || clients[key] != nil || starting.contains(key)
-      || failedUntil[key].map({ Date() < $0 }) == true
-    {
+    if let client = clients[key] {
       stateLock.unlock()
-      return
+      return .running(client)
     }
-    failedUntil.removeValue(forKey: key)
-    starting.insert(key)
+    if isShutDown || failedUntil[key].map({ Date() < $0 }) == true {
+      stateLock.unlock()
+      return .unavailable
+    }
+    if let onStart { startWaiters[key, default: []].append(onStart) }
+    let starts = starting.insert(key).inserted
+    if starts { failedUntil.removeValue(forKey: key) }
     stateLock.unlock()
-    startQueue.async { [weak self] in
-      guard let self else { return }
-      _ = self.startServer(serverId: serverId, rootUri: rootUri, clientKey: key)
-      self.stateLock.lock()
-      self.starting.remove(key)
-      self.stateLock.unlock()
+    if starts {
+      startQueue.async { [weak self] in
+        self?.startServer(serverId: serverId, rootUri: rootUri, clientKey: key) { client in
+          guard let self else { return }
+          self.stateLock.lock()
+          self.starting.remove(key)
+          let waiters = self.startWaiters.removeValue(forKey: key) ?? []
+          self.stateLock.unlock()
+          for waiter in waiters { waiter(client) }
+        }
+      }
     }
+    return .starting
   }
 
   /// A server process ended. If it was serving (not shutting down, not a
@@ -609,85 +790,28 @@ public final class LSPRegistry {
     documentsLock.lock()
     let serving = documents.contains { uri, document in
       resolveServerIds(languageId: document.languageId, fileUri: uri).contains(serverId)
-        && detectRootUri(fileUri: uri) == rootUri
+        && projectRoot(forFileUri: uri) == rootUri
     }
     documentsLock.unlock()
     if serving {
       startQueue.asyncAfter(deadline: .now() + delay + 0.1) { [weak self] in
-        self?.startInBackground(serverId: serverId, rootUri: rootUri)
+        _ = self?.availability(serverId: serverId, rootUri: rootUri, onStart: nil)
       }
     }
-  }
-
-  /// Port of `LspRegistry::get_clients`. Starts missing servers and waits
-  /// for them (requests, which run off the app's LSP queue).
-  func getClients(languageId: String, fileUri: String) -> [ServerProcess] {
-    let serverIds = resolveServerIds(languageId: languageId, fileUri: fileUri)
-    if serverIds.isEmpty || isAllowed?(fileUri) == false {
-      return []
-    }
-    let rootUri = detectRootUri(fileUri: fileUri)
-    var out: [ServerProcess] = []
-    for serverId in serverIds {
-      if let client = getOrStartClient(serverId: serverId, rootUri: rootUri) {
-        out.append(client)
-      }
-    }
-    return out
-  }
-
-  /// Port of `get_or_start_client`: reuse a running client, honor the
-  /// start-failure cooldown, and dedupe concurrent starts (waiting up to
-  /// ~6s for another thread's start attempt).
-  private func getOrStartClient(serverId: String, rootUri: String) -> ServerProcess? {
-    let key = Self.clientKey(serverId: serverId, rootUri: rootUri)
-    var waitIterations = 0
-
-    while true {
-      stateLock.lock()
-      if let client = clients[key] {
-        stateLock.unlock()
-        return client
-      }
-      if let until = failedUntil[key] {
-        if Date() < until {
-          stateLock.unlock()
-          return nil
-        }
-        failedUntil.removeValue(forKey: key)
-      }
-      if starting.contains(key) {
-        stateLock.unlock()
-        waitIterations += 1
-        if waitIterations >= Self.maxStartingWaitIterations {
-          lspLog(
-            "LSP server '\(serverId)' at '\(rootUri)' still starting after \(waitIterations) iterations (~\(UInt64(waitIterations) * 120 / 1000)s), giving up"
-          )
-          return nil
-        }
-        Thread.sleep(forTimeInterval: 0.12)
-        continue
-      }
-      starting.insert(key)
-      stateLock.unlock()
-      break
-    }
-
-    let result = startServer(serverId: serverId, rootUri: rootUri, clientKey: key)
-    stateLock.lock()
-    starting.remove(key)
-    stateLock.unlock()
-    return result
   }
 
   /// Port of `start_server`: resolve the command (PATH + managed bin dir),
-  /// start + initialize the client, and on failure record the 15s cooldown
-  /// and emit a serverError event.
-  private func startServer(serverId: String, rootUri: String, clientKey: String) -> ServerProcess? {
+  /// start the client and run its handshake, and on failure record the 15s
+  /// cooldown and emit a serverError event. `completion` gets the client
+  /// (registered, with the open documents sent to it), or nil.
+  private func startServer(
+    serverId: String, rootUri: String, clientKey: String, completion: @escaping (ServerProcess?) -> Void
+  ) {
     // Server commands come only from the global config.
     guard let serverConfig = currentBaseConfig().config.servers[serverId] else {
       lspLog("No LSP server configured for server id: \(serverId)")
-      return nil
+      completion(nil)
+      return
     }
 
     guard let resolvedCommand = ManagedServers.resolveLspCommandPath(serverConfig.command) else {
@@ -698,14 +822,15 @@ public final class LSPRegistry {
       failedUntil[clientKey] = Date().addingTimeInterval(Self.startRetryCooldown)
       stateLock.unlock()
       enqueue(.serverError(clientKey: clientKey, serverId: serverId, message: message))
-      return nil
+      completion(nil)
+      return
     }
 
     let initOptions =
       serverConfig.initializationOptions
       ?? LSPConfig.defaultInitOptions(serverId: serverId)
 
-    switch ServerProcess.start(
+    ServerProcess.start(
       command: resolvedCommand,
       args: serverConfig.args,
       rootUri: rootUri,
@@ -719,36 +844,52 @@ public final class LSPRegistry {
         // A document this server closed when it stopped serving it.
         if case .diagnostics(let uri, _, _) = event, self?.isDetached(uri, from: clientKey) == true { return }
         self?.enqueue(event)
-      })
-    {
-    case .success(let client):
-      // Documents opened before it was up (or before it crashed) first,
-      // then it takes notifications like the others: holding the documents
-      // lock throughout means no change slips in between.
-      documentsLock.lock()
-      // A new process: nothing is open in it yet.
-      openIn = openIn.mapValues { $0.subtracting([clientKey]) }
-      for (uri, document) in documents
-      where isAllowed?(uri) != false
-        && resolveServerIds(languageId: document.languageId, fileUri: uri).contains(serverId)
-        && detectRootUri(fileUri: uri) == rootUri
-      {
-        openIn[uri, default: []].insert(clientKey)
-        reattach(uri, to: [clientKey])
-        client.notify(method: "textDocument/didOpen", params: Self.didOpenParams(uri: uri, document: document))
       }
-      stateLock.lock()
-      clients[clientKey] = client
-      stateLock.unlock()
-      documentsLock.unlock()
-      return client
-    case .failure(let error):
-      lspLog("Failed to start LSP server for '\(serverId)' (key='\(clientKey)'): \(error)")
-      stateLock.lock()
-      failedUntil[clientKey] = Date().addingTimeInterval(Self.startRetryCooldown)
-      stateLock.unlock()
-      enqueue(.serverError(clientKey: clientKey, serverId: serverId, message: error))
-      return nil
+    ) { [weak self] result in
+      guard let self else {
+        if case .success(let client) = result { client.shutdown() }
+        completion(nil)
+        return
+      }
+      switch result {
+      case .success(let client):
+        // Documents opened before it was up (or before it crashed) first,
+        // then it takes notifications like the others: holding the documents
+        // lock throughout means no change slips in between.
+        self.documentsLock.lock()
+        self.stateLock.lock()
+        let shutDown = self.isShutDown
+        self.stateLock.unlock()
+        if shutDown {
+          self.documentsLock.unlock()
+          client.shutdown()
+          completion(nil)
+          return
+        }
+        // A new process: nothing is open in it yet.
+        self.openIn = self.openIn.mapValues { $0.subtracting([clientKey]) }
+        for (uri, document) in self.documents
+        where self.isAllowed?(uri) != false
+          && self.resolveServerIds(languageId: document.languageId, fileUri: uri).contains(serverId)
+          && self.projectRoot(forFileUri: uri) == rootUri
+        {
+          self.openIn[uri, default: []].insert(clientKey)
+          self.reattach(uri, to: [clientKey])
+          client.notify(method: "textDocument/didOpen", params: Self.didOpenParams(uri: uri, document: document))
+        }
+        self.stateLock.lock()
+        self.clients[clientKey] = client
+        self.stateLock.unlock()
+        self.documentsLock.unlock()
+        completion(client)
+      case .failure(let error):
+        lspLog("Failed to start LSP server for '\(serverId)' (key='\(clientKey)'): \(error)")
+        self.stateLock.lock()
+        self.failedUntil[clientKey] = Date().addingTimeInterval(Self.startRetryCooldown)
+        self.stateLock.unlock()
+        self.enqueue(.serverError(clientKey: clientKey, serverId: serverId, message: error))
+        completion(nil)
+      }
     }
   }
 }

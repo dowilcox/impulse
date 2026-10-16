@@ -62,11 +62,23 @@ public enum ReviewCommentAnchoring {
       if comment.side == .old { out += " (removed lines)" }
       out += "\n"
       if !comment.snippet.isEmpty {
-        let fence = comment.snippet.contains("```") ? "````" : "```"
+        let fence = codeFence(for: comment.snippet)
         out += "\(fence)\n\(comment.snippet)\n\(fence)\n"
       }
       out += comment.text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
     return out
+  }
+
+  /// A fence the snippet can't close: one backtick longer than its longest
+  /// run of backticks, and at least three.
+  static func codeFence(for snippet: String) -> String {
+    var longest = 0
+    var run = 0
+    for character in snippet {
+      run = character == "`" ? run + 1 : 0
+      longest = max(longest, run)
+    }
+    return String(repeating: "`", count: max(3, longest + 1))
   }
 }

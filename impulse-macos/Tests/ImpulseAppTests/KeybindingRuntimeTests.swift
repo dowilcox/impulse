@@ -30,38 +30,93 @@
       #expect(terminalSettings.keybindingOverrides["copy"] == "Cmd+Shift+C")
     }
 
-    @Test func metaInsertTextEncodingUsesEscapePrefixForOptionAscii() {
-      let event = NSEvent.keyEvent(
-        with: .keyDown,
-        location: .zero,
-        modifierFlags: [.option],
-        timestamp: 0,
-        windowNumber: 0,
-        context: nil,
-        characters: "f",
-        charactersIgnoringModifiers: "f",
-        isARepeat: false,
-        keyCode: 3
-      )
-
-      #expect(KeyEncoder.encodeMetaForInsertText(text: "f", event: event) == Data([0x1B, 0x66]))
+    /// A key event; `option` says which Option key is down, the way AppKit
+    /// reports it (device-dependent bits beside `.option`).
+    private func key(
+      _ characters: String, ignoringModifiers: String, keyCode: UInt16, flags: NSEvent.ModifierFlags = [],
+      option: KeyEncoder.OptionAsMeta = .off
+    ) -> NSEvent {
+      var modifiers = flags
+      switch option {
+      case .left: modifiers.formUnion(NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.option.rawValue | 0x20))
+      case .right: modifiers.formUnion(NSEvent.ModifierFlags(rawValue: NSEvent.ModifierFlags.option.rawValue | 0x40))
+      case .both, .off: break
+      }
+      return NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0, context: nil,
+        characters: characters, charactersIgnoringModifiers: ignoringModifiers, isARepeat: false, keyCode: keyCode)!
     }
 
-    @Test func metaInsertTextLeavesComposedTextUnchanged() {
-      let event = NSEvent.keyEvent(
-        with: .keyDown,
-        location: .zero,
-        modifierFlags: [.option],
-        timestamp: 0,
-        windowNumber: 0,
-        context: nil,
-        characters: "é",
-        charactersIgnoringModifiers: "e",
-        isARepeat: false,
-        keyCode: 14
-      )
+    @Test func optionTypesItsCharacterUnlessItIsMeta() {
+      let leftF = key("ƒ", ignoringModifiers: "f", keyCode: 3, option: .left)
+      #expect(KeyEncoder.metaBytes(for: leftF, optionAsMeta: .off) == nil, "off: ƒ is typed")
+      #expect(KeyEncoder.metaBytes(for: leftF, optionAsMeta: .left) == [0x1B, 0x66])
+      #expect(KeyEncoder.metaBytes(for: leftF, optionAsMeta: .both) == [0x1B, 0x66])
+      #expect(KeyEncoder.metaBytes(for: leftF, optionAsMeta: .right) == nil, "the other Option key")
+      let rightF = key("ƒ", ignoringModifiers: "f", keyCode: 3, option: .right)
+      #expect(KeyEncoder.metaBytes(for: rightF, optionAsMeta: .right) == [0x1B, 0x66])
+      #expect(KeyEncoder.metaBytes(for: rightF, optionAsMeta: .left) == nil)
+      // A German layout's ⌥L types @: as typed unless Option is Meta.
+      let at = key("@", ignoringModifiers: "l", keyCode: 37, option: .left)
+      #expect(KeyEncoder.metaBytes(for: at, optionAsMeta: .off) == nil)
+      #expect(KeyEncoder.metaBytes(for: at, optionAsMeta: .left) == [0x1B, 0x6C])
+      // Shift and Control still apply.
+      let shifted = key("Ï", ignoringModifiers: "F", keyCode: 3, flags: .shift, option: .left)
+      #expect(KeyEncoder.metaBytes(for: shifted, optionAsMeta: .left) == [0x1B, 0x46])
+      let control = key("\u{6}", ignoringModifiers: "f", keyCode: 3, flags: .control, option: .left)
+      #expect(KeyEncoder.metaBytes(for: control, optionAsMeta: .left) == [0x1B, 0x06])
+      // Keys that type nothing go through encodeForDoCommand.
+      let left = key("\u{F702}", ignoringModifiers: "\u{F702}", keyCode: 123, option: .left)
+      #expect(KeyEncoder.metaBytes(for: left, optionAsMeta: .both) == nil)
+    }
 
-      #expect(KeyEncoder.encodeMetaForInsertText(text: "é", event: event) == nil)
+    @Test func optionDeleteAndShiftReturn() {
+      let optionDelete = key("\u{7F}", ignoringModifiers: "\u{7F}", keyCode: 51, option: .left)
+      #expect(KeyEncoder.encode(event: optionDelete, appCursor: false, appKeypad: false) == [0x7F])
+      #expect(
+        KeyEncoder.encode(event: optionDelete, appCursor: false, appKeypad: false, optionAsMeta: .left)
+          == [0x1B, 0x7F])
+      let optionReturn = key("\r", ignoringModifiers: "\r", keyCode: 36, option: .left)
+      #expect(
+        KeyEncoder.encode(event: optionReturn, appCursor: false, appKeypad: false, optionAsMeta: .both)
+          == [0x1B, 0x0D])
+      // Shells read the kitty form as text; programs that want it ask for it.
+      let shiftReturn = key("\r", ignoringModifiers: "\r", keyCode: 36, flags: .shift)
+      #expect(KeyEncoder.encode(event: shiftReturn, appCursor: false, appKeypad: false) == [0x0D])
+      let controlC = key("\u{3}", ignoringModifiers: "c", keyCode: 8, flags: .control)
+      #expect(KeyEncoder.encode(event: controlC, appCursor: false, appKeypad: false) == [0x03])
+      // Option arrows keep their modifier whatever the setting.
+      let optionLeft = key("\u{F702}", ignoringModifiers: "\u{F702}", keyCode: 123, option: .left)
+      #expect(
+        KeyEncoder.encode(event: optionLeft, appCursor: false, appKeypad: false)
+          == Array("\u{1B}[1;3D".utf8))
+    }
+
+    @Test func kittyAltIsOptionOnlyWhenItIsMeta() {
+      let optionF = key("ƒ", ignoringModifiers: "f", keyCode: 3, option: .left)
+      #expect(KeyEncoder.kittyKey(for: optionF, optionAsMeta: .off) == nil, "typed as text")
+      let meta = KeyEncoder.kittyKey(for: optionF, optionAsMeta: .left)
+      #expect(meta?.modifiers == [.alt])
+      #expect(meta?.text == nil)
+      if case .text = meta?.key {} else { Issue.record("expected a text key, got \(String(describing: meta?.key))") }
+      // Beside ⌃, Option types nothing: ⌃⌥X is C-M-x whatever the setting.
+      let controlOption = key("\u{18}", ignoringModifiers: "x", keyCode: 7, flags: .control, option: .left)
+      #expect(KeyEncoder.kittyKey(for: controlOption, optionAsMeta: .off)?.modifiers == [.control, .alt])
+      #expect(KeyEncoder.kittyKey(for: controlOption, optionAsMeta: .left)?.modifiers == [.control, .alt])
+      #expect(KeyEncoder.kittyKey(for: controlOption, optionAsMeta: .off)?.text == nil)
+      let optionLeft = key("\u{F702}", ignoringModifiers: "\u{F702}", keyCode: 123, option: .left)
+      #expect(KeyEncoder.kittyKey(for: optionLeft, optionAsMeta: .off)?.modifiers == [.alt])
+    }
+
+    @Test func optionAsMetaSettingParsesAndValidates() {
+      #expect(KeyEncoder.OptionAsMeta(setting: "Left") == .left)
+      #expect(KeyEncoder.OptionAsMeta(setting: "nonsense") == .off)
+      var settings = Settings.default
+      #expect(settings.terminalOptionAsMeta == "off")
+      settings.terminalOptionAsMeta = "BOTH"
+      settings.validate()
+      #expect(settings.terminalOptionAsMeta == "both")
+      #expect(settings.terminalSettings().terminalOptionAsMeta == "both")
     }
 
     @Test func recordedKeysBecomeShortcutStrings() {
@@ -168,7 +223,7 @@
       XCTAssertEqual(terminalSettings.keybindingOverrides["copy"], "Cmd+Shift+C")
     }
 
-    func testMetaInsertTextEncodingUsesEscapePrefixForOptionAscii() {
+    func testOptionSendsMetaOnlyWhenTheSettingSaysSo() {
       guard
         let event = NSEvent.keyEvent(
           with: .keyDown,
@@ -177,7 +232,7 @@
           timestamp: 0,
           windowNumber: 0,
           context: nil,
-          characters: "f",
+          characters: "ƒ",
           charactersIgnoringModifiers: "f",
           isARepeat: false,
           keyCode: 3
@@ -186,29 +241,8 @@
         return XCTFail("Expected NSEvent.keyEvent to create a key event")
       }
 
-      XCTAssertEqual(
-        KeyEncoder.encodeMetaForInsertText(text: "f", event: event), Data([0x1B, 0x66]))
-    }
-
-    func testMetaInsertTextLeavesComposedTextUnchanged() {
-      guard
-        let event = NSEvent.keyEvent(
-          with: .keyDown,
-          location: .zero,
-          modifierFlags: [.option],
-          timestamp: 0,
-          windowNumber: 0,
-          context: nil,
-          characters: "é",
-          charactersIgnoringModifiers: "e",
-          isARepeat: false,
-          keyCode: 14
-        )
-      else {
-        return XCTFail("Expected NSEvent.keyEvent to create a key event")
-      }
-
-      XCTAssertNil(KeyEncoder.encodeMetaForInsertText(text: "é", event: event))
+      XCTAssertNil(KeyEncoder.metaBytes(for: event, optionAsMeta: .off))
+      XCTAssertEqual(KeyEncoder.metaBytes(for: event, optionAsMeta: .both), [0x1B, 0x66])
     }
   }
 #endif

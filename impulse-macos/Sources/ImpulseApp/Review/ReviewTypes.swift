@@ -27,6 +27,30 @@ enum ReviewAction: String {
   case stage, unstage, revert
 }
 
+/// A working-tree file as it is on disk (lstat): when it's the same as
+/// when its diff was read, and only files changed since, the diff still
+/// holds. nil for a file that's gone, and for anything but a file or a
+/// symlink (a submodule's folder doesn't change when its checkout does).
+struct FileSignature: Equatable, Sendable {
+  let inode: UInt64
+  let size: Int64
+  let mode: UInt16
+  let modified: [Int]
+  let changed: [Int]
+
+  init?(root: String, path: String) {
+    var info = stat()
+    guard lstat((root as NSString).appendingPathComponent(path), &info) == 0 else { return nil }
+    let type = info.st_mode & S_IFMT
+    guard type == S_IFREG || type == S_IFLNK else { return nil }
+    inode = UInt64(info.st_ino)
+    size = Int64(info.st_size)
+    mode = UInt16(info.st_mode)
+    modified = [Int(info.st_mtimespec.tv_sec), Int(info.st_mtimespec.tv_nsec)]
+    changed = [Int(info.st_ctimespec.tv_sec), Int(info.st_ctimespec.tv_nsec)]
+  }
+}
+
 extension FileDiff {
   /// Identity of the diff's content (changes, not positions or how many
   /// context lines group them into hunks). Stable across launches, so

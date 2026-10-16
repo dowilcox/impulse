@@ -62,8 +62,9 @@ extension GitClient {
   static let maxCountedFiles = 400
 
   /// Read a snapshot of the repository containing `path`, or nil when it is
-  /// not in a (non-bare) repository.
-  public static func snapshot(forPath path: String) -> RepoSnapshot? {
+  /// not in a (non-bare) repository. Without `lineCounts` its files carry
+  /// no added/removed counts, for callers that only need which files changed.
+  public static func snapshot(forPath path: String, lineCounts: Bool = true) -> RepoSnapshot? {
     guard let repo = try? openRepo(at: path), let root = try? repo.workdir() else { return nil }
     let gitDir = trimTrailingSlash(String(cString: git_repository_path(repo.raw)))
     let commonDir = trimTrailingSlash(String(cString: git_repository_commondir(repo.raw)))
@@ -122,7 +123,7 @@ extension GitClient {
     }
 
     let operation = readOperation(repo: repo, gitDir: gitDir)
-    let sections = readStatus(repo: repo)
+    let sections = readStatus(repo: repo, lineCounts: lineCounts)
     let stashCount = countStashes(repo: repo)
 
     return RepoSnapshot(
@@ -139,9 +140,10 @@ extension GitClient {
   /// The operation in progress in the repository containing `repoPath`
   /// (nil when there is none or no repository).
   public static func currentOperation(repoPath: String) -> RepoOperation? {
-    guard let repo = try? openRepo(at: repoPath) else { return nil }
-    let gitDir = trimTrailingSlash(String(cString: git_repository_path(repo.raw)))
-    return readOperation(repo: repo, gitDir: gitDir)
+    let operation = try? withRepo(at: repoPath) { repo in
+      readOperation(repo: repo, gitDir: trimTrailingSlash(String(cString: git_repository_path(repo.raw))))
+    }
+    return operation ?? nil
   }
 
   static func readOperation(repo: GitRepo, gitDir: String) -> RepoOperation? {
@@ -184,7 +186,7 @@ extension GitClient {
     var untrackedTruncated = false
   }
 
-  static func readStatus(repo: GitRepo) -> StatusSections {
+  static func readStatus(repo: GitRepo, lineCounts: Bool = true) -> StatusSections {
     var options = git_status_options()
     git_status_options_init(&options, UInt32(GIT_STATUS_OPTIONS_VERSION))
     options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR
@@ -261,6 +263,7 @@ extension GitClient {
     }
 
     // Line counts per section, unless the section is huge.
+    guard lineCounts else { return sections }
     if sections.staged.count <= maxCountedFiles {
       sections.staged = withLineCounts(sections.staged, repo: repo, scope: .staged)
     }

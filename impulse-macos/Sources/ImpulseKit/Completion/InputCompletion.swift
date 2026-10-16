@@ -24,8 +24,10 @@ public enum InputCompletion {
   ///
   /// `history` should be ordered newest-first. Returns the full completed
   /// line (which always starts with `input`), or `nil` when there's no
-  /// useful completion.
-  public static func complete(input: String, cwd: String?, history: [String]) -> String? {
+  /// useful completion. Completed names are escaped for `shell`.
+  public static func complete(
+    input: String, cwd: String?, history: [String], shell: ShellType = .bash
+  ) -> String? {
     if input.isEmpty || input.unicodeScalars.allSatisfy({ $0.properties.isWhitespace }) {
       return nil
     }
@@ -49,24 +51,27 @@ public enum InputCompletion {
     }
 
     let cwdPath = cwd.flatMap { $0.isEmpty ? nil : $0 }
-    let candidate: String?
+    let home = homePrefix(rawToken(input, comp.span))
+    let replacement: String?
     switch comp.kind {
     case .command:
-      candidate = completeCommand(comp.prefix)
+      replacement = completeCommand(comp.prefix).map { ShellQuoting.escaped($0, for: shell) }
     case .redirectTarget:
-      candidate = completePath(comp.prefix, cwd: cwdPath)
+      replacement = completePath(comp.prefix, cwd: cwdPath, home: home, shell: shell)
     case .envAssignment:
-      candidate = nil
+      replacement = nil
     case .argument:
-      candidate = completeArgument(
+      replacement = completeArgument(
         command: comp.command,
         argumentIndex: comp.argumentIndex,
         prefix: comp.prefix,
-        cwd: cwdPath)
+        cwd: cwdPath,
+        home: home,
+        shell: shell)
     }
-    guard let candidate else { return nil }
+    guard let replacement else { return nil }
 
-    return splice(input, span: comp.span, candidate: candidate)
+    return splice(input, span: comp.span, replacement: replacement)
   }
 
   /// The most recent command in `history` (newest first) that extends
@@ -120,8 +125,9 @@ public enum InputCompletion {
 
     let cwdPath = cwd.flatMap { $0.isEmpty ? nil : $0 }
     let (dirPart, _) = splitPathPrefix(comp.prefix)
+    let home = homePrefix(rawToken(input, span))
 
-    var matches = pathMatches(comp.prefix, cwd: cwdPath)
+    var matches = pathMatches(comp.prefix, cwd: cwdPath, home: home)
     // Directories first, then files; each group alphabetical by name.
     matches.sort { a, b in
       if a.isDir != b.isDir { return a.isDir }
@@ -138,24 +144,40 @@ public enum InputCompletion {
         display: match.name,
         kind: "path",
         isDir: match.isDir,
-        gitStatus: nil)
+        gitStatus: nil,
+        keptPrefix: home ?? "")
     }
 
     return CompletionResult(span: span, candidates: Array(candidates))
   }
 
-  /// Replace the completion token in `input` with `candidate`, keeping the
-  /// text before it verbatim. Returns `nil` unless the result genuinely
-  /// extends what was typed (so the ghost suffix stays consistent).
-  private static func splice(_ input: String, span: TextSpan, candidate: String) -> String? {
+  /// `input` with the completion token replaced by `replacement` (shell
+  /// text). Nil unless that only adds to what was typed: when the typed text
+  /// reads differently escaped (a `~` that matched a folder named `~`),
+  /// there's nothing to suggest after the cursor.
+  private static func splice(_ input: String, span: TextSpan, replacement: String) -> String? {
     let inputBytes = Array(input.utf8)
-    let start = min(span.start, inputBytes.count)
-    var resultBytes = Array(inputBytes[..<start])
-    resultBytes.append(contentsOf: candidate.utf8)
-    if resultBytes.count > inputBytes.count && resultBytes.starts(with: inputBytes) {
-      return String(decoding: resultBytes, as: UTF8.self)
-    }
-    return nil
+    let start = min(max(span.start, 0), inputBytes.count)
+    let resultBytes = Array(inputBytes[..<start]) + Array(replacement.utf8)
+    guard resultBytes.count > inputBytes.count, resultBytes.starts(with: inputBytes) else { return nil }
+    return String(decoding: resultBytes, as: UTF8.self)
+  }
+
+  /// The completion token as typed (quotes and backslashes included).
+  private static func rawToken(_ input: String, _ span: TextSpan) -> String {
+    let bytes = Array(input.utf8)
+    let start = min(max(span.start, 0), bytes.count)
+    let end = min(max(span.end, start), bytes.count)
+    return String(decoding: bytes[start..<end], as: UTF8.self)
+  }
+
+  /// How a path token typed as `raw` starts with the home folder, the way
+  /// the shell reads it: a bare `~/` or `$HOME/`. Quoted or escaped they're
+  /// plain names, as is everything else in the token (the parser takes
+  /// `$NAME`, `~` and globs literally, and so does path matching), so
+  /// they're escaped when inserted.
+  static func homePrefix(_ raw: String) -> String? {
+    ["~/", "$HOME/"].first { utf8HasPrefix(raw, $0) }
   }
 
   // -------------------------------------------------------------------------
@@ -185,14 +207,13 @@ public enum InputCompletion {
   /// Cached once per process — installing a new tool mid-session won't
   /// autocomplete until restart, which is an acceptable trade for not
   /// rescanning PATH on every keystroke. `static let` gives the same
-  /// thread-safe once-only initialization as the Rust `OnceLock`.
-  static let pathExecutables: [String] = scanPathExecutables()
+  /// thread-safe once-only initialization as the Rust `OnceLock`. The login
+  /// shell's PATH, not the app's: started from the Dock, Impulse only has
+  /// launchd's `/usr/bin:/bin:/usr/sbin:/sbin`.
+  static let pathExecutables: [String] = scanPathExecutables(LoginShell.loginPath())
 
-  private static func scanPathExecutables() -> [String] {
+  private static func scanPathExecutables(_ path: String) -> [String] {
     var names = Set<String>()
-    guard let path = ProcessInfo.processInfo.environment["PATH"] else {
-      return []
-    }
     for dir in path.split(separator: ":", omittingEmptySubsequences: false) {
       if dir.isEmpty { continue }
       let dirPath = String(dir)
@@ -223,19 +244,20 @@ public enum InputCompletion {
   // Argument completion (subcommands, flags, filesystem paths)
   // -------------------------------------------------------------------------
 
+  /// The completed argument as shell text.
   private static func completeArgument(
-    command: String?, argumentIndex: Int, prefix: String, cwd: String?
+    command: String?, argumentIndex: Int, prefix: String, cwd: String?, home: String?, shell: ShellType
   ) -> String? {
     if utf8HasPrefix(prefix, "-") {
-      return completeFlag(command: command, prefix: prefix)
+      return completeFlag(command: command, prefix: prefix).map { ShellQuoting.escaped($0, for: shell) }
     }
     // The first argument after a known command is usually a subcommand.
     if argumentIndex == 0, let command {
       if let sub = completeSubcommand(command: command, prefix: prefix) {
-        return sub
+        return ShellQuoting.escaped(sub, for: shell)
       }
     }
-    return completePath(prefix, cwd: cwd)
+    return completePath(prefix, cwd: cwd, home: home, shell: shell)
   }
 
   private static func completeSubcommand(command: String, prefix: String) -> String? {
@@ -280,9 +302,9 @@ public enum InputCompletion {
   /// surface only when the user typed a leading dot. Returns an empty array
   /// when the directory can't be resolved or read. Ordering is left to the
   /// caller.
-  private static func pathMatches(_ prefix: String, cwd: String?) -> [PathMatch] {
+  private static func pathMatches(_ prefix: String, cwd: String?, home: String?) -> [PathMatch] {
     let (dirPart, base) = splitPathPrefix(prefix)
-    guard let searchDir = resolveDir(dirPart, cwd: cwd) else { return [] }
+    guard let searchDir = resolveDir(dirPart, cwd: cwd, home: home) else { return [] }
     guard let entries = try? FileManager.default.contentsOfDirectory(atPath: searchDir) else {
       return []
     }
@@ -306,32 +328,34 @@ public enum InputCompletion {
     return matches
   }
 
-  private static func completePath(_ prefix: String, cwd: String?) -> String? {
-    // Keep the directory part exactly as typed; match only the trailing
-    // name.
+  /// The best path for `prefix` as shell text: the home `~/` or `$HOME/` it
+  /// was found under stays as typed, and the rest of the path (the folder
+  /// part, as matched, and the name) is escaped.
+  private static func completePath(_ prefix: String, cwd: String?, home: String?, shell: ShellType) -> String? {
+    // Match only the trailing name.
     let (dirPart, _) = splitPathPrefix(prefix)
 
     // Alphabetically-first match keeps the guess stable across keystrokes.
-    guard let best = pathMatches(prefix, cwd: cwd).min(by: { bytewiseLess($0.name, $1.name) })
+    guard
+      let best = pathMatches(prefix, cwd: cwd, home: home).min(by: { bytewiseLess($0.name, $1.name) })
     else {
       return nil
     }
 
-    var candidate = dirPart + best.name
-    if best.isDir {
-      candidate += "/"
-    }
-    return candidate
+    let path = dirPart + best.name + (best.isDir ? "/" : "")
+    return CompletionCandidate(
+      value: path, display: best.name, kind: "path", isDir: best.isDir, gitStatus: nil, keptPrefix: home ?? ""
+    ).insertion(typed: prefix, shell: shell)
   }
 
-  private static func resolveDir(_ dirPart: String, cwd: String?) -> String? {
-    if utf8HasPrefix(dirPart, "~/") {
-      guard let home = ProcessInfo.processInfo.environment["HOME"] else { return nil }
-      let rest = String(dirPart.dropFirst(2))
-      return rest.isEmpty ? home : home + "/" + rest
-    }
-    if dirPart == "~" || dirPart == "~/" {
-      return ProcessInfo.processInfo.environment["HOME"]
+  /// The folder `dirPart` names: under the home folder after a `home`
+  /// prefix, else absolute, else in `cwd`. Everything else is taken
+  /// literally, as the shell would once it's escaped.
+  private static func resolveDir(_ dirPart: String, cwd: String?, home: String?) -> String? {
+    if let home, utf8HasPrefix(dirPart, home) {
+      guard let homeDir = ProcessInfo.processInfo.environment["HOME"] else { return nil }
+      let rest = String(decoding: Array(dirPart.utf8.dropFirst(home.utf8.count)), as: UTF8.self)
+      return rest.isEmpty ? homeDir : homeDir + "/" + rest
     }
     if utf8HasPrefix(dirPart, "/") {
       return dirPart

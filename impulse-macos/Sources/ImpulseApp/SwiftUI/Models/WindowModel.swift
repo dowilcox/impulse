@@ -12,12 +12,28 @@ enum SidebarPanel {
 
 // MARK: - Tab Display Info
 
-/// Lightweight snapshot of a tab for the SwiftUI tab bar.
-struct TabDisplayInfo: Identifiable {
+/// Compares a class instance by identity, so value snapshots that carry one
+/// (a cached icon, a shared repository) can still be Equatable.
+@propertyWrapper
+struct ComparedByIdentity<Object: AnyObject>: Equatable {
+  var wrappedValue: Object?
+
+  init(wrappedValue: Object?) { self.wrappedValue = wrappedValue }
+
+  static func == (a: Self, b: Self) -> Bool { a.wrappedValue === b.wrappedValue }
+}
+
+/// Lightweight snapshot of a tab for the SwiftUI tab bar. Equatable, so the
+/// window model only changes (and the chrome only re-renders) when
+/// something shown did.
+struct TabDisplayInfo: Identifiable, Equatable {
   let id: Int  // Stable unique ID (survives reorders)
-  let index: Int  // Current position in the tab array
+  /// Position in the tab array when this snapshot was taken. Actions look
+  /// the tab up by `id` when they run (`WindowModel.withTab`) instead.
+  let index: Int
   let title: String
-  let icon: NSImage?
+  /// Reused per kind of icon by TabManager, so it compares by identity.
+  @ComparedByIdentity var icon: NSImage?
   let isPinned: Bool
   /// Shown from a single click; replaced by the next one until it's kept.
   var isPreview: Bool = false
@@ -51,14 +67,14 @@ struct TabDisplayInfo: Identifiable {
 
 /// A coding agent running in one of the window's terminals (inbox rows).
 /// One agent turn as the toolbelt lists it.
-struct AgentTurnItem: Identifiable {
+struct AgentTurnItem: Identifiable, Equatable {
   /// Index among the terminal's turns (oldest = 0).
   let id: Int
   let started: Date
   let finished: Bool
 }
 
-struct AgentSummary: Identifiable {
+struct AgentSummary: Identifiable, Equatable {
   /// The terminal's id.
   let id: UUID
   let agentName: String
@@ -88,7 +104,7 @@ extension AgentState {
 // MARK: - Workspace Info
 
 /// Snapshot of a workspace for the sidebar and switcher.
-struct WorkspaceInfo: Identifiable {
+struct WorkspaceInfo: Identifiable, Equatable {
   let id: UUID
   let name: String
   let root: String
@@ -98,8 +114,9 @@ struct WorkspaceInfo: Identifiable {
   let tabs: [TabDisplayInfo]
   let attentionCount: Int
   let progress: TerminalProgress?
-  /// The folder's repository (folder workspaces in a git repo).
-  let repository: GitRepositoryState?
+  /// The folder's repository (folder workspaces in a git repo). Its own
+  /// changes reach views through observation, so it compares by identity.
+  @ComparedByIdentity var repository: GitRepositoryState?
   /// A task worktree (can be archived).
   var isTask: Bool = false
   /// For a task Impulse made: "Task slot 1 · from origin/main · APP_PORT 8100".
@@ -144,6 +161,9 @@ final class WindowModel {
   /// The active workspace's tabs (what the strip shows). `index` values are
   /// global tab indexes.
   var tabDisplayInfos: [TabDisplayInfo] = []
+  /// Where the tab with this stable id is now (nil: it's closed). Set by
+  /// TabManager; see `withTab`.
+  @ObservationIgnored var tabIndexForID: ((Int) -> Int?)?
   var selectedTabIndex: Int = -1
   /// Every tab in every workspace (tab switcher).
   var allTabs: [TabDisplayInfo] = []
@@ -464,10 +484,18 @@ final class WindowModel {
 
   // MARK: Methods
 
-  /// Replace the tab display info array. Called by TabManager.
-  func refreshTabs(_ infos: [TabDisplayInfo], selectedIndex: Int) {
-    self.tabDisplayInfos = infos
-    self.selectedTabIndex = selectedIndex
+  /// Assign only when the value changed: every assignment to an observed
+  /// property invalidates the views that read it, equal or not.
+  func update<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<WindowModel, Value>, to value: Value) {
+    if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+  }
+
+  /// Run a tab action with the tab's current global index, if it's still
+  /// open. Rows and menus keep the tab's stable id: the index they were
+  /// drawn with goes stale as soon as another tab closes or moves.
+  func withTab(_ id: Int, _ action: (Int) -> Void) {
+    guard let index = tabIndexForID?(id) else { return }
+    action(index)
   }
 
   /// Replace the file tree nodes and rebuild the flat rendering list.

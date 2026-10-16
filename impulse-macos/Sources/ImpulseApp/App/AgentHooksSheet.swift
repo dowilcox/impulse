@@ -28,11 +28,17 @@ final class AgentHooksModel {
 
   private(set) var path = ""
   private(set) var before = ""
+  /// The file's bytes when the preview was made (nil: no file), to tell
+  /// whether it changed since.
+  @ObservationIgnored private var previewed: Data?
   private(set) var after: String?
   private(set) var installed = false
   /// Some of Impulse's hooks, from an older Impulse: Install adds the rest.
   private(set) var outdated = false
   private(set) var error: String?
+  /// The file changed after the preview was made, which now shows the
+  /// new content.
+  private(set) var refreshed = false
 
   init(projectRoot: String?, mainCheckout: String? = nil) {
     self.projectRoot = projectRoot
@@ -57,8 +63,10 @@ final class AgentHooksModel {
       path = home + "/.codex/config.toml"
     }
     let data = FileManager.default.contents(atPath: path)
+    previewed = data
     before = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
     error = nil
+    refreshed = false
     switch agent {
     case .claude:
       let status = AgentHookInstaller.claudeHookStatus(data)
@@ -94,9 +102,24 @@ final class AgentHooksModel {
     }
   }
 
-  /// Write the previewed change. Returns an error message on failure.
-  func apply() -> String? {
-    guard let after else { return error ?? "Nothing to change." }
+  enum Outcome: Equatable {
+    case written
+    /// The file changed since the preview: it's been redone, for another
+    /// look.
+    case changed
+    case failed(String)
+  }
+
+  /// Write the previewed change, unless the file changed since the preview
+  /// was made (the agent rewrote its settings, say): then the preview is
+  /// made again from what's there now, and nothing is written.
+  func apply() -> Outcome {
+    guard let after else { return .failed(error ?? "Nothing to change.") }
+    guard FileManager.default.contents(atPath: path) == previewed else {
+      reload()
+      refreshed = true
+      return .changed
+    }
     do {
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -109,9 +132,9 @@ final class AgentHooksModel {
         try FileManager.default.copyItem(atPath: target, toPath: backup)
       }
       try Data(after.utf8).write(to: URL(fileURLWithPath: target), options: .atomic)
-      return nil
+      return .written
     } catch {
-      return error.localizedDescription
+      return .failed(error.localizedDescription)
     }
   }
 }
@@ -163,6 +186,16 @@ struct AgentHooksSheetView: View {
           .truncationMode(.middle)
       }
 
+      if model.refreshed {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Icon(.info, size: 11).foregroundStyle(chrome.warning)
+          Text("The file changed since this preview, so nothing was written. Check the change again.")
+            .font(ChromeFont.ui(11.5))
+            .foregroundStyle(chrome.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+
       if model.agent == .claude, model.scope == .project, let main = model.mainCheckout {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
           Icon(.info, size: 11).foregroundStyle(chrome.warning)
@@ -205,9 +238,12 @@ struct AgentHooksSheetView: View {
             icon: model.installed ? .trash2 : .check, kind: model.installed ? .secondary : .primary
           ) {
             let wasInstalled = model.installed
-            if let failure = model.apply() {
+            switch model.apply() {
+            case .failed(let failure):
               onClose("Couldn't update \(TabManager.abbreviateHomePath(model.path)): \(failure)")
-            } else {
+            case .changed:
+              break  // the sheet stays open on the new preview
+            case .written:
               onClose(
                 wasInstalled
                   ? "Removed Impulse's \(model.agent.rawValue) hooks."

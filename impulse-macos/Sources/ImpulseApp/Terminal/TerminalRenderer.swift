@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import CoreText
 import ImpulseKit
 import os.log
@@ -168,6 +169,10 @@ class TerminalRenderer: NSView {
                      match, resolved))
             }
         }
+        // Only files that exist; network mounts, and volumes not known to be
+        // local disks, are looked up off the main thread.
+        checkFilesOffMain(found.compactMap(\.path).filter { looksUpOffMain($0) })
+        found.removeAll { item in item.path.map { !isFile($0) } ?? false }
         let labels = TerminalHints.labels(count: found.count)
         hintTargets = zip(found, labels).map { item, label in
             HintTarget(
@@ -234,15 +239,8 @@ class TerminalRenderer: NSView {
             context.fill(CGRect(x: x, y: top + ch - 1.5, width: width, height: 1.5))
             guard matchesTyped else { continue }
 
-            let label = target.label.uppercased()
-            let attrs: [CFString: Any] = [
-                kCTFontAttributeName: font,
-                kCTForegroundColorAttributeName: defaultBackgroundColor,
-            ]
-            guard let attrStr = CFAttributedStringCreate(nil, label as CFString, attrs as CFDictionary) else {
-                continue
-            }
-            let line = CTLineCreateWithAttributedString(attrStr)
+            guard let line = decorationLine(target.label.uppercased(), font: font, color: defaultBackgroundColor)
+            else { continue }
             let textWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
             let pill = CGRect(x: x - 1, y: top + 1, width: textWidth + 8, height: ch - 2)
             context.setFillColor(blockAccentColor)
@@ -329,6 +327,10 @@ class TerminalRenderer: NSView {
 
     /// Runtime keybinding overrides from settings.
     var keybindingOverrides: [String: String] = [:]
+
+    /// Which Option keys send Meta (Esc + the key) instead of typing the
+    /// character macOS gives them (`terminal_option_as_meta`).
+    var optionAsMeta: KeyEncoder.OptionAsMeta = .off
 
     /// 16-color ANSI palette (RGB triplets). Set from the theme.
     /// Used to substitute bold text colors when `boldIsBright` is true.
@@ -458,16 +460,23 @@ class TerminalRenderer: NSView {
     /// scroll bottom. `nil` while a command runs or before any tuck lands.
     private var scrollFloorOffset: Int?
 
-    /// Latest display offset reported by the overlay; used by the scroll clamp.
-    private var currentDisplayOffset: Int32 = 0
+    /// The terminal's display offset (0 = live bottom), read live: the block
+    /// overlay isn't fetched while decorations are off or an inline program
+    /// like Claude Code runs, so its copy can be stale.
+    private var currentDisplayOffset: Int32 { backend?.displayOffset() ?? 0 }
 
     /// Scrolled up from the live bottom (a tucked prompt's floor counts as
     /// the bottom). Read from the offset, not just the scroll gesture, so
     /// scrolling back down — or a command scrolling to the bottom — resumes
     /// following output without a keystroke in the grid.
     private var isViewingHistory: Bool {
-        isScrolledBack && Int(currentDisplayOffset) > (scrollFloorOffset ?? 0)
+        isScrolledBack && Int(currentDisplayOffset) > (activeScrollFloor ?? 0)
     }
+
+    /// The scroll floor, which only holds at an idle prompt: while a command
+    /// runs the overlay that clears it may not be drawn (an inline program
+    /// like Claude Code), so a floor from the last prompt mustn't linger.
+    private var activeScrollFloor: Int? { commandRunning ? nil : scrollFloorOffset }
 
     /// Vertical gap (a "tad" of padding) each collapsed blank prompt-padding row
     /// reserves between command blocks, in points. A normal row is `cellHeight`.
@@ -563,11 +572,18 @@ class TerminalRenderer: NSView {
     // MARK: Private Properties
 
     private var refreshTimer: DispatchSourceTimer?
+    /// When the pending `refreshTimer` fires.
+    private var refreshDeadline: DispatchTime?
     private var scrollAccumulator: CGFloat = 0
     private var isScrolledBack: Bool = false
     private var isSelecting = false
     private var pendingSelectionAnchor: (col: UInt16, row: UInt16)?
     private var shouldCopySelectionOnMouseUp = false
+    /// The left button's press went to the program (mouse reporting), so
+    /// its drags and release do too; otherwise the gesture selects text.
+    private var leftPressReported = false
+    /// Cell of the last drag reported to the program.
+    private var lastReportedMotionCell: (col: UInt16, row: UInt16)?
     private var needsRedraw = false
     private var cursorBlinkOn: Bool = true
     private var blinkTimer: DispatchSourceTimer?
@@ -578,6 +594,18 @@ class TerminalRenderer: NSView {
     private var textLineCache: [UInt64: CTLine] = [:]
     /// Lines for grapheme clusters (a base with combining marks), by color, style and text.
     private var clusterLineCache: [String: CTLine] = [:]
+    /// Lines for block chips, the sticky header and hint labels.
+    private var decorationLineCache: [String: CTLine] = [:]
+    /// Scratch for `drawTextRun`, reused across runs.
+    private var runUnits: [UniChar] = []
+    private var runUnitCells: [Int] = []
+    private var runOtherCells: [Int] = []
+    private var runGlyphs: [CGGlyph] = []
+    private var drawnGlyphs: [CGGlyph] = []
+    private var glyphPositions: [CGPoint] = []
+    /// The window's backing scale, read once per frame for pixel-snapped
+    /// box drawing.
+    private var backingScale: CGFloat = 2.0
     private let activeRefreshInterval: TimeInterval = 1.0 / 60.0
     /// After this long without output, stop polling at display rate and wait
     /// for the backend's wakeup.
@@ -600,8 +628,18 @@ class TerminalRenderer: NSView {
     /// The hovered row's text, read from the grid once per row per frame
     /// instead of a full snapshot for every cell the pointer crosses.
     private var hoverRowCache: RowText?
-    /// Paths on the hovered row already checked on disk this frame.
-    private var hoverPathCache: [String: String?] = [:]
+    /// Recent answers to "is this path an existing file?" for links and
+    /// hints, so hovering doesn't look the same path up on every frame.
+    private var fileChecks: [String: (isFile: Bool, checked: Date)] = [:]
+    private let fileCheckLifetime: TimeInterval = 5
+    private let fileCheckLimit = 512
+    /// Paths being looked up in the background.
+    private var pendingFileChecks: Set<String> = []
+    /// Volumes under /Volumes by mount point, and whether each is a disk on
+    /// this Mac (looked up like any folder) or a network share (looked up in
+    /// the background only).
+    private var volumeChecks: [String: (isLocal: Bool, checked: Date)] = [:]
+    private let volumeCheckLifetime: TimeInterval = 60
     private var hoverIsLink: Bool = false
     /// When hovering a link, the cell-range [startCol, endCol) on hoverRow
     /// that forms the link. Used to draw the hover underline and to resolve
@@ -611,8 +649,9 @@ class TerminalRenderer: NSView {
     private var hoverLinkUri: String?
     /// The file reference under the pointer (opens in the editor on ⌘-click).
     private var hoverLinkPath: (path: String, line: Int?, column: Int?)?
-    /// Absolute path of an existing file a candidate refers to (relative to
-    /// the terminal's directory), or nil. Set by the owning TerminalTab.
+    /// The absolute path a file reference refers to (relative ones from the
+    /// terminal's directory; see `absolutePath`), or nil. Whether it exists
+    /// is checked here (`isFile`). Set by the owning TerminalTab.
     var resolvePath: ((String) -> String?)?
     /// Open a file in the editor at an optional 1-based line and column.
     var onOpenPath: ((String, Int?, Int?) -> Void)?
@@ -707,9 +746,15 @@ class TerminalRenderer: NSView {
             TerminalSessionHub.shared.wake()
             return
         }
+        // Under a stream of output, keep to the display rate: the next tick
+        // comes a refresh interval after the last one that found something.
+        // After a quiet spell that's now, so typing echoes at once. A tick
+        // already due sooner stays.
+        let delay = max(0, lastActivity.timeIntervalSinceNow + activeRefreshInterval)
+        if refreshTimer != nil, let refreshDeadline, refreshDeadline <= .now() + delay { return }
         refreshTimer?.cancel()
         refreshTimer = nil
-        scheduleRefresh(after: 0)
+        scheduleRefresh(after: delay)
     }
 
     func startRefreshLoop() {
@@ -720,15 +765,19 @@ class TerminalRenderer: NSView {
     func stopRefreshLoop() {
         refreshTimer?.cancel()
         refreshTimer = nil
+        refreshDeadline = nil
     }
 
     private func scheduleRefresh(after interval: TimeInterval) {
         guard refreshTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + interval)
+        let deadline = DispatchTime.now() + interval
+        timer.schedule(deadline: deadline)
+        refreshDeadline = deadline
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             self.refreshTimer = nil
+            self.refreshDeadline = nil
             guard self.window != nil else { return }
             let now = Date()
             if self.tick() { self.lastActivity = now }
@@ -1106,7 +1155,6 @@ class TerminalRenderer: NSView {
                 shouldTuckPrompt = false
                 scrollFloorOffset = Int(overlay.displayOffset)
             }
-            currentDisplayOffset = overlay.displayOffset
         }
         lastContentRow = max(-1, min(lastContentRow, lines - 1))
 
@@ -1254,13 +1302,26 @@ class TerminalRenderer: NSView {
         // In a flipped NSView, CoreGraphics text still renders Y-up.
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         let cellExtras = grid.extras()
+        backingScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        // One character per cell, reused across rows.
+        var runScalars: [Unicode.Scalar] = []
+        runScalars.reserveCapacity(cols)
+        // Box-drawing and block-element cells are pixel-snapped fills drawn
+        // without antialiasing: set up once for each stretch of them, not per
+        // cell.
+        var inBoxBatch = false
+        func endBoxBatch() {
+            guard inBoxBatch else { return }
+            context.restoreGState()
+            inBoxBatch = false
+        }
 
         for row in drawRows {
             if frameCollapsedRows.contains(row) { continue }
             let rowY = rowTopY(row)
 
             // Run accumulation state.
-            var runString = ""
+            runScalars.removeAll(keepingCapacity: true)
             var runStartCol = 0
             var runFgR: UInt8 = 0
             var runFgG: UInt8 = 0
@@ -1277,8 +1338,15 @@ class TerminalRenderer: NSView {
                 // Skip wide char spacer cells.
                 if flags & GridBufferReader.flagWideCharSpacer != 0 { continue }
 
-                // Skip hidden cells.
-                if flags & GridBufferReader.flagHidden != 0 { continue }
+                // Hidden cells draw nothing but keep their place in a run
+                // (both cells of a wide character: its spacer is skipped).
+                if flags & GridBufferReader.flagHidden != 0 {
+                    if hasRun && !runScalars.isEmpty {
+                        runScalars.append(" ")
+                        if flags & GridBufferReader.flagWideChar != 0 { runScalars.append(" ") }
+                    }
+                    continue
+                }
 
                 let scalar = cell.character
                 let codepoint = scalar.value
@@ -1326,19 +1394,20 @@ class TerminalRenderer: NSView {
                     || isBold != runBold || isItalic != runItalic || isDim != runDim)
 
                 if (styleChanged || isBoxDrawing || isBlockElement || isWideChar || zeroWidth != nil)
-                    && hasRun && !runString.isEmpty {
+                    && hasRun && !runScalars.isEmpty {
                     drawTextRun(
-                        context: context, text: runString, col: runStartCol, rowY: rowY,
+                        context: context, scalars: runScalars, col: runStartCol, rowY: rowY,
                         fgR: runFgR, fgG: runFgG, fgB: runFgB,
                         bold: runBold, italic: runItalic, dim: runDim
                     )
-                    runString = ""
+                    runScalars.removeAll(keepingCapacity: true)
                     hasRun = false
                 }
 
                 if let zeroWidth {
                     // A base character with combining marks: one cluster in
                     // its own cell(s).
+                    endBoxBatch()
                     drawCluster(
                         context: context, text: String(scalar) + zeroWidth, col: col, cells: isWideChar ? 2 : 1,
                         rowY: rowY, fgR: fgR, fgG: fgG, fgB: fgB, bold: isBold, italic: isItalic, dim: isDim)
@@ -1349,8 +1418,9 @@ class TerminalRenderer: NSView {
                     // Wide characters (East Asian fullwidth) occupy 2 cells.
                     // Draw alone so subsequent runs restart at col + 2 (the
                     // spacer cell at col + 1 is skipped by flagWideCharSpacer).
+                    endBoxBatch()
                     drawTextRun(
-                        context: context, text: String(scalar),
+                        context: context, scalars: [scalar],
                         col: col, rowY: rowY,
                         fgR: fgR, fgG: fgG, fgB: fgB,
                         bold: isBold, italic: isItalic, dim: isDim
@@ -1358,35 +1428,40 @@ class TerminalRenderer: NSView {
                     continue
                 }
 
-                if isBoxDrawing {
-                    // Draw box-drawing character programmatically.
+                if isBoxDrawing || isBlockElement {
+                    if !inBoxBatch {
+                        context.saveGState()
+                        context.setShouldAntialias(false)
+                        inBoxBatch = true
+                    }
                     let cellX = padding + CGFloat(col) * cw
-                    drawBoxDrawing(
-                        context: context, codepoint: codepoint,
-                        x: cellX, y: rowY, width: cw, height: ch,
-                        fgR: fgR, fgG: fgG, fgB: fgB, dim: isDim
-                    )
-                } else if isBlockElement {
-                    // Draw block/shade element as snapped fills so adjacent
-                    // cells tile seamlessly (no seams in solid TUI fills).
-                    let cellX = padding + CGFloat(col) * cw
-                    drawBlockElement(
-                        context: context, codepoint: codepoint,
-                        x: cellX, y: rowY, width: cw, height: ch,
-                        fgR: fgR, fgG: fgG, fgB: fgB, dim: isDim
-                    )
+                    if isBoxDrawing {
+                        // Draw box-drawing character programmatically.
+                        drawBoxDrawing(
+                            context: context, codepoint: codepoint, col: col,
+                            x: cellX, y: rowY, width: cw, height: ch,
+                            fgR: fgR, fgG: fgG, fgB: fgB, dim: isDim
+                        )
+                    } else {
+                        // Draw block/shade element as snapped fills so adjacent
+                        // cells tile seamlessly (no seams in solid TUI fills).
+                        drawBlockElement(
+                            context: context, codepoint: codepoint, col: col,
+                            x: cellX, y: rowY, width: cw, height: ch,
+                            fgR: fgR, fgG: fgG, fgB: fgB, dim: isDim
+                        )
+                    }
                 } else {
-                    // Skip spaces (empty cells) that use the default background.
-                    // We still need to advance the column though.
+                    // Spaces (empty cells) draw nothing; in a run they keep
+                    // the following characters in their cells.
                     if codepoint == 0x20 || codepoint == 0 {
-                        if hasRun && !runString.isEmpty {
-                            // Append a space to the run to preserve positioning.
-                            runString.append(" ")
+                        if hasRun && !runScalars.isEmpty {
+                            runScalars.append(" ")
                         }
-                        // If no run, just skip.
                         continue
                     }
 
+                    endBoxBatch()
                     if !hasRun {
                         runStartCol = col
                         runFgR = fgR
@@ -1397,14 +1472,15 @@ class TerminalRenderer: NSView {
                         runDim = isDim
                         hasRun = true
                     }
-                    runString.append(String(scalar))
+                    runScalars.append(scalar)
                 }
             }
 
             // Flush remaining run for this row.
-            if hasRun && !runString.isEmpty {
+            endBoxBatch()
+            if hasRun && !runScalars.isEmpty {
                 drawTextRun(
-                    context: context, text: runString, col: runStartCol, rowY: rowY,
+                    context: context, scalars: runScalars, col: runStartCol, rowY: rowY,
                     fgR: runFgR, fgG: runFgG, fgB: runFgB,
                     bold: runBold, italic: runItalic, dim: runDim
                 )
@@ -1484,7 +1560,7 @@ class TerminalRenderer: NSView {
                     if cell.character.value != 0x20 && cell.character.value != 0 {
                         let bgR = cell.bgR, bgG = cell.bgG, bgB = cell.bgB
                         drawTextRun(
-                            context: context, text: String(cell.character),
+                            context: context, scalars: [cell.character],
                             col: cursorCol, rowY: cursorY,
                             fgR: bgR, fgG: bgG, fgB: bgB,
                             bold: cell.flags & GridBufferReader.flagBold != 0,
@@ -1521,29 +1597,27 @@ class TerminalRenderer: NSView {
             context.strokePath()
         }
 
-        // 9. Draw IME marked text overlay at the cursor position.
+        // 9. Draw IME marked text overlay at the cursor position, laid out
+        // as the grid will lay it out: wide characters take two cells.
         if !markedText.isEmpty {
             let cursorRow = grid.cursorRow
             let cursorCol = grid.cursorCol
             let startX = padding + CGFloat(cursorCol) * cw
             let startY = rowTopY(Int(cursorRow))
+            let widths = markedText.map(Self.cellWidth(of:))
 
             // Background for the marked text run.
-            let markedWidth = cw * CGFloat(max(1, markedText.count))
+            let markedWidth = cw * CGFloat(max(1, widths.reduce(0, +)))
             context.setFillColor(CGColor(srgbRed: 0.15, green: 0.15, blue: 0.2, alpha: 1.0))
             context.fill(CGRect(x: startX, y: startY, width: markedWidth, height: ch))
 
-            // Draw the marked text using the current cursor color as fg.
-            var runText = ""
-            for char in markedText {
-                runText.append(char)
+            var col = cursorCol
+            for (character, width) in zip(markedText, widths) {
+                drawCluster(
+                    context: context, text: String(character), col: col, cells: width, rowY: startY,
+                    fgR: 255, fgG: 255, fgB: 255, bold: false, italic: false, dim: false)
+                col += width
             }
-            drawTextRun(
-                context: context, text: runText,
-                col: cursorCol, rowY: startY,
-                fgR: 255, fgG: 255, fgB: 255,
-                bold: false, italic: false, dim: false
-            )
 
             // Underline the marked text to indicate active composition.
             context.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.8))
@@ -1851,12 +1925,7 @@ class TerminalRenderer: NSView {
         context: CGContext, text: String, failed: Bool, row: Int, grid: GridBufferReader, cols: Int
     ) {
         let color = failed ? blockFailedColor : (blockMutedTextColor.copy(alpha: 0.75) ?? blockMutedTextColor)
-        let attrs: [CFString: Any] = [
-            kCTFontAttributeName: chipFont ?? fontMetrics.font,
-            kCTForegroundColorAttributeName: color,
-        ]
-        guard let attrStr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) else { return }
-        let line = CTLineCreateWithAttributedString(attrStr)
+        guard let line = decorationLine(text, font: chipFont ?? fontMetrics.font, color: color) else { return }
         let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
         let cw = fontMetrics.cellWidth
         let span = Int((width / cw).rounded(.up)) + 2
@@ -2249,12 +2318,7 @@ class TerminalRenderer: NSView {
         var statusWidth: CGFloat = 0
         if let status = Self.blockChipText(exitCode: block.exitCode, durationMs: block.durationMs) {
             let color = block.failed ? blockFailedColor : blockMutedTextColor
-            let attrs: [CFString: Any] = [
-                kCTFontAttributeName: chipFont ?? fontMetrics.font,
-                kCTForegroundColorAttributeName: color,
-            ]
-            if let attrStr = CFAttributedStringCreate(nil, status as CFString, attrs as CFDictionary) {
-                let line = CTLineCreateWithAttributedString(attrStr)
+            if let line = decorationLine(status, font: chipFont ?? fontMetrics.font, color: color) {
                 statusWidth = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
                 context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
                 context.textPosition = CGPoint(
@@ -2265,17 +2329,11 @@ class TerminalRenderer: NSView {
         }
 
         // "❯ command", truncated to the space left of the status text.
-        let attrs: [CFString: Any] = [
-            kCTFontAttributeName: fontMetrics.font,
-            kCTForegroundColorAttributeName: blockMutedTextColor,
-        ]
-        guard
-            let attrStr = CFAttributedStringCreate(
-                nil, "❯ \(command)" as CFString, attrs as CFDictionary)
-        else { return }
-        let line = CTLineCreateWithAttributedString(attrStr)
         let maxWidth = Double(bounds.width - padding * 2 - statusWidth - 16)
-        let drawn = CTLineCreateTruncatedLine(line, maxWidth, .end, nil) ?? line
+        guard
+            let drawn = decorationLine(
+                "❯ \(command)", font: fontMetrics.font, color: blockMutedTextColor, truncatedTo: maxWidth)
+        else { return }
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         context.textPosition = CGPoint(x: padding, y: 3 + fontMetrics.ascent)
         CTLineDraw(drawn, context)
@@ -2283,9 +2341,6 @@ class TerminalRenderer: NSView {
 
     // MARK: Text Run Drawing
 
-    /// Draw a run of text at the given grid position using CoreText.
-    /// Each glyph is forced to advance by exactly cellWidth so text aligns
-    /// perfectly with the grid (cursor, selection, background fills).
     /// One cell's underline in its style (SGR 4:1–4:5); the stroke color is
     /// already set.
     private func drawUnderline(
@@ -2328,8 +2383,14 @@ class TerminalRenderer: NSView {
         context.strokePath()
     }
 
+    /// A run of cells, one character each, from grid column `col`. Each
+    /// glyph sits at its exact cell, whatever the font's own advances, so
+    /// text aligns with the grid (cursor, selection, backgrounds). Glyphs
+    /// the style's font has are drawn in one call; characters it lacks
+    /// (another font draws them), emoji and invisible format characters go
+    /// through CoreText one cell at a time. Spaces draw nothing.
     private func drawTextRun(
-        context: CGContext, text: String, col: Int, rowY: CGFloat,
+        context: CGContext, scalars: [Unicode.Scalar], col: Int, rowY: CGFloat,
         fgR: UInt8, fgG: UInt8, fgB: UInt8,
         bold: Bool, italic: Bool, dim: Bool
     ) {
@@ -2339,27 +2400,91 @@ class TerminalRenderer: NSView {
         let color = cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha)
 
         let font = fontForStyle(bold: bold, italic: italic)
-        let styleKey = fontStyleKey(bold: bold, italic: italic)
         let cw = fontMetrics.cellWidth
         let baseX = padding + CGFloat(col) * cw
         let textY = rowY + fontMetrics.ascent
 
-        // Draw each character at its exact cell position to prevent drift.
-        // CoreText's natural advances may differ slightly from cellWidth,
-        // causing characters to misalign with the grid over long runs.
-        var charCol = 0
-        for ch in text.unicodeScalars {
+        runUnits.removeAll(keepingCapacity: true)
+        runUnitCells.removeAll(keepingCapacity: true)
+        runOtherCells.removeAll(keepingCapacity: true)
+        for (cell, scalar) in scalars.enumerated() {
+            let value = scalar.value
+            if value == 0x20 || value == 0 { continue }
+            if value < 0x80 || (value < 0x10000 && Self.fontDrawsAlone(scalar)) {
+                runUnits.append(UniChar(value))
+                runUnitCells.append(cell)
+            } else {
+                runOtherCells.append(cell)
+            }
+        }
+
+        if !runUnits.isEmpty {
+            let count = runUnits.count
+            if runGlyphs.count < count { runGlyphs = [CGGlyph](repeating: 0, count: count) }
+            _ = runGlyphs.withUnsafeMutableBufferPointer {
+                CTFontGetGlyphsForCharacters(font, runUnits, $0.baseAddress!, count)
+            }
+            // Glyph positions are in text space: undo the flipped text
+            // matrix to place them at the cells' origins.
+            let toTextSpace = context.textMatrix.inverted()
+            drawnGlyphs.removeAll(keepingCapacity: true)
+            glyphPositions.removeAll(keepingCapacity: true)
+            for index in 0..<count {
+                guard runGlyphs[index] != 0 else {
+                    runOtherCells.append(runUnitCells[index])
+                    continue
+                }
+                drawnGlyphs.append(runGlyphs[index])
+                glyphPositions.append(
+                    CGPoint(x: baseX + CGFloat(runUnitCells[index]) * cw, y: textY).applying(toTextSpace))
+            }
+            if !drawnGlyphs.isEmpty {
+                context.setFillColor(color)
+                CTFontDrawGlyphs(font, drawnGlyphs, glyphPositions, drawnGlyphs.count, context)
+            }
+        }
+
+        guard !runOtherCells.isEmpty else { return }
+        let styleKey = fontStyleKey(bold: bold, italic: italic)
+        for cell in runOtherCells {
             let line = cachedTextLine(
-                scalar: ch,
+                scalar: scalars[cell],
                 font: font,
                 color: color,
                 styleKey: styleKey,
                 colorKey: colorKey
             )
-            context.textPosition = CGPoint(x: baseX + CGFloat(charCol) * cw, y: textY)
+            context.textPosition = CGPoint(x: baseX + CGFloat(cell) * cw, y: textY)
             CTLineDraw(line, context)
-            charCol += 1
         }
+    }
+
+    /// A character the font's own glyph shows just as a CoreText line would.
+    /// Not emoji (CoreText may take the color emoji font) or invisible
+    /// format characters (which CoreText draws as nothing).
+    private static func fontDrawsAlone(_ scalar: Unicode.Scalar) -> Bool {
+        let properties = scalar.properties
+        return !properties.isEmojiPresentation && !properties.isDefaultIgnorableCodePoint
+            && properties.generalCategory != .format
+    }
+
+    /// A line for block chips, the sticky header and hint labels, by font,
+    /// color and text (and truncation width): the same few strings are drawn
+    /// every frame.
+    private func decorationLine(
+        _ text: String, font: CTFont, color: CGColor, truncatedTo maxWidth: Double? = nil
+    ) -> CTLine? {
+        let colorName = (color.colorSpace?.name as String?) ?? ""
+        let components = color.components?.map { "\($0)" }.joined(separator: ",") ?? ""
+        let key = "\(ObjectIdentifier(font))|\(colorName)|\(components)|\(maxWidth.map { "\($0)" } ?? "")|\(text)"
+        if let line = decorationLineCache[key] { return line }
+        if decorationLineCache.count > 256 { decorationLineCache.removeAll(keepingCapacity: true) }
+        let attrs: [CFString: Any] = [kCTFontAttributeName: font, kCTForegroundColorAttributeName: color]
+        guard let string = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) else { return nil }
+        var line = CTLineCreateWithAttributedString(string)
+        if let maxWidth { line = CTLineCreateTruncatedLine(line, maxWidth, .end, nil) ?? line }
+        decorationLineCache[key] = line
+        return line
     }
 
     /// A grapheme cluster (base + zero-width characters) laid out by
@@ -2450,6 +2575,7 @@ class TerminalRenderer: NSView {
     private func cacheFontVariants() {
         textLineCache.removeAll(keepingCapacity: true)
         clusterLineCache.removeAll(keepingCapacity: true)
+        decorationLineCache.removeAll(keepingCapacity: true)
 
         let base = fontMetrics.font
         let size = CTFontGetSize(base)
@@ -2481,8 +2607,9 @@ class TerminalRenderer: NSView {
     // MARK: Box Drawing
 
     /// Draw a box-drawing or block element character using CGContext paths.
+    /// The caller has turned antialiasing off (see the text loop in `draw`).
     private func drawBoxDrawing(
-        context: CGContext, codepoint: UInt32,
+        context: CGContext, codepoint: UInt32, col: Int,
         x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat,
         fgR: UInt8, fgG: UInt8, fgB: UInt8, dim: Bool
     ) {
@@ -2492,7 +2619,7 @@ class TerminalRenderer: NSView {
         // Codex/Claude TUIs use box-drawing heavily. Snap all geometry to the
         // backing pixel grid and disable antialiasing so separators do not
         // smear color into adjacent rows/columns on macOS.
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        let scale = backingScale
         func snap(_ value: CGFloat) -> CGFloat {
             (value * scale).rounded() / scale
         }
@@ -2511,10 +2638,8 @@ class TerminalRenderer: NSView {
 
         // Fills below are pixel-snapped, so disabling antialiasing keeps
         // straight separators from bleeding into adjacent rows/columns. Arc
-        // cases re-enable it locally so rounded corners stay smooth.
-        context.saveGState()
-        context.setShouldAntialias(false)
-        defer { context.restoreGState() }
+        // cases re-enable it for themselves so rounded corners stay smooth.
+        defer { context.setShouldAntialias(false) }
 
         switch codepoint {
         // Horizontal lines.
@@ -2651,8 +2776,8 @@ class TerminalRenderer: NSView {
             // alignment with the grid is preserved regardless of the glyph's
             // natural advance width.
             drawTextRun(
-                context: context, text: String(UnicodeScalar(codepoint)!),
-                col: Int((x - padding) / width), rowY: y,
+                context: context, scalars: [UnicodeScalar(codepoint)!],
+                col: col, rowY: y,
                 fgR: fgR, fgG: fgG, fgB: fgB,
                 bold: false, italic: false, dim: dim
             )
@@ -2665,24 +2790,21 @@ class TerminalRenderer: NSView {
     /// edge to the backing pixel grid makes adjacent cells share an exact edge
     /// and tile without gaps. Solid blocks/quadrants paint at full opacity;
     /// shades blend the foreground over the already-drawn cell background.
+    /// The caller has turned antialiasing off (see the text loop in `draw`).
     private func drawBlockElement(
-        context: CGContext, codepoint: UInt32,
+        context: CGContext, codepoint: UInt32, col: Int,
         x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat,
         fgR: UInt8, fgG: UInt8, fgB: UInt8, dim: Bool
     ) {
         let dimAlpha: CGFloat = dim ? 0.5 : 1.0
 
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        let scale = backingScale
         func snap(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
         func rect(_ rx: CGFloat, _ ry: CGFloat, _ rw: CGFloat, _ rh: CGFloat) -> CGRect {
             let minX = snap(rx), minY = snap(ry)
             let maxX = snap(rx + rw), maxY = snap(ry + rh)
             return CGRect(x: minX, y: minY, width: max(0, maxX - minX), height: max(0, maxY - minY))
         }
-
-        context.saveGState()
-        context.setShouldAntialias(false)
-        defer { context.restoreGState() }
 
         func fill(_ rects: [CGRect], alpha: CGFloat = 1.0) {
             context.setFillColor(cachedColor(red: fgR, green: fgG, blue: fgB, alpha: alpha * dimAlpha))
@@ -2741,8 +2863,8 @@ class TerminalRenderer: NSView {
         default:
             // Unrecognized — fall back to the font glyph.
             drawTextRun(
-                context: context, text: String(UnicodeScalar(codepoint)!),
-                col: Int((x - padding) / width), rowY: y,
+                context: context, scalars: [UnicodeScalar(codepoint)!],
+                col: col, rowY: y,
                 fgR: fgR, fgG: fgG, fgB: fgB,
                 bold: false, italic: false, dim: dim
             )
@@ -2800,19 +2922,22 @@ class TerminalRenderer: NSView {
         // can tell apart (Ctrl-I vs Tab, Esc vs Alt); plain typing still goes
         // through the input manager below.
         if let backend, let flags = backend.mode()?.kittyFlags, !flags.isEmpty, !hasMarkedText(),
-            let key = KeyEncoder.kittyKey(for: event),
+            let key = KeyEncoder.kittyKey(for: event, optionAsMeta: optionAsMeta),
+            !Self.inputMethodComposes(key, flags: flags),
             let bytes = KittyKeyboard.encode(
                 key.key, modifiers: key.modifiers, event: event.isARepeat ? .repeat : .press, text: key.text,
                 flags: flags)
         {
             if !bytes.isEmpty {
-                if isScrolledBack {
-                    isScrolledBack = false
-                    backend.scrollToBottom()
-                }
-                backend.write(bytes: bytes)
-                resetBlink()
+                writeTypedBytes(bytes, to: backend)
             }
+            return
+        }
+
+        // Option as Meta: Esc + the key, before the input manager can
+        // compose with it (⌥E starts an accent on a US layout).
+        if let backend, !hasMarkedText(), let bytes = KeyEncoder.metaBytes(for: event, optionAsMeta: optionAsMeta) {
+            writeTypedBytes(bytes, to: backend)
             return
         }
 
@@ -2847,10 +2972,12 @@ class TerminalRenderer: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
-        // Releases, for programs that asked for kitty event types.
+        // Releases, for programs that asked for kitty event types (not for
+        // keys an input method took as text).
         if let backend, !event.modifierFlags.contains(.command),
-            let flags = backend.mode()?.kittyFlags, flags.contains(.reportEventTypes),
-            let key = KeyEncoder.kittyKey(for: event),
+            let flags = backend.mode()?.kittyFlags, flags.contains(.reportEventTypes), !hasMarkedText(),
+            let key = KeyEncoder.kittyKey(for: event, optionAsMeta: optionAsMeta),
+            !Self.inputMethodComposes(key, flags: flags),
             let bytes = KittyKeyboard.encode(
                 key.key, modifiers: key.modifiers, event: .release, text: key.text, flags: flags),
             !bytes.isEmpty
@@ -2859,6 +2986,43 @@ class TerminalRenderer: NSView {
             return
         }
         super.keyUp(with: event)
+    }
+
+    /// Send what a key typed to the program, returning to the bottom of the
+    /// output.
+    private func writeTypedBytes(_ bytes: [UInt8], to backend: TerminalBackend) {
+        if isScrolledBack {
+            isScrolledBack = false
+            backend.scrollToBottom()
+        }
+        backend.write(bytes: bytes)
+        resetBlink()
+    }
+
+    /// Whether a key reported as kitty `reportAllKeys` would bypass an input
+    /// method (Japanese, Chinese, Korean…) that needs it to compose: plain
+    /// typing goes through the input manager while one is selected.
+    private static func inputMethodComposes(
+        _ key: (key: KittyKeyboard.Key, modifiers: KittyKeyboard.Modifiers, text: String?),
+        flags: KittyKeyboard.Flags
+    ) -> Bool {
+        guard flags.contains(.reportAllKeys), case .text = key.key,
+            key.modifiers.isDisjoint(with: [.control, .alt, .superKey])
+        else { return false }
+        return inputMethodSelected()
+    }
+
+    /// The selected keyboard input source is an input method rather than a
+    /// plain keyboard layout.
+    private static func inputMethodSelected() -> Bool {
+        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+            let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceType)
+        else { return false }
+        let type = Unmanaged<CFString>.fromOpaque(property).takeUnretainedValue() as String
+        return [
+            kTISTypeKeyboardInputMode, kTISTypeKeyboardInputMethodModeEnabled,
+            kTISTypeKeyboardInputMethodWithoutModes,
+        ].contains { ($0 as String) == type }
     }
 
     override func doCommand(by selector: Selector) {
@@ -2875,15 +3039,11 @@ class TerminalRenderer: NSView {
         let bytes = KeyEncoder.encode(
             event: event,
             appCursor: mode?.appCursor ?? false,
-            appKeypad: mode?.appKeypad ?? false
+            appKeypad: mode?.appKeypad ?? false,
+            optionAsMeta: optionAsMeta
         )
         if !bytes.isEmpty {
-            if isScrolledBack {
-                isScrolledBack = false
-                backend.scrollToBottom()
-            }
-            backend.write(bytes: bytes)
-            resetBlink()
+            writeTypedBytes(bytes, to: backend)
         }
     }
 
@@ -2998,6 +3158,19 @@ class TerminalRenderer: NSView {
         let colI = Int(col)
         let rowI = Int(row)
         if colI == hoverCol && rowI == hoverRow { return }
+        updateHoverLink(col: colI, row: rowI)
+    }
+
+    /// A file lookup answered in the background: the reference under the
+    /// pointer may be a link now.
+    private func refreshHoverLink() {
+        guard allowHyperlinks, !hoverIsLink, hoverCol >= 0, hoverRow >= 0 else { return }
+        updateHoverLink(col: hoverCol, row: hoverRow)
+    }
+
+    /// The link at the cell under the pointer: an OSC 8 hyperlink, a URL or
+    /// a file reference.
+    private func updateHoverLink(col colI: Int, row rowI: Int) {
         hoverCol = colI
         hoverRow = rowI
 
@@ -3131,33 +3304,157 @@ class TerminalRenderer: NSView {
         let rowText = RowText(
             row: row, generation: frameGeneration, text: String(decoding: units, as: UTF16.self),
             colForUnit: colForUnit, unitForCol: unitForCol, hyperlink: hyperlink)
-        if hoverRowCache?.generation != frameGeneration { hoverPathCache = [:] }
         hoverRowCache = rowText
         return rowText
     }
 
     /// The existing file referenced at a column (see `TerminalPathDetector`),
     /// with its column range on the row. Only a match under the pointer is
-    /// checked on disk (once per frame).
+    /// checked on disk (see `isFile`).
     private func detectPathAt(
         col: Int, in row: RowText
     ) -> (path: String, line: Int?, column: Int?, startCol: Int, endCol: Int)? {
         guard let resolvePath, col < row.unitForCol.count, let hovered = row.unitForCol[col],
             let match = TerminalPathDetector.match(in: row.text, at: hovered),
-            match.range.upperBound <= row.colForUnit.count
+            match.range.upperBound <= row.colForUnit.count,
+            let absolute = resolvePath(match.path), isFile(absolute)
         else { return nil }
-        let absolute: String?
-        if let known = hoverPathCache[match.path] {
-            absolute = known
-        } else {
-            absolute = resolvePath(match.path)
-            hoverPathCache[match.path] = absolute
-        }
-        guard let absolute else { return nil }
         return (
             absolute, match.line, match.column,
             row.colForUnit[match.range.lowerBound], row.colForUnit[match.range.upperBound - 1] + 1
         )
+    }
+
+    // MARK: File References
+
+    /// The absolute path `candidate` names, from `directory` when it's
+    /// relative, worked out from the text alone: `standardizingPath` would
+    /// resolve symlinks for `..`, which can reach a network mount.
+    static func absolutePath(_ candidate: String, in directory: String) -> String {
+        var path = candidate.hasPrefix("~") ? (candidate as NSString).expandingTildeInPath : candidate
+        if !path.hasPrefix("/") { path = (directory as NSString).appendingPathComponent(path) }
+        var parts: [Substring] = []
+        for part in path.split(separator: "/") where part != "." {
+            if part == ".." { _ = parts.popLast() } else { parts.append(part) }
+        }
+        return "/" + parts.joined(separator: "/")
+    }
+
+    /// Paths where a lookup can mount a network share (/net and /Network
+    /// automount whatever host is named) or hang on a volume that stopped
+    /// answering.
+    static func isOnNetworkOrVolume(_ path: String) -> Bool {
+        var lower = path.lowercased()
+        if lower.hasPrefix("/system/volumes/data/") { lower.removeFirst("/system/volumes/data".count) }
+        return ["/net", "/network", "/volumes"].contains { lower == $0 || lower.hasPrefix($0 + "/") }
+    }
+
+    /// The mount point of a path under /Volumes (`/Volumes/Work` for
+    /// `/Volumes/Work/app/main.rs`), or nil.
+    static func volumeMountPoint(_ path: String) -> String? {
+        let parts = path.split(separator: "/")
+        guard parts.count >= 2, parts[0].lowercased() == "volumes" else { return nil }
+        return "/\(parts[0])/\(parts[1])"
+    }
+
+    /// Whether the file system at `mountPoint` is a disk on this Mac
+    /// (MNT_LOCAL), internal or external, rather than a network share. It
+    /// can hang on a share that stopped answering: call it off the main
+    /// thread.
+    nonisolated static func isLocalMount(_ mountPoint: String) -> Bool {
+        var info = statfs()
+        guard statfs(mountPoint, &info) == 0 else { return false }
+        return info.f_flags & UInt32(MNT_LOCAL) != 0
+    }
+
+    /// Whether `path` is an existing file (not a folder). Answers are kept a
+    /// few seconds. Paths on network mounts, and on volumes not yet known to
+    /// be local disks, are never looked up on the main thread: they're looked
+    /// up in the background (false until then), and the link under the
+    /// pointer is worked out again when the answer comes.
+    private func isFile(_ path: String) -> Bool {
+        if let entry = fileChecks[path], -entry.checked.timeIntervalSinceNow < fileCheckLifetime {
+            return entry.isFile
+        }
+        guard !looksUpOffMain(path) else {
+            lookUpInBackground(path)
+            return false
+        }
+        let isFile = Self.lookUpFile(path)
+        rememberFileCheck(path, isFile: isFile)
+        return isFile
+    }
+
+    /// A path whose lookup could mount a share or hang: on a network mount,
+    /// or on a volume not known to be a local disk.
+    private func looksUpOffMain(_ path: String) -> Bool {
+        guard Self.isOnNetworkOrVolume(path) else { return false }
+        guard let mountPoint = Self.volumeMountPoint(path), let entry = volumeChecks[mountPoint],
+            -entry.checked.timeIntervalSinceNow < volumeCheckLifetime
+        else { return true }
+        return !entry.isLocal
+    }
+
+    /// Look `path` up (and whether its volume is a local disk) on the
+    /// background queue; the answer is kept on the main thread.
+    private func lookUpInBackground(_ path: String) {
+        guard pendingFileChecks.insert(path).inserted else { return }
+        let mountPoint = Self.volumeMountPoint(path)
+        Self.slowFileCheckQueue.async { [weak self] in
+            let isLocal = mountPoint.map(Self.isLocalMount)
+            let isFile = Self.lookUpFile(path)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.pendingFileChecks.remove(path)
+                if let mountPoint, let isLocal {
+                    if self.volumeChecks.count >= 64 { self.volumeChecks.removeAll() }
+                    self.volumeChecks[mountPoint] = (isLocal, Date())
+                }
+                self.rememberFileCheck(path, isFile: isFile)
+                if isFile { self.refreshHoverLink() }
+            }
+        }
+    }
+
+    private func rememberFileCheck(_ path: String, isFile: Bool) {
+        if fileChecks.count >= fileCheckLimit {
+            let now = Date()
+            fileChecks = fileChecks.filter { now.timeIntervalSince($0.value.checked) < fileCheckLifetime }
+            if fileChecks.count >= fileCheckLimit { fileChecks.removeAll(keepingCapacity: true) }
+        }
+        fileChecks[path] = (isFile, Date())
+    }
+
+    nonisolated private static func lookUpFile(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+
+    /// Lookups on network mounts and other volumes, one at a time, so one
+    /// that hangs ties up a single thread.
+    private static let slowFileCheckQueue = DispatchQueue(label: "impulse.terminal.file-check", qos: .userInitiated)
+
+    /// Look `paths` up off the main thread, waiting at most `timeout`: a
+    /// share that doesn't answer leaves them unanswered (missing) instead of
+    /// freezing the window. Answers that come later are kept for next time.
+    private func checkFilesOffMain(_ paths: [String], timeout: TimeInterval = 0.3) {
+        let unknown = Set(paths).filter {
+            guard let entry = fileChecks[$0] else { return true }
+            return -entry.checked.timeIntervalSinceNow >= fileCheckLifetime
+        }
+        guard !unknown.isEmpty else { return }
+        let answers = FileCheckAnswers()
+        let done = DispatchSemaphore(value: 0)
+        Self.slowFileCheckQueue.async { [weak self] in
+            for path in unknown { answers.set(path, Self.lookUpFile(path)) }
+            done.signal()
+            let all = answers.all
+            DispatchQueue.main.async {
+                for (path, isFile) in all { self?.rememberFileCheck(path, isFile: isFile) }
+            }
+        }
+        _ = done.wait(timeout: .now() + timeout)
+        for (path, isFile) in answers.all { rememberFileCheck(path, isFile: isFile) }
     }
 
     /// Scan the row's text for a URL pattern and return the match that
@@ -3217,6 +3514,7 @@ class TerminalRenderer: NSView {
     override func mouseDown(with event: NSEvent) {
         onMouseDown?()
         endHints()
+        leftPressReported = false
         // Hover-toolbar buttons take priority over selection.
         let point = convert(event.locationInWindow, from: nil)
         if let target = hoverToolbarTargets.first(where: { $0.rect.contains(point) }) {
@@ -3284,7 +3582,10 @@ class TerminalRenderer: NSView {
             onBlockSelectionKey?(.exit)
         }
 
-        if reportMouseEvent(event, button: 0, motion: false, release: false) {
+        // Shift or Option selects text even while a program reports the
+        // mouse.
+        if !Self.selectsDespiteMouseReporting(event), reportMouseEvent(event, button: 0, motion: false, release: false) {
+            leftPressReported = true
             return
         }
         let (col, row) = gridPoint(from: event)
@@ -3314,7 +3615,9 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        if reportMouseEvent(event, button: 0, motion: true, release: false) {
+        // A press the program got: its drags and release go there too.
+        if leftPressReported {
+            _ = reportMouseEvent(event, button: 0, motion: true, release: false)
             return
         }
         let (col, row) = gridPoint(from: event)
@@ -3333,7 +3636,9 @@ class TerminalRenderer: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if reportMouseEvent(event, button: 0, motion: false, release: true) {
+        if leftPressReported {
+            leftPressReported = false
+            _ = reportMouseEvent(event, button: 0, motion: false, release: true)
             return
         }
         let shouldCopy = shouldCopySelectionOnMouseUp
@@ -3384,6 +3689,14 @@ class TerminalRenderer: NSView {
         }
 
         let (col, row) = gridPoint(from: event)
+        // A drag is reported when it reaches another cell, not for every
+        // point it moves.
+        if motion {
+            if let last = lastReportedMotionCell, last.col == col, last.row == row { return true }
+            lastReportedMotionCell = (col, row)
+        } else {
+            lastReportedMotionCell = nil
+        }
 
         // Encode modifier flags.
         var cb = button
@@ -3392,21 +3705,27 @@ class TerminalRenderer: NSView {
         if event.modifierFlags.contains(.option) { cb += 8 }
         if event.modifierFlags.contains(.control) { cb += 16 }
 
-        if mode.mouseSgr {
-            // SGR format: CSI < Cb ; Cx ; Cy ; (M|m)
-            let suffix = release ? "m" : "M"
-            let seq = "\u{1B}[<\(cb);\(Int(col) + 1);\(Int(row) + 1)\(suffix)"
-            backend.write(seq)
-        } else {
-            // Legacy X10 format: CSI M Cb Cx Cy (each byte = value + 32)
-            // Release events use button code 3 in X10.
-            let x10Button = release ? 3 : cb
-            let cbByte = UInt8(clamping: x10Button + 32)
-            let cxByte = UInt8(clamping: Int(col) + 1 + 32)
-            let cyByte = UInt8(clamping: Int(row) + 1 + 32)
-            backend.write(bytes: [0x1B, 0x5B, 0x4D, cbByte, cxByte, cyByte])
-        }
+        backend.write(bytes: Self.mouseReport(button: cb, col: col, row: row, release: release, sgr: mode.mouseSgr))
         return true
+    }
+
+    /// One mouse report: SGR (`CSI < Cb ; Cx ; Cy M`, `m` for a release) or
+    /// the X10/normal form (`CSI M Cb Cx Cy`, each byte the value + 32; a
+    /// release is button 3 there).
+    static func mouseReport(button: Int, col: UInt16, row: UInt16, release: Bool, sgr: Bool) -> [UInt8] {
+        if sgr {
+            return Array("\u{1B}[<\(button);\(Int(col) + 1);\(Int(row) + 1)\(release ? "m" : "M")".utf8)
+        }
+        return [
+            0x1B, 0x5B, 0x4D, UInt8(clamping: (release ? 3 : button) + 32),
+            UInt8(clamping: Int(col) + 1 + 32), UInt8(clamping: Int(row) + 1 + 32),
+        ]
+    }
+
+    /// Shift or Option held: the mouse selects text even while a program
+    /// has mouse reporting on.
+    static func selectsDespiteMouseReporting(_ event: NSEvent) -> Bool {
+        !event.modifierFlags.intersection([.shift, .option]).isEmpty
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -3512,20 +3831,19 @@ class TerminalRenderer: NSView {
             rawDelta = event.deltaY * 3
         }
 
-        // Mouse reporting: TUIs that opt in get wheel events as SGR mouse
-        // codes. Emit one mouse-button event per line of scroll so fast
-        // swipes feel proportional.
+        // Mouse reporting: TUIs that opt in get wheel events as mouse
+        // buttons 64/65, in SGR or the normal encoding. Emit one event per
+        // line of scroll so fast swipes feel proportional.
         if let mode, mode.mouseReportClick || mode.mouseMotion || mode.mouseDrag {
-            guard mode.mouseSgr else { return }
             scrollAccumulator += rawDelta
             let lines = Int(scrollAccumulator)
             guard lines != 0 else { return }
             scrollAccumulator -= CGFloat(lines)
             let (col, row) = gridPoint(from: event)
-            let button = scrollingUp ? 64 : 65
-            let oneEvent = "\u{1B}[<\(button);\(col + 1);\(row + 1)M"
+            let oneEvent = Self.mouseReport(
+                button: scrollingUp ? 64 : 65, col: col, row: row, release: false, sgr: mode.mouseSgr)
             let count = min(abs(lines), 20)
-            backend.write(String(repeating: oneEvent, count: count))
+            backend.write(bytes: Array(repeatElement(oneEvent, count: count).joined()))
             return
         }
 
@@ -3552,7 +3870,7 @@ class TerminalRenderer: NSView {
         // Clamp scroll-down (negative) so the offset can't drop below the floor
         // captured when the prompt was tucked away — the last command output is
         // the true bottom, and the redundant prompt below it stays hidden.
-        if lines < 0, let floor = scrollFloorOffset {
+        if lines < 0, let floor = activeScrollFloor {
             let available = Int(currentDisplayOffset) - floor
             if available <= 0 { return }
             lines = max(lines, -available)
@@ -3567,7 +3885,7 @@ class TerminalRenderer: NSView {
     /// open directly; files open in the editor (folders and bundles are
     /// revealed in Finder, never launched), and anything else asks first,
     /// showing the real target.
-    private func openLink(_ url: URL) {
+    func openLink(_ url: URL) {
         switch url.scheme?.lowercased() {
         case "http", "https", "mailto":
             NSWorkspace.shared.open(url)
@@ -3665,11 +3983,8 @@ extension TerminalRenderer: NSTextInputClient {
             isScrolledBack = false
             backend.scrollToBottom()
         }
-        if let metaData = KeyEncoder.encodeMetaForInsertText(text: text, event: currentKeyEvent) {
-            backend.write(metaData)
-        } else {
-            backend.write(text)
-        }
+        // Composed text as typed (Option as Meta is handled in keyDown).
+        backend.write(text)
         // Clear any composition state.
         markedText = ""
         markedSelection = NSRange(location: 0, length: 0)
@@ -3728,8 +4043,8 @@ extension TerminalRenderer: NSTextInputClient {
     }
 
     /// Returns the screen rectangle for the given character range. The IME
-    /// uses this to position its candidate window. We return the cursor
-    /// position since marked text is drawn at the cursor.
+    /// uses this to position its candidate window: the range's cells in the
+    /// marked text, which is drawn from the cursor.
     func firstRect(
         forCharacterRange range: NSRange,
         actualRange: NSRangePointer?
@@ -3739,19 +4054,47 @@ extension TerminalRenderer: NSTextInputClient {
         }
         let cw = fontMetrics.cellWidth
         let ch = fontMetrics.cellHeight
+        let cells = Self.markedTextCells(markedText, range: range)
+        actualRange?.pointee = cells.range
         // Where the marked text is drawn: the cursor's row, including the
         // bottom-anchor offset and collapsed rows. The view is flipped, and
         // convert(_:to:) accounts for that.
         let viewRect = NSRect(
-            x: padding + CGFloat(grid.cursorCol) * cw,
+            x: padding + CGFloat(grid.cursorCol + cells.offset) * cw,
             y: contentYOffset + rowTopY(Int(grid.cursorRow)),
-            width: cw, height: ch)
+            width: CGFloat(max(1, cells.width)) * cw, height: ch)
         let windowRect = self.convert(viewRect, to: nil)
         return window.convertToScreen(windowRect)
     }
 
     func characterIndex(for point: NSPoint) -> Int {
         return NSNotFound
+    }
+
+    /// Cells a character takes in the grid: two for East Asian wide and
+    /// fullwidth characters and emoji, one otherwise.
+    static func cellWidth(of character: Character) -> Int {
+        guard let scalar = character.unicodeScalars.first else { return 1 }
+        let v = scalar.value
+        let wide =
+            (0x1100...0x115F).contains(v) || (0x2E80...0x303E).contains(v) || (0x3041...0x33FF).contains(v)
+            || (0x3400...0x4DBF).contains(v) || (0x4E00...0x9FFF).contains(v) || (0xA000...0xA4CF).contains(v)
+            || (0xA960...0xA97F).contains(v) || (0xAC00...0xD7A3).contains(v) || (0xF900...0xFAFF).contains(v)
+            || (0xFE10...0xFE19).contains(v) || (0xFE30...0xFE6F).contains(v) || (0xFF00...0xFF60).contains(v)
+            || (0xFFE0...0xFFE6).contains(v) || (0x20000...0x3FFFD).contains(v)
+            || scalar.properties.isEmojiPresentation
+        return wide ? 2 : 1
+    }
+
+    /// Where `range` of the marked text (in UTF-16 units, as the input
+    /// manager counts) is drawn: its offset from the cursor and its width,
+    /// in cells, and the range clamped to the text.
+    static func markedTextCells(_ marked: String, range: NSRange) -> (offset: Int, width: Int, range: NSRange) {
+        let text = marked as NSString
+        let start = range.location == NSNotFound ? 0 : min(max(0, range.location), text.length)
+        let clamped = NSRange(location: start, length: min(max(0, range.length), text.length - start))
+        func cells(_ part: String) -> Int { part.reduce(0) { $0 + cellWidth(of: $1) } }
+        return (cells(text.substring(to: start)), cells(text.substring(with: clamped)), clamped)
     }
 }
 
@@ -3835,4 +4178,16 @@ extension TerminalRenderer {
     override func accessibilityRange(forLine line: Int) -> NSRange { accessibleText().range(forLine: line) }
 
     override func accessibilityString(for range: NSRange) -> String? { accessibleText().substring(range) }
+}
+
+/// Answers from `checkFilesOffMain`'s background lookups.
+private final class FileCheckAnswers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var answers: [String: Bool] = [:]
+
+    func set(_ path: String, _ isFile: Bool) {
+        lock.withLock { answers[path] = isFile }
+    }
+
+    var all: [String: Bool] { lock.withLock { answers } }
 }

@@ -39,4 +39,45 @@ final class EditorWebView: WKWebView {
     else { return false }
     return !editorKeeps.contains(binding.id) && !terminalCategories.contains(binding.category)
   }
+
+  // MARK: Dropped files
+
+  // Files dropped on the editor (from the file tree or Finder) open in
+  // editor tabs. The page never sees them: WebKit's own handling of a file
+  // drop is to load the file in place of the editor.
+
+  private static func droppedFiles(_ sender: NSDraggingInfo) -> [URL] {
+    sender.draggingPasteboard.readObjects(
+      forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+  }
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    Self.droppedFiles(sender).isEmpty ? super.draggingEntered(sender) : .copy
+  }
+
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    Self.droppedFiles(sender).isEmpty ? super.draggingUpdated(sender) : .copy
+  }
+
+  override func draggingExited(_ sender: NSDraggingInfo?) {
+    if let sender, !Self.droppedFiles(sender).isEmpty { return }
+    super.draggingExited(sender)
+  }
+
+  override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    Self.droppedFiles(sender).isEmpty ? super.prepareForDragOperation(sender) : true
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    let files = Self.droppedFiles(sender)
+    guard !files.isEmpty else { return super.performDragOperation(sender) }
+    guard let controller = window?.windowController as? MainWindowController else { return false }
+    for file in files { controller.openFile(path: file.path) }
+    return true
+  }
+
+  override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+    if let sender, !Self.droppedFiles(sender).isEmpty { return }
+    super.concludeDragOperation(sender)
+  }
 }

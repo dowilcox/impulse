@@ -4,6 +4,7 @@
 // workspace settings / initialization options for known servers.
 
 import Foundation
+import ImpulseKit
 
 public struct LSPServerConfig {
   public var command: String
@@ -301,22 +302,28 @@ public struct LSPConfig {
   /// Port of `detect_project_root`: walk up from the file's directory. The
   /// innermost directory containing a root marker wins; the innermost `.git`
   /// directory is the fallback when no marker matches anywhere.
-  public static func detectProjectRoot(fileUri: String, markers: [String]) -> String? {
+  ///
+  /// With a `ceiling` (a folder, as `WorkspaceTrust.normalize` spells it:
+  /// the trusted folder the file is in), the walk stops at the last
+  /// directory inside it, and that directory is the root when nothing below
+  /// it is: a server never works in a folder above the one trusted.
+  public static func detectProjectRoot(fileUri: String, markers: [String], within ceiling: String? = nil) -> String? {
     guard let path = FileURI.toPath(fileUri), path != "/" else { return nil }
     var dir = (path as NSString).deletingLastPathComponent
     if dir.isEmpty { return nil }
-    var best: String?
     var gitRoot: String?
+    var lastInside: String?
     let fm = FileManager.default
 
     while true {
-      if best == nil {
-        for marker in markers {
-          if fm.fileExists(atPath: (dir as NSString).appendingPathComponent(marker)) {
-            best = FileURI.fromPath(dir)
-            break
-          }
-        }
+      if let ceiling {
+        let resolved = WorkspaceTrust.normalize(dir)
+        guard ceiling == "/" || resolved == ceiling || resolved.hasPrefix(ceiling + "/") else { break }
+        lastInside = dir
+      }
+      for marker in markers where fm.fileExists(atPath: (dir as NSString).appendingPathComponent(marker)) {
+        // The innermost marker: nothing further up matters.
+        return FileURI.fromPath(dir)
       }
       if gitRoot == nil, fm.fileExists(atPath: (dir as NSString).appendingPathComponent(".git")) {
         gitRoot = FileURI.fromPath(dir)
@@ -327,7 +334,7 @@ public struct LSPConfig {
       dir = parent
     }
 
-    return best ?? gitRoot
+    return gitRoot ?? lastInside.flatMap(FileURI.fromPath)
   }
 
   // MARK: Default server settings

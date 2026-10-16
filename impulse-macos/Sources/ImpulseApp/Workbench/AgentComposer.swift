@@ -174,7 +174,7 @@ struct AgentComposerView: View {
     if fileIndex?.root != root {
       fileIndex = (root, [])
       DispatchQueue.global(qos: .userInitiated).async {
-        let files = FileIndex.files(root: root, limit: 50_000)
+        let files = FileIndex.files(root: root, limit: 50_000, trusted: Trust.shared.isTrusted(root))
         DispatchQueue.main.async {
           fileIndex = (root, files)
           updateMentions(for: self.text)

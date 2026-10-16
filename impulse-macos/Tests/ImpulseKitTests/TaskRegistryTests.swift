@@ -24,6 +24,24 @@
       #expect(registry.nextSlot(available: { $0 != 1 }) == 3, "a slot whose ports are busy is skipped")
     }
 
+    @Test func theSearchForAFreeSlotEnds() throws {
+      var registry = TaskRegistry()
+      var asked = 0
+      #expect(registry.nextSlot(available: { _ in asked += 1; return false }) == nil, "ports that are never free")
+      #expect(asked == TaskRegistry.maxSlot)
+      for slot in 1...TaskRegistry.maxSlot {
+        registry.add(TaskRecord(path: "/r.worktrees/t\(slot)", branch: "t\(slot)", slot: slot))
+      }
+      #expect(registry.nextSlot() == nil, "every slot taken")
+
+      // Under the registry's lock: the update returns, and the lock is free again.
+      let git = try temporaryGitDirectory()
+      defer { try? FileManager.default.removeItem(atPath: (git as NSString).deletingLastPathComponent) }
+      let none = try TaskRegistry.update(commonGitDirectory: git) { $0.nextSlot { _ in false } }
+      #expect(none == nil)
+      #expect(try TaskRegistry.update(commonGitDirectory: git) { $0.nextSlot() } == 1)
+    }
+
     @Test func addingTheSameFolderReplacesItsRecord() {
       var registry = TaskRegistry()
       registry.add(TaskRecord(path: "/r.worktrees/a", branch: "a", slot: 1))
@@ -69,7 +87,7 @@
       defer { try? FileManager.default.removeItem(atPath: (git as NSString).deletingLastPathComponent) }
       #expect(TaskRegistry.load(commonGitDirectory: git) == TaskRegistry())
       let created = Date(timeIntervalSince1970: 1_760_000_000)
-      let slot = try TaskRegistry.update(commonGitDirectory: git) { registry -> Int in
+      let slot = try TaskRegistry.update(commonGitDirectory: git) { registry -> Int? in
         let slot = registry.nextSlot()
         registry.add(TaskRecord(path: "/r.worktrees/a", branch: "a", base: "main", remote: "origin", slot: slot, created: created))
         return slot

@@ -26,48 +26,60 @@ extension MainWindowController {
       guard !rules.isEmpty || !known.isEmpty else { return }
       DispatchQueue.main.async {
         self?.showDependencyToast(
-          workspace: id, root: root, move: move, rules: rules, known: known, settings: settings)
+          workspace: id, root: root, move: move, changed: changed, known: known, settings: settings)
       }
     }
   }
 
+  /// The settings read here, not yet trusted, only decide what the toast
+  /// says and offers; what runs is worked out again from the trusted
+  /// settings when it's clicked.
   private func showDependencyToast(
-    workspace: UUID, root: String, move: DependencyChanges.Move, rules: [(file: String, command: String)],
-    known: [String], settings: ProjectConfig?
+    workspace: UUID, root: String, move: DependencyChanges.Move, changed: [String], known: [String],
+    settings: ProjectConfig?
   ) {
+    let rules = DependencyChanges.matches(rules: settings?.onChange ?? [:], changed: changed)
     let files = Array(Set(rules.map(\.file) + known)).sorted()
     let names = files.map { ($0 as NSString).lastPathComponent }
     let listed = names.count <= 2 ? names.joined(separator: " and ") : "\(names[0]), \(names[1]) and \(names.count - 2) more"
-    var title: String?
-    var command: String?
-    if !rules.isEmpty {
-      title = "Update Dependencies"
-      command = rules.map(\.command).joined(separator: " && ")
-    } else if let setup = settings?.setupScript {
-      title = "Run Setup"
-      command = setup
-    }
+    let command = Self.updateCommand(settings, changed: changed, known: known)
     let check = move == .merge ? settings?.checkScript : nil
     var toast = Toast(
       kind: .info, message: "\(listed) changed",
       detail: command.map { "Update with: \($0)" } ?? "Reinstall dependencies before running tests.",
       lifetime: 20)
-    if let title, let command {
-      toast.actionTitle = title
-      toast.action = { [weak self] in self?.runProjectCommand(command, root: root, workspace: workspace) }
+    if command != nil {
+      toast.actionTitle = rules.isEmpty ? "Run Setup" : "Update Dependencies"
+      toast.action = { [weak self] in
+        self?.runProjectCommand(root: root, workspace: workspace) { Self.updateCommand($0, changed: changed, known: known) }
+      }
     }
-    if let check {
+    if check != nil {
       toast.secondaryTitle = "Run Check"
-      toast.secondaryAction = { [weak self] in self?.runProjectCommand(check, root: root, workspace: workspace) }
+      toast.secondaryAction = { [weak self] in self?.runProjectCommand(root: root, workspace: workspace) { $0.checkScript } }
     }
     toasts.show(toast)
   }
 
-  /// Run a command from the project settings (once they're trusted) in a new
-  /// terminal tab of `workspace`.
-  private func runProjectCommand(_ command: String, root: String, workspace: UUID) {
-    withTrustedProjectConfig(root: root) { [weak self] _ in
+  /// What brings the checkout up to date after `changed`: the
+  /// `[on_change]` commands for the files that changed, else the setup
+  /// script when a known dependency file changed.
+  private static func updateCommand(_ settings: ProjectConfig?, changed: [String], known: [String]) -> String? {
+    let rules = DependencyChanges.matches(rules: settings?.onChange ?? [:], changed: changed)
+    if !rules.isEmpty { return rules.map(\.command).joined(separator: " && ") }
+    return known.isEmpty ? nil : settings?.setupScript
+  }
+
+  /// Run a command from the project settings in a new terminal tab of
+  /// `workspace`, once they're trusted. `command` picks it from the
+  /// trusted settings, so what runs is what was trusted.
+  private func runProjectCommand(root: String, workspace: UUID, _ command: @escaping (ProjectConfig) -> String?) {
+    withTrustedProjectConfig(root: root) { [weak self] config in
       guard let self else { return }
+      guard let command = command(config) else {
+        self.toasts.show(Toast(kind: .info, message: "The project settings have nothing to run for this anymore."))
+        return
+      }
       self.tabManager.activateWorkspace(workspace)
       self.tabManager.addTerminalTab(directory: root, initialCommand: command)
     }

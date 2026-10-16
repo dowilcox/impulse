@@ -10,7 +10,19 @@ final class ReviewFile {
   /// Viewed earlier, but the diff changed since.
   var changedSinceViewed = false
   var expanded = true
-  var diff: FileDiff?
+  var diff: FileDiff? {
+    didSet {
+      Self.versions &+= 1
+      diffVersion = Self.versions
+    }
+  }
+  /// Changes whenever `diff` is replaced, to a number no file had before:
+  /// the list keeps a file's rows while it's the same.
+  private(set) var diffVersion = 0
+  private static var versions = 0
+  /// The file on disk when `diff` was read: while it's the same, after
+  /// edits to other files, the diff still holds.
+  var signature: FileSignature?
   var error: String?
   /// A diff request is out.
   var loading = false
@@ -119,65 +131,89 @@ enum ReviewRow: Hashable {
   }
 }
 
+/// What a file's rows, and their heights, are made from: while it's the
+/// same, the rows built last time still hold.
+struct ReviewRowKey: Equatable {
+  let layout: ReviewLayout
+  let expanded: Bool
+  let diffVersion: Int
+  let error: String?
+  let comments: [ReviewComment]
+  let outdated: Set<String>
+  /// The composer's hunk and line.
+  let composer: [Int]?
+  let editingComment: String?
+
+  init(_ file: ReviewFile, layout: ReviewLayout) {
+    self.layout = layout
+    expanded = file.expanded
+    diffVersion = file.diffVersion
+    error = file.error
+    comments = file.comments
+    outdated = file.outdated
+    composer = file.composer.map { [$0.hunk, $0.lineIndex] }
+    editingComment = file.editingComment
+  }
+}
+
 enum ReviewRowBuilder {
   /// The rows for `files` in order.
   static func rows(_ files: [ReviewFile], layout: ReviewLayout) -> [ReviewRow] {
-    var rows: [ReviewRow] = []
-    for file in files {
-      let path = file.path
-      rows.append(.fileHeader(path))
-      defer { rows.append(.fileEnd(path)) }
-      guard file.expanded else { continue }
-      guard let diff = file.diff else {
-        rows.append(.notice(path, file.error.map(ReviewNotice.error) ?? .loading))
-        continue
-      }
-      if diff.isBinary {
-        rows.append(.notice(path, .binary))
-        continue
-      }
-      if diff.tooLarge {
-        rows.append(.notice(path, .tooLarge))
-        continue
-      }
-      if diff.hunks.isEmpty {
-        rows.append(.notice(path, .noChanges))
-        continue
-      }
-      // Comments whose lines changed float at the top.
-      let outdated = file.comments.filter { file.outdated.contains($0.id) }
-      if !outdated.isEmpty {
-        rows.append(.outdatedTitle(path))
-        rows += outdated.map { .comment(path, id: $0.id) }
-      }
-      let anchored = commentsByEnd(file.comments.filter { !file.outdated.contains($0.id) })
-      for (hunkIndex, hunk) in diff.hunks.enumerated() {
-        rows.append(.hunkHeader(path, hunk: hunkIndex))
-        func extras(after lineIndex: Int) {
-          let line = hunk.lines[lineIndex]
-          for key in anchorKeys(line) {
-            rows += (anchored[key] ?? []).map { .comment(path, id: $0.id) }
-          }
-          if let composer = file.composer, composer.hunk == hunkIndex, composer.lineIndex == lineIndex {
-            rows.append(.composer(path))
-          }
-        }
-        switch layout {
-        case .unified:
-          for index in hunk.lines.indices {
-            rows.append(.line(path, hunk: hunkIndex, line: index))
-            extras(after: index)
-          }
-        case .split:
-          for pair in splitPairs(hunk.lines) {
-            rows.append(.split(path, hunk: hunkIndex, old: pair.old, new: pair.new))
-            if let old = pair.old { extras(after: old) }
-            if let new = pair.new, new != pair.old { extras(after: new) }
-          }
-        }
-      }
-      if diff.truncated { rows.append(.notice(path, .truncated)) }
+    files.flatMap { rows(for: $0, layout: layout) }
+  }
+
+  /// One file's rows, from its header to the end of its card.
+  static func rows(for file: ReviewFile, layout: ReviewLayout) -> [ReviewRow] {
+    var rows: [ReviewRow] = [.fileHeader(file.path)]
+    rows += body(of: file, layout: layout)
+    rows.append(.fileEnd(file.path))
+    return rows
+  }
+
+  /// What a file's card shows between its header and its end.
+  private static func body(of file: ReviewFile, layout: ReviewLayout) -> [ReviewRow] {
+    let path = file.path
+    guard file.expanded else { return [] }
+    guard let diff = file.diff else {
+      return [.notice(path, file.error.map(ReviewNotice.error) ?? .loading)]
     }
+    if diff.isBinary { return [.notice(path, .binary)] }
+    if diff.tooLarge { return [.notice(path, .tooLarge)] }
+    if diff.hunks.isEmpty { return [.notice(path, .noChanges)] }
+    var rows: [ReviewRow] = []
+    // Comments whose lines changed float at the top.
+    let outdated = file.comments.filter { file.outdated.contains($0.id) }
+    if !outdated.isEmpty {
+      rows.append(.outdatedTitle(path))
+      rows += outdated.map { .comment(path, id: $0.id) }
+    }
+    let anchored = commentsByEnd(file.comments.filter { !file.outdated.contains($0.id) })
+    for (hunkIndex, hunk) in diff.hunks.enumerated() {
+      rows.append(.hunkHeader(path, hunk: hunkIndex))
+      func extras(after lineIndex: Int) {
+        let line = hunk.lines[lineIndex]
+        for key in anchorKeys(line) {
+          rows += (anchored[key] ?? []).map { .comment(path, id: $0.id) }
+        }
+        if let composer = file.composer, composer.hunk == hunkIndex, composer.lineIndex == lineIndex {
+          rows.append(.composer(path))
+        }
+      }
+      switch layout {
+      case .unified:
+        for index in hunk.lines.indices {
+          rows.append(.line(path, hunk: hunkIndex, line: index))
+          extras(after: index)
+        }
+      case .split:
+        for pair in splitPairs(hunk.lines) {
+          rows.append(.split(path, hunk: hunkIndex, old: pair.old, new: pair.new))
+          if let old = pair.old { extras(after: old) }
+          if let new = pair.new, new != pair.old { extras(after: new) }
+        }
+      }
+    }
+    if diff.truncated { rows.append(.notice(path, .truncated)) }
     return rows
   }
 

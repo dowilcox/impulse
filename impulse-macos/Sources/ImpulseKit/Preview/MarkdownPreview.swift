@@ -41,7 +41,7 @@ public enum MarkdownPreview {
       }
     }
 
-    var bytes = Array(source.utf8)
+    let bytes = Array(source.utf8)
     bytes.withUnsafeBufferPointer { buffer in
       buffer.baseAddress.map {
         $0.withMemoryRebound(to: CChar.self, capacity: buffer.count) {
@@ -76,21 +76,21 @@ public enum MarkdownPreview {
       .replacingOccurrences(of: "'", with: "&#x27;")
   }
 
-  /// Render a markdown source string to a full standalone HTML document with
-  /// themed CSS and highlight.js code highlighting. `highlightJSPath` should
-  /// be an absolute `file://` URL string to `highlight.min.js` (empty to
-  /// disable highlighting). Returns nil if the source exceeds the size limit.
   /// Adds a Run button to shell code blocks. `$ ` prompts are stripped
-  /// (only prompted lines run when a block has any).
-  static let runButtonScript = """
-    <style nonce="aW1wdWxzZVByZXZpZXc=">
+  /// (only prompted lines run when a block has any). Those blocks wrap, so
+  /// no part of the command hides past the right edge.
+  static func runButtonScript(nonce: String) -> String {
+    """
+    <style nonce="\(nonce)">
     pre { position: relative; }
+    pre.impulse-runnable { padding-right: 72px; }
+    pre.impulse-runnable code { white-space: pre-wrap; overflow-wrap: anywhere; }
     .impulse-run { position: absolute; top: 6px; right: 6px; font: 12px -apple-system, sans-serif;
       padding: 2px 8px; border-radius: 5px; border: 1px solid rgba(127,127,127,.4);
       background: rgba(127,127,127,.15); color: inherit; cursor: pointer; opacity: .75; }
     .impulse-run:hover { opacity: 1; }
     </style>
-    <script nonce="aW1wdWxzZVByZXZpZXc=">
+    <script nonce="\(nonce)">
     (function () {
       var shells = /(^|\\s)language-(bash|sh|shell|zsh|fish|console|shell-session|terminal)(\\s|$)/;
       function command(code) {
@@ -107,12 +107,74 @@ public enum MarkdownPreview {
         button.addEventListener("click", function () {
           window.webkit.messageHandlers.impulseRun.postMessage(command(code));
         });
+        code.parentElement.classList.add("impulse-runnable");
         code.parentElement.appendChild(button);
       });
     })();
     </script>
     """
+  }
 
+  /// A new script nonce for each rendered page, so nothing written into the
+  /// page ahead of time can carry it.
+  static func makeNonce() -> String {
+    var generator = SystemRandomNumberGenerator()
+    let bytes = (0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+    return Data(bytes).base64EncodedString()
+  }
+
+  /// A Run button's command, ready to type into a shell.
+  public struct RunCommand: Equatable, Sendable {
+    /// Control characters dropped (escape sequences, ⌃U and the like could
+    /// rewrite or run the line), tabs as spaces, line ends as `\n`, the
+    /// ends trimmed.
+    public let text: String
+    /// Nothing in it can hide from someone reading the preview: one line,
+    /// no long run of spaces pushing the rest aside, and no invisible
+    /// format characters (bidirectional overrides, zero-width characters)
+    /// or Unicode line breaks. A command that isn't plain should be
+    /// checked before it runs.
+    public let isPlain: Bool
+  }
+
+  /// Runs of spaces at least this long make a command not plain.
+  static let hidingSpaceRun = 16
+
+  /// The command a Run button sent (`raw`), or nil when there's nothing to
+  /// run.
+  public static func runCommand(from raw: String) -> RunCommand? {
+    var scalars = String.UnicodeScalarView()
+    var previous: Unicode.Scalar?
+    for scalar in raw.unicodeScalars {
+      defer { previous = scalar }
+      switch scalar.value {
+      case 0x0A where previous == "\r": continue
+      case 0x0A, 0x0D: scalars.append("\n")
+      case 0x09: scalars.append(" ")
+      case 0x00...0x1F, 0x7F...0x9F: continue
+      default: scalars.append(scalar)
+      }
+    }
+    let text = String(scalars).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    let invisible = text.unicodeScalars.contains { scalar in
+      switch scalar.properties.generalCategory {
+      case .format, .lineSeparator, .paragraphSeparator: return true
+      default: return false
+      }
+    }
+    let isPlain =
+      !text.contains("\n") && !invisible && !text.contains(String(repeating: " ", count: hidingSpaceRun))
+    return RunCommand(text: text, isPlain: isPlain)
+  }
+
+  /// Render a markdown source string to a full standalone HTML document with
+  /// themed CSS and highlight.js code highlighting. `highlightJSPath` should
+  /// be an absolute `file://` URL string to `highlight.min.js` (empty to
+  /// disable highlighting). Returns nil if the source exceeds the size limit.
+  /// Scripts run only with the page's nonce, new for each render: the
+  /// highlight.js file and Impulse's own scripts carry it.
+  ///
   /// With `runButtons`, shell code blocks (bash, sh, zsh, fish, console…)
   /// get a Run button that posts the command to the `impulseRun` message
   /// handler.
@@ -142,13 +204,14 @@ public enum MarkdownPreview {
     let fontFamily = sanitizeFontFamily(theme.fontFamily)
     let codeFontFamily = sanitizeFontFamily(theme.codeFontFamily)
 
+    let nonce = makeNonce()
     let hljsPath = htmlEscape(highlightJSPath.trimmingCharacters(in: .whitespacesAndNewlines))
     let highlightScripts =
       hljsPath.isEmpty
       ? ""
       : """
-      <script src="\(hljsPath)"></script>
-      <script nonce="aW1wdWxzZVByZXZpZXc=">if (window.hljs) { window.hljs.highlightAll(); }</script>
+      <script nonce="\(nonce)" src="\(hljsPath)"></script>
+      <script nonce="\(nonce)">if (window.hljs) { window.hljs.highlightAll(); }</script>
       """
 
     return """
@@ -157,7 +220,7 @@ public enum MarkdownPreview {
       <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file: 'nonce-aW1wdWxzZVByZXZpZXc='; img-src file: data:; font-src file:;">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-\(nonce)'; img-src file: data:; font-src file:;">
       <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html {
@@ -277,7 +340,7 @@ public enum MarkdownPreview {
       <body>
       \(body)
       \(highlightScripts)
-      \(runButtons ? runButtonScript : "")
+      \(runButtons ? runButtonScript(nonce: nonce) : "")
       </body>
       </html>
       """

@@ -61,5 +61,22 @@
       #expect(Set(rows[0].bottom) == [GraphSegment(0, 0), GraphSegment(0, 1), GraphSegment(0, 2)])
       #expect(rows.map(\.lane) == [0, 0, 1, 2])
     }
+
+    @Test func pagesLayOutLikeTheWholeHistory() {
+      // Merges, a side root and branches whose lines run across page breaks.
+      let history = [
+        c("m2", "m1", "f2"), c("f2", "f1"), c("m1", "b", "t"), c("x", "b"), c("b", "a"),
+        c("t", "a", "s"), c("f1", "a"), c("a", "r"), c("s"), c("r"),
+      ]
+      let whole = CommitGraph.layout(history)
+      for size in 1...history.count {
+        var layout = CommitGraph.Layout()
+        var rows: [GraphRow] = []
+        for start in stride(from: 0, to: history.count, by: size) {
+          rows += layout.append(Array(history[start..<min(start + size, history.count)]))
+        }
+        #expect(rows == whole, "pages of \(size)")
+      }
+    }
   }
 #endif

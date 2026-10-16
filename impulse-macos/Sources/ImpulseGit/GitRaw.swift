@@ -72,13 +72,20 @@ final class GitRepo {
 /// falling back to `git_repository_discover` on cache miss. Port of
 /// `git::open_repo`.
 func openRepo(at path: String) throws -> GitRepo {
-  precondition(LibGit2.initialized, "libgit2 failed to initialize")
+  try openRepo(at: path, lookupDir: repoLookupDirectory(path))
+}
 
-  // Try the parent directory for files (most lookups are for files).
+/// The directory a path's repository root is cached by: a file's parent
+/// (most lookups are for files).
+private func repoLookupDirectory(_ path: String) -> String {
   var isDirectory: ObjCBool = false
   let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
   let isFile = exists && !isDirectory.boolValue
-  let lookupDir = isFile ? (path as NSString).deletingLastPathComponent : path
+  return isFile ? (path as NSString).deletingLastPathComponent : path
+}
+
+private func openRepo(at path: String, lookupDir: String) throws -> GitRepo {
+  precondition(LibGit2.initialized, "libgit2 failed to initialize")
 
   if let cachedRoot = RepoCache.shared.root(forDirectory: lookupDir),
     let repo = try? GitRepo(openingAt: cachedRoot)
@@ -103,6 +110,78 @@ func openRepo(at path: String) throws -> GitRepo {
 
   RepoCache.shared.store(root: root, forDirectory: lookupDir)
   return repo
+}
+
+/// Run `body` on the repository containing `path`, reusing the handle an
+/// earlier short read left idle (see `RepoHandles`). For quick reads of
+/// refs and commits only: nothing libgit2 hands out from the repository
+/// may outlive `body`.
+func withRepo<R>(at path: String, _ body: (GitRepo) throws -> R) throws -> R {
+  let lookupDir = repoLookupDirectory(path)
+  let reused = RepoCache.shared.root(forDirectory: lookupDir).flatMap { RepoHandles.shared.take(root: $0) }
+  let repo = try reused ?? openRepo(at: path, lookupDir: lookupDir)
+  defer { RepoHandles.shared.put(repo) }
+  return try body(repo)
+}
+
+/// Repositories opened for short reads, kept idle for a few seconds so a
+/// burst of them (a revision per task, a lookup per branch) opens each
+/// repository once instead of re-reading its config every time. A handle
+/// serves one caller at a time; one whose folders are gone, or that has
+/// been idle a while, is closed instead (an open repository holds on to
+/// pack files and some config from when it opened).
+final class RepoHandles: @unchecked Sendable {
+  static let shared = RepoHandles()
+
+  private let lock = NSLock()
+  /// By working directory, as libgit2 reports it (the `RepoCache` roots).
+  private var idle: [String: (repo: GitRepo, since: Date)] = [:]
+  private let capacity = 8
+  private let lifetime: TimeInterval = 5
+  private var closeScheduled = false
+
+  var idleCount: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return idle.count
+  }
+
+  /// The idle handle on the repository whose working directory is `root`.
+  func take(root: String) -> GitRepo? {
+    lock.lock()
+    let entry = idle.removeValue(forKey: root)
+    lock.unlock()
+    guard let entry, Date().timeIntervalSince(entry.since) < lifetime,
+      access(root, F_OK) == 0, access(git_repository_path(entry.repo.raw), F_OK) == 0
+    else { return nil }
+    return entry.repo
+  }
+
+  /// Leave `repo` for the next short read of the same repository.
+  func put(_ repo: GitRepo) {
+    guard let root = repo.workdirRaw else { return }
+    lock.lock()
+    defer { lock.unlock() }
+    idle[root] = (repo, Date())
+    if idle.count > capacity, let oldest = idle.min(by: { $0.value.since < $1.value.since })?.key {
+      idle[oldest] = nil
+    }
+    scheduleClose()
+  }
+
+  /// Close what's been idle for `lifetime` (lock held).
+  private func scheduleClose() {
+    guard !closeScheduled else { return }
+    closeScheduled = true
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + lifetime) { [self] in
+      lock.lock()
+      defer { lock.unlock() }
+      closeScheduled = false
+      let now = Date()
+      idle = idle.filter { now.timeIntervalSince($0.value.since) < lifetime }
+      if !idle.isEmpty { scheduleClose() }
+    }
+  }
 }
 
 // MARK: - C interop helpers

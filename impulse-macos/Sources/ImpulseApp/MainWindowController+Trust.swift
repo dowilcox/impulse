@@ -78,7 +78,10 @@ extension MainWindowController {
   ) {
     Trust.prompting.remove(folder)
     if response == .alertFirstButtonReturn {
-      Trust.shared.trust(parentBox?.state == .on ? parent : folder)
+      // The folder itself first: trusting the parent doesn't lift a
+      // restriction on a folder inside it.
+      Trust.shared.trust(folder)
+      if parentBox?.state == .on { Trust.shared.trust(parent) }
       Trust.declined.remove(folder)
       Self.trustDidChange()
     } else {

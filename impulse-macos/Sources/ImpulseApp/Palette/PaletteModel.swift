@@ -2,6 +2,7 @@ import AppKit
 import ImpulseGit
 import ImpulseKit
 import Observation
+import Synchronization
 
 /// What the palette does with the user's choice. Implemented by the window.
 protocol PaletteHost: AnyObject {
@@ -14,7 +15,9 @@ protocol PaletteHost: AnyObject {
   func paletteGoToLine(_ line: UInt32, column: UInt32?)
   func paletteSwitchBranch(_ branch: String)
   func paletteCreateBranch(_ name: String)
-  func paletteSelectTab(_ index: Int)
+  /// Select the tab with this stable id (`TabDisplayInfo.id`), if it's
+  /// still open.
+  func paletteSelectTab(id: Int)
   /// The window's workspaces, and the global tab indexes the strip shows.
   var paletteWorkspaces: [WorkspaceInfo] { get }
   var paletteVisibleTabIndices: [Int] { get }
@@ -129,9 +132,18 @@ final class PaletteModel {
   @ObservationIgnored var iconCache: IconCache?
   @ObservationIgnored var onDismiss: (() -> Void)?
 
-  @ObservationIgnored private var fileIndex: [String] = []
+  @ObservationIgnored private var fileIndex: [String] = [] {
+    didSet { fileIndexVersion += 1 }
+  }
+  @ObservationIgnored private var fileIndexVersion = 0
   @ObservationIgnored private var fileIndexRoot: String = ""
   @ObservationIgnored private var fileIndexDate: Date = .distantPast
+  /// Every file the last file query matched (in index order), so a query
+  /// that only adds to it searches those instead of the whole index.
+  @ObservationIgnored private var fileMatches: (term: String, indexVersion: Int, paths: [String])?
+  /// The newest refresh's generation, readable from the worker: a file
+  /// ranking still running for an older one stops early.
+  @ObservationIgnored private let latestGeneration = LatestGeneration()
   @ObservationIgnored private var branches: [String]?
   @ObservationIgnored private var taskBranches: [(name: String, isRemote: Bool)]?
   @ObservationIgnored private var symbols: [OutlineSymbol]?
@@ -202,6 +214,7 @@ final class PaletteModel {
 
   private func refresh() {
     generation += 1
+    latestGeneration.value.store(generation, ordering: .relaxed)
     textSearchWork?.cancel()
     let (newMode, term) = parse()
     mode = newMode
@@ -231,7 +244,7 @@ final class PaletteModel {
     guard !root.isEmpty else { return }
     isBusy = true
     Self.worker.async { [weak self] in
-      let files = FileIndex.files(root: root)
+      let files = FileIndex.files(root: root, trusted: Trust.shared.isTrusted(root))
       DispatchQueue.main.async {
         guard let self, self.fileIndexRoot == root else { return }
         self.fileIndex = files
@@ -251,12 +264,28 @@ final class PaletteModel {
       emptyMessage = isBusy ? "Indexing files…" : "Type to search files in \(displayRoot(root))"
       return
     }
-    let index = fileIndex
+    // A query that only adds to the last one can only match among its
+    // matches (same case rules or stricter).
+    let version = fileIndexVersion
+    let candidates =
+      fileMatches.flatMap { last in
+        last.indexVersion == version && term.utf16.starts(with: last.term.utf16) ? last.paths : nil
+      } ?? fileIndex
     let generation = self.generation
+    let latest = latestGeneration
     Self.worker.async { [weak self] in
-      let ranked = FuzzyMatcher.rank(index, query: term, limit: 60, isPath: true) { $0 }
+      // Each keystroke queues a ranking; older ones give up once a newer
+      // one is asked for.
+      guard
+        let matched = FuzzyMatcher.matches(
+          candidates, query: term, isPath: true,
+          shouldStop: { latest.value.load(ordering: .relaxed) != generation }, text: { $0 })
+      else { return }
+      let ranked = FuzzyMatcher.best(matched, limit: 60)
+      let paths = matched.map(\.item)
       DispatchQueue.main.async {
         guard let self, self.generation == generation else { return }
+        if self.fileIndexVersion == version { self.fileMatches = (term, version, paths) }
         self.rows = ranked.map { entry in
           self.fileRow(
             absolute: (root as NSString).appendingPathComponent(entry.item), root: root,
@@ -513,7 +542,7 @@ final class PaletteModel {
         subtitle: subtitle.isEmpty ? nil : subtitle,
         trailing: position.flatMap { $0 < 9 ? "⌘\($0 + 1)" : nil }
       ) { [weak self] in
-        self?.host?.paletteSelectTab(tab.index)
+        self?.host?.paletteSelectTab(id: tab.id)
       }
     }
     emptyMessage = "No matching tabs"
@@ -856,4 +885,9 @@ final class PaletteModel {
       run(row)
     }
   }
+}
+
+/// A generation number shared with the palette's worker queue.
+private final class LatestGeneration: Sendable {
+  let value = Atomic<Int>(0)
 }

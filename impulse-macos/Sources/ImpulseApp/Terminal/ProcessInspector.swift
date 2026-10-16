@@ -23,6 +23,17 @@ enum ProcessInspector {
     return ProcessDetails(pid: pid, executablePath: path, arguments: arguments)
   }
 
+  /// When the process started (microseconds since 1970), which tells it
+  /// apart from a later process given the same pid. Nil when there's no
+  /// such process.
+  static func startTime(of pid: pid_t) -> UInt64? {
+    guard pid > 0 else { return nil }
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+    return info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec
+  }
+
   /// argv from `KERN_PROCARGS2`: an argc int, the exec path, NUL padding,
   /// then argc NUL-terminated strings (environment follows).
   static func arguments(of pid: pid_t) -> [String]? {

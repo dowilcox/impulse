@@ -3,6 +3,7 @@
 // managed-status coverage.
 #if canImport(Testing)
   import Foundation
+  import ImpulseKit
   import Testing
 
   @testable import ImpulseLSP
@@ -64,6 +65,36 @@
         fileUri: FileURI.fromPath(file)!, markers: ["Cargo.toml"])
 
       #expect(root == FileURI.fromPath(inner))
+    }
+
+    @Test func aTrustedFolderIsAsFarUpAsTheRootGoes() throws {
+      // A repository with package.json at its top, and only packages/app
+      // trusted. (The temporary folder is behind a symlink, /var to
+      // /private/var: the ceiling is spelled resolved, the file not.)
+      let repo = try makeTempDir()
+      defer { try? FileManager.default.removeItem(atPath: repo) }
+      try FileManager.default.createDirectory(atPath: repo + "/.git", withIntermediateDirectories: true)
+      try "{}".write(toFile: repo + "/package.json", atomically: true, encoding: .utf8)
+      let app = repo + "/packages/app"
+      try FileManager.default.createDirectory(atPath: app + "/src", withIntermediateDirectories: true)
+      let file = FileURI.fromPath(app + "/src/main.ts")!
+      let ceiling = WorkspaceTrust.normalize(app)
+
+      #expect(LSPConfig.detectProjectRoot(fileUri: file, markers: ["package.json"]) == FileURI.fromPath(repo))
+      #expect(
+        LSPConfig.detectProjectRoot(fileUri: file, markers: ["package.json"], within: ceiling)
+          == FileURI.fromPath(app), "the trusted folder, in the file's own spelling")
+
+      // A marker inside the trusted folder still counts.
+      try "{}".write(toFile: app + "/src/package.json", atomically: true, encoding: .utf8)
+      #expect(
+        LSPConfig.detectProjectRoot(fileUri: file, markers: ["package.json"], within: ceiling)
+          == FileURI.fromPath(app + "/src"))
+
+      // The registry keeps its servers there too.
+      let registry = LSPRegistry(rootUri: FileURI.fromPath(repo)!, config: LSPConfig.defaultConfig())
+      registry.trustedFolder = { _ in ceiling }
+      #expect(registry.rootPath(forFileUri: FileURI.fromPath(app + "/lib.ts")!) == app)
     }
 
     @Test func nonFileUriReturnsNil() {

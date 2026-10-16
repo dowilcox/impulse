@@ -118,9 +118,21 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
   let scrollView = NSScrollView()
   private(set) var rows: [ReviewRow] = []
   private var heights: [CGFloat] = []
+  /// What `heights` were measured for: the table's width and code font.
   private var heightsWidth: CGFloat = 0
+  private var heightsFont: NSFont?
+  /// Each file's part of `rows`, in order, built again only when what it
+  /// shows changed.
+  private var segments: [Segment] = []
   private var lastTopPath: String?
   private var resizeWork: DispatchWorkItem?
+
+  private struct Segment {
+    let path: String
+    let key: ReviewRowKey
+    let rows: [ReviewRow]
+    var heights: [CGFloat]
+  }
 
   init(context: ReviewDiffContext) {
     self.context = context
@@ -162,6 +174,9 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     tableView.postsFrameChangedNotifications = true
     NotificationCenter.default.addObserver(
       self, selector: #selector(frameChanged), name: NSView.frameDidChangeNotification, object: tableView)
+    // Setting the delegate drops the table's row count: read it now, so
+    // the first rows inserted aren't counted twice.
+    tableView.reloadData()
   }
 
   deinit {
@@ -175,12 +190,66 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
 
   // MARK: Reloading
 
-  /// Show `newRows`, keeping the row at the top of the view where it was.
-  func reload(_ newRows: [ReviewRow]) {
+  /// Show `files`, keeping the row at the top of the view where it was.
+  /// Only files whose rows changed are built and measured again, and only
+  /// the part of the table that differs is replaced.
+  func reload(_ files: [ReviewFile]) {
     let anchor = topAnchor()
-    rows = newRows.isEmpty ? [] : [.pageTop] + newRows
-    heights = []
-    tableView.reloadData()
+    let width = measuringWidth
+    let remeasure = abs(width - heightsWidth) > 0.5 || heightsFont != context.metrics.codeFont
+    var cached: [String: Segment] = [:]
+    for segment in segments { cached[segment.path] = segment }
+    var changed = Set<String>()
+    segments = files.map { file in
+      let key = ReviewRowKey(file, layout: context.layout)
+      if var segment = cached[file.path], segment.key == key {
+        if remeasure { segment.heights = segment.rows.map { height(of: $0, width: width) } }
+        return segment
+      }
+      changed.insert(file.path)
+      let rows = ReviewRowBuilder.rows(for: file, layout: context.layout)
+      return Segment(path: file.path, key: key, rows: rows, heights: rows.map { height(of: $0, width: width) })
+    }
+    heightsWidth = width
+    heightsFont = context.metrics.codeFont
+    let old = rows
+    // Nothing to keep, or the table lost count of the old rows: start over.
+    let fullReload = old.isEmpty || tableView.numberOfRows != old.count
+    rows = segments.isEmpty ? [] : [.pageTop] + segments.flatMap(\.rows)
+    heights = segments.isEmpty ? [] : [ReviewMetrics.pageTopHeight] + segments.flatMap(\.heights)
+    if fullReload {
+      tableView.reloadData()
+      if let anchor { restore(anchor) }
+      boundsChanged()
+      return
+    }
+
+    // Replace what lies between the rows that stayed the same at the top
+    // and at the bottom.
+    let common = min(old.count, rows.count)
+    var top = 0
+    while top < common, old[top] == rows[top] { top += 1 }
+    var bottom = 0
+    while bottom < common - top, old[old.count - 1 - bottom] == rows[rows.count - 1 - bottom] { bottom += 1 }
+    let inserted = IndexSet(integersIn: top..<(rows.count - bottom))
+    tableView.beginUpdates()
+    tableView.removeRows(at: IndexSet(integersIn: top..<(old.count - bottom)), withAnimation: [])
+    tableView.insertRows(at: inserted, withAnimation: [])
+    tableView.endUpdates()
+    // Rows kept in place whose file changed (or every row, at a new width
+    // or font) may have a new height.
+    let resized = IndexSet(
+      rows.indices.filter { !inserted.contains($0) && (remeasure || changed.contains(rows[$0].path)) })
+    if !resized.isEmpty { tableView.noteHeightOfRows(withIndexesChanged: resized) }
+    // Rows on screen show the files as they are now (headers, notices,
+    // colors), as a full reload would.
+    var shown = IndexSet()
+    tableView.enumerateAvailableRowViews { rowView, row in
+      guard self.rows.indices.contains(row), !inserted.contains(row) else { return }
+      (rowView as? ReviewRowView)?.configure(row: self.rows[row], context: self.context)
+      shown.insert(row)
+    }
+    if !shown.isEmpty { tableView.reloadData(forRowIndexes: shown, columnIndexes: IndexSet(integer: 0)) }
     if let anchor { restore(anchor) }
     boundsChanged()
   }
@@ -192,7 +261,9 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     let visible = tableView.rows(in: tableView.visibleRect)
     guard visible.length > 0 else { return }
     let indexes = IndexSet(
-      (visible.location..<(visible.location + visible.length)).filter { !isBeingTypedIn(rows[$0]) })
+      (visible.location..<(visible.location + visible.length)).filter {
+        rows.indices.contains($0) && !isBeingTypedIn(rows[$0])
+      })
     tableView.reloadData(forRowIndexes: indexes, columnIndexes: IndexSet(integer: 0))
     tableView.enumerateAvailableRowViews { rowView, _ in rowView.needsDisplay = true }
   }
@@ -272,7 +343,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
     let work = DispatchWorkItem { [weak self] in
       guard let self else { return }
       let anchor = self.topAnchor()
-      self.heights = []
+      self.remeasure(width: self.measuringWidth)
       self.tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<self.rows.count))
       if let anchor { self.restore(anchor) }
     }
@@ -282,15 +353,24 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
 
   // MARK: Heights
 
+  private var measuringWidth: CGFloat { tableView.bounds.width > 0 ? tableView.bounds.width : 800 }
+
+  /// Every row's height again (lines wrap differently at a new width).
+  /// A new font is measured by `reload`, which tells the table.
+  private func remeasure(width: CGFloat) {
+    for index in segments.indices {
+      segments[index].heights = segments[index].rows.map { height(of: $0, width: width) }
+    }
+    heights = segments.isEmpty ? [] : [ReviewMetrics.pageTopHeight] + segments.flatMap(\.heights)
+    heightsWidth = width
+  }
+
   func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
   func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-    let width = tableView.bounds.width > 0 ? tableView.bounds.width : 800
-    if heights.count != rows.count || abs(width - heightsWidth) > 0.5 {
-      heightsWidth = width
-      heights = rows.map { height(of: $0, width: width) }
-    }
-    return rows.indices.contains(row) ? heights[row] : 20
+    let width = measuringWidth
+    if abs(width - heightsWidth) > 0.5 { remeasure(width: width) }
+    return heights.indices.contains(row) ? heights[row] : 20
   }
 
   private func height(of row: ReviewRow, width: CGFloat) -> CGFloat {
@@ -333,11 +413,12 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
   // MARK: Views
 
   func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
-    if case .fileHeader = rows[row] { return true }
-    return false
+    guard rows.indices.contains(row), case .fileHeader = rows[row] else { return false }
+    return true
   }
 
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+    guard rows.indices.contains(row) else { return nil }
     let view =
       tableView.makeView(withIdentifier: ReviewRowView.identifier, owner: nil) as? ReviewRowView
       ?? ReviewRowView()
@@ -347,6 +428,7 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
   }
 
   func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    guard rows.indices.contains(row) else { return nil }
     let item = rows[row]
     switch item {
     case .line, .split:

@@ -114,7 +114,8 @@ extension MainWindowController: PaletteHost {
     GitActions(repository: repository, host: self).createBranch(name)
   }
 
-  func paletteSelectTab(_ index: Int) {
+  func paletteSelectTab(id: Int) {
+    guard let index = tabManager.index(ofTabUID: id) else { return }
     tabManager.selectTab(index: index)
   }
 }

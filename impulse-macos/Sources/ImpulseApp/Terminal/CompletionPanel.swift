@@ -175,6 +175,9 @@ struct CompletionAnchorView: NSViewRepresentable {
     var onChange: ((NSRect, NSWindow?) -> Void)?
     private var observers: [NSObjectProtocol] = []
     private weak var observedWindow: NSWindow?
+    /// What was last reported, so only changes are.
+    private var reportedRect: NSRect?
+    private weak var reportedWindow: NSWindow?
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -194,15 +197,19 @@ struct CompletionAnchorView: NSViewRepresentable {
       report()
     }
 
-    /// Reports the current screen rect + window to the SwiftUI side.
+    /// Reports the current screen rect + window to the SwiftUI side when
+    /// either changed. This runs during SwiftUI's view update
+    /// (`updateNSView`) and layout, where writing view state is undefined
+    /// behavior, so the report goes out on the next turn of the main queue.
     func report() {
-      guard let window else {
-        onChange?(.zero, nil)
-        return
+      let screenRect = window.map { $0.convertToScreen(convert(bounds, to: nil)) } ?? .zero
+      guard screenRect != reportedRect || window !== reportedWindow else { return }
+      reportedRect = screenRect
+      reportedWindow = window
+      let window = window
+      DispatchQueue.main.async { [weak self] in
+        self?.onChange?(screenRect, window)
       }
-      let inWindow = convert(bounds, to: nil)
-      let screenRect = window.convertToScreen(inWindow)
-      onChange?(screenRect, window)
     }
 
     private func reinstallWindowObservers() {

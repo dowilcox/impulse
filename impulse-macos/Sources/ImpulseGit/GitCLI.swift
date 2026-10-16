@@ -215,6 +215,53 @@ public enum GitCLI {
     return env
   }
 
+  /// Environment for a git read in a folder that isn't trusted, so it runs
+  /// no program the repository's own configuration names: an fsmonitor
+  /// hook, hooks, a clean/smudge filter driver (`git status` runs clean
+  /// filters on files whose timestamps changed) or a merge driver (`git
+  /// merge-tree` runs those). Set through `GIT_CONFIG_KEY_<n>` rather than
+  /// `-c`, which a driver name containing "=" would get past. Nil when the
+  /// configuration can't be read, so the drivers aren't known: the read
+  /// mustn't run then.
+  public static func restrictedEnvironment(root: String, base: [String: String] = [:]) -> [String: String]? {
+    var keys = ["core.fsmonitor", "core.hooksPath"]
+    var values = ["false", "/dev/null"]
+    let pattern = #"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver)$"#
+    let names: [Substring]
+    switch run(["config", "-z", "--name-only", "--get-regexp", pattern], in: root, environment: base, timeout: 15) {
+    case .success(let result):
+      names = result.stdout.split(separator: "\0")
+    case .failure(let error) where error.kind != .timedOut && error.status == 1 && error.output.isEmpty:
+      // Exit 1 with nothing said: no driver is configured.
+      names = []
+    case .failure:
+      return nil
+    }
+    var drivers = Set<String>()
+    for name in names where !name.isEmpty {
+      keys.append(String(name))
+      if name.hasPrefix("merge.") {
+        // A merge driver that always reports a conflict.
+        values.append("false")
+        continue
+      }
+      values.append("")
+      // Not required either: a required filter with no command fails.
+      let driver = String(name[..<(name.lastIndex(of: ".") ?? name.endIndex)])
+      if drivers.insert(driver).inserted {
+        keys.append(driver + ".required")
+        values.append("false")
+      }
+    }
+    var env = base
+    env["GIT_CONFIG_COUNT"] = String(keys.count)
+    for (index, key) in keys.enumerated() {
+      env["GIT_CONFIG_KEY_\(index)"] = key
+      env["GIT_CONFIG_VALUE_\(index)"] = values[index]
+    }
+    return env
+  }
+
   /// Classify git's output into a known failure kind. Pure; unit-tested.
   public static func classify(output: String, arguments: [String]) -> GitCLIError.Kind {
     let text = output.lowercased()

@@ -20,7 +20,8 @@ public struct GitError: Error, Equatable, CustomStringConvertible {
 }
 
 /// Namespace for the ported git API. All operations are stateless; the only
-/// shared state is the repo-root LRU cache (`RepoCache`).
+/// shared state is the repo-root LRU cache (`RepoCache`) and the handles
+/// short reads leave idle for a few seconds (`RepoHandles`).
 public enum GitClient {}
 
 // MARK: - Size / complexity guards (ported constants from git.rs)

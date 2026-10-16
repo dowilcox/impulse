@@ -34,6 +34,8 @@ struct CommandEditor: NSViewRepresentable {
   var font: NSFont = .monospacedSystemFont(ofSize: 13, weight: .regular)
   /// Color the text as a shell command (off for prose, e.g. agent prompts).
   var shellSyntax = true
+  /// How pasted file paths are quoted (with `shellSyntax`).
+  var shellType: ShellType = .bash
   /// Whether the shell can run a command word (nil: can't tell); unknown
   /// commands get a dashed underline.
   var isKnownCommand: ((String) -> Bool?)? = nil
@@ -121,8 +123,12 @@ struct CommandEditor: NSViewRepresentable {
 
     func textDidChange(_ notification: Notification) {
       guard let textView else { return }
-      textView.highlight()
       textView.enclosingScrollView?.invalidateIntrinsicContentSize()
+      // Mid-composition (IME, dead keys) the text isn't final: restyling it
+      // would wipe the composition's underline, and the owner would see
+      // (and suggest for) half-composed input. The commit lands here again.
+      guard !textView.hasMarkedText() else { return }
+      textView.highlight()
       if parent.text != textView.string { parent.text = textView.string }
     }
 
@@ -332,18 +338,26 @@ final class CommandTextView: NSTextView {
   // kept.
   override func paste(_ sender: Any?) {
     let pasteboard = NSPasteboard.general
-    let shell = coordinator?.parent.shellSyntax == true
+    let shell = coordinator?.parent.shellSyntax == true ? coordinator?.parent.shellType : nil
+    func word(_ path: String) -> String { shell.map { path.shellEscaped(for: $0) } ?? path }
     if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
       as? [URL], !urls.isEmpty
     {
-      insertText(urls.map { shell ? $0.path.shellEscaped : $0.path }.joined(separator: " "), replacementRange: selectedRange())
+      insertText(urls.map { word($0.path) }.joined(separator: " "), replacementRange: selectedRange())
       return
     }
     if pasteboard.string(forType: .string) == nil, let path = Self.savePastedImage(from: pasteboard) {
-      insertText(shell ? path.shellEscaped : path, replacementRange: selectedRange())
+      insertText(word(path), replacementRange: selectedRange())
       return
     }
     pasteAsPlainText(sender)
+  }
+
+  override func unmarkText() {
+    super.unmarkText()
+    // A composition can end without inserting anything (focus moved away):
+    // what's left of it is now plain text the owner hasn't seen.
+    coordinator?.textDidChange(Notification(name: NSText.didChangeNotification, object: self))
   }
 
   /// Write a pasted image to a PNG in the caches folder; its path.
@@ -363,9 +377,10 @@ final class CommandTextView: NSTextView {
 
   // MARK: Highlighting
 
-  /// Color the command from the shell parser's tokens.
+  /// Color the command from the shell parser's tokens. Not while text is
+  /// being composed: that would replace the marked text's styling.
   func highlight() {
-    guard let storage = textStorage else { return }
+    guard let storage = textStorage, !hasMarkedText() else { return }
     let text = storage.string
     let whole = NSRange(location: 0, length: (text as NSString).length)
     storage.beginEditing()

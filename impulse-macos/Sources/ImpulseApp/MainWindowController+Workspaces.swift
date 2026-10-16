@@ -91,16 +91,20 @@ extension MainWindowController {
 
     // Show cached tree instantly if available. Skip git refresh since the
     // background rebuild below will fetch fresh git status anyway.
+    var expandedPaths = Set<String>()
     if let cached = fileTreeCache[dir] {
       fileTreeData.updateTree(nodes: cached, rootPath: dir, skipGitRefresh: true)
       fileTreeCacheTouch(key: dir)
       windowModel.updateFileTree(cached, rootPath: dir)
+      expandedPaths = Self.collectExpandedPaths(cached)
     }
 
-    // Refresh from disk in the background.
+    // Refresh from disk in the background, open folders listed too, so
+    // replacing the cached tree doesn't show them empty for a moment.
     let showHidden = fileTreeData.showHidden
     DispatchQueue.global(qos: .userInitiated).async {
-      let nodes = FileTreeNode.buildTree(rootPath: dir, showHidden: showHidden)
+      let nodes = FileTreeDataController.buildTree(
+        rootPath: dir, showHidden: showHidden, expanding: expandedPaths)
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         guard self.fileTreeRootPath == dir else { return }

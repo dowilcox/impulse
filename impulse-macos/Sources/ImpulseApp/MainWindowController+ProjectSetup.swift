@@ -4,7 +4,8 @@ import ImpulseKit
 
 /// The Project Setup tab: opening it on a repository, filling it from the
 /// repository's settings and from what's in it, then saving into
-/// `.impulse/project.toml` (which trusts exactly what it wrote), trying the
+/// `.impulse/project.toml` (which trusts what it wrote, unless the file then
+/// holds settings the screen didn't show), trying the
 /// settings in a new task, and re-applying values to tasks that already
 /// exist.
 extension MainWindowController {
@@ -160,11 +161,13 @@ extension MainWindowController {
     model.found = found
     model.copies = rows(found.copies, chosen: settings.worktreeCopy, hasSettings: hasSettings)
     model.clones = rows(found.clones, chosen: settings.worktreeClone, hasSettings: hasSettings)
-    let ports = hasSettings ? settings.ports : found.ports
+    // Ports and an offset the file sets but that can't be used are shown
+    // as written, marked, so they're fixed rather than dropped unseen.
+    let ports = hasSettings ? settings.ports.merging(settings.unusablePorts) { _, unusable in unusable } : found.ports
     model.ports = ports.keys.sorted().map { .init(name: $0, value: String(ports[$0]!)) }
     let values = hasSettings ? settings.worktreeEnv : found.values
     model.values = values.keys.sorted().map { .init(name: $0, value: values[$0]!) }
-    model.portOffset = String(settings.portOffset)
+    model.portOffset = String(settings.unusablePortOffset ?? settings.portOffset)
     model.envFile = settings.envFile
     model.setup = (hasSettings ? settings.setupScript : found.setup) ?? ""
     model.check = (hasSettings ? settings.checkScript : found.check) ?? ""
@@ -259,9 +262,10 @@ extension MainWindowController {
     }
   }
 
-  /// Save what the screen has into `.impulse/project.toml` and trust
-  /// exactly what was written. Impulse's own local file, folded into
-  /// the screen, is removed: its settings are in the project's now. A file
+  /// Save what the screen has into `.impulse/project.toml` and trust what
+  /// was written when the file reads back as just that. Impulse's own local
+  /// file, folded into the screen, is removed: its settings are in the
+  /// project's now. A file
   /// changed since the screen read it is only written over once the user
   /// says so (`overwriting`). `then` says whether the settings were saved.
   private func saveProjectSetup(
@@ -291,10 +295,18 @@ extension MainWindowController {
           model.isSaving = false
           switch outcome {
           case .saved(let digest, let text, let local):
-            var trust = ProjectTrustStore.current
-            trust.trust(root: Self.trustKey(for: root), digest: digest)
-            ProjectTrustStore.current = trust
-            self.toasts.show(Toast(kind: .success, message: "Saved \(ProjectConfig.relativePath)"))
+            if let digest {
+              var trust = ProjectTrustStore.current
+              trust.trust(root: Self.trustKey(for: root), digest: digest)
+              ProjectTrustStore.current = trust
+              self.toasts.show(Toast(kind: .success, message: "Saved \(ProjectConfig.relativePath)"))
+            } else {
+              self.toasts.show(
+                Toast(
+                  kind: .success, message: "Saved \(ProjectConfig.relativePath)",
+                  detail: "It also holds settings this screen didn't write, so it asks before running its commands.",
+                  lifetime: 10))
+            }
             model.markSaved(config, text: text, local: local)
             then?(true)
           case .changed:
@@ -351,8 +363,9 @@ extension MainWindowController {
   }
 
   private enum SaveOutcome {
-    /// What was written and its digest, and the local file's state after.
-    case saved(digest: String, text: String, local: ProjectSetupModel.LocalFile?)
+    /// What was written, the local file's state after, and the digest to
+    /// trust: nil when the file reads as more than the screen saved.
+    case saved(digest: String?, text: String, local: ProjectSetupModel.LocalFile?)
     /// The file isn't what the screen read.
     case changed
     case failed(Error)
@@ -383,7 +396,8 @@ extension MainWindowController {
     }
     let localText = localPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
     return .saved(
-      digest: ProjectConfig.digest(data), text: text, local: savedSettings(committed: text, local: localText).local)
+      digest: ProjectSettingsFile.holdsOnly(config, in: text) ? ProjectConfig.digest(data) : nil, text: text,
+      local: savedSettings(committed: text, local: localText).local)
   }
 
   /// Write the current ports and values into the env file of every task

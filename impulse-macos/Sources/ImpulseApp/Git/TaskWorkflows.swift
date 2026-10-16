@@ -65,6 +65,9 @@ final class TaskSheetModel {
   /// preview of its own values.
   var settings: ProjectConfig?
   var slot: Int?
+  /// The settings give tasks values of their own, but no slot is left for
+  /// this one: every slot's ports are in use or past 65535.
+  var noFreeSlot = false
   /// Folders that will be cloned in (the ones the main checkout has).
   var clones: [String] = []
   /// Lock files in the repository, when it has no task settings yet.
@@ -79,8 +82,9 @@ final class TaskSheetModel {
 
   /// "APP_PORT 8100 · VITE_PORT 5273 · .env: APP_URL, DB_DATABASE".
   var valuesPreview: String? {
-    guard let settings, settings.hasTaskValues, let slot else { return nil }
-    let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
+    guard let settings, settings.hasTaskValues, let slot,
+      let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
+    else { return nil }
     var parts = ports.keys.sorted().map { "\($0) \(ports[$0]!)" }
     if !settings.worktreeEnv.isEmpty {
       parts.append("\(settings.envFile): " + settings.worktreeEnv.keys.sorted().joined(separator: ", "))
@@ -222,6 +226,15 @@ struct TaskSheetView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(RoundedRectangle(cornerRadius: Metrics.radius).fill(chrome.raised))
 
+      if model.noFreeSlot {
+        Text(
+          "No free ports for a new task: every slot up to \(TaskRegistry.maxSlot) has a port in use or past 65535. This task gets no ports or values of its own."
+        )
+        .font(ChromeFont.ui(11))
+        .foregroundStyle(chrome.warning)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+
       if !model.isLoading, model.needsSetup {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
           Text(
@@ -346,10 +359,9 @@ extension MainWindowController {
         return (kind.displayName, name)
       }
       let settings = try? Self.loadProjectConfig(root: root)?.config.get()
-      let slot =
-        settings?.hasTaskValues == true
-        ? TaskRegistryStore.registry(root: root)?.nextSlot { TaskRegistryStore.portsAreFree(settings, slot: $0) }
-        : nil
+      let registry = settings?.hasTaskValues == true ? TaskRegistryStore.registry(root: root) : nil
+      let slot = registry?.nextSlot { TaskRegistryStore.portsAreFree(settings, slot: $0) }
+      let noFreeSlot = registry != nil && slot == nil
       let clones = ((settings?.worktreeClone ?? []) + [settings?.databaseFolder].compactMap { $0 }).filter {
         FileManager.default.fileExists(atPath: (root as NSString).appendingPathComponent($0))
       }
@@ -368,6 +380,7 @@ extension MainWindowController {
         }
         model.settings = settings
         model.slot = slot
+        model.noFreeSlot = noFreeSlot
         model.clones = clones
         model.lockFiles = lockFiles
         if base == nil, !movingChanges, let computed, model.canReplaceBase {
@@ -560,6 +573,9 @@ extension MainWindowController {
               self?.toasts.show(
                 Toast(kind: .warning, message: "The changes stayed in \((root as NSString).lastPathComponent).", detail: moveFailure, lifetime: 12))
             }
+            if let moved, let note = Self.moveNote(moved, main: (root as NSString).lastPathComponent) {
+              self?.toasts.show(Toast(kind: .warning, message: note.message, detail: note.detail, lifetime: 15))
+            }
           }
         }
       }
@@ -580,28 +596,72 @@ extension MainWindowController {
     let branch = GitOperations.currentBranch(root: root)
     var names: Set<String> = ["HEAD", head, String(head.prefix(7))]
     if let branch { names.insert(branch) }
-    for remote in GitOperations.branches(root: root).remote
-    where GitClient.resolveCommit(repoPath: root, revision: "refs/remotes/\(remote)") == head {
-      names.insert(remote)
-    }
+    names.formUnion(GitClient.remoteBranches(at: head, repoPath: root))
     return (names, branch ?? "HEAD")
+  }
+
+  /// What a move left behind, for a toast: files edited while it ran, and
+  /// folders holding a repository of their own. Nil when it took everything.
+  static func moveNote(_ moved: ChangeMove.Moved, main: String) -> (message: String, detail: String)? {
+    var parts: [String] = []
+    let edited = moved.editedDuring
+    if !edited.isEmpty {
+      let one = edited.count == 1
+      parts.append(
+        "\(TaskLanding.naming(edited)) \(one ? "was" : "were") edited during the move: \(main) keeps the \(one ? "edit" : "edits"), and the task has \(one ? "it" : "them") as before.")
+    }
+    let nested = moved.nestedRepositories
+    if !nested.isEmpty {
+      parts.append(
+        nested.count == 1
+          ? "\(nested[0]) holds a git repository of its own, so it stays in \(main)."
+          : "\(nested.count) folders hold git repositories of their own (\(nested.prefix(3).joined(separator: ", "))), so they stay in \(main).")
+    }
+    guard !parts.isEmpty else { return nil }
+    return ("Some changes stayed in \(main).", parts.joined(separator: " "))
   }
 
   /// Undo a move: the files go back to the main checkout, and the new task
   /// is archived (whatever it holds by then is kept in a snapshot) and its
-  /// branch deleted when nothing was committed on it.
+  /// branch deleted when nothing was committed on it. When the files can't
+  /// go back, or some changed in the main checkout since (those are left as
+  /// they are), the task stays.
   func undoMove(_ moved: ChangeMove.Moved, root: String, path: String, branch: String) {
+    let main = (root as NSString).lastPathComponent
     let finish = { [weak self] in
-      DispatchQueue.global(qos: .userInitiated).async {
-        let undone = ChangeMove.undo(moved, source: root)
-        let removed = Self.removeTask(root: path, branch: branch, dirty: true, archiveScript: nil).result
-        if case .success = removed { _ = GitOperations.deleteBranch(branch, root: root) }
-        DispatchQueue.main.async {
-          guard let self else { return }
-          if case .failure(let error) = undone { return self.presentGitError(error, title: "Couldn't put the changes back") }
-          if case .failure(let error) = removed { return self.presentGitError(error, title: "Couldn't remove \(branch)") }
+      // On the repository's queue, so it doesn't run in the middle of
+      // another git action on the main checkout; snapshotted first, so
+      // nothing in it is overwritten unrecorded.
+      var left: [String] = []
+      GitRepositoryStore.shared.state(forRoot: root).run(snapshotReason: "undo move", requireSnapshot: true) { root in
+        ChangeMove.undo(moved, source: root).map { left = $0 }
+      } completion: { [weak self] undone, _ in
+        guard let self else { return }
+        if case .failure(let error) = undone {
+          return self.presentGitError(error, title: "Couldn't put the changes back, so \(branch) was kept")
+        }
+        guard left.isEmpty else {
+          // The task still has its version of those files.
+          self.tabManager.openWorkspace(folder: path)
+          let one = left.count == 1
           self.toasts.show(
-            Toast(kind: .success, message: "The changes are back in \((root as NSString).lastPathComponent); \(branch) is gone."))
+            Toast(
+              kind: .warning, message: "The changes are back in \(main), but \(branch) was kept.",
+              detail:
+                "\(TaskLanding.naming(left)) changed in \(main) since the move, so \(one ? "it was" : "they were") left as \(one ? "it is" : "they are"). \(branch) has the moved version.",
+              lifetime: 20))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+          let removed = Self.removeTask(root: path, branch: branch, dirty: true, archiveScript: nil).result
+          if case .success = removed { _ = GitOperations.deleteBranch(branch, root: root) }
+          DispatchQueue.main.async {
+            guard let self else { return }
+            if case .failure(let error) = removed {
+              return self.presentGitError(error, title: "The changes are back, but \(branch) couldn't be removed")
+            }
+            self.toasts.show(Toast(kind: .success, message: "The changes are back in \(main); \(branch) is gone."))
+          }
         }
       }
     }
@@ -640,14 +700,18 @@ extension MainWindowController {
       }
       var record: TaskRecord?
       if failure == nil {
+        // Someone else's branch stays restricted even when the folder the
+        // tasks are in is trusted (a trusted ~/Code), until it's trusted
+        // itself.
+        if isRemote { Trust.shared.restrict(path) }
         let settings = try? Self.loadProjectConfig(root: path)?.config.get()
         Self.copyFiles(copies + Self.envFileCopy(settings, root: root, copies: copies), from: root, to: path)
         for folder in settings?.worktreeClone ?? [] { FolderClone.clone(folder, from: root, to: path) }
         // The base it will be merged into: what New Task would start from.
         let main = GitClient.snapshot(forPath: root)
         let base = main.map { WorktreeTasks.defaultBase(branch: $0.branch, upstream: $0.upstream, ahead: $0.ahead).base }
-        record = TaskRegistryStore.recordCreated(path: path, branch: branch, base: base ?? "", root: root) { slot in
-          TaskRegistryStore.portsAreFree(settings, slot: slot)
+        record = TaskRegistryStore.recordCreated(path: path, branch: branch, base: base ?? "", root: root, fromRemote: isRemote) {
+          slot in TaskRegistryStore.portsAreFree(settings, slot: slot)
         }
       }
       DispatchQueue.main.async {
@@ -802,25 +866,14 @@ extension MainWindowController {
   /// `docker compose <arguments>` in `directory`, with the login shell's
   /// PATH; its output, or nil when it fails or takes over a minute.
   private static func compose(_ arguments: [String], in directory: String) -> String? {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["docker", "compose"] + arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: directory)
     var environment = ProcessInfo.processInfo.environment
     environment["PATH"] = LoginShell.loginPath()
-    process.environment = environment
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    let finished = DispatchSemaphore(value: 0)
-    process.terminationHandler = { _ in finished.signal() }
-    guard (try? process.run()) != nil else { return nil }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    if finished.wait(timeout: .now() + 60) == .timedOut {
-      process.terminate()
-      return nil
-    }
-    return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    guard
+      let output = try? ChildProcess.run(
+        "/usr/bin/env", ["docker", "compose"] + arguments, in: directory, environment: environment, timeout: 60),
+      !output.timedOut, output.status == 0
+    else { return nil }
+    return String(decoding: output.stdout, as: UTF8.self)
   }
 
   private static func copyFiles(_ files: [String], from root: String, to destination: String) {
@@ -853,13 +906,24 @@ extension MainWindowController {
     let root = workspace.root
     let name = workspace.name
     // Ignored files (.env, node_modules) go with the folder for good: the
-    // snapshot only holds what git would track. Say so before asking.
+    // snapshot only holds what git would track. Say so before asking. A
+    // repository of its own inside it would go too, history and all: that
+    // stops it.
+    let trusted = Trust.shared.isTrusted(root)
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      let ignored = GitOperations.ignoredEntries(root: root)
+      let nested = GitOperations.nestedRepositories(root: root, trusted: trusted)
+      let ignored = nested?.isEmpty == true ? GitOperations.ignoredEntryList(root: root, trusted: trusted) : []
       DispatchQueue.main.async {
         guard let self else { return }
         guard let workspace = self.tabManager.workspace(id) else {
           self.archivingTasks.remove(id)
+          return
+        }
+        // One that couldn't be checked counts as there.
+        guard nested?.isEmpty == true else {
+          self.archivingTasks.remove(id)
+          self.toasts.show(
+            Toast(kind: .warning, message: "\(name) wasn't archived.", detail: Self.nestedRepositoryMessage(nested), lifetime: 15))
           return
         }
         self.confirmArchiveTask(id, root: root, name: name, snapshot: workspace.repository?.snapshot, ignored: ignored)
@@ -875,17 +939,15 @@ extension MainWindowController {
     return FileManager.default.fileExists(atPath: root, isDirectory: &isDirectory) && isDirectory.boolValue
   }
 
-  private func confirmArchiveTask(_ id: UUID, root: String, name: String, snapshot: RepoSnapshot?, ignored: [String]) {
+  /// `ignored`: nil when they couldn't be listed.
+  private func confirmArchiveTask(_ id: UUID, root: String, name: String, snapshot: RepoSnapshot?, ignored: [String]?) {
     let branch = snapshot?.branch ?? (root as NSString).lastPathComponent
     let dirty = snapshot?.changedFileCount ?? 0
     var message = "The folder \(TabManager.abbreviateHomePath(root)) is removed; branch \(branch) is kept."
     if dirty > 0 {
       message += " \(dirty) uncommitted file\(dirty == 1 ? "" : "s") will be saved in a snapshot that Undo restores."
     }
-    if !ignored.isEmpty {
-      let shown = ignored.prefix(3).joined(separator: ", ") + (ignored.count > 3 ? ", …" : "")
-      message += " Ignored files in it (\(shown)) are deleted, and Undo can't bring them back."
-    }
+    if let warning = Self.ignoredFilesWarning(ignored) { message += " " + warning }
     if let snapshot, snapshot.ahead > 0 || snapshot.upstream == nil {
       message += " The branch has commits that aren't pushed."
     }
@@ -896,22 +958,26 @@ extension MainWindowController {
         self.archivingTasks.remove(id)
         return
       }
-      // The project's archive script (once trusted) runs before removal.
+      // The project's archive script (once trusted) runs before removal; in
+      // a folder that isn't trusted, only when the user says so.
       self.trustProjectConfig(root: root) { [weak self] config in
         guard let self else { return }
-        guard self.stillArchivable(id, root: root, name: name) else {
-          self.archivingTasks.remove(id)
-          return
+        self.confirmArchiveScript(config?.archiveScript, root: root, branch: branch) { [weak self] script in
+          guard let self else { return }
+          guard self.stillArchivable(id, root: root, name: name) else {
+            self.archivingTasks.remove(id)
+            return
+          }
+          // Close the workspace first (it confirms unsaved files and running
+          // processes), then remove the folder once it's gone.
+          self.requestCloseWorkspace(
+            id, recordForUndo: false,
+            then: { [weak self] in
+              self?.archivingTasks.remove(id)
+              self?.removeTaskWorktree(root: root, branch: branch, dirty: dirty > 0, archiveScript: script)
+            },
+            cancelled: { [weak self] in self?.archivingTasks.remove(id) })
         }
-        // Close the workspace first (it confirms unsaved files and running
-        // processes), then remove the folder once it's gone.
-        self.requestCloseWorkspace(
-          id, recordForUndo: false,
-          then: { [weak self] in
-            self?.archivingTasks.remove(id)
-            self?.removeTaskWorktree(root: root, branch: branch, dirty: dirty > 0, archiveScript: config?.archiveScript)
-          },
-          cancelled: { [weak self] in self?.archivingTasks.remove(id) })
       }
     }
   }
@@ -953,14 +1019,25 @@ extension MainWindowController {
       let results = tasks.map { ($0, Self.restoreArchived($0)) }
       DispatchQueue.main.async {
         guard let self else { return }
+        var trustChanged = false
         for (task, result) in results {
-          if case .failure(let error) = result {
-            self.presentGitError(error, title: "Couldn't restore \(task.branch)")
-            continue
+          if case .failure(let failure) = result {
+            self.presentGitError(failure.error, title: "Couldn't restore \(task.branch)")
+            // Only a folder Impulse made again (just its files didn't come
+            // back), not whatever else may be at the path now.
+            guard failure.folderRestored else { continue }
           }
-          if Trust.shared.isTrusted(task.mainRoot) { Trust.shared.trust(task.root) }
+          // Trusted again only if it was before; someone else's branch stays
+          // restricted.
+          if task.wasTrusted {
+            Trust.shared.trust(task.root)
+            trustChanged = true
+          } else if task.record?.fromRemote == true {
+            Trust.shared.restrict(task.root)
+          }
           self.tabManager.openWorkspace(folder: task.root)
         }
+        if trustChanged { Self.trustDidChange() }
       }
     }
   }

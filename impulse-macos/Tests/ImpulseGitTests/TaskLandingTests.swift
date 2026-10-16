@@ -161,5 +161,79 @@
       try repo.write("notes.txt", "draft\n")
       #expect(throws: Never.self) { try GitOperations.fastForward(to: "ahead", root: repo.root).get() }
     }
+
+    // MARK: Deleting a landed branch
+
+    /// `fix` pushed to origin, then landed.
+    private func landed() throws -> (repo: TempRepo, origin: TempRepo, other: TempRepo, commit: String) {
+      let (repo, origin, other) = try setUp()
+      try repo.git("push", "-q", "origin", "fix")
+      let landed = try TaskLanding.mergeAndPush(branch: "fix", base: "main", remote: "origin", root: repo.root).get()
+      return (repo, origin, other, landed.commit)
+    }
+
+    private func exists(_ ref: String, in repo: TempRepo) -> Bool {
+      (try? repo.git("rev-parse", "--verify", "-q", ref)) != nil
+    }
+
+    @Test func aLandedBranchIsDeletedHereAndOnTheRemote() throws {
+      let (repo, origin, other, commit) = try landed()
+      defer { [repo, origin, other].forEach { $0.destroy() } }
+      let tip = try repo.git("rev-parse", "fix")
+      try repo.git("config", "branch.fix.remote", "origin")
+
+      let cleanup = TaskLanding.deleteLandedBranch("fix", mergedInto: [commit, "origin/main"], remote: "origin", root: repo.root)
+      #expect(cleanup == .init(deletedCommit: tip, deletedOnRemote: true, kept: []))
+      #expect(!exists("refs/heads/fix", in: repo))
+      #expect(!exists("refs/heads/fix", in: origin))
+      #expect((try? repo.git("config", "--get", "branch.fix.remote")) == nil, "its settings go too")
+    }
+
+    @Test func aBranchWithCommitsSinceItLandedIsKept() throws {
+      let (repo, origin, other, commit) = try landed()
+      defer { [repo, origin, other].forEach { $0.destroy() } }
+      try repo.git("switch", "-q", "fix")
+      try repo.commit(["d.txt": "more\n"], message: "more")
+      try repo.git("switch", "-q", "main")
+      let tip = try repo.git("rev-parse", "fix")
+
+      let cleanup = TaskLanding.deleteLandedBranch("fix", mergedInto: [commit, "origin/main"], remote: "origin", root: repo.root)
+      #expect(cleanup.deletedCommit == nil)
+      #expect(cleanup.kept.count == 1)
+      #expect(try repo.git("rev-parse", "fix") == tip)
+      #expect(exists("refs/heads/fix", in: origin))
+    }
+
+    @Test func aBranchMovedOnlyAtTheLastMomentIsKept() throws {
+      let (repo, origin, other, _) = try landed()
+      defer { [repo, origin, other].forEach { $0.destroy() } }
+      let tip = try repo.git("rev-parse", "fix")
+      try repo.git("switch", "-q", "fix")
+      try repo.commit(["d.txt": "more\n"], message: "more")
+      try repo.git("switch", "-q", "main")
+      // The compare-and-swap: deleting it at the old tip fails.
+      guard case .failure(.stale) = GitOperations.deleteBranch("fix", at: tip, root: repo.root) else {
+        Issue.record("expected the delete to refuse")
+        return
+      }
+      #expect(exists("refs/heads/fix", in: repo))
+    }
+
+    @Test func theRemoteBranchIsKeptWhenSomeonePushedToIt() throws {
+      let (repo, origin, other, commit) = try landed()
+      defer { [repo, origin, other].forEach { $0.destroy() } }
+      // Someone else adds to fix on the remote; this clone hasn't fetched it.
+      try other.git("fetch", "-q", "origin")
+      try other.git("switch", "-q", "-c", "fix", "origin/fix")
+      try other.commit(["e.txt": "theirs\n"], message: "theirs")
+      try other.git("push", "-q", "origin", "fix")
+      let theirs = try other.git("rev-parse", "HEAD")
+
+      let cleanup = TaskLanding.deleteLandedBranch("fix", mergedInto: [commit, "origin/main"], remote: "origin", root: repo.root)
+      #expect(cleanup.deletedCommit != nil, "the local branch is merged, so it goes")
+      #expect(!cleanup.deletedOnRemote)
+      #expect(cleanup.kept.count == 1)
+      #expect(try origin.git("rev-parse", "refs/heads/fix") == theirs)
+    }
   }
 #endif

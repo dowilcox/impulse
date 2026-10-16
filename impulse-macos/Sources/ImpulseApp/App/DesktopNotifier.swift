@@ -25,8 +25,12 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
   }
   private var authorization: Bool?
   private var pending: [UNNotificationRequest] = []
-  /// Delivered notification ids per terminal id.
+  /// Delivered notification ids per terminal id, oldest first.
   private var delivered: [String: [String]] = [:]
+  /// Kept per terminal (older ones are withdrawn) and waiting for
+  /// permission: a program can post in a loop.
+  private static let deliveredLimit = 10
+  private static let pendingLimit = 20
 
   func activate() {
     center?.delegate = self
@@ -36,7 +40,15 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
   /// notifications.
   func post(title: String, subtitle: String?, body: String, terminalID: UUID, thread: String) {
     let id = UUID().uuidString
-    delivered[terminalID.uuidString, default: []].append(id)
+    var ids = delivered[terminalID.uuidString, default: []]
+    ids.append(id)
+    if ids.count > Self.deliveredLimit {
+      let withdrawn = Array(ids.prefix(ids.count - Self.deliveredLimit))
+      ids.removeFirst(withdrawn.count)
+      center?.removeDeliveredNotifications(withIdentifiers: withdrawn)
+      pending.removeAll { withdrawn.contains($0.identifier) }
+    }
+    delivered[terminalID.uuidString] = ids
     post(
       id: id, title: title, subtitle: subtitle, body: body,
       userInfo: ["terminal": terminalID.uuidString], thread: thread)
@@ -71,6 +83,7 @@ final class DesktopNotifier: NSObject, UNUserNotificationCenterDelegate {
     case false?:
       break
     case nil:
+      guard pending.count < Self.pendingLimit else { return }
       pending.append(request)
       guard pending.count == 1 else { return }
       center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, error in

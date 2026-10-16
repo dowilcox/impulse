@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import ImpulseGit
 import ImpulseKit
+import UniformTypeIdentifiers
 
 private func nonEmpty(_ value: String?) -> String? {
   guard let value else { return nil }
@@ -103,9 +104,9 @@ enum TabEntry {
     case .terminal(let container):
       if let active = container.activeTerminal {
         let title = active.tabTitle
-        return title.isEmpty ? LoginShell.defaultShellName() : title
+        return title.isEmpty ? TabManager.shellName : title
       }
-      return LoginShell.defaultShellName()
+      return TabManager.shellName
     case .editor(let editor):
       if let path = editor.filePath {
         let name = (path as NSString).lastPathComponent
@@ -145,7 +146,7 @@ enum TabEntry {
       return TabInfo(
         cwd: container.activeTerminal?.currentWorkingDirectory,
         gitBranch: nil,
-        shellName: LoginShell.defaultShellName(),
+        shellName: TabManager.shellName,
         cursorLine: nil, cursorCol: nil,
         language: nil, encoding: nil, indentInfo: nil
       )
@@ -354,7 +355,20 @@ final class TabManager: NSObject {
   private let core: ImpulseCore
 
   /// Observable state for SwiftUI views. Set by MainWindowController.
-  weak var windowModel: WindowModel?
+  weak var windowModel: WindowModel? {
+    didSet { windowModel?.tabIndexForID = { [weak self] uid in self?.index(ofTabUID: uid) } }
+  }
+
+  /// A coalesced sync is queued (`refreshSegmentLabels`).
+  private var syncScheduled = false
+  /// When the WindowModel was last synced (system uptime).
+  private var lastSync: TimeInterval = 0
+  /// Tab icons that would otherwise be made anew on every sync, by kind.
+  private var tabIconImages: [String: NSImage] = [:]
+
+  /// The login shell's name, looked up once: `LoginShell` asks Open
+  /// Directory (a `dscl` process) every time.
+  static let shellName = LoginShell.defaultShellName()
 
   /// Optional callback invoked instead of directly closing a tab. When set,
   /// the caller (MainWindowController) can show a save confirmation dialog
@@ -444,10 +458,15 @@ final class TabManager: NSObject {
   /// If a tab for the same file is already open, it is selected instead of
   /// creating a duplicate. Image files are opened in a preview tab. Binary
   /// files (>10 MB or containing null bytes) are skipped with an alert.
+  /// `opened` runs once the file's tab is in place, or once it's clear the
+  /// file won't open.
   func addEditorTab(
     path: String, projectDirectory: String? = nil, goToLine: UInt32? = nil,
-    goToColumn: UInt32? = nil, beside: Bool = false, preview: Bool = false
+    goToColumn: UInt32? = nil, beside: Bool = false, preview: Bool = false,
+    opened: (() -> Void)? = nil
   ) {
+    var readingAsync = false
+    defer { if !readingAsync { opened?() } }
     let preview = preview && !beside && SettingsStore.shared.settings.editorPreviewTabs
     // O(1) deduplication using the openFilePaths set.
     if openFilePaths.contains(path) {
@@ -479,36 +498,69 @@ final class TabManager: NSObject {
       return
     }
 
-    // Reject binary files.
+    // Too big for the editor: offer a pager instead.
+    if let size = Self.fileSize(path), size > Self.maxEditorFileSize {
+      showTooLargeToEdit(path)
+      ensureATab()
+      return
+    }
+
+    // Reject binary files. Opening one that would run (a program, an app,
+    // a .command) is never a click away: those are shown in Finder.
     if Self.isBinaryFile(path) {
+      let url = URL(fileURLWithPath: path)
+      let runs = Self.opensAsProgram(path)
       windowModel?.toasts.show(
         Toast(
           kind: .info, message: "\((path as NSString).lastPathComponent) is a binary file the editor can't show.",
-          actionTitle: "Open in Default App",
-          action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }, lifetime: 10))
+          actionTitle: runs ? "Reveal in Finder" : "Open in Default App",
+          action: {
+            if runs {
+              NSWorkspace.shared.activateFileViewerSelecting([url])
+            } else {
+              NSWorkspace.shared.open(url)
+            }
+          }, lifetime: 10))
       ensureATab()
       return
     }
 
     // Read file content off the main thread, then create the editor tab on main.
     let exists = FileManager.default.fileExists(atPath: path)
+    readingAsync = true
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       // A file that isn't UTF-8 stays closed: it would open empty, and a
       // save would overwrite it. (A path that doesn't exist yet opens empty.)
-      let file = exists ? TextFile.read(path) : TextFile.Contents(text: "", bom: false)
-      let largeFile =
-        (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int).flatMap({ $0 })
-        ?? 0 > 5 * 1024 * 1024
+      // The stamp comes from the same read, so a save can tell a later
+      // change on disk from what the editor shows.
+      let read = exists ? TextFile.readStamped(path) : (TextFile.Contents(text: "", bom: false), nil)
+      let file = read?.contents
+      let size = file?.text.utf8.count ?? 0
 
       DispatchQueue.main.async { [weak self] in
+        defer { opened?() }
         guard let self else { return }
+        // It grew past the limit since it was checked.
+        if size > Self.maxEditorFileSize {
+          self.showTooLargeToEdit(path)
+          self.ensureATab()
+          return
+        }
         guard let file else {
+          let url = URL(fileURLWithPath: path)
+          let runs = Self.opensAsProgram(path)
           self.windowModel?.toasts.show(
             Toast(
               kind: .info,
               message: "\((path as NSString).lastPathComponent) isn't UTF-8 text, so the editor won't open it.",
-              actionTitle: "Open in Default App",
-              action: { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }, lifetime: 10))
+              actionTitle: runs ? "Reveal in Finder" : "Open in Default App",
+              action: {
+                if runs {
+                  NSWorkspace.shared.activateFileViewerSelecting([url])
+                } else {
+                  NSWorkspace.shared.open(url)
+                }
+              }, lifetime: 10))
           self.ensureATab()
           return
         }
@@ -516,11 +568,34 @@ final class TabManager: NSObject {
         // Re-check deduplication in case a tab was opened while reading.
         if self.openFilePaths.contains(path) { return }
         self.insertLoadedEditorTab(
-          path: path, content: file.text, bom: file.bom, largeFile: largeFile,
+          path: path, content: file.text, bom: file.bom, stamp: read?.stamp,
+          largeFile: size > EditorTab.largeFileSize,
           projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn,
           beside: beside, preview: preview)
       }
     }
+  }
+
+  /// Files larger than this don't open in the editor (Monaco holds the
+  /// whole text, and so does the window).
+  static let maxEditorFileSize = 10 * 1024 * 1024
+
+  private static func fileSize(_ path: String) -> Int? {
+    (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue
+  }
+
+  /// A file too large for the editor: say so, and offer to page through it
+  /// in a terminal.
+  func showTooLargeToEdit(_ path: String) {
+    let name = (path as NSString).lastPathComponent
+    windowModel?.toasts.show(
+      Toast(
+        kind: .info, message: "\(name) is too large for the editor (over 10 MB).",
+        actionTitle: "View in Terminal",
+        action: { [weak self] in
+          self?.addTerminalTab(
+            directory: (path as NSString).deletingLastPathComponent, initialCommand: "less -- \(path.shellEscaped(for: LoginShell.defaultShellType()))")
+        }, lifetime: 10))
   }
 
   /// A window launched to open files that turned out unopenable would be
@@ -529,18 +604,45 @@ final class TabManager: NSObject {
     if records.isEmpty { addTerminalTab() }
   }
 
+  /// Whether opening the file with its default app would run something:
+  /// an executable (the execute bit, a Mach-O or `#!` header), an app or
+  /// other bundle, a script, or a type that runs or installs when opened.
+  static func opensAsProgram(_ path: String) -> Bool {
+    let url = URL(fileURLWithPath: path)
+    let runnableExtensions: Set<String> = [
+      "app", "command", "tool", "terminal", "workflow", "action", "pkg", "mpkg", "jar",
+      "fileloc", "webloc", "inetloc", "scpt", "scptd", "applescript", "prefpane",
+    ]
+    if runnableExtensions.contains(url.pathExtension.lowercased()) { return true }
+    if let type = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType,
+      [UTType.executable, .bundle, .package, .script].contains(where: { type.conforms(to: $0) })
+    {
+      return true
+    }
+    if FileManager.default.isExecutableFile(atPath: path) { return true }
+    guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+    defer { try? handle.close() }
+    let head = [UInt8](handle.readData(ofLength: 4))
+    if head.starts(with: [0x23, 0x21]) { return true }  // #!
+    let machO: [[UInt8]] = [
+      [0xFE, 0xED, 0xFA, 0xCE], [0xFE, 0xED, 0xFA, 0xCF], [0xCE, 0xFA, 0xED, 0xFE],
+      [0xCF, 0xFA, 0xED, 0xFE], [0xCA, 0xFE, 0xBA, 0xBE], [0xBE, 0xBA, 0xFE, 0xCA],
+    ]
+    return machO.contains(head)
+  }
+
   /// Creates and inserts an editor tab for a file whose content was already
   /// read (off the main thread). Used by `addEditorTab` and by session restore,
   /// which preloads every file first so tabs can be inserted in saved order.
   func insertLoadedEditorTab(
-    path: String, content fileContent: String, bom: Bool = false, largeFile: Bool,
-    projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil,
+    path: String, content fileContent: String, bom: Bool = false, stamp: TextFile.Stamp? = nil,
+    largeFile: Bool, projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil,
     beside: Bool = false, preview: Bool = false
   ) {
     guard !openFilePaths.contains(path) else { return }
     let editorTab = makeEditorTab(
-      path: path, content: fileContent, bom: bom, largeFile: largeFile, projectDirectory: projectDirectory,
-      goToLine: goToLine, goToColumn: goToColumn)
+      path: path, content: fileContent, bom: bom, stamp: stamp, largeFile: largeFile,
+      projectDirectory: projectDirectory, goToLine: goToLine, goToColumn: goToColumn)
     if beside {
       splitSelectedTab(with: .editor(editorTab), axis: .horizontal)
     } else if preview, let index = replaceablePreviewIndex() {
@@ -596,9 +698,11 @@ final class TabManager: NSObject {
   }
 
   /// A new editor surface for a file whose content was already read.
+  /// `stamp` is the file's from the read that gave `fileContent` (nil when
+  /// unknown: the editor then checks the disk itself).
   func makeEditorTab(
-    path: String, content fileContent: String, bom: Bool = false, largeFile: Bool, projectDirectory: String?,
-    goToLine: UInt32? = nil, goToColumn: UInt32? = nil
+    path: String, content fileContent: String, bom: Bool = false, stamp: TextFile.Stamp? = nil, largeFile: Bool,
+    projectDirectory: String?, goToLine: UInt32? = nil, goToColumn: UInt32? = nil
   ) -> EditorTab {
     let editorOptions = editorOptionsFromSettings(forPath: path)
     let themeDef = ThemeManager.monacoTheme(forName: theme.id)
@@ -608,14 +712,16 @@ final class TabManager: NSObject {
     editorTab.projectDirectory =
       projectDirectory
       ?? (path as NSString).deletingLastPathComponent
-    editorTab.openFile(path: path, content: fileContent, language: language, bom: bom)
+    // Large files open read-only to avoid WebView freezes, and aren't
+    // reloaded on every write.
+    editorTab.isLargeFile = largeFile
+    editorTab.openFile(path: path, content: fileContent, language: language, bom: bom, stamp: stamp)
     editorTab.loadEditor()
 
     // Apply editor settings (font, tab size, etc.) from the current settings.
     editorTab.applySettings(editorOptions)
     editorTab.applyTheme(themeDef)
 
-    // Open large files in read-only mode to avoid WebView freezes.
     if largeFile {
       editorTab.setReadOnly(true)
     }
@@ -819,7 +925,7 @@ final class TabManager: NSObject {
       editor.cleanup()
       if let path = editor.filePath {
         NotificationCenter.default.post(
-          name: .impulseEditorClosed, object: nil, userInfo: ["path": path])
+          name: .impulseEditorClosed, object: editor, userInfo: ["path": path])
       }
     case .imagePreview:
       break
@@ -1185,6 +1291,11 @@ final class TabManager: NSObject {
     records.indices.contains(index) ? records[index].workspaceID : nil
   }
 
+  /// The current index of the tab with this stable id (nil: it's closed).
+  func index(ofTabUID uid: Int) -> Int? {
+    records.firstIndex { $0.uid == uid }
+  }
+
   /// Show a workspace: its last selected tab, or a new terminal in its
   /// folder when it has none (running `initialCommand`, if given).
   func activateWorkspace(_ id: UUID, initialCommand: String? = nil) {
@@ -1356,7 +1467,7 @@ final class TabManager: NSObject {
     GitRepositoryStore.shared.resolve(directory: root) { [weak self, weak workspace] state in
       guard let workspace, let state else { return }
       workspace.repository = state
-      self?.syncToWindowModel()
+      self?.refreshSegmentLabels()
     }
     DispatchQueue.global(qos: .utility).async { [weak self, weak workspace] in
       let isTask =
@@ -1367,7 +1478,7 @@ final class TabManager: NSObject {
         guard isTask, let workspace else { return }
         workspace.isTask = true
         workspace.taskSummary = summary
-        self?.syncToWindowModel()
+        self?.refreshSegmentLabels()
       }
     }
   }
@@ -1379,9 +1490,8 @@ final class TabManager: NSObject {
     var parts = ["Task" + (record.slot.map { " slot \($0)" } ?? "")]
     if let base = record.baseRef { parts.append("from \(base)") }
     if let slot = record.slot, let settings = try? MainWindowController.loadProjectConfig(root: root)?.config.get(),
-      !settings.ports.isEmpty
+      !settings.ports.isEmpty, let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
     {
-      let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
       parts.append(ports.keys.sorted().map { "\($0) \(ports[$0]!)" }.joined(separator: ", "))
     }
     return parts.joined(separator: " · ")
@@ -1426,7 +1536,7 @@ final class TabManager: NSObject {
         changed = true
       }
     }
-    if changed { syncToWindowModel() }
+    if changed { refreshSegmentLabels() }
     return changed
   }
 
@@ -1781,9 +1891,12 @@ final class TabManager: NSObject {
     insertTab(removed)
   }
 
-  /// Move another tab's surfaces into the selected tab as panes.
+  /// Move another tab's surfaces into the selected tab as panes. Only a tab
+  /// of the selected tab's workspace can join it.
   func joinTab(at sourceIndex: Int, axis: SplitAxis) {
-    guard tabs.indices.contains(sourceIndex), selectedIndex >= 0, sourceIndex != selectedIndex
+    guard records.indices.contains(sourceIndex), records.indices.contains(selectedIndex),
+      sourceIndex != selectedIndex,
+      records[sourceIndex].workspaceID == records[selectedIndex].workspaceID
     else { return }
     let source = records[sourceIndex].entry
     source.view.removeFromSuperview()
@@ -1954,9 +2067,13 @@ final class TabManager: NSObject {
     syncToWindowModel()
   }
 
-  /// Push current tab state to the SwiftUI-observable WindowModel.
+  /// Push current tab state to the SwiftUI-observable WindowModel, now.
+  /// Only what changed is assigned, so views that show something else
+  /// aren't invalidated.
   func syncToWindowModel() {
     assert(Thread.isMainThread, "syncToWindowModel must run on the main thread")
+    syncScheduled = false
+    lastSync = ProcessInfo.processInfo.systemUptime
     guard let ws = windowModel else { return }
 
     // Internal consistency: selectedIndex must always point at a real tab,
@@ -2026,7 +2143,7 @@ final class TabManager: NSObject {
         agentState: agentTerminal?.agentState
       )
     }
-    ws.agents = records.flatMap { record -> [AgentSummary] in
+    let agents = records.flatMap { record -> [AgentSummary] in
       record.entry.surfaces.compactMap { surface in
         guard case .terminal(let container) = surface, let terminal = container.activeTerminal,
           let agent = terminal.agent, let state = terminal.agentState
@@ -2041,13 +2158,15 @@ final class TabManager: NSObject {
     }.sorted {
       $0.state.urgency != $1.state.urgency ? $0.state.urgency > $1.state.urgency : $0.since > $1.since
     }
-    ws.allTabs = infos
-    ws.refreshTabs(
-      infos.filter { $0.workspaceID == activeWorkspaceID }, selectedIndex: selectedIndex)
-    ws.ports = activeWorkspace.ports
-    ws.workspaces = workspaces.map { workspace in
+    ws.update(\.agents, to: agents)
+    ws.update(\.allTabs, to: infos)
+    ws.update(\.tabDisplayInfos, to: infos.filter { $0.workspaceID == activeWorkspaceID })
+    ws.update(\.selectedTabIndex, to: selectedIndex)
+    ws.update(\.ports, to: activeWorkspace.ports)
+    let overlapMonitor = OverlapMonitor.shared
+    let workspaceInfos = workspaces.map { workspace in
       let tabs = infos.filter { $0.workspaceID == workspace.id }
-      let overlaps = workspace.kind == .folder ? OverlapMonitor.shared.pairs(involving: workspace.root) : []
+      let overlaps = workspace.kind == .folder ? overlapMonitor.pairs(involving: workspace.root) : []
       return WorkspaceInfo(
         id: workspace.id,
         name: workspace.name,
@@ -2063,33 +2182,39 @@ final class TabManager: NSObject {
         taskSummary: workspace.taskSummary,
         overlaps: overlaps,
         mainCheckoutPath: overlaps.isEmpty ? nil : workspace.repository?.snapshot.map { snapshot in
-          TaskRegistry.canonical(
+          overlapMonitor.canonical(
             (snapshot.commonDir as NSString).lastPathComponent == ".git"
               ? (snapshot.commonDir as NSString).deletingLastPathComponent : snapshot.root)
         },
-        isMerged: workspace.isTask && OverlapMonitor.shared.isMerged(workspace.root),
-        isUpstreamGone: workspace.isTask && OverlapMonitor.shared.isUpstreamGone(workspace.root),
+        isMerged: workspace.isTask && overlapMonitor.isMerged(workspace.root),
+        isUpstreamGone: workspace.isTask && overlapMonitor.isUpstreamGone(workspace.root),
         repositoryHasMergedTasks: workspace.repository.map {
-          !(OverlapMonitor.shared.merged[$0.snapshot?.commonDir ?? ""] ?? []).isEmpty
+          !(overlapMonitor.merged[$0.snapshot?.commonDir ?? ""] ?? []).isEmpty
         } ?? false,
         ports: workspace.ports,
         agentsWaiting: tabs.filter { $0.agentState?.wantsUser == true }.count,
         agentsWorking: tabs.filter { $0.agentState == .working }.count
       )
     }
+    ws.update(\.workspaces, to: workspaceInfos)
 
     // Update the active file path for sidebar highlighting.
-    if let editor = selectedEditor {
-      ws.activeFilePath = editor.filePath
-    } else {
-      ws.activeFilePath = nil
-    }
+    ws.update(\.activeFilePath, to: selectedEditor?.filePath)
   }
 
-  /// Updates tab labels to reflect current tab titles (e.g., after a
-  /// terminal title change or editor save).
+  /// Sync the WindowModel soon, after a title, attention, progress, agent
+  /// or dirty-state change. Calls are coalesced: at most one sync runs per
+  /// run-loop turn, and not within 50 ms of the last one, so a title
+  /// spinner or a burst of output doesn't rebuild the chrome each time.
   func refreshSegmentLabels() {
-    syncToWindowModel()
+    guard !syncScheduled else { return }
+    syncScheduled = true
+    let wait = max(0, lastSync + 0.05 - ProcessInfo.processInfo.systemUptime)
+    DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+      // A direct sync since then already covered it.
+      guard let self, self.syncScheduled else { return }
+      self.syncToWindowModel()
+    }
   }
 
   // MARK: - Vertical Tab Subtitles
@@ -2136,7 +2261,7 @@ final class TabManager: NSObject {
         }
         self.tabBranchCache[dir] = (branch: branch, at: Date())
         if previous != branch {
-          self.syncToWindowModel()
+          self.refreshSegmentLabels()
         }
       }
     }
@@ -2153,32 +2278,47 @@ final class TabManager: NSObject {
     return path
   }
 
-  /// Returns the appropriate icon for a tab entry.
+  /// Returns the appropriate icon for a tab entry. The same image comes
+  /// back each time for the same icon (the icon cache's, or one made once
+  /// here), so unchanged tab infos compare equal.
   private func tabIcon(for tab: TabEntry) -> NSImage? {
     switch tab {
     case .terminal:
-      return iconCache?.materialIcon(name: "console")
-        ?? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "Terminal")
+      return iconCache?.materialIcon(name: "console") ?? symbolIcon("terminal.fill", "Terminal")
     case .editor(let editor):
       if let path = editor.filePath {
         let filename = (path as NSString).lastPathComponent
-        return iconCache?.icon(filename: filename, isDirectory: false, expanded: false)
-          ?? NSWorkspace.shared.icon(forFile: path)
+        if let icon = iconCache?.icon(filename: filename, isDirectory: false, expanded: false) {
+          return icon
+        }
+        return cachedTabIcon("file:" + path) { NSWorkspace.shared.icon(forFile: path) }
       }
-      return NSImage(systemSymbolName: "doc.text", accessibilityDescription: "Editor")
+      return symbolIcon("doc.text", "Editor")
     case .imagePreview:
-      return iconCache?.materialIcon(name: "image")
-        ?? NSImage(systemSymbolName: "photo", accessibilityDescription: "Image")
+      return iconCache?.materialIcon(name: "image") ?? symbolIcon("photo", "Image")
     case .diffReview:
-      return NSImage(
-        systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Review Changes")
+      return symbolIcon("arrow.triangle.branch", "Review Changes")
     case .history:
-      return NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "History")
+      return symbolIcon("clock.arrow.circlepath", "History")
     case .tool(let view):
-      return NSImage(systemSymbolName: view.toolSymbol, accessibilityDescription: view.toolTitle)
+      return symbolIcon(view.toolSymbol, view.toolTitle)
     case .split(let split):
       return tabIcon(for: split.focused)
     }
+  }
+
+  private func symbolIcon(_ name: String, _ description: String) -> NSImage? {
+    cachedTabIcon("symbol:\(name):\(description)") {
+      NSImage(systemSymbolName: name, accessibilityDescription: description)
+    }
+  }
+
+  private func cachedTabIcon(_ key: String, make: () -> NSImage?) -> NSImage? {
+    if let image = tabIconImages[key] { return image }
+    guard let image = make() else { return nil }
+    if tabIconImages.count > 256 { tabIconImages.removeAll(keepingCapacity: true) }
+    tabIconImages[key] = image
+    return image
   }
 
   // MARK: - Editor Options
@@ -2302,32 +2442,37 @@ final class TabManager: NSObject {
 
   // MARK: - File Type Detection
 
-  /// Returns `true` if the file path has an image extension.
+  /// Returns `true` if the file path has an image extension (and isn't a
+  /// FIFO or device, which loading the image would block on).
   static func isImageFile(_ path: String) -> Bool {
     let ext = (path as NSString).pathExtension.lowercased()
     switch ext {
     case "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif":
-      return true
+      var info = stat()
+      return stat(path, &info) != 0 || info.st_mode & S_IFMT == S_IFREG
     default:
       return false
     }
   }
 
   /// Returns `true` if the file is likely a binary (>10 MB or contains null
-  /// bytes in the first 8 KB).
+  /// bytes in the first 8 KB). Anything but a regular file (a FIFO, a
+  /// device) counts as binary, so it's never read.
   static func isBinaryFile(_ path: String) -> Bool {
-    let fm = FileManager.default
-    guard let attrs = try? fm.attributesOfItem(atPath: path),
-      let size = attrs[.size] as? UInt64
-    else { return false }
+    // Non-blocking: opening a FIFO with no writer mustn't hang the caller.
+    let fd = open(path, O_RDONLY | O_NONBLOCK | O_NOCTTY | O_CLOEXEC)
+    guard fd >= 0 else { return false }
+    defer { close(fd) }
+    var info = stat()
+    guard fstat(fd, &info) == 0 else { return false }
+    guard info.st_mode & S_IFMT == S_IFREG else { return true }
 
     // Files larger than 10 MB are treated as binary.
-    if size > 10 * 1024 * 1024 { return true }
+    if info.st_size > 10 * 1024 * 1024 { return true }
 
     // Read the first 8 KB and check for null bytes.
-    guard let handle = FileHandle(forReadingAtPath: path) else { return false }
-    defer { handle.closeFile() }
-    let data = handle.readData(ofLength: 8192)
-    return data.contains(0)
+    var buffer = [UInt8](repeating: 0, count: 8192)
+    let count = read(fd, &buffer, buffer.count)
+    return count > 0 && buffer[0..<count].contains(0)
   }
 }

@@ -144,6 +144,89 @@ public struct WorkspaceEdit: Equatable, Sendable {
       return true
     }
   }
+
+  /// What the user is asked about before the edit applies (none: it just
+  /// applies): every file it creates, moves or deletes, wherever it is, and
+  /// every file outside `boundary` it changes (without a boundary, every
+  /// file it changes). `path` turns a URI into a path.
+  public func confirmations(within boundary: String?, path: (String) -> String) -> [WorkspaceEditConfirmation] {
+    let files = FileManager.default
+    var out: [WorkspaceEditConfirmation] = []
+    for operation in operations {
+      switch operation {
+      case .edit(let uri, let edits):
+        let file = path(uri)
+        if !edits.isEmpty, boundary.map({ !Self.isInside(file, $0) }) ?? true { out.append(.changes(path: file)) }
+      case .create(let uri, let overwrite, let ignoreIfExists):
+        let file = path(uri)
+        let exists = files.fileExists(atPath: file)
+        if exists && (ignoreIfExists || !overwrite) { continue }
+        out.append(exists ? .empties(path: file) : .creates(path: file))
+      case .rename(let oldUri, let newUri, _, _):
+        out.append(.moves(from: path(oldUri), to: path(newUri)))
+      case .delete(let uri, let recursive, _):
+        let file = path(uri)
+        var isDirectory: ObjCBool = false
+        let folder = files.fileExists(atPath: file, isDirectory: &isDirectory) && isDirectory.boolValue
+        out.append(.deletes(path: file, withContents: folder && recursive))
+      }
+    }
+    return out
+  }
+
+  /// Whether `path` is `folder` or inside it, once `..` is taken out and
+  /// symlinks are resolved as far as each exists: a link inside the folder
+  /// that points out of it is outside.
+  public static func isInside(_ path: String, _ folder: String) -> Bool {
+    let folder = resolvedPath(folder)
+    let resolved = resolvedPath(path)
+    return folder == "/" || resolved == folder || resolved.hasPrefix(folder + "/")
+  }
+
+  /// `path` with `..` taken out and symlinks resolved as far as it exists
+  /// (a file still to be created resolves through its folder).
+  public static func resolvedPath(_ path: String) -> String {
+    var existing = (path as NSString).standardizingPath
+    var missing: [String] = []
+    while !existing.isEmpty, existing != "/", !FileManager.default.fileExists(atPath: existing) {
+      missing.insert((existing as NSString).lastPathComponent, at: 0)
+      existing = (existing as NSString).deletingLastPathComponent
+    }
+    return missing.reduce(WorkspaceTrust.normalize(existing)) { ($0 as NSString).appendingPathComponent($1) }
+  }
+
+  /// Where a rename or code action the user picked may change files
+  /// without asking: the repository the file is in, or the trusted folder
+  /// it's in when that's narrower (only part of the repository is
+  /// trusted) or there's no repository; failing both, the language
+  /// server's project root. So a rename that reaches a sibling crate or
+  /// package doesn't ask, and one that reaches past the repository or
+  /// what's trusted does. (Changes a server makes on its own stay within
+  /// its project root.)
+  public static func userEditBoundary(trustedFolder: String?, repositoryRoot: String?, serverRoot: String?) -> String? {
+    switch (trustedFolder, repositoryRoot) {
+    case let (trusted?, repository?):
+      return isInside(repository, trusted) ? repository : trusted
+    case let (trusted?, nil):
+      return trusted
+    case let (nil, repository?):
+      return repository
+    case (nil, nil):
+      return serverRoot
+    }
+  }
+}
+
+/// Something a workspace edit does that the user says yes to first (see
+/// `WorkspaceEdit.confirmations`).
+public enum WorkspaceEditConfirmation: Equatable, Sendable {
+  /// Changes a file outside the boundary.
+  case changes(path: String)
+  case creates(path: String)
+  /// Creates a file over an existing one, leaving it empty.
+  case empties(path: String)
+  case moves(from: String, to: String)
+  case deletes(path: String, withContents: Bool)
 }
 
 public enum TextEditApplier {

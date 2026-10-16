@@ -24,10 +24,13 @@ public struct TaskRecord: Codable, Equatable, Sendable {
   /// When Finish Task pushed the branch for review: once it's merged, Impulse
   /// offers to clean up.
   public var pushedForReview: Date?
+  /// Made from a remote branch (New Task from Branch…), possibly someone
+  /// else's: its folder stays restricted until it's trusted itself.
+  public var fromRemote: Bool?
 
   public init(
     path: String, branch: String, base: String? = nil, remote: String? = nil, slot: Int? = nil,
-    created: Date = Date(), start: String? = nil, pushedForReview: Date? = nil
+    created: Date = Date(), start: String? = nil, pushedForReview: Date? = nil, fromRemote: Bool? = nil
   ) {
     self.path = path
     self.branch = branch
@@ -37,6 +40,7 @@ public struct TaskRecord: Codable, Equatable, Sendable {
     self.created = created
     self.start = start
     self.pushedForReview = pushedForReview
+    self.fromRemote = fromRemote
   }
 
   /// `origin/main`, or `main` for a local base; nil when unknown.
@@ -73,12 +77,16 @@ public struct TaskRegistry: Codable, Equatable, Sendable {
     tasks.first { $0.branch == branch }
   }
 
-  /// The lowest slot from 1 up that no task holds and `available` accepts.
-  public func nextSlot(available: (Int) -> Bool = { _ in true }) -> Int {
+  /// The highest slot given. The search for a free one stops there, as
+  /// ports that are never free (in use for good, or past 65535) would
+  /// keep it going forever.
+  public static let maxSlot = 999
+
+  /// The lowest slot from 1 to `maxSlot` that no task holds and `available`
+  /// accepts; nil when there's none.
+  public func nextSlot(available: (Int) -> Bool = { _ in true }) -> Int? {
     let taken = Set(tasks.compactMap(\.slot))
-    var slot = 1
-    while taken.contains(slot) || !available(slot) { slot += 1 }
-    return slot
+    return (1...Self.maxSlot).first { !taken.contains($0) && available($0) }
   }
 
   /// Add a task, replacing any record for the same folder.

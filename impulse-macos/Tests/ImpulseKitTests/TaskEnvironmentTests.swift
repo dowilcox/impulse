@@ -97,11 +97,107 @@
 
     @Test func oddValuesAreQuoted() {
       #expect(TaskEnvironment.quoted("plain_value-1") == "plain_value-1")
+      #expect(TaskEnvironment.quoted("http://localhost:8100") == "http://localhost:8100")
+      #expect(TaskEnvironment.quoted("postgres://u@db/app?sslmode=disable") == "postgres://u@db/app?sslmode=disable")
       #expect(TaskEnvironment.quoted("two words") == "\"two words\"")
       #expect(TaskEnvironment.quoted("a\"b") == "\"a\\\"b\"")
+      #expect(TaskEnvironment.quoted("it's") == "\"it's\"")
+      #expect(TaskEnvironment.quoted("${APP_URL}/api") == "\"${APP_URL}/api\"", "left for the reader to expand")
+      #expect(TaskEnvironment.quoted("a\nb=1\r") == "ab=1", "one value per line")
+      #expect(TaskEnvironment.quoted("") == "")
       #expect(TaskEnvironment.key(of: "  export  KEY = value") == "KEY")
       #expect(TaskEnvironment.key(of: "# KEY=value") == nil)
       #expect(TaskEnvironment.underscored("feat-search.ui") == "feat_search_ui")
+    }
+
+    /// A branch from a remote names the task folder, and so `{task}`.
+    @Test func aBranchNameCantRunCommandsFromTheEnvFile() throws {
+      let task = "feat$(touch${IFS}PWNED)`touch PWNED2`"
+      #expect(TaskEnvironment.expand("app-{task}", task: task, slot: 1, ports: [:]) == "app-feat--touch--IFS-PWNED--touch-PWNED2-")
+      #expect(TaskEnvironment.expand("app_{task_}", task: task, slot: 1, ports: [:]) == "app_feat__touch__IFS_PWNED__touch_PWNED2_")
+
+      // Sourced by a shell, the task's values run nothing; the settings'
+      // own `${NAME}` still expands.
+      let folder = FileManager.default.temporaryDirectory.appendingPathComponent("env-\(UUID().uuidString)").path
+      try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(atPath: folder) }
+      var config = ProjectConfig()
+      config.ports = ["APP_PORT": 8000]
+      config.worktreeEnv = [
+        "NAME": "app-{task}", "DB": "app_{task_}", "URL": "http://localhost:{APP_PORT}/${NAME}",
+        "DSN": "postgres://u@db/app?sslmode=disable", "QUOTE": "it's\nfine",
+      ]
+      let values = TaskEnvironment.values(config: config, task: task, slot: 1)
+      let file = (folder as NSString).appendingPathComponent(".env")
+      try TaskEnvironment.applying(values, to: "", comment: "Impulse task x").write(toFile: file, atomically: true, encoding: .utf8)
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = ["-c", #"set -a; . ./.env; printf '%s\n' "$NAME" "$DB" "$URL" "$DSN" "$QUOTE""#]
+      process.currentDirectoryURL = URL(fileURLWithPath: folder)
+      let output = Pipe()
+      process.standardOutput = output
+      try process.run()
+      process.waitUntilExit()
+      let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      #expect(process.terminationStatus == 0)
+      #expect(
+        printed
+          == """
+          app-feat--touch--IFS-PWNED--touch-PWNED2-
+          app_feat__touch__IFS_PWNED__touch_PWNED2_
+          http://localhost:8100/app-feat--touch--IFS-PWNED--touch-PWNED2-
+          postgres://u@db/app?sslmode=disable
+          it'sfine
+
+          """)
+      let made = try FileManager.default.contentsOfDirectory(atPath: folder).filter { $0.hasPrefix("PWNED") }
+      #expect(made.isEmpty)
+    }
+
+    @Test func portsPastTheLastOneArentPorts() throws {
+      #expect(TaskEnvironment.port(8000, slot: 1, offset: 100) == 8100)
+      #expect(TaskEnvironment.port(65500, slot: 1, offset: 100) == nil)
+      #expect(TaskEnvironment.port(Int.max, slot: 1, offset: 100) == nil, "no overflow")
+      #expect(TaskEnvironment.port(8000, slot: Int.max, offset: 2) == nil)
+      #expect(TaskEnvironment.port(8000, slot: 3, offset: Int.max) == nil)
+      #expect(TaskEnvironment.port(Int.min, slot: 1, offset: -1) == nil)
+      #expect(TaskEnvironment.ports(["A": 8000, "B": 65500], slot: 1, offset: 100) == nil, "the slot can't be used")
+      #expect(TaskEnvironment.ports(["A": 8000, "B": 5173], slot: 2, offset: 100) == ["A": 8200, "B": 5373])
+
+      var config = ProjectConfig()
+      config.ports = ["A": 8000, "B": 65500]
+      #expect(TaskEnvironment.values(config: config, task: "x", slot: 1) == [.init("A", "8100")], "B has no port in slot 1")
+    }
+
+    @Test func portsAndOffsetsThatArentPortsAreSetAside() throws {
+      let config = try ProjectConfig.parse(
+        """
+        [worktrees]
+        port_offset = 9223372036854775807
+
+        [worktrees.ports]
+        APP_PORT = 8000
+        HUGE = 9223372036854775807
+        ZERO = 0
+        HIGH = 70000
+        NEGATIVE = -9223372036854775808
+        """
+      ).get()
+      #expect(config.ports == ["APP_PORT": 8000])
+      #expect(config.unusablePorts == ["HUGE": Int.max, "ZERO": 0, "HIGH": 70000, "NEGATIVE": Int.min])
+      #expect(config.portOffset == 100, "the default")
+      #expect(config.unusablePortOffset == Int.max)
+      #expect(TaskEnvironment.values(config: config, task: "x", slot: 1) == [.init("APP_PORT", "8100")])
+      #expect(try ProjectConfig.parse("[worktrees]\nport_offset = 10001").get().unusablePortOffset == 10001)
+      #expect(try ProjectConfig.parse("[worktrees]\nport_offset = 0").get().unusablePortOffset == 0)
+      #expect(try ProjectConfig.parse("[worktrees]\nport_offset = 10000").get().portOffset == 10000)
+
+      // A later file's usable value replaces an earlier one that wasn't.
+      let layered = try ProjectConfig.parse(layers: [
+        "[worktrees]\nport_offset = -1\n[worktrees.ports]\nA = 70000", "[worktrees]\nport_offset = 50\n[worktrees.ports]\nA = 7000",
+      ]).get()
+      #expect(layered.ports == ["A": 7000] && layered.unusablePorts.isEmpty)
+      #expect(layered.portOffset == 50 && layered.unusablePortOffset == nil)
     }
 
     @Test func clonesAndTheDatabaseFolderAreRead() throws {

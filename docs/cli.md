@@ -20,7 +20,9 @@ Every terminal Impulse starts gets that `bin` folder at the front of its `PATH`,
 | `TERM_PROGRAM`       | `Impulse`                                                                                                             |
 | `EDITOR`, `VISUAL`   | Set only when [Impulse is your `$EDITOR`](#use-impulse-as-your-editor).                                               |
 
-The socket belongs to the running app and serves all its windows. Only your user account can connect to it. The development build ("Impulse Dev") uses `~/Library/Application Support/impulse-dev/impulse.sock` instead.
+The socket belongs to the running app and serves all its windows. Only your user account can connect to it. The development build ("Impulse Dev") uses `~/Library/Application Support/impulse-dev/impulse.sock` instead. If another copy of Impulse is already listening there, a second copy leaves that socket alone and gives its own terminals one in the temporary folder; `IMPULSE_SOCKET` always names the right one.
+
+The [quick terminal](workspaces-and-tabs.md#quick-terminal) gets the same variables. Its requests go to the frontmost window: `impulse tab` opens the tab there, and `impulse split` says "This terminal can't be split." With no window open, `notify`, `status` and agent hooks still work there.
 
 If your shell startup files replace `PATH` outright (rather than adding to it), `impulse` may not be found; use `"$IMPULSE_CLI"` in scripts, or add the folder back to `PATH` in your shell config.
 
@@ -60,6 +62,14 @@ impulse open src/forecast.ts:42:7
 
 With a line and no column, the cursor goes to column 1. If the path is a folder, it opens as a workspace (`impulse open .` opens the current folder). If the file doesn't exist, `impulse` prints `No such file: …` and exits with status 1.
 
+It also opens a pipe, such as bash and zsh's process substitution or fish's `psub`, and anything else in `/dev` (`/dev/fd/5`, `/dev/stdin`):
+
+```sh
+impulse open <(git show HEAD~3:src/forecast.ts)
+```
+
+`impulse` reads it (up to 10 MB) into a file in the temporary folder, named after it (`63`, say), and opens that. Saving changes that copy.
+
 ### `impulse edit`
 
 ```
@@ -68,9 +78,12 @@ impulse edit <file>
 
 Opens the file like `impulse open`, then waits until you close its tab before exiting. That's what an editor launched by `git commit`, `crontab -e` or `kubectl edit` must do, which makes `impulse edit` usable as `$EDITOR`. See [Use Impulse as your `$EDITOR`](#use-impulse-as-your-editor).
 
-- If the file doesn't exist, Impulse creates it empty and opens it.
-- Images, binary files and folders don't get an editor tab to close, so `impulse edit` returns right away for them.
+- If the file doesn't exist, Impulse creates it empty and opens it. Only the terminal's own shell, or a program started from it, can create a file this way (see [Inside tmux or screen](#inside-tmux-or-screen)).
+- Images and folders don't get an editor tab to close, so `impulse edit` returns right away for them.
+- A file the editor won't open (a binary file, one larger than 10 MB, one that isn't UTF-8 text or can't be read) makes `impulse edit` exit with status 1 right away, printing `Impulse couldn't open <file> in the editor.`; the window says why. A pipe, or anything else in `/dev`, can't be edited: `impulse edit <(…)` prints `impulse edit: /dev/fd/63 can't be edited in place; impulse open shows a copy`.
+- The wait follows the tab, so it still ends when you close the tab after saving it under another name with **Save As**.
 - `:line[:column]` works as with `open`.
+- Press ⌃C to stop waiting; the tab stays open.
 - If Impulse quits while `impulse edit` is waiting, it exits with status 1 ("no answer from Impulse").
 
 ### `impulse review`
@@ -104,6 +117,8 @@ impulse split down 'npm test -- --watch'
 ```
 
 The command's words are joined with spaces and typed into the new pane's shell, so quote a command that has its own quoting or shell operators as one argument.
+
+Like `tab` and `checkpoint`, `split` only works from the terminal's own shell, not inside tmux or screen; see [Inside tmux or screen](#inside-tmux-or-screen).
 
 ### `impulse tab`
 
@@ -146,7 +161,7 @@ Reports an agent state for this pane, for agents that Impulse doesn't recognize 
 | `done`    | **Finished**         |
 | `idle`    | **Idle**             |
 
-If no agent was recognized in the pane, Impulse starts tracking one called "Agent". `waiting` and `done` flag the pane and notify you like any agent; see [Agents](agents.md#agent-states). Once a pane has reported a status, Impulse stops guessing that agent's state from its output.
+If no agent was recognized in the pane, Impulse starts tracking one called "Agent". `waiting` and `done` flag the pane and notify you like any agent; see [Agents](agents.md#agent-states). Once a pane has reported a status, Impulse stops guessing that agent's state from its output, and the state stays until the next report, however long the program is quiet.
 
 A message may follow the state, for example `impulse status working running migrations`. It's shown after the state in the [agent list](agents.md#the-agent-list) and on the [toolbelt](agents.md#the-toolbelt). Each `impulse status` replaces the message; one without a message clears it.
 
@@ -209,7 +224,7 @@ fix-elevation (task)
 
 It's meant for agents as much as for you: an agent only knows its own folder, and this shows it what the others are doing before it merges a branch or makes sweeping edits. `--json` prints the same as JSON, for scripts.
 
-`impulse tasks wait <task>` waits until no agent is working (or waiting for input) in that task, named by its folder or branch, then exits: a way to let a branch stop moving before merging it.
+`impulse tasks wait <task>` waits until no agent is working (or waiting for input) in that task, named by its folder or branch, then exits: a way to let a branch stop moving before merging it. Press ⌃C to stop waiting.
 
 ### `impulse hook`
 
@@ -219,17 +234,31 @@ impulse hook <claude|codex> [event]
 
 What the hooks installed by **Install Agent Hooks…** run; you don't normally call it yourself. Claude Code passes its hook input as JSON on standard input; Codex passes its notification JSON as the last argument. Impulse reads the event name (from the argument, or from the JSON), the message and the session id from it:
 
-| Event                               | Effect on the pane's agent                                                          |
-| ----------------------------------- | ----------------------------------------------------------------------------------- |
-| `SessionStart`                      | **Idle**                                                                            |
-| `UserPromptSubmit`                  | **Working**                                                                         |
-| `Notification`                      | **Needs your input** if the message asks for permission or input, else **Finished** |
-| `Stop`, `agent-turn-complete`       | **Finished**                                                                        |
-| Anything else (tool use, subagents) | No change                                                                           |
+| Event                                               | Effect on the pane's agent                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `SessionStart`                                      | **Idle**                                                                                                      |
+| `UserPromptSubmit`                                  | **Working**                                                                                                   |
+| `PostToolUse`                                       | **Working**, when it's the tool a permission request was waiting on; else no change                           |
+| `Notification`                                      | **Needs your input** if the message asks for permission or input; else **Finished**, if the agent was working |
+| `Stop`, `agent-turn-complete`                       | **Finished**                                                                                                  |
+| Anything else (`PreToolUse`, subagents, compaction) | No change                                                                                                     |
 
 For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), and a question before a merge (`PreToolUse`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).
 
 Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does nothing and exits with status 0, so the hooks never get in the agent's way. See [Agents](agents.md#agent-hooks).
+
+## Inside tmux or screen
+
+`IMPULSE_PANE_TOKEN` names a pane, but any program that can see a shell's environment could read it. So the commands that start programs or run git where they're asked to also check where the request comes from: `split`, `tab`, `checkpoint`, and `edit` of a file that doesn't exist yet only work from the pane's own shell or a program started from it. The others (`open`, `edit` of an existing file, `review`, `notify`, `status`, `tasks` and `hook`) only need the token.
+
+tmux and screen run their shells in a server of their own, not under the shell you started them from, and their panes keep the token of the Impulse pane the server started in. Inside them:
+
+- `split`, `tab` and `checkpoint` print `impulse split only works from the terminal's own shell, not inside tmux or screen.` (with the command's name) and exit with status 1.
+- `impulse edit` can't create a file; create it first (`touch notes.md`).
+- `review` and `tasks`, and the notes Impulse's hooks give Claude Code, use the folder of that Impulse pane, not the folder you're in inside tmux.
+- Agent hooks, `notify` and `status` work as usual.
+
+If the Impulse pane the tmux server started in has closed, commands act as they do [outside Impulse terminals](#use-it-outside-impulse-terminals).
 
 ## Exit status
 
@@ -294,7 +323,7 @@ alias impulse=/Applications/Impulse.app/Contents/Resources/bin/impulse
 impulse open ~/Code/trailhead/src/server.ts:12
 ```
 
-Without a pane token, requests go to the frontmost Impulse window. `open`, `edit`, `review` and `checkpoint` work this way. `split`, `tab`, `notify` and `status` act on a pane, so they refuse with "Run this inside an Impulse terminal.", and `hook` does nothing.
+Without a pane token, requests go to the frontmost Impulse window. `open`, `edit` of an existing file and `review last-turn` work this way. `split`, `tab`, `notify`, `status`, `checkpoint`, `tasks` and the other `review` scopes need a pane, so they refuse with "Run this inside an Impulse terminal.", and `hook` does nothing.
 
 ## Examples
 

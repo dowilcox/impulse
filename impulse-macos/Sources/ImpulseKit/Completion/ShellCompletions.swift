@@ -16,36 +16,18 @@ public enum ShellCompletions {
   public static func fish(
     line: String, cwd: String?, fishPath: String, timeout: TimeInterval = 1.5
   ) -> [CompletionCandidate] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: fishPath)
     // The line goes in an environment variable, so it's never parsed as code.
-    process.arguments = ["-c", "complete -C -- \"$IMPULSE_COMPLETE_LINE\""]
     var environment = ProcessInfo.processInfo.environment
     environment["IMPULSE_COMPLETE_LINE"] = line
-    process.environment = environment
-    if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    process.standardInput = FileHandle.nullDevice
-    do {
-      try process.run()
-    } catch {
-      return []
-    }
-    let deadline = DispatchTime.now() + timeout
-    let finished = DispatchSemaphore(value: 0)
-    var data = Data()
-    DispatchQueue.global(qos: .userInitiated).async {
-      data = output.fileHandleForReading.readDataToEndOfFile()
-      finished.signal()
-    }
-    if finished.wait(timeout: deadline) == .timedOut {
-      process.terminate()
-      return []
-    }
-    process.waitUntilExit()
-    return parseFish(String(decoding: data, as: UTF8.self))
+    // A timeout stops the whole process group, so a completion script's
+    // helper that hangs can't outlive the request.
+    guard
+      let result = try? ChildProcess.run(
+        fishPath, ["-c", "complete -C -- \"$IMPULSE_COMPLETE_LINE\""], in: cwd,
+        environment: environment, timeout: timeout),
+      !result.timedOut
+    else { return [] }
+    return parseFish(String(decoding: result.stdout, as: UTF8.self))
   }
 
   /// `value<TAB>description` lines → candidates (kind "shell"; a trailing
@@ -67,7 +49,7 @@ public enum ShellCompletions {
       out.append(
         CompletionCandidate(
           value: value, display: display, kind: isDir ? "path" : "shell", isDir: isDir, gitStatus: nil,
-          detail: detail?.isEmpty == false ? detail : nil))
+          detail: detail?.isEmpty == false ? detail : nil, keptPrefix: nil))
       if out.count >= limit { break }
     }
     return out

@@ -109,4 +109,85 @@
       #expect(SessionState.autosaveKey([window(title: "✳ claude", line: 1, activeTab: 0, tasks: ["/tmp/repo.worktrees/fix"])]) != saved)
     }
   }
+
+  struct SessionScrollbackTests {
+    private func scratchDirectory() throws -> URL {
+      let dir = FileManager.default.temporaryDirectory.appendingPathComponent("impulse-session-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      return dir
+    }
+
+    private func session(_ transcripts: [String]) -> SessionState {
+      let tabs = transcripts.map {
+        SessionTab(pinned: false, panes: [.terminal(cwd: "/tmp", title: nil, shell: "zsh", transcript: $0)])
+      }
+      let workspace = SessionWorkspaceState(
+        kind: "scratch", root: "/tmp", tabs: tabs, activeTabIndex: 0, fileTreeRoot: nil)
+      let window = SessionWindowState(
+        workspaces: [workspace], activeWorkspaceIndex: 0, frame: nil, sidebarVisible: nil, sidebarWidth: nil)
+      return SessionState.snapshot(windows: [window], activeWindowIndex: 0)
+    }
+
+    private func scrollbackNames(_ state: SessionState) -> [String?] {
+      state.windows.flatMap { $0.workspaces ?? [] }.flatMap(\.tabs).flatMap(\.panes).map(\.scrollback)
+    }
+
+    private func files(in directory: URL) -> Set<String> {
+      Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+    }
+
+    @Test func unchangedOutputIsNotWrittenAgain() throws {
+      let dir = try scratchDirectory()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      var first = session(["$ ls\nREADME.md\n", "$ make\nok\n"])
+      SessionScrollback.store(&first, in: dir)
+      let names = scrollbackNames(first)
+      #expect(names.allSatisfy { $0 != nil })
+      let quiet = dir.appendingPathComponent(try #require(names[0]))
+      let stamp = try FileManager.default.attributesOfItem(atPath: quiet.path)[.systemFileNumber] as? Int
+
+      // The first terminal printed nothing new; the second did.
+      var second = session(["$ ls\nREADME.md\n", "$ make\nok\n$ make test\npassed\n"])
+      let kept = SessionScrollback.store(&second, in: dir)
+      let secondNames = scrollbackNames(second)
+      #expect(secondNames[0] == names[0])
+      #expect(secondNames[1] != names[1])
+      #expect(try FileManager.default.attributesOfItem(atPath: quiet.path)[.systemFileNumber] as? Int == stamp)
+      // Restore finds every terminal's output.
+      var restored = try #require(second.windows[0].workspaces)
+      for t in restored[0].tabs.indices { restored[0].tabs[t].panes[0].transcript = nil }
+      SessionScrollback.load(into: &restored, from: dir)
+      #expect(
+        restored[0].tabs.map { $0.panes[0].transcript } == ["$ ls\nREADME.md\n", "$ make\nok\n$ make test\npassed\n"])
+
+      // Until the new session is written, the old one's files stay.
+      #expect(files(in: dir).contains(try #require(names[1])))
+      SessionScrollback.removeFiles(except: kept, in: dir)
+      #expect(files(in: dir) == Set(secondNames.compactMap { $0 }))
+    }
+
+    @Test func oldOutputStaysWhenTheSessionFileCannotBeWritten() throws {
+      let dir = try scratchDirectory()
+      defer { try? FileManager.default.removeItem(at: dir) }
+      let scrollback = dir.appendingPathComponent("scrollback")
+      let sessionFile = dir.appendingPathComponent("session-state.json")
+      SessionState.persist(session(["one\n"]), to: sessionFile, scrollbackDirectory: scrollback, synchronously: true)
+      let saved = try #require(SessionState.load(from: sessionFile))
+      let before = files(in: scrollback)
+      #expect(before == Set(scrollbackNames(saved).compactMap { $0 }))
+
+      // The session file can't be written (a folder is in its way): the
+      // previous session's output must survive.
+      let blocked = dir.appendingPathComponent("blocked")
+      try FileManager.default.createDirectory(
+        at: blocked.appendingPathComponent("inside"), withIntermediateDirectories: true)
+      SessionState.persist(session(["two\n"]), to: blocked, scrollbackDirectory: scrollback, synchronously: true)
+      #expect(files(in: scrollback).isSuperset(of: before))
+
+      SessionState.persist(session(["two\n"]), to: sessionFile, scrollbackDirectory: scrollback, synchronously: true)
+      let resaved = try #require(SessionState.load(from: sessionFile))
+      #expect(files(in: scrollback) == Set(scrollbackNames(resaved).compactMap { $0 }))
+      #expect(files(in: scrollback).isDisjoint(with: before))
+    }
+  }
 #endif

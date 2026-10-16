@@ -33,9 +33,16 @@ public struct CompletionCandidate: Codable, Equatable, Sendable {
   public var gitStatus: String?
   /// What it is ("Stage changes", a script's command), for spec candidates.
   public var detail: String?
+  /// How `value` goes into the input. Impulse's own candidates are literal
+  /// text (a file name, a branch), escaped when inserted, after this leading
+  /// part kept as is: the `~/` or `$HOME/` a path completion read as the
+  /// home folder, usually nothing. Nil for the shell's own answers, which
+  /// come as the shell prints them (see `ShellQuoting.completionText`).
+  public var keptPrefix: String?
 
   public init(
-    value: String, display: String, kind: String, isDir: Bool, gitStatus: String?, detail: String? = nil
+    value: String, display: String, kind: String, isDir: Bool, gitStatus: String?, detail: String? = nil,
+    keptPrefix: String? = ""
   ) {
     self.value = value
     self.display = display
@@ -43,12 +50,23 @@ public struct CompletionCandidate: Codable, Equatable, Sendable {
     self.isDir = isDir
     self.gitStatus = gitStatus
     self.detail = detail
+    self.keptPrefix = keptPrefix
+  }
+
+  /// The shell text that replaces the token `typed` (as typed, up to the
+  /// cursor) when this candidate is accepted.
+  public func insertion(typed: String, shell: ShellType) -> String {
+    guard let keptPrefix else { return ShellQuoting.completionText(value, typed: typed, for: shell) }
+    guard value.utf8.starts(with: keptPrefix.utf8) else { return ShellQuoting.escaped(value, for: shell) }
+    let rest = String(decoding: Array(value.utf8.dropFirst(keptPrefix.utf8.count)), as: UTF8.self)
+    return keptPrefix + ShellQuoting.escaped(rest, for: shell)
   }
 
   enum CodingKeys: String, CodingKey {
     case value, display, kind, detail
     case isDir = "is_dir"
     case gitStatus = "git_status"
+    case keptPrefix = "kept_prefix"
   }
 }
 

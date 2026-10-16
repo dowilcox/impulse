@@ -34,12 +34,36 @@ extension MainWindowController {
 
   /// Add the shells' own history files to Impulse's history.
   func importShellHistory() {
-    CommandHistory.shared.importShellHistory { [weak self] count in
-      self?.toasts.show(
-        Toast(
-          kind: .success,
-          message: count == 0
-            ? "No zsh, bash or fish history found." : "Imported \(count) commands from shell history."))
+    guard settings.terminalPersistentHistory else {
+      toasts.show(Toast(kind: .info, message: "Command history is off. Turn on Keep command history in Settings."))
+      return
+    }
+    CommandHistory.shared.importShellHistory { [weak self] found, added in
+      let message =
+        found == 0
+        ? "No zsh, bash or fish history found."
+        : added == 0
+          ? "Shell history is already imported."
+          : "Imported \(added) command\(added == 1 ? "" : "s") from shell history."
+      self?.toasts.show(Toast(kind: found == 0 ? .info : .success, message: message))
+    }
+  }
+
+  /// Delete Impulse's command history, after asking.
+  func clearCommandHistory() {
+    guard let window else { return }
+    let alert = NSAlert()
+    alert.messageText = "Clear command history?"
+    alert.informativeText =
+      "Impulse forgets every command it has recorded, in every terminal. Your shell's own history isn't touched."
+    alert.addButton(withTitle: "Clear History")
+    alert.addButton(withTitle: "Cancel")
+    alert.buttons.first?.hasDestructiveAction = true
+    alert.beginSheetModal(for: window) { [weak self] response in
+      guard response == .alertFirstButtonReturn else { return }
+      CommandHistory.shared.clear {
+        self?.toasts.show(Toast(kind: .success, message: "Command history cleared."))
+      }
     }
   }
 
@@ -62,20 +86,43 @@ extension MainWindowController {
     }
   }
 
-  /// Look for dev servers every few seconds while the window is visible:
-  /// listening ports of anything running in the window's terminals.
+  /// Look for dev servers every few seconds while the window can be seen
+  /// (not covered, minimized, hidden or on another Space): listening ports
+  /// of anything running in the window's terminals.
   func startPortScanning() {
-    portTimer?.invalidate()
+    guard let window else { return }
+    notificationObservers.append(
+      NotificationCenter.default.addObserver(
+        forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+      ) { [weak self] _ in
+        self?.updatePortScanning()
+      })
+    updatePortScanning()
+  }
+
+  /// Scan while the window is visible, at once when it comes back into
+  /// view; stop the timer while it isn't.
+  private func updatePortScanning() {
+    guard let window, window.occlusionState.contains(.visible) else {
+      portTimer?.invalidate()
+      portTimer = nil
+      return
+    }
+    guard portTimer == nil else { return }
+    scanPorts()
     portTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-      guard let self, let window = self.window, window.isVisible, !window.isMiniaturized else { return }
-      let trees = self.tabManager.processTrees()
-      DispatchQueue.global(qos: .utility).async { [weak self] in
-        var ports: [UUID: [ListeningPort]] = [:]
-        for tree in trees where !tree.pids.isEmpty {
-          ports[tree.workspace] = PortScanner.listeningPorts(of: tree.pids)
-        }
-        DispatchQueue.main.async { self?.tabManager.setPorts(ports) }
+      self?.scanPorts()
+    }
+  }
+
+  private func scanPorts() {
+    let trees = tabManager.processTrees()
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      var ports: [UUID: [ListeningPort]] = [:]
+      for tree in trees where !tree.pids.isEmpty {
+        ports[tree.workspace] = PortScanner.listeningPorts(of: tree.pids)
       }
+      DispatchQueue.main.async { self?.tabManager.setPorts(ports) }
     }
   }
 
@@ -208,7 +255,9 @@ extension MainWindowController {
       case .url, .port:
         let hint = TerminalHintMatch(
           kind: info["kind"] as? String == "port" ? .port : .url, range: 0..<1, text: text)
-        if let url = hint.url { NSWorkspace.shared.open(url) }
+        // The same rules as clicking a link: a file opens in the editor (a
+        // folder or app is shown in Finder), never launched.
+        if let url = hint.url { terminal.renderer.openLink(url) }
       case .path:
         if let path {
           paletteOpenFile(
@@ -300,7 +349,11 @@ extension MainWindowController {
               kind: .success, message: "Restored files to before turn \(index + 1)",
               actionTitle: snapshot == nil ? nil : "Undo",
               action: snapshot.map { snapshot in
-                { state.run { SafetySnapshots.restore(snapshot, root: $0) } completion: { _, _ in } }
+                {
+                  state.run { SafetySnapshots.restore(snapshot, root: $0) } completion: { [weak self] result, _ in
+                    if case .failure(let error) = result { self?.gitPresentError(error, title: "Couldn't undo the restore") }
+                  }
+                }
               }, lifetime: 15))
         }
       }

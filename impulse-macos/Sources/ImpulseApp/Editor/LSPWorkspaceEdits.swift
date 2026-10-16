@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImpulseGit
 import ImpulseKit
 
 /// A code action Swift carries out when it's picked: the server's raw
@@ -19,17 +20,53 @@ extension MainWindowController {
   struct WorkspaceEditOutcome {
     /// Why it stopped (changes before the failure stay, as LSP's "abort").
     var failure: String?
+    /// The user said no when asked: nothing changed.
+    var declined = false
     /// Files touched.
     var files: Int
     /// Reverts the whole edit: open editors undo their step (if it's still
     /// the last one), files on disk go back (if nobody changed them since).
     var undo: () -> Void
+
+    static func refused(_ failure: String) -> WorkspaceEditOutcome {
+      WorkspaceEditOutcome(failure: failure, files: 0, undo: {})
+    }
   }
 
   /// Apply `edit` across files: an open editor takes its part as one undo
   /// step, other files are rewritten on disk, and files are created, moved or
-  /// trashed as asked.
-  func applyWorkspaceEdit(_ edit: WorkspaceEdit) -> WorkspaceEditOutcome {
+  /// trashed as asked. An edit that changes files outside `root` (the folder
+  /// it may change without asking: the server's project root for a change a
+  /// server makes on its own, `userEditBoundary` for one the user picked),
+  /// or creates, moves or deletes files, is applied only once the user says
+  /// yes (and `isAllowed` still holds then). `completion` always runs: with
+  /// a declined outcome when the window goes before the user answers.
+  func applyWorkspaceEdit(
+    _ edit: WorkspaceEdit, root: String?, title: String, isAllowed: @escaping () -> Bool = { true },
+    completion: @escaping (WorkspaceEditOutcome) -> Void
+  ) {
+    if let refusal = refusal(for: edit) { return completion(.refused(refusal)) }
+    let changes = changesToConfirm(edit, root: root)
+    guard !changes.isEmpty else { return completion(apply(edit)) }
+    let declined = WorkspaceEditOutcome(failure: nil, declined: true, files: 0, undo: {})
+    confirmWorkspaceEdit(title: title, root: root, changes: changes) { [weak self] approved in
+      guard approved, let self else { return completion(declined) }
+      guard isAllowed() else { return completion(.refused("The language server was stopped.")) }
+      completion(self.apply(edit))
+    }
+  }
+
+  /// Where a rename or code action the user picked in the file at `uri` may
+  /// change files without asking (see `WorkspaceEdit.userEditBoundary`).
+  func userEditBoundary(forFileUri uri: String) -> String? {
+    let path = uriToFilePath(uri)
+    return WorkspaceEdit.userEditBoundary(
+      trustedFolder: Trust.shared.isEnabled ? Trust.shared.trustingFolder(path) : nil,
+      repositoryRoot: GitClient.repoRoot(forPath: (path as NSString).deletingLastPathComponent),
+      serverRoot: core.lspRootPath(fileUri: uri))
+  }
+
+  private func apply(_ edit: WorkspaceEdit) -> WorkspaceEditOutcome {
     var undoSteps: [() -> Void] = []
     var touched = Set<String>()
     func outcome(_ failure: String?) -> WorkspaceEditOutcome {
@@ -40,27 +77,8 @@ extension MainWindowController {
     }
     func name(_ path: String) -> String { (path as NSString).lastPathComponent }
 
-    // Edits for a document that changed since the server computed them
-    // would land in the wrong places.
-    for (uri, version) in edit.versions {
-      if let current = LSPDocuments.shared.version(uri), current != version {
-        return outcome(
-          "\(name(uriToFilePath(uri))) changed while the language server was working on it. Try again.")
-      }
-    }
-
-    // Moving or trashing a file that's open would strand its tab.
-    for operation in edit.operations {
-      switch operation {
-      case .rename(let uri, _, _, _), .delete(let uri, _, _):
-        let path = uriToFilePath(uri)
-        if openEditor(forPath: path) != nil {
-          return outcome("Close \(name(path)) first: the change moves or removes it.")
-        }
-      default:
-        break
-      }
-    }
+    // Checked again: things may have changed while the user was asked.
+    if let refusal = refusal(for: edit) { return .refused(refusal) }
 
     let files = FileManager.default
     for operation in edit.operations {
@@ -137,12 +155,17 @@ extension MainWindowController {
           try? files.moveItem(atPath: to, toPath: from)
         }
 
-      case .delete(let uri, _, let ignoreIfNotExists):
+      case .delete(let uri, let recursive, let ignoreIfNotExists):
         let path = uriToFilePath(uri)
         touched.insert(path)
-        guard files.fileExists(atPath: path) else {
+        var isDirectory: ObjCBool = false
+        guard files.fileExists(atPath: path, isDirectory: &isDirectory) else {
           if ignoreIfNotExists { continue }
           return outcome("\(name(path)) doesn't exist.")
+        }
+        // A folder goes with its contents only when the server said so.
+        if isDirectory.boolValue, !recursive, !((try? files.contentsOfDirectory(atPath: path))?.isEmpty ?? true) {
+          return outcome("\(name(path)) isn't empty.")
         }
         var trashed: NSURL?
         do {
@@ -161,6 +184,105 @@ extension MainWindowController {
     return outcome(nil)
   }
 
+  /// Why `edit` can't be applied now, if it can't: a document changed since
+  /// the server worked out its edits, or a file the edit moves, replaces or
+  /// removes is open in an editor (its tab would be stranded, its unsaved
+  /// changes lost).
+  private func refusal(for edit: WorkspaceEdit) -> String? {
+    func name(_ path: String) -> String { (path as NSString).lastPathComponent }
+    // Edits for a document that changed since the server computed them
+    // would land in the wrong places.
+    for (uri, version) in edit.versions {
+      if let current = LSPDocuments.shared.version(uri), current != version {
+        return "\(name(uriToFilePath(uri))) changed while the language server was working on it. Try again."
+      }
+    }
+    let files = FileManager.default
+    for operation in edit.operations {
+      let replaced: [String]
+      switch operation {
+      case .edit:
+        replaced = []
+      case .create(let uri, let overwrite, let ignoreIfExists):
+        let path = uriToFilePath(uri)
+        replaced = overwrite && !ignoreIfExists && files.fileExists(atPath: path) ? [path] : []
+      case .rename(let oldUri, let newUri, let overwrite, let ignoreIfExists):
+        let to = uriToFilePath(newUri)
+        replaced = [uriToFilePath(oldUri)] + (overwrite && !ignoreIfExists && files.fileExists(atPath: to) ? [to] : [])
+      case .delete(let uri, _, _):
+        replaced = [uriToFilePath(uri)]
+      }
+      for path in replaced {
+        if let open = openFile(atOrUnder: path) {
+          return "Close \(name(open)) first: the change moves, replaces or removes it."
+        }
+      }
+    }
+    return nil
+  }
+
+  /// What the user is asked about before `edit` applies, as lines (empty:
+  /// nothing; see `WorkspaceEdit.confirmations`).
+  private func changesToConfirm(_ edit: WorkspaceEdit, root: String?) -> [String] {
+    let rootName = root.map { ($0 as NSString).lastPathComponent }
+    func shown(_ path: String) -> String {
+      if let root, let rootName, WorkspaceEdit.isInside(path, root) {
+        let standardized = (path as NSString).standardizingPath
+        let prefix = (root as NSString).standardizingPath + "/"
+        if standardized.hasPrefix(prefix) { return rootName + "/" + standardized.dropFirst(prefix.count) }
+      }
+      return TabManager.abbreviateHomePath(WorkspaceEdit.resolvedPath(path))
+    }
+    return edit.confirmations(within: root, path: uriToFilePath).map { confirmation in
+      switch confirmation {
+      case .changes(let path): return "Changes \(shown(path))"
+      case .creates(let path): return "Creates \(shown(path))"
+      case .empties(let path): return "Replaces \(shown(path)) with an empty file"
+      case .moves(let from, let to): return "Moves \(shown(from)) to \(shown(to))"
+      case .deletes(let path, let withContents):
+        return withContents ? "Deletes \(shown(path)) and everything in it" : "Deletes \(shown(path))"
+      }
+    }
+  }
+
+  /// Ask whether to apply a change that does more than edit files in
+  /// `root`. `completion` runs once: with the answer, or false when there's
+  /// no window, or it closes while the question waits for another sheet
+  /// (or is up).
+  private func confirmWorkspaceEdit(
+    title: String, root: String?, changes: [String], completion: @escaping (Bool) -> Void
+  ) {
+    guard let window else { return completion(false) }
+    let shownLimit = 12
+    var list = changes.prefix(shownLimit).map { "• \($0)" }
+    if changes.count > shownLimit { list.append("…and \(changes.count - shownLimit) more") }
+    let place = root.map { "“\(($0 as NSString).lastPathComponent)”" } ?? "the project"
+    let alert = NSAlert()
+    alert.messageText = "Apply “\(title)”?"
+    alert.informativeText = "It does more than edit files in \(place):\n\n" + list.joined(separator: "\n")
+    alert.addButton(withTitle: "Apply")
+    alert.addButton(withTitle: "Cancel")
+
+    // Main thread only.
+    var closeObserver: NSObjectProtocol?
+    var answered = false
+    func answer(_ approved: Bool) {
+      guard !answered else { return }
+      answered = true
+      if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+      completion(approved)
+    }
+    closeObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification, object: window, queue: .main
+    ) { _ in answer(false) }
+    presentWhenNoSheet { window in
+      guard !answered else { return }
+      alert.beginSheetModal(for: window) { response in
+        answer(response == .alertFirstButtonReturn)
+      }
+    }
+  }
+
   /// The editor showing `path` in any window (an open file is edited in its
   /// editor, never behind its back on disk).
   private func openEditor(forPath path: String) -> EditorTab? {
@@ -174,12 +296,26 @@ extension MainWindowController {
     return nil
   }
 
+  /// A file open in an editor (in any window) that is `path`, or inside it
+  /// when it's a folder.
+  private func openFile(atOrUnder path: String) -> String? {
+    let target = (path as NSString).standardizingPath
+    let controllers = [self] + NSApp.windows.compactMap { $0.windowController as? MainWindowController }.filter { $0 !== self }
+    for controller in controllers {
+      for case .editor(let editor) in controller.tabManager.allSurfaces {
+        guard let open = editor.filePath.map({ ($0 as NSString).standardizingPath }) else { continue }
+        if open == target || open.hasPrefix(target + "/") { return open }
+      }
+    }
+    return nil
+  }
+
   /// Toast for an edit that reached past the current file (one-file edits
   /// undo with ⌘Z like any other).
   func reportWorkspaceEdit(_ outcome: WorkspaceEditOutcome, verb: String) {
     if let failure = outcome.failure {
       toasts.show(Toast(kind: .warning, message: failure))
-    } else if outcome.files > 1 {
+    } else if !outcome.declined, outcome.files > 1 {
       toasts.show(
         Toast(
           kind: .success, message: "\(verb) in \(outcome.files) files", actionTitle: "Undo",
@@ -196,24 +332,36 @@ extension MainWindowController {
   static func monacoEdit(_ edit: LSPTextEdit) -> MonacoTextEdit {
     MonacoTextEdit(
       range: MonacoRange(
-        startLine: UInt32(max(0, edit.startLine)), startColumn: UInt32(max(0, edit.startCharacter)),
-        endLine: UInt32(max(0, edit.endLine)), endColumn: UInt32(max(0, edit.endCharacter))),
+        startLine: UInt32(clamping: edit.startLine), startColumn: UInt32(clamping: edit.startCharacter),
+        endLine: UInt32(clamping: edit.endLine), endColumn: UInt32(clamping: edit.endCharacter)),
       text: edit.newText)
   }
 
-  /// A server's `workspace/applyEdit`: apply it and answer.
+  /// A server's `workspace/applyEdit`: apply it (within its project root
+  /// unless the user agrees) and answer. A server that has been stopped
+  /// (its folder isn't trusted any more, say) changes nothing.
   func handleLspApplyEdit(clientKey: String, id: Any, label: String?, edit: Any) {
-    var result: [String: Any]
-    if let parsed = WorkspaceEdit.parse(edit) {
-      let outcome = applyWorkspaceEdit(parsed)
-      reportWorkspaceEdit(outcome, verb: label ?? "Changed")
-      result = ["applied": outcome.failure == nil]
-      if let failure = outcome.failure { result["failureReason"] = failure }
-    } else {
-      result = ["applied": false, "failureReason": "Malformed edit"]
+    let core = self.core
+    func answer(_ result: [String: Any]) {
+      let json = (try? JSONSerialization.data(withJSONObject: result)).flatMap { String(data: $0, encoding: .utf8) }
+      core.lspRespond(clientKey: clientKey, id: id, resultJson: json ?? "{\"applied\":false}")
     }
-    let json = (try? JSONSerialization.data(withJSONObject: result)).flatMap { String(data: $0, encoding: .utf8) }
-    core.lspRespond(clientKey: clientKey, id: id, resultJson: json ?? "{\"applied\":false}")
+    guard core.lspIsServing(clientKey: clientKey) else {
+      return answer(["applied": false, "failureReason": "The language server was stopped."])
+    }
+    guard let parsed = WorkspaceEdit.parse(edit) else {
+      return answer(["applied": false, "failureReason": "Malformed edit"])
+    }
+    applyWorkspaceEdit(
+      parsed, root: core.lspRootPath(clientKey: clientKey), title: label ?? "Change from the language server",
+      isAllowed: { core.lspIsServing(clientKey: clientKey) }
+    ) { [weak self] outcome in
+      self?.reportWorkspaceEdit(outcome, verb: label ?? "Changed")
+      var result: [String: Any] = ["applied": outcome.failure == nil && !outcome.declined]
+      if let failure = outcome.failure { result["failureReason"] = failure }
+      if outcome.declined { result["failureReason"] = "The change was declined." }
+      answer(result)
+    }
   }
 
   // MARK: Code actions
@@ -269,31 +417,35 @@ extension MainWindowController {
       return
     }
     enqueueLspRequest(
-      DispatchWorkItem { [weak self] in
+      languageId: action.language, fileUri: action.uri, method: "codeAction/resolve", params: params
+    ) { [weak self] response in
+      let resolved = response.flatMap { $0.data(using: .utf8) }
+        .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+      DispatchQueue.main.async {
         guard let self else { return }
-        let response = self.core.lspRequest(
-          languageId: action.language, fileUri: action.uri, method: "codeAction/resolve", paramsJson: params)
-        let resolved = response.flatMap { $0.data(using: .utf8) }
-          .flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-        DispatchQueue.main.async {
-          guard let resolved, resolved["error"] == nil else {
-            self.toasts.show(Toast(kind: .warning, message: "Couldn't apply “\(raw["title"] as? String ?? "action")”."))
-            return
-          }
-          self.carryOut(resolved, from: action)
+        guard let resolved, resolved["error"] == nil else {
+          self.toasts.show(Toast(kind: .warning, message: "Couldn't apply “\(raw["title"] as? String ?? "action")”."))
+          return
         }
-      })
+        self.carryOut(resolved, from: action)
+      }
+    }
   }
 
   private func carryOut(_ codeAction: [String: Any], from action: LspCodeAction) {
     let title = codeAction["title"] as? String ?? "Action"
-    if let editJSON = codeAction["edit"], let edit = WorkspaceEdit.parse(editJSON) {
-      let outcome = applyWorkspaceEdit(edit)
-      reportWorkspaceEdit(outcome, verb: title)
-      if outcome.failure != nil { return }
+    let command = (codeAction["command"] as? [String: Any]).flatMap { command in
+      (command["command"] as? String).map { (name: $0, arguments: command["arguments"]) }
     }
-    if let command = codeAction["command"] as? [String: Any], let name = command["command"] as? String {
-      executeLspCommand(name, arguments: command["arguments"], title: title, from: action)
+    guard let editJSON = codeAction["edit"], let edit = WorkspaceEdit.parse(editJSON) else {
+      if let command { executeLspCommand(command.name, arguments: command.arguments, title: title, from: action) }
+      return
+    }
+    applyWorkspaceEdit(edit, root: userEditBoundary(forFileUri: action.uri), title: title) { [weak self] outcome in
+      guard let self else { return }
+      self.reportWorkspaceEdit(outcome, verb: title)
+      guard outcome.failure == nil, !outcome.declined, let command else { return }
+      self.executeLspCommand(command.name, arguments: command.arguments, title: title, from: action)
     }
   }
 
@@ -304,18 +456,16 @@ extension MainWindowController {
     if let arguments, !(arguments is NSNull) { params["arguments"] = arguments }
     guard let json = Self.jsonString(params) else { return }
     enqueueLspRequest(
-      DispatchWorkItem { [weak self] in
-        guard let self else { return }
-        let response = self.core.lspRequest(
-          languageId: action.language, fileUri: action.uri, method: "workspace/executeCommand", paramsJson: json)
-        let object = response.flatMap { $0.data(using: .utf8) }
-          .flatMap { (try? JSONSerialization.jsonObject(with: $0, options: .fragmentsAllowed)) as? [String: Any] }
-        guard let error = object?["error"] as? String else { return }
-        DispatchQueue.main.async {
-          self.toasts.show(
-            Toast(kind: .warning, message: "Couldn't run “\(title ?? command)”.", detail: error))
-        }
-      })
+      languageId: action.language, fileUri: action.uri, method: "workspace/executeCommand", params: json
+    ) { [weak self] response in
+      let object = response.flatMap { $0.data(using: .utf8) }
+        .flatMap { (try? JSONSerialization.jsonObject(with: $0, options: .fragmentsAllowed)) as? [String: Any] }
+      guard let error = object?["error"] as? String else { return }
+      DispatchQueue.main.async {
+        self?.toasts.show(
+          Toast(kind: .warning, message: "Couldn't run “\(title ?? command)”.", detail: error))
+      }
+    }
   }
 
   // MARK: Pass-through requests
@@ -336,19 +486,16 @@ extension MainWindowController {
     }
     let uri = URL(fileURLWithPath: path).absoluteString
     object["textDocument"] = ["uri": uri]
-    let language = editor.lspLanguage
     guard let json = Self.jsonString(object) else { return }
-    enqueueLspRequest(
-      DispatchWorkItem { [weak self] in
-        guard let self else { return }
-        var response = self.core.lspRequest(
-          languageId: language, fileUri: uri, method: method, paramsJson: json) ?? "null"
-        // An {"error": …} envelope: no server, no support, or a failure.
-        if response.hasPrefix("{\"error\"") { response = "null" }
-        DispatchQueue.main.async { [weak editor] in
-          editor?.resolveLspRequest(requestId: requestId, result: response)
-        }
-      })
+    enqueueLspRequest(languageId: editor.lspLanguage, fileUri: uri, method: method, params: json) {
+      [weak editor] response in
+      var response = response ?? "null"
+      // An {"error": …} envelope: no server, no support, or a failure.
+      if response.hasPrefix("{\"error\"") { response = "null" }
+      DispatchQueue.main.async {
+        editor?.resolveLspRequest(requestId: requestId, result: response)
+      }
+    }
   }
 
   static func jsonString(_ value: Any) -> String? {

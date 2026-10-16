@@ -70,21 +70,52 @@ extension MainWindowController {
     }
   }
 
-  /// A preview's Run button: run the command in a terminal of the same tab
-  /// (the first one), or in a new one split below.
-  func runFromPreview(_ command: String, directory: String, editor: EditorTab) {
-    if let location = tabManager.location(of: editor),
+  /// A preview's Run button. The command goes to a terminal of the same tab
+  /// whose shell is at its prompt (the first such), or to a new one split
+  /// below: never typed into a running program such as an agent or vim.
+  /// It runs right away only in a trusted folder and when it's plain (one
+  /// line, nothing hidden in it); otherwise it waits in the input bar to be
+  /// checked and run with Return.
+  func runFromPreview(_ raw: String, directory: String, editor: EditorTab) {
+    guard let command = MarkdownPreview.runCommand(from: raw) else { return }
+    let trusted = Trust.shared.isTrusted(editor.filePath ?? directory)
+    let runNow = trusted && command.isPlain
+    let note =
+      trusted
+      ? "Check the command, then press Return to run it."
+      : "This folder isn't trusted: check the command, then press Return to run it."
+    // With the input bar off, the shell's own line may hold typed text the
+    // command would join, so an existing terminal isn't used.
+    let inputBar = settings.terminalContextBar
+
+    if inputBar, let location = tabManager.location(of: editor),
       case .split(let split) = tabManager.tabs[location.tabIndex],
       let terminal = split.orderedPanes.lazy.compactMap({ pane -> TerminalTab? in
         if case .terminal(let container) = pane.entry { return container.activeTerminal } else { return nil }
-      }).first
+      }).first(where: Self.isAtPrompt)
     {
-      terminal.runCommand(command)
-      terminal.focus()
+      if runNow {
+        terminal.runCommand(command.text)
+        terminal.focus()
+      } else {
+        NotificationCenter.default.post(
+          name: .terminalInsertIntoInputBar, object: terminal, userInfo: ["text": command.text])
+        toasts.show(Toast(kind: .info, message: note))
+      }
       return
     }
-    let container = tabManager.makeTerminalContainer(directory: directory, initialCommand: command)
+    if !runNow, !inputBar {
+      // Nowhere to put it for checking first.
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(command.text, forType: .string)
+      toasts.show(Toast(kind: .info, message: "Copied the command: paste it into a terminal to check and run it."))
+      return
+    }
+    let container = tabManager.makeTerminalContainer(
+      directory: directory, initialCommand: runNow ? command.text : nil)
+    if !runNow { container.activeTerminal?.inputDraft = command.text }
     tabManager.splitSelectedTab(with: .terminal(container), axis: .vertical)
+    if !runNow { toasts.show(Toast(kind: .info, message: note)) }
   }
 
   /// Toggle preview for the active editor tab (markdown or SVG).

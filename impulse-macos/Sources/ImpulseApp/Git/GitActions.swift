@@ -233,6 +233,24 @@ struct GitActions {
         guard case .success = result, let aborted else {
           return report(result, failure: "Couldn't abort — \(name)")
         }
+        let undo: (() -> Void)? =
+          aborted.undo == nil
+          ? nil
+          : {
+            repository.run("Undoing…") { OperationAbort.undo(aborted, operation: operation, root: $0) } completion: {
+              result, _ in report(result, failure: "Couldn't undo the abort")
+            }
+          }
+        // The reset began but didn't finish cleanly: say so, and keep Undo
+        // (everything as it was) on screen until it's dismissed.
+        if let problem = aborted.problem {
+          host?.toasts.show(
+            Toast(
+              kind: .warning, message: "The \(name) was only partly aborted",
+              detail: "\(problem.message) Undo puts every file back as it was before aborting.",
+              actionTitle: undo == nil ? nil : "Undo", action: undo, lifetime: nil))
+          return
+        }
         var detail: String?
         if case .reset(let kept, let exact) = aborted.outcome {
           let work = kept.isEmpty ? "" : " and put back your \(kept.count == 1 ? "file" : "\(kept.count) files") from before it"
@@ -241,15 +259,8 @@ struct GitActions {
         }
         host?.toasts.show(
           Toast(
-            kind: .success, message: "Aborted \(name)", detail: detail, actionTitle: aborted.undo == nil ? nil : "Undo",
-            action: aborted.undo == nil
-              ? nil
-              : {
-                repository.run("Undoing…") { OperationAbort.undo(aborted, operation: operation, root: $0) } completion: {
-                  result, _ in report(result, failure: "Couldn't undo the abort")
-                }
-              },
-            lifetime: 15))
+            kind: .success, message: "Aborted \(name)", detail: detail, actionTitle: undo == nil ? nil : "Undo",
+            action: undo, lifetime: 15))
       }
     }
   }
@@ -308,7 +319,8 @@ struct GitActions {
       switch result {
       case .success:
         CommitMessageHistory.record(message, root: root)
-        let short = sha.map { String($0.prefix(7)) } ?? ""
+        let committed = sha
+        let short = committed.map { String($0.prefix(7)) } ?? ""
         let repository = self.repository
         let host = self.host
         host?.toasts.show(
@@ -318,7 +330,8 @@ struct GitActions {
             action: options.amend
               ? nil
               : {
-                repository.run { GitOperations.uncommit(root: $0) } completion: { result, _ in
+                // Only this commit: not one made on top of it since.
+                repository.run { GitOperations.uncommit(expectedHead: committed, root: $0) } completion: { result, _ in
                   if case .failure(let error) = result {
                     host?.gitPresentError(error, title: "Couldn't uncommit")
                   }
@@ -339,7 +352,8 @@ struct GitActions {
     let repository = self.repository
     guard let snapshot = repository.snapshot, let head = snapshot.headOid, !snapshot.isUnborn else { return }
     let perform = {
-      repository.run { GitOperations.uncommit(root: $0) } completion: { result, _ in
+      // The commit the user saw, not whatever HEAD is by the time it runs.
+      repository.run { GitOperations.uncommit(expectedHead: head, root: $0) } completion: { result, _ in
         guard case .success = result else { return report(result, failure: "Couldn't undo the commit") }
         host?.toasts.show(
           Toast(
@@ -515,6 +529,8 @@ struct GitActions {
                 repository.run { root in
                   if let previous { return GitOperations.restoreRef("refs/tags/\(name)", to: previous, root: root) }
                   return GitOperations.deleteTag(name, root: root)
+                } completion: { result, _ in
+                  report(result, failure: "Couldn't undo \(force ? "moving" : "creating") \(name)")
                 }
               }, lifetime: 10))
         }
@@ -574,7 +590,11 @@ struct GitActions {
         Toast(
           kind: .success, message: "Deleted tag \(name)", actionTitle: object == nil ? nil : "Undo",
           action: object.map { object in
-            { repository.run { GitOperations.restoreRef("refs/tags/\(name)", to: object, root: $0) } }
+            {
+              repository.run { GitOperations.restoreRef("refs/tags/\(name)", to: object, root: $0) } completion: {
+                result, _ in report(result, failure: "Couldn't restore \(name)")
+              }
+            }
           }, lifetime: 15))
     }
   }
@@ -582,18 +602,23 @@ struct GitActions {
   /// Delete a tag on the remote, after asking (it can't be undone there).
   func deleteRemoteTag(_ name: String) {
     let repository = self.repository
-    let remote = GitOperations.defaultRemote(root: repository.root) ?? "origin"
-    host?.gitConfirm(
-      title: "Delete \(name) from \(remote)?",
-      message: "The tag is removed from the remote; your local tag stays. Anyone who already fetched it keeps their copy.",
-      confirmTitle: "Delete", destructive: true
-    ) { confirmed in
-      guard confirmed else { return }
-      repository.run("Deleting \(name) from \(remote)…") {
-        GitOperations.deleteRemoteTag(name, remote: remote, root: $0)
-      } completion: { result, _ in
-        if case .success = result { host?.toasts.show(Toast(kind: .success, message: "Deleted \(name) from \(remote)")) }
-        report(result, failure: "Couldn't delete \(name) from \(remote)")
+    let root = repository.root
+    DispatchQueue.global(qos: .userInitiated).async {
+      let remote = GitOperations.defaultRemote(root: root) ?? "origin"
+      DispatchQueue.main.async {
+        host?.gitConfirm(
+          title: "Delete \(name) from \(remote)?",
+          message: "The tag is removed from the remote; your local tag stays. Anyone who already fetched it keeps their copy.",
+          confirmTitle: "Delete", destructive: true
+        ) { confirmed in
+          guard confirmed else { return }
+          repository.run("Deleting \(name) from \(remote)…") {
+            GitOperations.deleteRemoteTag(name, remote: remote, root: $0)
+          } completion: { result, _ in
+            if case .success = result { host?.toasts.show(Toast(kind: .success, message: "Deleted \(name) from \(remote)")) }
+            report(result, failure: "Couldn't delete \(name) from \(remote)")
+          }
+        }
       }
     }
   }
@@ -719,28 +744,23 @@ struct GitActions {
   }
 
   private func stashAndSwitch(_ name: String) {
+    var stash: String?
     repository.run("Switching to \(name)…") { root in
       let stashed = GitOperations.stash(
         message: "Impulse: before switching to \(name)", includeUntracked: true, root: root)
       if case .failure = stashed { return stashed }
+      stash = GitOperations.stashCommit(0, root: root)
       return GitOperations.switchBranch(name, root: root)
     } completion: { result, _ in
       switch result {
       case .success:
-        let repository = self.repository
-        let host = self.host
+        // This stash, even if another was made on top of it since.
+        let popped = stash
         host?.toasts.show(
           Toast(
             kind: .success, message: "Stashed your changes and switched to \(name)",
             actionTitle: "Pop Stash",
-            action: {
-              repository.run { GitOperations.stashApply(0, pop: true, root: $0) } completion: {
-                result, _ in
-                if case .failure(let error) = result {
-                  host?.gitPresentError(error, title: "Couldn't pop the stash")
-                }
-              }
-            }, lifetime: 12))
+            action: { applyStash(0, commit: popped, pop: true) }, lifetime: 12))
       case .failure(let error):
         host?.gitPresentError(error, title: "Couldn't switch to \(name)")
       }
@@ -760,11 +780,16 @@ struct GitActions {
   /// yet is deleted only after asking (`base` names what it isn't in).
   func deleteBranch(_ name: String, base: String? = nil, force: Bool = false, completion: (() -> Void)? = nil) {
     let repository = self.repository
-    let sha = GitClient.resolveCommit(repoPath: repository.root, revision: "refs/heads/\(name)")
-    repository.run { GitOperations.deleteBranch(name, force: force, root: $0) } completion: { result, _ in
+    // Where it was when it was deleted, for Undo.
+    var deleted: String?
+    repository.run { root in
+      deleted = GitClient.resolveCommit(repoPath: root, revision: "refs/heads/\(name)")
+      return GitOperations.deleteBranch(name, force: force, root: root)
+    } completion: { result, _ in
       completion?()
       switch result {
       case .success:
+        let sha = deleted
         host?.toasts.show(
           Toast(
             kind: .success, message: "Deleted \(name)", actionTitle: sha == nil ? nil : "Undo",
@@ -772,7 +797,10 @@ struct GitActions {
               {
                 repository.run {
                   GitOperations.createBranch(name, startPoint: sha, checkout: false, root: $0)
-                } completion: { _, _ in completion?() }
+                } completion: { result, _ in
+                  report(result, failure: "Couldn't restore \(name)")
+                  completion?()
+                }
               }
             }, lifetime: 15))
       case .failure(.cli(let error)) where !force && error.output.contains("not fully merged"):
@@ -801,33 +829,39 @@ struct GitActions {
     }
   }
 
-  func applyStash(_ index: Int, pop: Bool) {
+  /// Apply or pop a stash: the one at `commit` (the stash as listed when it
+  /// was picked) wherever it has moved to in the list, or without one,
+  /// whatever is at `index` when it runs. Found on the repository's queue,
+  /// right before it's used.
+  func applyStash(_ index: Int, commit: String? = nil, pop: Bool) {
     let root = repository.root
-    guard pop, let commit = GitOperations.stashCommit(index, root: root) else {
-      repository.run { GitOperations.stashApply(index, pop: pop, root: $0) } completion: { result, _ in
-        report(result, failure: pop ? "Couldn't pop the stash" : "Couldn't apply the stash")
-      }
-      return
-    }
+    var popped: (entry: GitOperations.StashEntry, paths: [String])?
     // Popping drops the entry: remember it, and snapshot the working tree,
     // so Undo can put both back.
-    let message = GitOperations.stashList(root: root).first { $0.index == index }?.message ?? "Restored stash"
-    let paths = GitOperations.stashPaths(commit, root: root)
-    repository.run(snapshotReason: "pop stash") {
-      GitOperations.stashApply(index, pop: true, root: $0)
+    repository.run(snapshotReason: pop ? "pop stash" : nil) { root in
+      guard let entry = GitOperations.stashEntry(index: index, commit: commit, root: root) else {
+        return .failure(.stale("That stash isn't in the list anymore."))
+      }
+      let paths = pop ? GitOperations.stashPaths(entry.commit, root: root) : []
+      let result = GitOperations.stashApply(entry.index, pop: pop, root: root)
+      if case .success = result, pop { popped = (entry, paths) }
+      return result
     } completion: { [repository, host] result, snapshot in
       guard case .success = result else {
-        report(result, failure: "Couldn't pop the stash")
+        report(result, failure: pop ? "Couldn't pop the stash" : "Couldn't apply the stash")
         return
       }
+      guard let popped else { return }
+      let (entry, paths) = popped
       GitActions.notifyEditors(root: root, paths: paths)
       guard let snapshot else { return }
       host?.toasts.show(
         Toast(
-          kind: .success, message: "Popped “\(message)”", actionTitle: "Undo",
+          kind: .success, message: "Popped “\(entry.message)”", actionTitle: "Undo",
           action: {
-            repository.run {
-              GitOperations.undoStashPop(commit, message: message, snapshot: snapshot, root: $0)
+            // Snapshot first: edits made since the pop are kept for Undo.
+            repository.run(snapshotReason: "before undo", requireSnapshot: true) {
+              GitOperations.undoStashPop(entry.commit, message: entry.message, snapshot: snapshot, root: $0)
             } completion: { result, _ in
               if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't undo the pop") }
               GitActions.notifyEditors(root: root, paths: paths)
@@ -836,21 +870,27 @@ struct GitActions {
     }
   }
 
-  /// Drop a stash. No confirmation: the toast's Undo stores it again.
-  func dropStash(_ index: Int) {
-    let root = repository.root
-    guard let commit = GitOperations.stashCommit(index, root: root) else { return }
-    let message = GitOperations.stashList(root: root).first { $0.index == index }?.message ?? "Restored stash"
-    repository.run { GitOperations.stashDrop(index, root: $0) } completion: { [repository, host] result, _ in
-      guard case .success = result else {
+  /// Drop a stash (the one at `commit`, as `applyStash` finds it). No
+  /// confirmation: the toast's Undo stores it again.
+  func dropStash(_ index: Int, commit: String? = nil) {
+    var dropped: GitOperations.StashEntry?
+    repository.run { root in
+      guard let entry = GitOperations.stashEntry(index: index, commit: commit, root: root) else {
+        return .failure(.stale("That stash isn't in the list anymore."))
+      }
+      let result = GitOperations.stashDrop(entry.index, root: root)
+      if case .success = result { dropped = entry }
+      return result
+    } completion: { [repository, host] result, _ in
+      guard case .success = result, let dropped else {
         report(result, failure: "Couldn't drop the stash")
         return
       }
       host?.toasts.show(
         Toast(
-          kind: .success, message: "Dropped “\(message)”", actionTitle: "Undo",
+          kind: .success, message: "Dropped “\(dropped.message)”", actionTitle: "Undo",
           action: {
-            repository.run { GitOperations.stashStore(commit, message: message, root: $0) } completion: {
+            repository.run { GitOperations.stashStore(dropped.commit, message: dropped.message, root: $0) } completion: {
               result, _ in
               if case .failure(let error) = result { host?.gitPresentError(error, title: "Couldn't restore the stash") }
             }

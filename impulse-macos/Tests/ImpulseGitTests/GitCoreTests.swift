@@ -541,6 +541,76 @@
       _ = try GitOperations.removeWorktree(path: path, root: repo.root).get()
       #expect(GitOperations.worktrees(root: repo.root).count == 1)
     }
+
+    // MARK: Reads on a reused repository
+
+    @Test func resolvingReusesTheRepositoryButSeesRefsMove() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      let first = try repo.git("rev-parse", "HEAD")
+      #expect(GitClient.resolveCommit(repoPath: repo.root, revision: "main") == first)
+      #expect(RepoHandles.shared.idleCount > 0)
+
+      try repo.commit(["a.txt": "2\n"])
+      #expect(GitClient.resolveCommit(repoPath: repo.root, revision: "main") == (try repo.git("rev-parse", "HEAD")))
+      try repo.git("pack-refs", "--all")
+      try repo.commit(["a.txt": "3\n"])
+      let third = try repo.git("rev-parse", "HEAD")
+      #expect(GitClient.resolveCommit(repoPath: repo.root + "/a.txt", revision: "main") == third)
+      #expect(
+        GitClient.resolveCommits(repoPath: repo.root, revisions: ["main", "HEAD~2", "no-such-branch"])
+          == ["main": third, "HEAD~2": first])
+
+      // A worktree that's gone resolves nothing, however recently it was read.
+      let task = repo.root + "-handles"
+      try repo.git("worktree", "add", "-q", "-b", "task", task)
+      defer { try? FileManager.default.removeItem(atPath: task) }
+      #expect(GitClient.resolveCommit(repoPath: task, revision: "HEAD") == third)
+      try repo.git("worktree", "remove", task)
+      #expect(GitClient.resolveCommit(repoPath: task, revision: "HEAD") == nil)
+    }
+
+    @Test func remoteBranchesAtACommitMatchGit() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      let old = try repo.git("rev-parse", "HEAD")
+      try repo.commit(["a.txt": "2\n"])
+      let head = try repo.git("rev-parse", "HEAD")
+      try repo.git("update-ref", "refs/remotes/origin/main", head)
+      try repo.git("update-ref", "refs/remotes/origin/feature/x", head)
+      try repo.git("update-ref", "refs/remotes/fork/main", old)
+      try repo.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+      func git(_ commit: String) throws -> [String] {
+        try repo.git("for-each-ref", "--points-at=\(commit)", "--format=%(refname:lstrip=2)", "refs/remotes")
+          .split(separator: "\n").map(String.init).filter { !$0.hasSuffix("/HEAD") }.sorted()
+      }
+      #expect(GitClient.remoteBranches(at: head, repoPath: repo.root).sorted() == ["origin/feature/x", "origin/main"])
+      #expect(GitClient.remoteBranches(at: head, repoPath: repo.root).sorted() == (try git(head)))
+      #expect(GitClient.remoteBranches(at: old, repoPath: repo.root) == ["fork/main"])
+      try repo.git("pack-refs", "--all")
+      #expect(GitClient.remoteBranches(at: head, repoPath: repo.root).sorted() == (try git(head)))
+      #expect(GitClient.remoteBranches(at: "not-a-commit", repoPath: repo.root).isEmpty)
+    }
+
+    @Test func snapshotWithoutLineCountsListsTheSameFiles() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n", "b.txt": "1\n"])
+      try repo.write("a.txt", "1\n2\n")
+      try repo.write("b.txt", "x\n")
+      try repo.git("add", "b.txt")
+      try repo.write("c.txt", "new\n")
+      let counted = try #require(GitClient.snapshot(forPath: repo.root))
+      let plain = try #require(GitClient.snapshot(forPath: repo.root, lineCounts: false))
+      #expect(plain.staged.map(\.path) == counted.staged.map(\.path))
+      #expect(plain.unstaged.map(\.path) == counted.unstaged.map(\.path))
+      #expect(plain.untracked.map(\.path) == counted.untracked.map(\.path))
+      #expect(plain.headOid == counted.headOid)
+      #expect(counted.totalAdded > 0)
+      #expect((plain.staged + plain.unstaged + plain.untracked).allSatisfy { $0.added == nil && $0.removed == nil })
+    }
   }
 #endif
 
@@ -677,8 +747,196 @@
       #expect(RepoWatcher.classifyGitPath("rebase-merge/msgnum") == .operation)
       #expect(RepoWatcher.classifyGitPath("objects/ab/cdef") == [])
       #expect(RepoWatcher.classifyGitPath("index.lock") == [])
-      #expect(RepoWatcher.classifyGitPath("worktrees/feature/index") == .index)
-      #expect(RepoWatcher.classifyGitPath("worktrees/feature/HEAD") == .refs)
+      #expect(RepoWatcher.classifyGitPath("info/exclude") == .workingTree)
+      // Linked worktrees' own index and HEAD are theirs, not the main
+      // checkout's.
+      #expect(RepoWatcher.classifyGitPath("worktrees/feature/index") == [])
+      #expect(RepoWatcher.classifyGitPath("worktrees/feature/HEAD") == [])
+    }
+
+    @Test func aLinkedWorktreeOnlySharesTheRefs() {
+      func classify(_ path: String) -> RepoWatcher.Change {
+        RepoWatcher.classify(
+          path, root: "/r.worktrees/task", gitDir: "/r/.git/worktrees/task", commonDir: "/r/.git",
+          isIgnored: { _ in false })
+      }
+      #expect(classify("/r/.git/worktrees/task/index") == .index)
+      #expect(classify("/r/.git/worktrees/task/HEAD") == .refs)
+      #expect(classify("/r/.git/worktrees/task/FETCH_HEAD") == .refs)
+      #expect(classify("/r/.git/worktrees/task/MERGE_HEAD") == .operation)
+      #expect(classify("/r/.git/refs/heads/main") == .refs)
+      #expect(classify("/r/.git/refs/remotes/origin/main") == .refs)
+      #expect(classify("/r/.git/packed-refs") == .refs)
+      #expect(classify("/r/.git/info/exclude") == .workingTree)
+      // The main checkout's own state, and another task's.
+      #expect(classify("/r/.git/index") == [])
+      #expect(classify("/r/.git/HEAD") == [])
+      #expect(classify("/r/.git/FETCH_HEAD") == [])
+      #expect(classify("/r/.git/MERGE_HEAD") == [])
+      #expect(classify("/r/.git/rebase-merge/msgnum") == [])
+      #expect(classify("/r/.git/worktrees/other/index") == [])
+      #expect(classify("/r/.git/worktrees/other/HEAD") == [])
+      #expect(classify("/r/.git/objects/ab/cdef") == [])
+      #expect(classify("/r/.git/refs/heads/main.lock") == [])
+      #expect(classify("/r.worktrees/task/src/a.swift") == .workingTree)
+      #expect(classify("/r.worktrees/task/.git") == [])
+      #expect(classify("/r.worktrees/other/a.swift") == [])
+    }
+
+    @Test func theMainCheckoutSkipsItsTasksOwnFiles() {
+      func classify(_ path: String) -> RepoWatcher.Change {
+        RepoWatcher.classify(path, root: "/r", gitDir: "/r/.git", commonDir: "/r/.git", isIgnored: { _ in false })
+      }
+      #expect(classify("/r/.git/index") == .index)
+      #expect(classify("/r/.git/HEAD") == .refs)
+      #expect(classify("/r/.git/refs/heads/task") == .refs)
+      #expect(classify("/r/.git/worktrees/task/index") == [])
+      #expect(classify("/r/.git/worktrees/task/HEAD") == [])
+      #expect(classify("/r/.git/worktrees/task") == [])
+      #expect(classify("/r/src/a.swift") == .workingTree)
+      #expect(classify("/r") == .workingTree)
+    }
+
+    @Test func ignoredFoldersAreCheckedFromTheTop() {
+      var asked: [String] = []
+      let ignored: Set<String> = ["node_modules/", "debug.log", "secret/.gitignore"]
+      func classify(_ relative: String) -> RepoWatcher.Change {
+        RepoWatcher.classifyWorkingTreePath(relative) { path in
+          asked.append(path)
+          return ignored.contains(path)
+        }
+      }
+      #expect(classify("node_modules/react/cjs/index.js") == [])
+      #expect(asked == ["node_modules/"])
+      #expect(classify("debug.log") == [])
+      #expect(classify("src/app/main.swift") == .workingTree)
+      #expect(classify("node_modules/pkg/.gitignore") == [])
+      // Ignore rules count even where they match themselves.
+      #expect(classify("secret/.gitignore") == .workingTree)
+      #expect(classify(".gitignore") == .workingTree)
+      #expect(RepoWatcher.changesIgnoreRules("/r/web/.gitignore"))
+      #expect(RepoWatcher.changesIgnoreRules("/r/.git/info/exclude"))
+      #expect(!RepoWatcher.changesIgnoreRules("/r/web/gitignore.md"))
+    }
+
+    @Test func ignoreFilterMatchesGitAndKeepsTrackedFiles() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit([".gitignore": "node_modules/\n*.log\nbuild/\n", "src/a.txt": "a\n"])
+      try repo.write("build/keep.txt", "kept\n")
+      try repo.git("add", "-f", "build/keep.txt")
+      try repo.git("commit", "-q", "-m", "keep")
+      try repo.write("node_modules/x/y.js", "y\n")
+      try repo.write("build/other.o", "o\n")
+      try repo.write("debug.log", "d\n")
+
+      let filter = IgnoreFilter(root: repo.root)
+      for path in ["node_modules/x/y.js", "debug.log", "src/a.txt", "build/keep.txt", "build/other.o"] {
+        let gitIgnores = (try? repo.git("check-ignore", "-q", path)) != nil
+        #expect(filter.isIgnored(path) == gitIgnores, "\(path)")
+      }
+      #expect(filter.isIgnored("node_modules/"))
+      #expect(!filter.isIgnored("src/"))
+      // Git still follows the file it tracks in there.
+      #expect(!filter.isIgnored("build/"))
+
+      // A folder seen ignored still is once it's deleted.
+      try FileManager.default.removeItem(atPath: repo.root + "/node_modules")
+      #expect(filter.isIgnored("node_modules"))
+
+      // New rules apply once the filter is told.
+      #expect(!filter.isIgnored("tmp/"))
+      try repo.write(".gitignore", "node_modules/\n*.log\nbuild/\ntmp/\n")
+      filter.invalidate()
+      #expect(filter.isIgnored("tmp/"))
+      // So does a newly tracked file.
+      try repo.write("tmp/tracked.txt", "t\n")
+      try repo.git("add", "-f", "tmp/tracked.txt")
+      filter.invalidate()
+      #expect(!filter.isIgnored("tmp/"))
+    }
+
+    @Test func changesInIgnoredFoldersAreNotReported() async throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit([".gitignore": "node_modules/\n*.log\n", "a.txt": "1\n"])
+      let snapshot = try #require(GitClient.snapshot(forPath: repo.root))
+
+      let received = LockedChanges()
+      let watcher = RepoWatcher(
+        root: snapshot.root, gitDir: snapshot.gitDir, commonDir: snapshot.commonDir,
+        debounce: 0.05
+      ) { change in received.add(change) }
+      watcher.start()
+      defer { watcher.stop() }
+      try await Task.sleep(for: .milliseconds(300))
+
+      for index in 0..<20 { try repo.write("node_modules/pkg\(index)/index.js", "x\n") }
+      // In place: an atomic write's temporary file next to it isn't a `.log`.
+      try Data("log\n".utf8).write(to: URL(fileURLWithPath: repo.root + "/build.log"))
+      try await Task.sleep(for: .milliseconds(800))
+      #expect(received.value.isEmpty)
+
+      try repo.write("a.txt", "2\n")
+      for _ in 0..<40 where !received.value.contains(.workingTree) {
+        try await Task.sleep(for: .milliseconds(100))
+      }
+      #expect(received.value.contains(.workingTree))
+    }
+
+    @Test func checkoutsHearOnlyTheirOwnIndexButEveryCommit() async throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"])
+      let task = TempRepo(root: repo.root + "-task")
+      try repo.git("worktree", "add", "-q", "-b", "task", task.root)
+      defer { task.destroy() }
+
+      func watch(_ root: String, into changes: LockedChanges) throws -> RepoWatcher {
+        let snapshot = try #require(GitClient.snapshot(forPath: root))
+        let watcher = RepoWatcher(
+          root: snapshot.root, gitDir: snapshot.gitDir, commonDir: snapshot.commonDir, debounce: 0.05
+        ) { change in changes.add(change) }
+        watcher.start()
+        return watcher
+      }
+      func waitFor(_ change: RepoWatcher.Change, in changes: LockedChanges) async throws {
+        for _ in 0..<40 where !changes.value.contains(change) {
+          try await Task.sleep(for: .milliseconds(100))
+        }
+      }
+      let mainChanges = LockedChanges()
+      let taskChanges = LockedChanges()
+      let mainWatcher = try watch(repo.root, into: mainChanges)
+      defer { mainWatcher.stop() }
+      let taskWatcher = try watch(task.root, into: taskChanges)
+      defer { taskWatcher.stop() }
+      try await Task.sleep(for: .milliseconds(300))
+
+      // Staging in the task: the task hears it, the main checkout doesn't.
+      try task.write("b.txt", "b\n")
+      try task.git("add", "b.txt")
+      try await waitFor(.index, in: taskChanges)
+      #expect(taskChanges.value.contains(.index))
+      try await Task.sleep(for: .milliseconds(500))
+      #expect(mainChanges.value.isEmpty)
+
+      // And the other way around.
+      taskChanges.reset()
+      try repo.write("c.txt", "c\n")
+      try repo.git("add", "c.txt")
+      try await waitFor(.index, in: mainChanges)
+      #expect(mainChanges.value.contains(.index))
+      try await Task.sleep(for: .milliseconds(500))
+      #expect(taskChanges.value.isEmpty)
+
+      // A commit moves a branch, which every checkout hears.
+      mainChanges.reset()
+      try task.git("commit", "-q", "-m", "task work")
+      try await waitFor(.refs, in: mainChanges)
+      try await waitFor(.refs, in: taskChanges)
+      #expect(mainChanges.value.contains(.refs))
+      #expect(taskChanges.value.contains(.refs))
     }
 
     @Test func reportsWorkingTreeAndIndexChanges() async throws {
@@ -718,6 +976,11 @@
       lock.lock()
       defer { lock.unlock() }
       return changes
+    }
+    func reset() {
+      lock.lock()
+      changes = []
+      lock.unlock()
     }
   }
 #endif
@@ -1012,6 +1275,93 @@
         try String(contentsOfFile: repo.root + "/b.txt", encoding: .utf8) == "edited after the pop\n",
         "files outside the stash are left alone")
       #expect(GitOperations.stashList(root: repo.root).map(\.message) == ["On main: wip", "On main: keep"])
+    }
+
+    @Test func aStashIsFoundByItsCommitWhereverItMoved() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "first")
+      try repo.write("a.txt", "two\n")
+      _ = try GitOperations.stash(message: "picked", root: repo.root).get()
+      let picked = try #require(GitOperations.stashList(root: repo.root).first)
+      #expect(picked.commit == (try repo.git("rev-parse", "stash@{0}")))
+      // Another stash lands on top before the drop runs.
+      try repo.write("a.txt", "three\n")
+      _ = try GitOperations.stash(message: "newer", root: repo.root).get()
+
+      let found = try #require(GitOperations.stashEntry(index: picked.index, commit: picked.commit, root: repo.root))
+      #expect(found.index == 1)
+      #expect(found.message == "On main: picked")
+      #expect(GitOperations.stashEntry(index: 0, commit: nil, root: repo.root)?.message == "On main: newer")
+      _ = try GitOperations.stashDrop(found.index, root: repo.root).get()
+      #expect(GitOperations.stashEntry(index: 0, commit: picked.commit, root: repo.root) == nil)
+      #expect(GitOperations.stashList(root: repo.root).map(\.message) == ["On main: newer"])
+    }
+
+    @Test func uncommitTakesBackOnlyTheCommitItWasAskedFor() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "one\n"], message: "first")
+      try repo.commit(["a.txt": "two\n"], message: "mine")
+      let mine = try repo.git("rev-parse", "HEAD")
+      try repo.commit(["b.txt": "agent\n"], message: "an agent's")
+      guard case .failure(.stale) = GitOperations.uncommit(expectedHead: mine, root: repo.root) else {
+        Issue.record("expected a refusal")
+        return
+      }
+      #expect(try repo.git("rev-list", "--count", "HEAD") == "3")
+      let agents = try repo.git("rev-parse", "HEAD")
+      _ = try GitOperations.uncommit(expectedHead: agents, root: repo.root).get()
+      #expect(try repo.git("rev-parse", "HEAD") == mine)
+    }
+
+    @Test func uncommitDoesWhatResetSoftDoes() throws {
+      // Two identical repositories: git's own reset in one, Impulse's in the
+      // other.
+      func make() throws -> TempRepo {
+        let repo = try TempRepo.create()
+        try repo.commit(["a.txt": "one\n", "b.txt": "b\n"], message: "first")
+        try repo.write("a.txt", "two\n")
+        try repo.write("c.txt", "new\n")
+        try repo.git("add", "-A")
+        try repo.git("commit", "-q", "-m", "second")
+        try repo.write("a.txt", "three, unstaged\n")
+        try repo.write("d.txt", "untracked\n")
+        try repo.write("b.txt", "staged\n")
+        try repo.git("add", "b.txt")
+        return repo
+      }
+      let oracle = try make()
+      let ours = try make()
+      defer { [oracle, ours].forEach { $0.destroy() } }
+      try oracle.git("reset", "--soft", "HEAD~1")
+      _ = try GitOperations.uncommit(expectedHead: try ours.git("rev-parse", "HEAD"), root: ours.root).get()
+
+      for args in [
+        ["rev-parse", "HEAD"], ["rev-parse", "ORIG_HEAD"], ["symbolic-ref", "HEAD"], ["ls-files", "-s"],
+        ["status", "--porcelain", "--untracked-files=all"], ["reflog", "-1", "--format=%gs", "main"],
+        ["reflog", "-1", "--format=%gs", "HEAD"],
+      ] {
+        #expect(try ours.git(args) == oracle.git(args), "git \(args.joined(separator: " "))")
+      }
+      #expect(try ours.read("a.txt") == "three, unstaged\n")
+    }
+
+    @Test func worktreeListFailingIsntAnEmptyList() throws {
+      let dir = FileManager.default.temporaryDirectory.appendingPathComponent("impulse-not-a-repo-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: dir) }
+      #expect(GitOperations.worktreeList(root: dir.path) == nil)
+      #expect(GitOperations.worktrees(root: dir.path).isEmpty)
+    }
+
+    @Test func changedPathsKeepNonASCIINames() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "a\n"], message: "first")
+      let before = try repo.git("rev-parse", "HEAD")
+      try repo.commit(["café.txt": "c\n"], message: "second")
+      #expect(GitOperations.changedPaths(from: before, to: "HEAD", root: repo.root) == ["café.txt"])
     }
   }
 #endif

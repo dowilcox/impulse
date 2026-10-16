@@ -31,11 +31,41 @@
     }
   }
 
+  struct SettingsMergeTests {
+    @Test func changesMadeInImpulseGoOnTopOfAnOutsideEdit() {
+      let base = Settings.default
+      var ours = base
+      ours.fontSize = 16
+      var theirs = base
+      theirs.colorScheme = "harbor"
+      theirs.customKeybindings = [CustomKeybinding(name: "Tests", key: "Ctrl+T", command: "npm test")]
+      let merged = Settings.merged(ours, onto: theirs, since: base)
+      #expect(merged.fontSize == 16)
+      #expect(merged.colorScheme == "harbor")
+      #expect(merged.customKeybindings == theirs.customKeybindings)
+    }
+
+    @Test func withNothingChangedInImpulseTheFileWins() {
+      var theirs = Settings.default
+      theirs.fontSize = 20
+      #expect(Settings.merged(.default, onto: theirs, since: .default) == theirs)
+    }
+
+    @Test func aKeyChangedOnBothSidesKeepsImpulsesValue() {
+      var ours = Settings.default
+      ours.tabWidth = 2
+      var theirs = Settings.default
+      theirs.tabWidth = 8
+      #expect(Settings.merged(ours, onto: theirs, since: .default).tabWidth == 2)
+    }
+  }
+
   struct CustomShortcutTests {
     @Test func commandLineKeepsShellSyntaxAndQuotesExtraArguments() {
       #expect(CustomKeybinding(command: "npm run lint && npm test").commandLine == "npm run lint && npm test")
       #expect(CustomKeybinding(command: "npm", args: ["test"]).commandLine == "npm test")
-      #expect(CustomKeybinding(command: "echo", args: ["a b", "it's"]).commandLine == "echo 'a b' 'it'\\''s'")
+      #expect(CustomKeybinding(command: "echo", args: ["a b", "it's"]).commandLine(for: .bash) == "echo 'a b' 'it'\\''s'")
+      #expect(CustomKeybinding(command: "echo", args: ["a\\b", "it's"]).commandLine(for: .fish) == "echo 'a\\\\b' 'it\\'s'")
       #expect(CustomKeybinding(command: "  ").commandLine == "")
     }
 

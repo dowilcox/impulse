@@ -137,8 +137,15 @@ final class ProjectSetupModel {
     return parts.isEmpty ? nil : ListFormatter.localizedString(byJoining: parts)
   }
 
-  /// What task n adds to each port, n times.
-  var offset: Int { Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } ?? 100 }
+  /// What task n adds to each port, n times; the default while the field
+  /// holds something else.
+  var offset: Int {
+    Int(portOffset.trimmingCharacters(in: .whitespaces)).flatMap { ProjectConfig.portOffsets.contains($0) ? $0 : nil }
+      ?? ProjectConfig().portOffset
+  }
+
+  /// The tasks every port must have room for below 65535.
+  static let tasksWithRoom = 10
 
   /// Saved: the file holds `config` (what the screen showed) as `text`,
   /// with `local` what's now in the local file. Nothing is read again, so
@@ -186,6 +193,8 @@ final class ProjectSetupModel {
     if let problem = problem(name: pair, in: values, variable: true) { return problem }
     if isBlank(pair) { return nil }
     if names(ports).contains(trimmed(pair.name)) { return "Also a port" }
+    // The env file holds one value per line, so a line break would be left out.
+    if pair.value.contains(where: \.isNewline) { return "Can't hold a line break" }
     let known = Set(["task", "task_", "slot"]).union(names(ports))
     if let unknown = Self.placeholders(in: pair.value).first(where: { !known.contains($0) }) {
       return "No {\(unknown)}: use {task}, {task_}, {slot} or a port's name"
@@ -209,9 +218,21 @@ final class ProjectSetupModel {
     return nil
   }
 
+  /// Empty is the default. Otherwise a whole number that leaves every
+  /// port (and with the override on, every fixed Compose port) a port for
+  /// `tasksWithRoom` tasks.
   var offsetProblem: String? {
     let value = trimmed(portOffset)
-    return value.isEmpty || Int(value).map({ $0 > 0 }) == true ? nil : "A whole number above 0"
+    guard let offset = value.isEmpty ? ProjectConfig().portOffset : Int(value), ProjectConfig.portOffsets.contains(offset)
+    else { return "A whole number from 1 to \(ProjectConfig.portOffsets.upperBound)" }
+    let named = ports.compactMap { pair -> (String, Int)? in
+      guard let port = Int(trimmed(pair.value)), TaskEnvironment.portRange.contains(port) else { return nil }
+      return (trimmed(pair.name), port)
+    }
+    let fixed = composeOverride ? fixedPorts.compactMap { fixed in fixed.port.host.map { ("\(fixed.service) \($0)", $0) } } : []
+    guard let tooHigh = (named + fixed).first(where: { TaskEnvironment.port($0.1, slot: Self.tasksWithRoom, offset: offset) == nil })
+    else { return nil }
+    return "Too big: task \(Self.tasksWithRoom)'s \(tooHigh.0.isEmpty ? String(tooHigh.1) : tooHigh.0) would be past 65535"
   }
 
   var databaseProblem: String? {
@@ -645,7 +666,10 @@ struct ProjectSetupView: View {
             TextField("APP_PORT", text: $pair.name).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 200)
             TextField("8000", text: $pair.value).textFieldStyle(.roundedBorder).font(ChromeFont.mono(12)).frame(width: 90)
             // Verbatim: a localized key would print 8100 as "8,100".
-            Text(verbatim: Int(pair.value.trimmingCharacters(in: .whitespaces)).map { "task 1: \($0 + model.offset)" } ?? "")
+            Text(
+              verbatim: Int(pair.value.trimmingCharacters(in: .whitespaces))
+                .flatMap { TaskEnvironment.portRange.contains($0) ? TaskEnvironment.port($0, slot: 1, offset: model.offset) : nil }
+                .map { "task 1: \($0)" } ?? "")
               .font(ChromeFont.ui(11)).foregroundStyle(chrome.textTertiary)
             Spacer(minLength: 0)
             ChromeIconButton(icon: .trash2, help: "Remove", size: 22, iconSize: 12) {
@@ -682,7 +706,7 @@ struct ProjectSetupView: View {
     let file = model.composeFileName ?? "the Compose file"
     subheading("In \(file)", detail: "Written as plain numbers, so only one checkout's stack can run at a time.")
     ForEach(Array(model.fixedPorts.enumerated()), id: \.offset) { _, fixed in
-      composeRow(fixed.service, fixed.port.raw, task: ComposeFile.moved(fixed.port, by: model.offset))
+      composeRow(fixed.service, fixed.port.raw, task: ComposeFile.moved(fixed.port, slot: 1, offset: model.offset) ?? "past 65535")
     }
     ForEach(Array(model.containerNames.enumerated()), id: \.offset) { _, container in
       composeRow(container.service, "container_name \(container.name)", task: "\(container.name)-<task>")

@@ -564,13 +564,13 @@ private struct StashRow: View {
       Spacer(minLength: 4)
       if hovering {
         ChromeIconButton(icon: .play, help: "Apply", size: 20, iconSize: 11) {
-          actions.applyStash(entry.index, pop: false)
+          actions.applyStash(entry.index, commit: entry.commit, pop: false)
         }
         ChromeIconButton(icon: .arrowUp, help: "Pop", size: 20, iconSize: 11) {
-          actions.applyStash(entry.index, pop: true)
+          actions.applyStash(entry.index, commit: entry.commit, pop: true)
         }
         ChromeIconButton(icon: .trash2, help: "Drop", size: 20, iconSize: 11) {
-          actions.dropStash(entry.index)
+          actions.dropStash(entry.index, commit: entry.commit)
         }
       } else {
         Text("stash@{\(entry.index)}").font(ChromeFont.mono(10)).foregroundStyle(chrome.textTertiary)

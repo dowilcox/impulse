@@ -3,7 +3,7 @@ import Foundation
 // Ported from impulse-core/src/shell.rs (detection portion — the rc-file
 // scaffolding already lives in the app's TerminalTab).
 
-public enum ShellType: String {
+public enum ShellType: String, Sendable {
   case bash
   case zsh
   case fish
@@ -12,8 +12,19 @@ public enum ShellType: String {
 public enum LoginShell {
   /// The user's login shell from Open Directory (`dscl`), since `/etc/passwd`
   /// only contains system accounts on macOS. Returns nil when it cannot be
-  /// determined or the shell binary does not exist.
+  /// determined or the shell binary does not exist. Looked up once (it's
+  /// asked for on every tab title and terminal; `dscl` can take seconds on
+  /// directory-bound Macs).
   public static func userLoginShell() -> String? {
+    cachedUserLoginShell
+  }
+
+  /// `static let`: initialized once, thread-safely, on first use.
+  private static let cachedUserLoginShell: String? = lookUpUserLoginShell()
+  private static let cachedDefaultShellPath: String =
+    userLoginShell() ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/bash"
+
+  private static func lookUpUserLoginShell() -> String? {
     guard let username = ProcessInfo.processInfo.environment["USER"] else { return nil }
     // Validate username to prevent path traversal in the dscl argument.
     let allowed = username.allSatisfy { char in
@@ -39,9 +50,12 @@ public enum LoginShell {
 
   /// The default shell path, preferring the system user database over `$SHELL`.
   public static func defaultShellPath() -> String {
-    userLoginShell()
-      ?? ProcessInfo.processInfo.environment["SHELL"]
-      ?? "/bin/bash"
+    cachedDefaultShellPath
+  }
+
+  /// How the default shell quotes (what terminals run).
+  public static func defaultShellType() -> ShellType {
+    detectShellType(defaultShellPath())
   }
 
   /// The short name of the user's default shell (e.g. "fish", "zsh", "bash").

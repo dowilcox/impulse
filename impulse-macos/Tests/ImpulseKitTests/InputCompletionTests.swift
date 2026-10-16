@@ -53,6 +53,65 @@
           == "cat alpha/inner.txt")
     }
 
+    @Test func pathCompletionsAreEscaped() throws {
+      let fm = FileManager.default
+      let dir = fm.temporaryDirectory.appendingPathComponent("impulse-completion-escape-\(UUID().uuidString)")
+      try fm.createDirectory(at: dir.appendingPathComponent("x$(touch PWNED)"), withIntermediateDirectories: true)
+      try fm.createDirectory(at: dir.appendingPathComponent("my dir"), withIntermediateDirectories: true)
+      try Data("x".utf8).write(to: dir.appendingPathComponent("my dir/it's.txt"))
+      defer { try? fm.removeItem(at: dir) }
+
+      let cwd = dir.path
+      // A name is inserted as a name, never as shell syntax.
+      #expect(InputCompletion.complete(input: "cd x", cwd: cwd, history: []) == "cd x\\$\\(touch\\ PWNED\\)/")
+      #expect(InputCompletion.complete(input: "cat my", cwd: cwd, history: []) == "cat my\\ dir/")
+      // A token typed escaped continues as typed.
+      #expect(InputCompletion.complete(input: "cat my\\ dir/i", cwd: cwd, history: []) == "cat my\\ dir/it\\'s.txt")
+      // `~/` and `$HOME/` stay unquoted so they still expand.
+      if let home = ProcessInfo.processInfo.environment["HOME"],
+        fm.fileExists(atPath: (home as NSString).appendingPathComponent("Library"))
+      {
+        #expect(InputCompletion.complete(input: "ls ~/Librar", cwd: cwd, history: []) == "ls ~/Library/")
+        #expect(InputCompletion.complete(input: "ls $HOME/Librar", cwd: cwd, history: []) == "ls $HOME/Library/")
+        let menu = InputCompletion.completeCandidates(input: "ls ~/Librar", cwd: cwd, history: [], limit: 5)
+        #expect(menu.candidates.first?.insertion(typed: "~/Librar", shell: .bash) == "~/Library/")
+      }
+    }
+
+    @Test func literalNamesAreNeverExpanded() throws {
+      let fm = FileManager.default
+      let dir = fm.temporaryDirectory.appendingPathComponent("impulse-completion-literal-\(UUID().uuidString)")
+      for folder in ["~/inner", "$HOME"] {
+        try fm.createDirectory(at: dir.appendingPathComponent(folder), withIntermediateDirectories: true)
+      }
+      for file in ["~$Report.docx", "a\\b"] {
+        try Data("x".utf8).write(to: dir.appendingPathComponent(file))
+      }
+      defer { try? fm.removeItem(at: dir) }
+      let cwd = dir.path
+
+      func menu(_ input: String) -> [String] {
+        let result = InputCompletion.completeCandidates(input: input, cwd: cwd, history: [], limit: 10)
+        let bytes = Array(input.utf8)
+        let typed = String(decoding: bytes[result.span.start..<result.span.end], as: UTF8.self)
+        return result.candidates.map { $0.insertion(typed: typed, shell: .bash) }
+      }
+      // A folder named `~` in this folder isn't the home folder: `rm -rf ~/`
+      // would be. Escaped, it no longer continues what was typed, so there's
+      // no ghost text, and the menu inserts it escaped.
+      #expect(InputCompletion.complete(input: "rm -rf ~", cwd: cwd, history: []) == nil)
+      #expect(menu("rm -rf ~") == ["\\~/", "\\~\\$Report.docx"])
+      #expect(InputCompletion.complete(input: "ls $H", cwd: cwd, history: []) == nil)
+      #expect(menu("ls $H") == ["\\$HOME/"])
+      #expect(InputCompletion.complete(input: "ls ~$", cwd: cwd, history: []) == nil)
+      #expect(menu("ls ~$") == ["\\~\\$Report.docx"])
+      // Typed escaped, `~/` is that folder, and stays escaped.
+      #expect(InputCompletion.complete(input: "ls \\~/in", cwd: cwd, history: []) == "ls \\~/inner/")
+      // A backslash in a name keeps its escape.
+      #expect(InputCompletion.complete(input: "cat a\\\\", cwd: cwd, history: []) == "cat a\\\\b")
+      #expect(menu("cat a") == ["a\\\\b"])
+    }
+
     @Test func noCompletionForEmptyOrBlankInput() {
       #expect(InputCompletion.complete(input: "", cwd: nil, history: []) == nil)
       #expect(InputCompletion.complete(input: "   ", cwd: nil, history: []) == nil)

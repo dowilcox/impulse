@@ -5,7 +5,7 @@ use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -16,10 +16,10 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags as AlacFlags;
 use alacritty_terminal::term::{Term, TermDamage, TermMode};
 use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite, Options as PtyOptions};
-use alacritty_terminal::vte::ansi::Processor;
 use alacritty_terminal::vte::ansi::{
     Color as AlacColor, CursorShape as AlacCursorShape, NamedColor, Rgb as AlacRgb,
 };
+use alacritty_terminal::vte::ansi::{Handler, Processor};
 use crossbeam_channel::{Receiver, Sender};
 use polling::{Event as PollingEvent, Events, PollMode, Poller};
 
@@ -34,6 +34,7 @@ use crate::history::{
     command_history_rerun_input, CommandHistoryContext, CommandHistoryQuery, CommandHistoryRecord,
     CommandHistorySearchResult, CommandHistoryStore,
 };
+use crate::osc_scanner::{OscEvent, OscScanner, OscSkip, MAX_CLIPBOARD_OSC_LEN};
 use crate::search::{SearchResult, SearchStats, TerminalSearch};
 
 // ---------------------------------------------------------------------------
@@ -129,7 +130,10 @@ impl EventListener for EventProxy {
                 let _ = self.event_tx.send(TerminalEvent::ChildExited(code));
             }
             AlacEvent::ClipboardStore(_, text) => {
-                let _ = self.event_tx.send(TerminalEvent::ClipboardStore(text));
+                // The scanner already drops longer OSC 52 writes unparsed.
+                if text.len() <= MAX_CLIPBOARD_BYTES {
+                    let _ = self.event_tx.send(TerminalEvent::ClipboardStore(text));
+                }
             }
             AlacEvent::ClipboardLoad(_, _) => {
                 let _ = self.event_tx.send(TerminalEvent::ClipboardLoad);
@@ -164,8 +168,6 @@ fn send_wakeup(event_tx: &EventSink, wakeup_pending: &AtomicBool) {
     }
 }
 
-/// Absolute grid row of the cursor: eviction estimate + history depth +
-/// on-screen line. Stable across scrolling, exact under line wrapping.
 /// Where the shell integration finds its nonce (and unsets it, so programs
 /// the shell runs don't inherit it).
 const SHELL_NONCE_VAR: &str = "IMPULSE_SHELL_NONCE";
@@ -181,9 +183,277 @@ fn random_nonce() -> String {
 /// resizes and shutdown again.
 const MAX_READ_PER_PASS: usize = 256 * 1024;
 
+/// Longest window title passed on, in characters (the scanner also drops
+/// title OSCs over `MAX_TITLE_OSC_LEN` bytes before alacritty stores them).
+const MAX_TITLE_CHARS: usize = 1024;
+/// Largest clipboard write (OSC 52) passed on: what the scanner's limit on
+/// its base64 allows.
+const MAX_CLIPBOARD_BYTES: usize = MAX_CLIPBOARD_OSC_LEN / 4 * 3;
+/// Longest OSC 8 hyperlink target Impulse acts on.
+const MAX_HYPERLINK_URI_LEN: usize = 4096;
+
+/// Rows alacritty may keep past the configured scrollback until Impulse
+/// trims them. alacritty drops the oldest line silently once its history is
+/// full, which would leave command-block rows pointing at the wrong text;
+/// with room to spare, Impulse does the dropping and counts every line.
+const SCROLLBACK_HEADROOM: usize = 1000;
+
+/// Absolute grid row of the cursor: lines dropped from the scrollback +
+/// history depth + on-screen line. Stable across scrolling, exact under line
+/// wrapping.
 fn absolute_cursor_row<T: EventListener>(term: &Term<T>, row_base: i64) -> i64 {
     let grid = term.grid();
     row_base + grid.history_size() as i64 + i64::from(grid.cursor.point.line.0)
+}
+
+/// Drop the scrollback lines past `max` (the headroom above it filled up
+/// since the last trim). Returns how many went, to add to the block
+/// tracker's row base. The alternate screen has no scrollback.
+fn trim_scrollback<T>(term: &mut Term<T>, max: usize) -> usize {
+    if term.mode().contains(TermMode::ALT_SCREEN) {
+        return 0;
+    }
+    let grid = term.grid_mut();
+    let excess = grid.history_size().saturating_sub(max);
+    if excess > 0 {
+        // Drops the oldest lines, then gives the headroom back.
+        grid.update_history(max);
+        grid.update_history(max + SCROLLBACK_HEADROOM);
+    }
+    excess
+}
+
+/// A handler that does nothing: an OSC handed to it is dropped.
+struct IgnoreAll;
+
+impl Handler for IgnoreAll {}
+
+/// The reader thread's handling of PTY output: Impulse's own OSCs are
+/// picked out, the rest goes to alacritty's parser, and command-block rows
+/// are recorded against the grid as each mark arrives.
+struct OutputPipeline {
+    scanner: OscScanner,
+    processor: Processor,
+    /// The scrollback size asked for (alacritty's is larger by
+    /// `SCROLLBACK_HEADROOM`).
+    max_scrollback: usize,
+    /// Newlines a synchronized update has held back from the parser.
+    sync_newlines: usize,
+}
+
+impl OutputPipeline {
+    fn new(nonce: Option<String>, max_scrollback: usize) -> Self {
+        Self {
+            scanner: OscScanner::with_nonce(nonce),
+            processor: Processor::new(),
+            max_scrollback,
+            sync_newlines: 0,
+        }
+    }
+
+    /// Handle one read of PTY output.
+    fn process<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        bytes: &[u8],
+        blocks: &Mutex<CommandBlockTracker>,
+        history: &Mutex<CommandHistoryStore>,
+        history_context: &CommandHistoryContext,
+        event_tx: &EventSink,
+    ) {
+        // Scan for OSC sequences, then use their offsets to capture command
+        // output without the shell's marks.
+        self.scanner.scan(bytes);
+        let osc_events = self.scanner.drain_event_spans();
+        let skips = self.scanner.drain_skips();
+        let n = bytes.len();
+        let mut output_cursor = 0usize;
+        let mut parsed = 0usize;
+
+        for osc_event in osc_events {
+            if let Some(start_offset) = osc_event.start_offset {
+                let start_offset = start_offset.min(n);
+                if start_offset > output_cursor {
+                    if let Ok(mut blocks) = blocks.lock() {
+                        blocks.observe_output(&bytes[output_cursor..start_offset]);
+                    }
+                }
+                // Parse up to the mark so the cursor row reflects the bytes
+                // preceding it.
+                self.parse_until(term, bytes, &mut parsed, start_offset, &skips, blocks);
+            }
+
+            match osc_event.event {
+                OscEvent::CwdChanged(path) => {
+                    if let Ok(mut blocks) = blocks.lock() {
+                        blocks.set_cwd(path.clone());
+                    }
+                    let _ = event_tx.send(TerminalEvent::CwdChanged(path));
+                }
+                OscEvent::CommandText(command) => {
+                    if let Ok(mut blocks) = blocks.lock() {
+                        blocks.set_pending_command(command);
+                    }
+                }
+                OscEvent::PromptStart => {
+                    if let Ok(mut blocks) = blocks.lock() {
+                        let row = absolute_cursor_row(term, blocks.row_base());
+                        blocks.prompt_marked(row);
+                    }
+                    let _ = event_tx.send(TerminalEvent::PromptStart);
+                }
+                OscEvent::CommandStart => {
+                    if let Ok(mut blocks) = blocks.lock() {
+                        let row = absolute_cursor_row(term, blocks.row_base());
+                        let block = blocks.command_started(Some(row));
+                        let _ = event_tx.send(TerminalEvent::CommandBlockStarted((&block).into()));
+                    }
+                    let _ = event_tx.send(TerminalEvent::CommandStart);
+                }
+                OscEvent::CommandEnd(code) => {
+                    if let Ok(mut blocks) = blocks.lock() {
+                        let row = absolute_cursor_row(term, blocks.row_base());
+                        if let Some(block) = blocks.command_ended(code, Some(row)) {
+                            if let Ok(mut history) = history.lock() {
+                                history.record_completed_block(&block, history_context.clone());
+                            }
+                            let _ =
+                                event_tx.send(TerminalEvent::CommandBlockEnded((&block).into()));
+                        }
+                    }
+                    let _ = event_tx.send(TerminalEvent::CommandEnd(code));
+                }
+                OscEvent::AttentionRequest(value) => {
+                    let _ = event_tx.send(TerminalEvent::AttentionRequest(value));
+                }
+                OscEvent::Notification { title, body } => {
+                    let _ = event_tx.send(TerminalEvent::Notification { title, body });
+                }
+                OscEvent::Progress { state, percent } => {
+                    let _ = event_tx.send(TerminalEvent::Progress { state, percent });
+                }
+                OscEvent::SessionStatus(fields) => {
+                    let _ = event_tx.send(TerminalEvent::SessionStatus(fields));
+                }
+                OscEvent::ShellNames(names) => {
+                    let _ = event_tx.send(TerminalEvent::ShellNames(names));
+                }
+                OscEvent::ShellPath(path) => {
+                    let _ = event_tx.send(TerminalEvent::ShellPath(path));
+                }
+            }
+
+            output_cursor = output_cursor.max(osc_event.end_offset.min(n));
+        }
+        if output_cursor < n {
+            if let Ok(mut blocks) = blocks.lock() {
+                blocks.observe_output(&bytes[output_cursor..n]);
+            }
+        }
+        self.parse_until(term, bytes, &mut parsed, n, &skips, blocks);
+    }
+
+    /// Parse `bytes[*parsed..until]`, leaving out the oversized OSCs in
+    /// `skips` (which never straddle `until`: marks and the chunk's end
+    /// fall outside them).
+    fn parse_until<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        bytes: &[u8],
+        parsed: &mut usize,
+        until: usize,
+        skips: &[OscSkip],
+        blocks: &Mutex<CommandBlockTracker>,
+    ) {
+        for skip in skips {
+            if skip.start < *parsed || skip.start >= until {
+                continue;
+            }
+            self.parse(term, &bytes[*parsed..skip.start], blocks);
+            if skip.abort {
+                self.abandon_osc(term, blocks);
+            }
+            *parsed = skip.end;
+        }
+        if until > *parsed {
+            self.parse(term, &bytes[*parsed..until], blocks);
+            *parsed = until;
+        }
+    }
+
+    /// Make the parser drop the OSC it's collecting, which went over its
+    /// limit (vte would buffer it without bound): CAN ends it, and it goes
+    /// to a handler that ignores it rather than to the terminal.
+    fn abandon_osc<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        blocks: &Mutex<CommandBlockTracker>,
+    ) {
+        // A synchronized update would only buffer the CAN, and later hand
+        // the OSC to the terminal after all.
+        if self.processor.sync_timeout().sync_timeout().is_some() {
+            self.stop_sync(term, blocks);
+        }
+        self.processor.advance(&mut IgnoreAll, b"\x18");
+    }
+
+    /// Feed output to the parser, a slice at a time so the scrollback can't
+    /// outgrow its headroom before it's trimmed: a byte scrolls at most one
+    /// line (bar a few escape sequences).
+    fn parse<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        bytes: &[u8],
+        blocks: &Mutex<CommandBlockTracker>,
+    ) {
+        for slice in bytes.chunks(SCROLLBACK_HEADROOM) {
+            let history_before = term.grid().history_size();
+            self.processor.advance(term, slice);
+            let mut newlines = slice.iter().filter(|&&b| b == b'\n').count();
+            if self.processor.sync_timeout().sync_timeout().is_some() {
+                // Held back until the update ends.
+                self.sync_newlines += newlines;
+            } else {
+                newlines += std::mem::take(&mut self.sync_newlines);
+            }
+            self.trim(term, blocks, history_before, newlines);
+        }
+    }
+
+    /// End a synchronized update (one that ran past its deadline).
+    fn stop_sync<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        blocks: &Mutex<CommandBlockTracker>,
+    ) {
+        let history_before = term.grid().history_size();
+        self.processor.stop_sync(term);
+        let newlines = std::mem::take(&mut self.sync_newlines);
+        self.trim(term, blocks, history_before, newlines);
+    }
+
+    /// Trim the scrollback and move the block rows' base past what left it.
+    fn trim<T>(
+        &mut self,
+        term: &mut Term<T>,
+        blocks: &Mutex<CommandBlockTracker>,
+        history_before: usize,
+        newlines: usize,
+    ) {
+        let history = term.grid().history_size();
+        let mut evicted = trim_scrollback(term, self.max_scrollback);
+        if evicted > 0 && history >= self.max_scrollback + SCROLLBACK_HEADROOM {
+            // The headroom filled up (escape sequences that scroll a screen
+            // at a time, or a long synchronized update), so alacritty may
+            // have dropped lines itself: estimate those from the newlines.
+            evicted += newlines.saturating_sub(history.saturating_sub(history_before));
+        }
+        if evicted > 0 {
+            if let Ok(mut blocks) = blocks.lock() {
+                blocks.bump_row_base(evicted as u64);
+            }
+        }
+    }
 }
 
 /// Resize the term, keeping recorded block rows on the text they marked.
@@ -192,10 +462,13 @@ fn absolute_cursor_row<T: EventListener>(term: &Term<T>, row_base: i64) -> i64 {
 /// everything below them; the logical lines themselves (and their distance
 /// from the cursor) survive, so rows are mapped through those. The alternate
 /// screen hides the primary grid, so rows stay put while it is active.
+/// Lines pushed out of the scrollback (`max_scrollback`) are counted in the
+/// rows' base.
 fn resize_term<T: EventListener>(
     term: &mut Term<T>,
     blocks: &Mutex<CommandBlockTracker>,
     size: TermSize,
+    max_scrollback: usize,
 ) {
     if term.mode().contains(TermMode::ALT_SCREEN) {
         term.resize(size);
@@ -204,12 +477,18 @@ fn resize_term<T: EventListener>(
     let before = row_positions(term);
     term.resize(size);
     let after = row_positions(term);
-    if before == after {
+    let evicted = trim_scrollback(term, max_scrollback);
+    if before == after && evicted == 0 {
         return;
     }
     if let Ok(mut blocks) = blocks.lock() {
-        let base = blocks.row_base();
-        blocks.remap_rows(|abs| base + reflowed_row(abs - base, &before, &after));
+        if before != after {
+            let base = blocks.row_base();
+            blocks.remap_rows(|abs| base + reflowed_row(abs - base, &before, &after));
+        }
+        if evicted > 0 {
+            blocks.bump_row_base(evicted as u64);
+        }
     }
 }
 
@@ -398,17 +677,22 @@ impl ConfiguredColors {
 // Minimum contrast (accessibility)
 // ---------------------------------------------------------------------------
 
+/// An sRGB channel in linear light.
+fn srgb_to_linear(v: u8) -> f32 {
+    let v = v as f32 / 255.0;
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// WCAG 2.1 relative luminance of an sRGB color.
 fn relative_luminance(c: RgbColor) -> f32 {
-    fn channel(v: u8) -> f32 {
-        let v = v as f32 / 255.0;
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    }
-    0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+    // Looked up: it runs for every cell of every frame with minimum contrast on.
+    static LINEAR: OnceLock<[f32; 256]> = OnceLock::new();
+    let linear = LINEAR.get_or_init(|| std::array::from_fn(|v| srgb_to_linear(v as u8)));
+    0.2126 * linear[c.r as usize] + 0.7152 * linear[c.g as usize] + 0.0722 * linear[c.b as usize]
 }
 
 /// WCAG 2.1 contrast ratio between two colors (1.0–21.0).
@@ -558,6 +842,56 @@ fn spawn_pty(pty_options: &PtyOptions, window_size: WindowSize) -> io::Result<tt
     tty::new(pty_options, window_size, 0)
 }
 
+/// How long a closing terminal's shell gets to exit after SIGHUP before it
+/// is killed.
+const CHILD_EXIT_GRACE: Duration = Duration::from_secs(1);
+
+/// Hang up the shell and wait up to `CHILD_EXIT_GRACE` for it to exit, then
+/// kill it. alacritty's `Pty` waits for the child when dropped, so a shell
+/// ignoring SIGHUP would otherwise hold the reader thread forever. The child
+/// is left for that wait to reap.
+#[cfg(target_os = "macos")]
+fn stop_child(pid: u32) {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return;
+    };
+    let exited = || {
+        // WNOWAIT looks without reaping, so the pid isn't freed (and
+        // perhaps reused) before alacritty signals and waits on it.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        // An error means it's already been reaped.
+        result != 0 || info.si_pid == pid
+    };
+    if exited() {
+        return;
+    }
+    unsafe { libc::kill(pid, libc::SIGHUP) };
+    let deadline = Instant::now() + CHILD_EXIT_GRACE;
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        if exited() {
+            return;
+        }
+    }
+    log::warn!("shell {pid} ignored SIGHUP; killing it");
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stop_child(pid: u32) {
+    if let Ok(pid) = libc::pid_t::try_from(pid) {
+        unsafe { libc::kill(pid, libc::SIGHUP) };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BackendMsg — commands sent to the PTY read thread
 // ---------------------------------------------------------------------------
@@ -638,6 +972,102 @@ pub struct TerminalBackend {
     master_fd: Arc<AtomicI32>,
 }
 
+/// Most command blocks without command text one poll passes on (the
+/// newest). Output that prints marks makes these by the thousand; blocks
+/// from the shell integration carry their command and all get through.
+const MAX_ANONYMOUS_BLOCKS_PER_POLL: usize = 32;
+
+/// Most notifications, and most attention requests, one poll passes on
+/// (the newest).
+const MAX_ALERTS_PER_POLL: usize = 8;
+
+/// Thin out one poll's events, so a flood of output can't fan out into
+/// thousands of UI updates: one bell; only the last title, cwd, names, PATH,
+/// progress and clipboard write; session status merged between block
+/// events; the newest few alerts; and the newest few blocks without command
+/// text.
+fn coalesce_events(events: Vec<TerminalEvent>) -> Vec<TerminalEvent> {
+    use TerminalEvent as E;
+    let last = |kind: fn(&TerminalEvent) -> bool| events.iter().rposition(kind);
+    let last_title = last(|e| matches!(e, E::TitleChanged(_) | E::ResetTitle));
+    let last_cwd = last(|e| matches!(e, E::CwdChanged(_)));
+    let last_names = last(|e| matches!(e, E::ShellNames(_)));
+    let last_path = last(|e| matches!(e, E::ShellPath(_)));
+    let last_progress = last(|e| matches!(e, E::Progress { .. }));
+    let last_clipboard = last(|e| matches!(e, E::ClipboardStore(_)));
+    let count = |kind: fn(&TerminalEvent) -> bool| events.iter().filter(|e| kind(e)).count();
+    let mut skip_notifications =
+        count(|e| matches!(e, E::Notification { .. })).saturating_sub(MAX_ALERTS_PER_POLL);
+    let mut skip_attention =
+        count(|e| matches!(e, E::AttentionRequest(_))).saturating_sub(MAX_ALERTS_PER_POLL);
+
+    // Older blocks without command text go whole, start and end together:
+    // an end without its start would be taken for the previous command's.
+    let mut newest = std::collections::HashSet::new();
+    let mut dropped = std::collections::HashSet::new();
+    for event in events.iter().rev() {
+        let (E::CommandBlockStarted(block) | E::CommandBlockEnded(block)) = event else {
+            continue;
+        };
+        if block.command.is_some() || newest.contains(&block.id) {
+            continue;
+        }
+        if newest.len() < MAX_ANONYMOUS_BLOCKS_PER_POLL {
+            newest.insert(block.id);
+        } else {
+            dropped.insert(block.id);
+        }
+    }
+
+    let skip = |remaining: &mut usize| {
+        let skipped = *remaining > 0;
+        *remaining = remaining.saturating_sub(1);
+        skipped
+    };
+    let mut rang = false;
+    // The mark sent right after a dropped block's start or end.
+    let mut drop_mark = false;
+    // Each status sets some keys: merged, later values win, but never across
+    // a block event (a command ending clears the status).
+    let mut status = std::collections::BTreeMap::new();
+    let mut kept = Vec::with_capacity(events.len().min(256));
+    for (index, event) in events.into_iter().enumerate() {
+        let after_dropped = std::mem::take(&mut drop_mark);
+        let keep = match &event {
+            E::Bell => !std::mem::replace(&mut rang, true),
+            E::TitleChanged(_) | E::ResetTitle => Some(index) == last_title,
+            E::CwdChanged(_) => Some(index) == last_cwd,
+            E::ShellNames(_) => Some(index) == last_names,
+            E::ShellPath(_) => Some(index) == last_path,
+            E::Progress { .. } => Some(index) == last_progress,
+            E::ClipboardStore(_) => Some(index) == last_clipboard,
+            E::SessionStatus(fields) => {
+                status.extend(fields.iter().map(|(k, v)| (k.clone(), v.clone())));
+                false
+            }
+            E::CommandBlockStarted(block) | E::CommandBlockEnded(block) => {
+                if !status.is_empty() {
+                    kept.push(E::SessionStatus(std::mem::take(&mut status)));
+                }
+                drop_mark = dropped.contains(&block.id);
+                !drop_mark
+            }
+            E::CommandStart | E::CommandEnd(_) => !after_dropped,
+            E::PromptStart => !matches!(kept.last(), Some(E::PromptStart)),
+            E::Notification { .. } => !skip(&mut skip_notifications),
+            E::AttentionRequest(_) => !skip(&mut skip_attention),
+            _ => true,
+        };
+        if keep {
+            kept.push(event);
+        }
+    }
+    if !status.is_empty() {
+        kept.push(E::SessionStatus(status));
+    }
+    kept
+}
+
 impl TerminalBackend {
     /// Create a new terminal backend and spawn a shell process.
     pub fn new(
@@ -665,7 +1095,9 @@ impl TerminalBackend {
             query_colors: Arc::clone(&query_colors),
         };
 
-        let alac_config = config.to_alacritty_config();
+        let mut alac_config = config.to_alacritty_config();
+        let max_scrollback = config.scrollback_lines;
+        alac_config.scrolling_history = max_scrollback + SCROLLBACK_HEADROOM;
         let mut pty_options = config.to_pty_options();
         // The shell integration adds this to the command text it reports;
         // see OscScanner::with_nonce.
@@ -683,6 +1115,7 @@ impl TerminalBackend {
             // Previous output first, so the new shell's prompt follows it.
             let mut processor: Processor = Processor::new();
             processor.advance(&mut term, text.as_bytes());
+            trim_scrollback(&mut term, max_scrollback);
         }
         let term = Arc::new(FairMutex::new(term));
 
@@ -717,7 +1150,6 @@ impl TerminalBackend {
         let wakeup_pending_clone = Arc::clone(&wakeup_pending);
         let password_input_clone = Arc::clone(&password_input);
         let poller_clone = Arc::clone(&poller);
-        let max_scrollback = config.scrollback_lines;
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
@@ -793,10 +1225,17 @@ impl TerminalBackend {
             }
         }
         let _forget_fd = ForgetFd(master_fd);
+        // Make sure the child is gone before `pty` waits for it on drop.
+        struct StopChild(u32);
+        impl Drop for StopChild {
+            fn drop(&mut self) {
+                stop_child(self.0);
+            }
+        }
+        let _stop_child = StopChild(pty.child().id());
 
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
-        let mut processor: Processor = Processor::new();
-        let mut scanner = crate::osc_scanner::OscScanner::with_nonce(Some(shell_nonce));
+        let mut pipeline = OutputPipeline::new(Some(shell_nonce), max_scrollback);
 
         #[cfg(unix)]
         let master_fd = {
@@ -832,7 +1271,7 @@ impl TerminalBackend {
                             columns: cols as usize,
                             screen_lines: rows as usize,
                         };
-                        resize_term(&mut term.lock(), &blocks, size);
+                        resize_term(&mut term.lock(), &blocks, size, max_scrollback);
                         true
                     }
                     BackendMsg::Shutdown => false,
@@ -879,7 +1318,7 @@ impl TerminalBackend {
             // A synchronized update (DEC 2026) is buffered until it ends. If
             // the program dies mid-frame it never does, so wake at its
             // deadline and flush, as alacritty's own event loop does.
-            let sync_deadline = processor.sync_timeout().sync_timeout();
+            let sync_deadline = pipeline.processor.sync_timeout().sync_timeout();
             let timeout =
                 sync_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
 
@@ -895,7 +1334,7 @@ impl TerminalBackend {
 
             if events.is_empty() && sync_deadline.is_some_and(|deadline| Instant::now() >= deadline)
             {
-                processor.stop_sync(&mut *term.lock());
+                pipeline.stop_sync(&mut term.lock(), &blocks);
                 send_wakeup(&event_tx, &wakeup_pending);
                 continue;
             }
@@ -950,167 +1389,17 @@ impl TerminalBackend {
                         }
                         Ok(n) => {
                             read_this_pass += n;
-                            // Scan for OSC sequences, then use their offsets to capture
-                            // command output without including shell prompt markers.
-                            scanner.scan(&buf[..n]);
-                            let osc_events = scanner.drain_event_spans();
-                            let mut output_cursor = 0usize;
-                            let mut advance_cursor = 0usize;
-                            {
-                                // Hold the term lock across the chunk so block row
-                                // marks are recorded against the exact grid state at
-                                // each shell-integration mark.
-                                let mut term_locked = term.lock();
-                                let hs_before = term_locked.grid().history_size();
-                                let nl_before = blocks
-                                    .lock()
-                                    .map(|blocks| blocks.current_output_line())
-                                    .unwrap_or(0);
-
-                                for osc_event in osc_events {
-                                    if let Some(start_offset) = osc_event.start_offset {
-                                        let start_offset = start_offset.min(n);
-                                        if start_offset > output_cursor {
-                                            if let Ok(mut blocks) = blocks.lock() {
-                                                blocks.observe_output(
-                                                    &buf[output_cursor..start_offset],
-                                                );
-                                            }
-                                        }
-                                        // Advance the parser up to the mark so the
-                                        // cursor row reflects the bytes preceding it.
-                                        if start_offset > advance_cursor {
-                                            processor.advance(
-                                                &mut *term_locked,
-                                                &buf[advance_cursor..start_offset],
-                                            );
-                                            advance_cursor = start_offset;
-                                        }
-                                    }
-
-                                    match osc_event.event {
-                                        crate::osc_scanner::OscEvent::CwdChanged(path) => {
-                                            if let Ok(mut blocks) = blocks.lock() {
-                                                blocks.set_cwd(path.clone());
-                                            }
-                                            let _ = event_tx.send(TerminalEvent::CwdChanged(path));
-                                        }
-                                        crate::osc_scanner::OscEvent::CommandText(command) => {
-                                            if let Ok(mut blocks) = blocks.lock() {
-                                                blocks.set_pending_command(command);
-                                            }
-                                        }
-                                        crate::osc_scanner::OscEvent::PromptStart => {
-                                            if let Ok(mut blocks) = blocks.lock() {
-                                                let row = absolute_cursor_row(
-                                                    &term_locked,
-                                                    blocks.row_base(),
-                                                );
-                                                blocks.prompt_marked(row);
-                                            }
-                                            let _ = event_tx.send(TerminalEvent::PromptStart);
-                                        }
-                                        crate::osc_scanner::OscEvent::CommandStart => {
-                                            if let Ok(mut blocks) = blocks.lock() {
-                                                let row = absolute_cursor_row(
-                                                    &term_locked,
-                                                    blocks.row_base(),
-                                                );
-                                                let block = blocks.command_started(Some(row));
-                                                let _ = event_tx.send(
-                                                    TerminalEvent::CommandBlockStarted(
-                                                        (&block).into(),
-                                                    ),
-                                                );
-                                            }
-                                            let _ = event_tx.send(TerminalEvent::CommandStart);
-                                        }
-                                        crate::osc_scanner::OscEvent::CommandEnd(code) => {
-                                            if let Ok(mut blocks) = blocks.lock() {
-                                                let row = absolute_cursor_row(
-                                                    &term_locked,
-                                                    blocks.row_base(),
-                                                );
-                                                if let Some(block) =
-                                                    blocks.command_ended(code, Some(row))
-                                                {
-                                                    if let Ok(mut history) = history.lock() {
-                                                        history.record_completed_block(
-                                                            &block,
-                                                            history_context.clone(),
-                                                        );
-                                                    }
-                                                    let _ = event_tx.send(
-                                                        TerminalEvent::CommandBlockEnded(
-                                                            (&block).into(),
-                                                        ),
-                                                    );
-                                                }
-                                            }
-                                            let _ = event_tx.send(TerminalEvent::CommandEnd(code));
-                                        }
-                                        crate::osc_scanner::OscEvent::AttentionRequest(value) => {
-                                            let _ = event_tx
-                                                .send(TerminalEvent::AttentionRequest(value));
-                                        }
-                                        crate::osc_scanner::OscEvent::Notification {
-                                            title,
-                                            body,
-                                        } => {
-                                            let _ = event_tx
-                                                .send(TerminalEvent::Notification { title, body });
-                                        }
-                                        crate::osc_scanner::OscEvent::Progress {
-                                            state,
-                                            percent,
-                                        } => {
-                                            let _ = event_tx
-                                                .send(TerminalEvent::Progress { state, percent });
-                                        }
-                                        crate::osc_scanner::OscEvent::SessionStatus(fields) => {
-                                            let _ =
-                                                event_tx.send(TerminalEvent::SessionStatus(fields));
-                                        }
-                                        crate::osc_scanner::OscEvent::ShellNames(names) => {
-                                            let _ = event_tx.send(TerminalEvent::ShellNames(names));
-                                        }
-                                        crate::osc_scanner::OscEvent::ShellPath(path) => {
-                                            let _ = event_tx.send(TerminalEvent::ShellPath(path));
-                                        }
-                                    }
-
-                                    output_cursor = output_cursor.max(osc_event.end_offset.min(n));
-                                }
-                                if output_cursor < n {
-                                    if let Ok(mut blocks) = blocks.lock() {
-                                        blocks.observe_output(&buf[output_cursor..n]);
-                                    }
-                                }
-                                // Feed the remaining bytes to alacritty's state machine.
-                                if advance_cursor < n {
-                                    processor.advance(&mut *term_locked, &buf[advance_cursor..n]);
-                                }
-
-                                // At the scrollback cap alacritty evicts one history
-                                // line per scrolled line and history_size() stops
-                                // growing; estimate evictions from observed newlines
-                                // so absolute block rows keep tracking the grid. The
-                                // alternate screen never scrolls into history.
-                                let hs_after = term_locked.grid().history_size();
-                                if hs_after >= max_scrollback
-                                    && !term_locked.mode().contains(TermMode::ALT_SCREEN)
-                                {
-                                    if let Ok(mut blocks) = blocks.lock() {
-                                        let newlines =
-                                            blocks.current_output_line().saturating_sub(nl_before);
-                                        let grown = hs_after.saturating_sub(hs_before) as u64;
-                                        let evicted = newlines.saturating_sub(grown);
-                                        if evicted > 0 {
-                                            blocks.bump_row_base(evicted);
-                                        }
-                                    }
-                                }
-                            }
+                            // Hold the term lock across the chunk so block row
+                            // marks are recorded against the exact grid state at
+                            // each shell-integration mark.
+                            pipeline.process(
+                                &mut term.lock(),
+                                &buf[..n],
+                                &blocks,
+                                &history,
+                                &history_context,
+                                &event_tx,
+                            );
 
                             // Notify frontend of content change.
                             send_wakeup(&event_tx, &wakeup_pending);
@@ -1220,7 +1509,7 @@ impl TerminalBackend {
                 _ => events.push(ev),
             }
         }
-        events
+        coalesce_events(events)
     }
 
     /// Return command block metadata observed for this terminal session.
@@ -1603,6 +1892,8 @@ impl TerminalBackend {
 
         // Fill from display iterator, collecting what doesn't fit a cell.
         let mut extras: Vec<(u32, u8, Vec<u8>)> = Vec::new();
+        // Neighbouring cells mostly share colors: reuse the last contrast fix.
+        let mut last_contrast: Option<(RgbColor, RgbColor, RgbColor)> = None;
         for indexed in content.display_iter {
             let row_i32 = indexed.point.line.0 + display_offset;
             let col = indexed.point.column.0;
@@ -1610,13 +1901,21 @@ impl TerminalBackend {
                 let row = row_i32 as usize;
                 let offset = cell_offset + (row * num_cols + col) * buffer::CELL_STRIDE;
                 let bg = self.colors.resolve(indexed.cell.bg, term_colors);
-                let fg = apply_minimum_contrast(
-                    self.colors.resolve(indexed.cell.fg, term_colors),
-                    bg,
-                    self.colors.minimum_contrast,
-                );
+                let fg = self.colors.resolve(indexed.cell.fg, term_colors);
+                let fg = match last_contrast {
+                    Some((from, under, to)) if from == fg && under == bg => to,
+                    _ => {
+                        let to = apply_minimum_contrast(fg, bg, self.colors.minimum_contrast);
+                        last_contrast = Some((fg, bg, to));
+                        to
+                    }
+                };
                 let mut flags = convert_flags(indexed.cell.flags);
-                if indexed.cell.hyperlink().is_some() {
+                if indexed
+                    .cell
+                    .hyperlink()
+                    .is_some_and(|link| link.uri().len() <= MAX_HYPERLINK_URI_LEN)
+                {
                     flags |= CellFlags::HYPERLINK;
                 }
                 buffer::write_cell(buf, offset, indexed.cell.c, fg, bg, flags);
@@ -1771,6 +2070,12 @@ impl TerminalBackend {
             .scroll_display(alacritty_terminal::grid::Scroll::Delta(delta));
     }
 
+    /// How far the viewport is scrolled back into the scrollback, in lines
+    /// (0 at the bottom).
+    pub fn display_offset(&self) -> usize {
+        self.term.lock().grid().display_offset()
+    }
+
     /// Scroll the viewport to the bottom.
     pub fn scroll_to_bottom(&self) {
         self.term
@@ -1837,7 +2142,9 @@ impl TerminalBackend {
         }
         let point = viewport_point(&term, col, row);
         let cell = &grid[point];
-        cell.hyperlink().map(|h| h.uri().to_string())
+        cell.hyperlink()
+            .map(|h| h.uri().to_string())
+            .filter(|uri| uri.len() <= MAX_HYPERLINK_URI_LEN)
     }
 
     /// Get the current terminal mode flags.
@@ -2084,11 +2391,13 @@ fn shell_name_from_path(path: &str) -> Option<String> {
 }
 
 /// Strip ASCII control characters (except tab and newline) from a shell-set
-/// title so embedded NULs don't silently truncate strings on the Swift side.
+/// title so embedded NULs don't silently truncate strings on the Swift side,
+/// and cap its length.
 fn sanitize_title(title: &str) -> String {
     title
         .chars()
         .filter(|c| *c == '\t' || *c == '\n' || (*c >= ' ' && *c != '\x7f'))
+        .take(MAX_TITLE_CHARS)
         .collect()
 }
 
@@ -2422,11 +2731,11 @@ mod tests {
         };
 
         // Narrower: the long line takes three rows, pushing the prompt down.
-        resize_term(&mut term, &blocks, size(10));
+        resize_term(&mut term, &blocks, size(10), 10_000);
         assert_eq!(rows(&blocks), (Some(0), Some(1), Some(4), Some(4)));
 
         // Wider: it fits on one row, pulling the prompt up.
-        resize_term(&mut term, &blocks, size(40));
+        resize_term(&mut term, &blocks, size(40), 10_000);
         assert_eq!(rows(&blocks), (Some(0), Some(1), Some(2), Some(2)));
     }
 
@@ -2459,10 +2768,10 @@ mod tests {
         // most of it scrolled into history on a four-line screen.
         assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(10));
 
-        resize_term(&mut term, &blocks, size(10));
+        resize_term(&mut term, &blocks, size(10), 10_000);
         // The long line now takes five rows.
         assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(12));
-        resize_term(&mut term, &blocks, size(80));
+        resize_term(&mut term, &blocks, size(80), 10_000);
         assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(8));
     }
 
@@ -2492,5 +2801,339 @@ mod tests {
         // Damage was reset: with no changes, only the cursor row reports.
         let rows = collect_term_damage(&mut term).expect("expected partial damage");
         assert!(rows.iter().all(|&r| r < 5));
+    }
+
+    /// A term with the scrollback Impulse configures: `max` lines plus the
+    /// headroom it trims back.
+    fn term_with_scrollback<T: EventListener>(
+        max: usize,
+        columns: usize,
+        screen_lines: usize,
+        listener: T,
+    ) -> alacritty_terminal::term::Term<T> {
+        let mut config = TerminalConfig::default().to_alacritty_config();
+        config.scrolling_history = max + super::SCROLLBACK_HEADROOM;
+        let size = TermSize {
+            columns,
+            screen_lines,
+        };
+        alacritty_terminal::term::Term::new(config, &size, listener)
+    }
+
+    /// The text of a grid line (0 is the top of the screen, negative lines
+    /// are scrollback), without trailing blanks.
+    fn row_text<T>(term: &alacritty_terminal::term::Term<T>, line: i64) -> String {
+        use alacritty_terminal::grid::Dimensions;
+        use alacritty_terminal::index::{Column, Line};
+        let row = &term.grid()[Line(line as i32)];
+        let text: String = (0..term.grid().columns())
+            .map(|column| row[Column(column)].c)
+            .collect();
+        text.trim_end().to_string()
+    }
+
+    #[test]
+    fn block_rows_stay_on_their_text_once_the_scrollback_is_full() {
+        use super::OutputPipeline;
+        use crate::blocks::CommandBlockTracker;
+        use crate::history::{CommandHistoryContext, CommandHistoryStore};
+        use alacritty_terminal::event::VoidListener;
+        use alacritty_terminal::grid::Dimensions;
+        use std::sync::Mutex;
+
+        let max = 20;
+        let mut session = Vec::new();
+        for i in 0..40 {
+            session.extend_from_slice(format!("line {i}\r\n").as_bytes());
+        }
+        session.extend_from_slice(b"\x1b]133;A\x07$ build\r\n\x1b]133;C\x07");
+        // One line, ten rows on a 20-column screen: counting newlines took it
+        // for one, so every block row above it drifted.
+        session.extend(std::iter::repeat_n(b'x', 200));
+        session.extend_from_slice(b"\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ ");
+
+        // All in one read (marks after evictions in the same read), and in
+        // reads that split everything.
+        for read_size in [session.len(), 7] {
+            let mut term = term_with_scrollback(max, 20, 5, VoidListener);
+            let blocks = Mutex::new(CommandBlockTracker::new());
+            let history = Mutex::new(CommandHistoryStore::new());
+            let context = CommandHistoryContext::default();
+            let (sink, _rx) = test_sink();
+            let mut pipeline = OutputPipeline::new(None, max);
+            for read in session.chunks(read_size) {
+                pipeline.process(&mut term, read, &blocks, &history, &context, &sink);
+            }
+
+            assert_eq!(term.grid().history_size(), max);
+            let blocks = blocks.lock().unwrap();
+            let line = |abs: i64| abs - blocks.row_base() - max as i64;
+            let block = blocks.iter_blocks().next().unwrap();
+            assert_eq!(row_text(&term, line(block.prompt_row.unwrap())), "$ build");
+            assert_eq!(
+                row_text(&term, line(block.output_row.unwrap())),
+                "x".repeat(20)
+            );
+            assert_eq!(row_text(&term, line(block.end_row.unwrap())), "$");
+            assert_eq!(
+                row_text(&term, line(blocks.pending_prompt_row().unwrap())),
+                "$"
+            );
+        }
+    }
+
+    #[test]
+    fn an_oversized_osc_never_reaches_the_terminal() {
+        use super::OutputPipeline;
+        use crate::blocks::CommandBlockTracker;
+        use crate::history::{CommandHistoryContext, CommandHistoryStore};
+        use crate::osc_scanner::{MAX_CLIPBOARD_OSC_LEN, MAX_TITLE_OSC_LEN};
+        use std::sync::Mutex;
+
+        let (sink, rx) = test_sink();
+        let proxy = EventProxy {
+            event_tx: sink.clone(),
+            wakeup_pending: Arc::new(AtomicBool::new(false)),
+            query_colors: Arc::new(RwLock::new([RgbColor::new(0, 0, 0); 269])),
+        };
+        let mut term = term_with_scrollback(100, 20, 5, proxy);
+        let blocks = Mutex::new(CommandBlockTracker::new());
+        let history = Mutex::new(CommandHistoryStore::new());
+        let context = CommandHistoryContext::default();
+        let mut pipeline = OutputPipeline::new(None, 100);
+        let mut process = |term: &mut _, bytes: &[u8]| {
+            pipeline.process(term, bytes, &blocks, &history, &context, &sink)
+        };
+
+        // A title past its limit, then text.
+        let mut title = b"\x1b]2;".to_vec();
+        title.extend(std::iter::repeat_n(b'T', MAX_TITLE_OSC_LEN + 1));
+        title.extend_from_slice(b"\x07ok");
+        process(&mut term, &title);
+        // A clipboard write past its limit, over many reads, ended by ST.
+        let mut clipboard = b"\x1b]52;c;".to_vec();
+        clipboard.extend(std::iter::repeat_n(b'A', MAX_CLIPBOARD_OSC_LEN + 8));
+        clipboard.extend_from_slice(b"\x1b\\!");
+        for read in clipboard.chunks(0x10000) {
+            process(&mut term, read);
+        }
+        // Within their limits they still work.
+        process(&mut term, b"\x1b]2;fine\x07\x1b]52;c;aGk=\x07");
+
+        let events: Vec<String> = rx
+            .try_iter()
+            .filter(|event| !matches!(event, TerminalEvent::Wakeup))
+            .map(|event| format!("{event:?}"))
+            .collect();
+        assert_eq!(
+            events,
+            [r#"TitleChanged("fine")"#, r#"ClipboardStore("hi")"#],
+            "no bell from the dropped OSC's BEL either"
+        );
+        // What follows each dropped OSC is text again.
+        assert_eq!(row_text(&term, 0), "ok!");
+    }
+
+    fn summary(id: u64, command: Option<&str>) -> crate::blocks::TerminalCommandBlockSummary {
+        crate::blocks::TerminalCommandBlockSummary {
+            id: crate::blocks::TerminalBlockId(id),
+            command: command.map(str::to_string),
+            cwd: None,
+            started_at_ms: 0,
+            ended_at_ms: None,
+            exit_code: None,
+            output_start_line: 0,
+            output_end_line: None,
+            has_output: false,
+        }
+    }
+
+    fn status(key: &str, value: &str) -> TerminalEvent {
+        TerminalEvent::SessionStatus([(key.to_string(), value.to_string())].into_iter().collect())
+    }
+
+    fn debug(events: &[TerminalEvent]) -> Vec<String> {
+        events.iter().map(|event| format!("{event:?}")).collect()
+    }
+
+    #[test]
+    fn a_poll_passes_one_bell_and_the_latest_state() {
+        use super::coalesce_events;
+        use TerminalEvent as E;
+
+        let events = vec![
+            E::Bell,
+            E::TitleChanged("a".into()),
+            E::CwdChanged("/a".into()),
+            E::Bell,
+            status("status", "Working"),
+            E::ResetTitle,
+            E::PromptStart,
+            E::TitleChanged("b".into()),
+            status("detail", "x"),
+            E::CwdChanged("/b".into()),
+            status("status", "Done"),
+            E::Bell,
+        ];
+        assert_eq!(
+            debug(&coalesce_events(events)),
+            [
+                "Bell",
+                "PromptStart",
+                r#"TitleChanged("b")"#,
+                r#"CwdChanged("/b")"#,
+                r#"SessionStatus({"detail": "x", "status": "Done"})"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn session_status_is_not_merged_across_a_command_ending() {
+        use super::coalesce_events;
+        use TerminalEvent as E;
+
+        // The status set before the command ended is cleared by its end; the
+        // one set after stands alone.
+        let events = vec![
+            status("status", "Working"),
+            status("detail", "x"),
+            E::CommandBlockEnded(summary(1, Some("claude"))),
+            status("indicator", "#ffa500"),
+        ];
+        assert_eq!(
+            debug(&coalesce_events(events)),
+            [
+                r#"SessionStatus({"detail": "x", "status": "Working"})"#,
+                r#"CommandBlockEnded(TerminalCommandBlockSummary { id: TerminalBlockId(1), command: Some("claude"), cwd: None, started_at_ms: 0, ended_at_ms: None, exit_code: None, output_start_line: 0, output_end_line: None, has_output: false })"#,
+                r##"SessionStatus({"indicator": "#ffa500"})"##,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_poll_passes_the_newest_alerts() {
+        use super::{coalesce_events, MAX_ALERTS_PER_POLL};
+        use TerminalEvent as E;
+
+        let notification = |i: usize| E::Notification {
+            title: "t".into(),
+            body: i.to_string(),
+        };
+        let mut events: Vec<E> = (0..20).map(notification).collect();
+        events.extend((0..10).map(|_| E::AttentionRequest("yes".into())));
+        events.push(E::AttentionRequest("no".into()));
+        let kept = coalesce_events(events);
+        let bodies: Vec<&str> = kept
+            .iter()
+            .filter_map(|event| match event {
+                E::Notification { body, .. } => Some(body.as_str()),
+                _ => None,
+            })
+            .collect();
+        let newest: Vec<String> = (20 - MAX_ALERTS_PER_POLL..20)
+            .map(|i| i.to_string())
+            .collect();
+        assert_eq!(bodies, newest);
+        let attention: Vec<&str> = kept
+            .iter()
+            .filter_map(|event| match event {
+                E::AttentionRequest(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(attention.len(), MAX_ALERTS_PER_POLL);
+        assert_eq!(attention.last(), Some(&"no"));
+
+        // Nothing carries over between polls: a prompt a second all arrive.
+        for _ in 0..5 {
+            assert_eq!(coalesce_events(vec![notification(0)]).len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_flood_of_anonymous_blocks_passes_only_the_newest_whole() {
+        use super::{coalesce_events, MAX_ANONYMOUS_BLOCKS_PER_POLL};
+        use TerminalEvent as E;
+
+        let cycle = |events: &mut Vec<E>, id: u64, command: Option<&str>| {
+            events.push(E::PromptStart);
+            events.push(E::CommandBlockStarted(summary(id, command)));
+            events.push(E::CommandStart);
+            events.push(E::CommandBlockEnded(summary(id, command)));
+            events.push(E::CommandEnd(0));
+        };
+        // Marks printed by output: blocks with no command text.
+        let mut events = Vec::new();
+        for id in 0..1000 {
+            cycle(&mut events, id, None);
+            if id == 500 {
+                cycle(&mut events, 5000, Some("make"));
+            }
+        }
+        let kept = coalesce_events(events);
+        let block_ids = |kind: fn(&E) -> Option<u64>| kept.iter().filter_map(kind).collect();
+        let started: Vec<u64> = block_ids(|e| match e {
+            E::CommandBlockStarted(block) => Some(block.id.0),
+            _ => None,
+        });
+        let ended: Vec<u64> = block_ids(|e| match e {
+            E::CommandBlockEnded(block) => Some(block.id.0),
+            _ => None,
+        });
+        // The block with a command always gets through; each anonymous one
+        // either whole or not at all.
+        let anonymous = MAX_ANONYMOUS_BLOCKS_PER_POLL as u64;
+        let expected: Vec<u64> = std::iter::once(5000)
+            .chain(1000 - anonymous..1000)
+            .collect();
+        assert_eq!(started, expected);
+        assert_eq!(ended, expected);
+        // A dropped block's marks go with it, and the prompts between them
+        // become one.
+        let marks = |kind: fn(&E) -> bool| kept.iter().filter(|e| kind(e)).count();
+        assert_eq!(marks(|e| matches!(e, E::CommandStart)), expected.len());
+        assert_eq!(marks(|e| matches!(e, E::CommandEnd(_))), expected.len());
+        assert_eq!(
+            debug(&kept[..3]),
+            debug(&[
+                E::PromptStart,
+                E::CommandBlockStarted(summary(5000, Some("make"))),
+                E::CommandStart
+            ])
+        );
+        assert!(matches!(kept.last(), Some(E::CommandEnd(0))));
+
+        // A pasted script's commands all get through, however many.
+        let mut events = Vec::new();
+        for id in 0..200 {
+            cycle(&mut events, id, Some("echo"));
+        }
+        assert_eq!(coalesce_events(events).len(), 1000);
+    }
+
+    #[test]
+    fn luminance_comes_out_as_it_did_before_the_table() {
+        use super::relative_luminance;
+        // The formula as it was computed per cell.
+        fn reference(c: RgbColor) -> f32 {
+            fn channel(v: u8) -> f32 {
+                let v = v as f32 / 255.0;
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            }
+            0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+        }
+        for v in 0..=255u8 {
+            for c in [
+                RgbColor::new(v, v, v),
+                RgbColor::new(v, 255 - v, v / 2),
+                RgbColor::new(0, v, 255),
+            ] {
+                assert_eq!(relative_luminance(c).to_bits(), reference(c).to_bits());
+            }
+        }
     }
 }

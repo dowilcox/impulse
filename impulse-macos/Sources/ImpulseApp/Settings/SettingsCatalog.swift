@@ -289,6 +289,10 @@ enum SettingsCatalog {
     toggle("terminal_copy_on_select", "Copy on select", \.terminalCopyOnSelect, .terminal, "Behavior"),
     toggle("terminal_scroll_on_output", "Scroll to bottom on output", \.terminalScrollOnOutput, .terminal, "Behavior"),
     toggle("terminal_allow_hyperlink", "Clickable links", \.terminalAllowHyperlink, .terminal, "Behavior"),
+    choice(
+      "terminal_option_as_meta", "Option as Meta", \.terminalOptionAsMeta, .terminal, "Behavior",
+      [("off", "Off"), ("left", "Left Option"), ("right", "Right Option"), ("both", "Both Option keys")],
+      detail: "The Option key sends Esc + the key (Meta-f, Meta-b in the shell) instead of typing ƒ, or @ on some layouts."),
     toggle(
       "terminal_allow_osc52_write", "Programs may set the clipboard", \.terminalAllowOsc52Write, .terminal,
       "Clipboard", detail: "OSC 52 writes, as used by tmux, vim and ssh sessions."),

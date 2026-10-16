@@ -217,7 +217,10 @@ enum EditorCommand: Encodable {
 /// and snake_case keys produced by the Monaco JavaScript layer.
 enum EditorEvent: Decodable {
     case ready
-    case fileOpened
+    /// An `OpenFile` was carried out. `content` is the buffer's text when
+    /// Monaco holds something other than what was sent (it normalized
+    /// mixed or lone-CR line endings, or dropped a byte-order mark).
+    case fileOpened(content: String?)
     case contentChanged(content: String?, changes: [MonacoContentChange], version: UInt32)
     case cursorMoved(line: UInt32, column: UInt32)
     case saveRequested
@@ -307,7 +310,7 @@ enum EditorEvent: Decodable {
             self = .ready
 
         case .fileOpened:
-            self = .fileOpened
+            self = .fileOpened(content: try container.decodeIfPresent(String.self, forKey: .content))
 
         case .contentChanged:
             let content = try container.decodeIfPresent(String.self, forKey: .content)
@@ -508,7 +511,11 @@ struct MonacoCompletionItem: Codable {
     var insertText: String
     var insertTextRules: UInt32?
     var range: MonacoRange?
+    /// With `range` as the insert range: the one replace mode takes.
+    var replaceRange: MonacoRange?
     var additionalTextEdits: [MonacoTextEdit]
+    var sortText: String?
+    var filterText: String?
 
     enum CodingKeys: String, CodingKey {
         case label
@@ -517,7 +524,10 @@ struct MonacoCompletionItem: Codable {
         case insertText = "insert_text"
         case insertTextRules = "insert_text_rules"
         case range
+        case replaceRange = "replace_range"
         case additionalTextEdits = "additional_text_edits"
+        case sortText = "sort_text"
+        case filterText = "filter_text"
     }
 
     init(
@@ -527,7 +537,10 @@ struct MonacoCompletionItem: Codable {
         insertText: String,
         insertTextRules: UInt32? = nil,
         range: MonacoRange? = nil,
-        additionalTextEdits: [MonacoTextEdit] = []
+        replaceRange: MonacoRange? = nil,
+        additionalTextEdits: [MonacoTextEdit] = [],
+        sortText: String? = nil,
+        filterText: String? = nil
     ) {
         self.label = label
         self.kind = kind
@@ -535,7 +548,10 @@ struct MonacoCompletionItem: Codable {
         self.insertText = insertText
         self.insertTextRules = insertTextRules
         self.range = range
+        self.replaceRange = replaceRange
         self.additionalTextEdits = additionalTextEdits
+        self.sortText = sortText
+        self.filterText = filterText
     }
 }
 

@@ -138,8 +138,8 @@ public enum TaskLanding {
       ["merge", "--no-ff", "--no-edit", "-m", message(branch: branch, base: base), "--end-of-options", branch],
       in: folder, timeout: 600)
     guard case .failure(let error) = merged else { return .success(()) }
-    let conflicted = (try? GitOperations.git(["diff", "--name-only", "--diff-filter=U"], in: folder).get())
-      .map { $0.stdout.split(separator: "\n").map(String.init) } ?? []
+    let conflicted = (try? GitOperations.git(["diff", "--name-only", "-z", "--diff-filter=U"], in: folder).get())
+      .map { $0.stdout.split(separator: "\0").map(String.init) } ?? []
     _ = GitOperations.git(["merge", "--abort"], in: folder)
     let untracked = untrackedInTheWay(error.output ?? "")
     if !untracked.isEmpty { return .failure(.untracked(untracked)) }
@@ -161,6 +161,66 @@ public enum TaskLanding {
   public static func naming(_ files: [String]) -> String {
     guard let first = files.first else { return "files" }
     return files.count == 1 ? first : "\(first) and \(files.count - 1) more file\(files.count == 2 ? "" : "s")"
+  }
+
+  /// What deleting a landed task's branch did.
+  public struct BranchCleanup: Equatable, Sendable {
+    /// The commit the branch was at when it was deleted (for Undo); nil
+    /// when it was kept.
+    public var deletedCommit: String?
+    /// It was deleted on the remote too.
+    public var deletedOnRemote = false
+    /// What was kept, and why ("fix has commits that aren't merged…").
+    public var kept: [String] = []
+  }
+
+  /// Delete `branch`, and with `remote` its copy there, after checking
+  /// again that it's landed: what was merged when Finish or Archive Merged
+  /// Tasks looked may have moved since. The local branch goes only while
+  /// its tip is merged into one of `targets` (the merge commit, the base)
+  /// and only while it's still at that tip; the remote one only while
+  /// its last fetched tip is merged too and the remote still has it there.
+  /// `trusted`: the repository's merge drivers may run (`isMerged`).
+  public static func deleteLandedBranch(
+    _ branch: String, mergedInto targets: [String], remote: String?, root: String, trusted: Bool = false
+  ) -> BranchCleanup {
+    var cleanup = BranchCleanup()
+    guard let tip = GitOperations.resolveRef("refs/heads/\(branch)", root: root) else { return cleanup }
+    func merged(_ commit: String) -> Bool {
+      targets.contains { GitOperations.isMerged(commit, into: $0, root: root, trusted: trusted) }
+    }
+    guard merged(tip) else {
+      cleanup.kept.append("\(branch) has commits that aren't merged, so it was kept.")
+      return cleanup
+    }
+    switch GitOperations.deleteBranch(branch, at: tip, root: root) {
+    case .success:
+      break
+    case .failure(.stale):
+      cleanup.kept.append("\(branch) moved meanwhile, so it was kept.")
+      return cleanup
+    case .failure(let error):
+      cleanup.kept.append("\(branch) was kept: \(error.message)")
+      return cleanup
+    }
+    cleanup.deletedCommit = tip
+    guard let remote, let remoteTip = GitOperations.resolveRef("refs/remotes/\(remote)/\(branch)", root: root) else {
+      return cleanup
+    }
+    guard merged(remoteTip) else {
+      cleanup.kept.append("\(branch) on \(remote) has commits that aren't merged, so it was kept there.")
+      return cleanup
+    }
+    switch GitOperations.deleteRemoteBranch(branch, remote: remote, at: remoteTip, root: root) {
+    case .success:
+      cleanup.deletedOnRemote = true
+    case .failure(let error):
+      cleanup.kept.append(
+        (error.output ?? "").contains("stale info")
+          ? "\(branch) changed on \(remote) since the last fetch, so it was kept there."
+          : "\(branch) couldn't be deleted on \(remote): \(error.message)")
+    }
+    return cleanup
   }
 
   /// Whether `commit` is already part of `other`.

@@ -27,6 +27,16 @@ enum TextFile {
     return decode(data)
   }
 
+  /// The file's text with the stamp it had while it was read. The stamp is
+  /// nil when the file changed during the read: then it can't vouch for
+  /// the text, and a save compares the text itself.
+  static func readStamped(_ path: String) -> (contents: Contents, stamp: Stamp?)? {
+    let before = stamp(path)
+    guard let contents = read(path) else { return nil }
+    let after = stamp(path)
+    return (contents, before != nil && before == after ? after : nil)
+  }
+
   static func decode(_ data: Data) -> Contents? {
     let bom = data.starts(with: utf8BOM)
     guard let text = String(data: bom ? data.dropFirst(utf8BOM.count) : data, encoding: .utf8) else {

@@ -1,4 +1,5 @@
 import AppKit
+import ImpulseKit
 import SwiftUI
 
 /// Warp-style input area pinned below the terminal: a context-chip row
@@ -13,6 +14,9 @@ struct TerminalContextBarView: View {
 
   @State private var text: String = ""
   @State private var suggestion: String? = nil
+  /// The suggestion is a command from history (taken as it is), not a
+  /// completion (already escaped).
+  @State private var suggestionFromHistory = false
   /// Index into the recent-history list while cycling with ↑/↓; nil = live draft.
   @State private var historyIndex: Int? = nil
   @State private var savedDraft: String = ""
@@ -56,6 +60,9 @@ struct TerminalContextBarView: View {
 
   /// The dropdown is open exactly when there are candidates to show.
   private var isDropdownOpen: Bool { !completions.isEmpty }
+
+  /// How the terminal's shell quotes (for inserted paths and completions).
+  private var shellType: ShellType { LoginShell.detectShellType(model.shellName) }
 
   /// The command text follows the terminal font size (and zoom), a point
   /// smaller: SF Mono at 13 sits with the terminal's 14.
@@ -311,6 +318,7 @@ struct TerminalContextBarView: View {
             suggestion: model.commandRunning ? nil : suggestion,
             colors: CommandEditorColors(theme: model.theme),
             font: NSFont.monospacedSystemFont(ofSize: inputFontSize, weight: .regular),
+            shellType: shellType,
             isKnownCommand: model.onIsKnownCommand,
             focusToken: focusRequest,
             onSubmit: handleSubmit,
@@ -337,8 +345,8 @@ struct TerminalContextBarView: View {
       // can anchor itself just above the field. Transparent / non-interactive.
       .overlay(
         CompletionAnchorView { rect, window in
-          anchorScreenRect = rect
-          anchorWindow = window
+          if anchorScreenRect != rect { anchorScreenRect = rect }
+          if anchorWindow !== window { anchorWindow = window }
         }
         .allowsHitTesting(false)
       )
@@ -406,8 +414,9 @@ struct TerminalContextBarView: View {
       // on an empty bar answers "Press Enter to continue".
       model.onSendLine?(text)
     } else {
-      let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !command.isEmpty else { return }
+      // Trimmed, except that a leading space stays (it keeps the command
+      // out of the shell's history).
+      guard let command = TerminalTab.commandText(text) else { return }
       model.onRunCommand?(command)
     }
     text = ""
@@ -468,8 +477,10 @@ struct TerminalContextBarView: View {
       return
     }
     if result.candidates.count == 1 {
-      // A visible history suggestion keeps Tab.
-      if let suggestion, suggestion.hasPrefix(text), suggestion != text {
+      // A visible history suggestion keeps Tab. A completion suggestion
+      // doesn't: the candidate says the same, and goes in escaped for the
+      // token as typed.
+      if suggestionFromHistory, let suggestion, suggestion.hasPrefix(text), suggestion != text {
         _ = acceptSuggestion()
         return
       }
@@ -497,6 +508,7 @@ struct TerminalContextBarView: View {
     }
     if let fromHistory = model.onInputSuggestion?(input) {
       suggestion = fromHistory
+      suggestionFromHistory = true
       return
     }
     if let current = suggestion, !(current.hasPrefix(input) && current != input) {
@@ -509,6 +521,8 @@ struct TerminalContextBarView: View {
       DispatchQueue.main.async {
         guard generation == suggestionGeneration, text == input else { return }
         suggestion = result
+        // History had no match above, so this is a completion.
+        suggestionFromHistory = false
       }
     }
   }
@@ -616,9 +630,10 @@ struct TerminalContextBarView: View {
     }
 
     // The candidate's value already contains any trailing "/" for directories.
-    // Shell-escape it so names with spaces are usable, preserving the trailing
-    // slash (which `shellEscaped` keeps when present in the safe set / quotes).
-    let replacement = candidate.value.shellEscaped
+    // It goes in escaped (a name like `x$(touch y)` or `~` stays a name),
+    // after a home `~/` or `$HOME/` it was found under, which still expands.
+    let typed = String(decoding: bytes[span.start..<span.end], as: UTF8.self)
+    let replacement = candidate.insertion(typed: typed, shell: shellType)
 
     let prefix = String(decoding: bytes[0..<span.start], as: UTF8.self)
     let suffix = String(decoding: bytes[span.end...], as: UTF8.self)

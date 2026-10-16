@@ -67,6 +67,9 @@ const pendingCodeActions = new Map();
 const pendingRename = new Map();
 const pendingPrepareRename = new Map();
 let contentVersion = 0;
+// True while a reload of the open file is applied as an edit (the host
+// already has that text, so no ContentChanged is sent for it).
+let applyingReload = false;
 let currentDiffDecorations = [];
 let pendingCommands = [];
 
@@ -225,6 +228,7 @@ require(["vs/editor/editor.main"], function () {
     contentVersion++;
     scheduleGitDiff(250);
     scheduleConflictLenses();
+    if (applyingReload) return;
     sendToHost({
       type: "ContentChanged",
       changes: e.changes.map(function (change) {
@@ -756,6 +760,94 @@ function handleSetJsonSchema(cmd) {
 }
 
 function handleOpenFile(cmd) {
+  const text = cmd.content || "";
+  let failed = false;
+  try {
+    const path = cmd.file_path || "";
+    if (path !== "" && path === currentFilePath && currentModel && !currentModel.isDisposed()) {
+      reloadModelText(text);
+    } else {
+      openNewModel(cmd);
+    }
+  } catch (e) {
+    failed = true;
+    console.error("OpenFile failed:", e);
+  }
+  // Monaco normalizes mixed or lone-CR line endings and drops a leading
+  // byte-order mark: then the host takes the model's text, so its copy
+  // and the change offsets it gets stay in step.
+  const mayDiffer = failed || text.indexOf("\r") !== -1 || text.charCodeAt(0) === 0xfeff;
+  const value = mayDiffer && currentModel && !currentModel.isDisposed() ? currentModel.getValue() : text;
+  sendToHost(value === text ? { type: "FileOpened" } : { type: "FileOpened", content: value });
+}
+
+/** The line ending Monaco picks for `text` (most line breaks win). */
+function eolFor(text, fallback) {
+  function count(s) {
+    let n = 0;
+    for (let i = text.indexOf(s); i !== -1; i = text.indexOf(s, i + s.length)) n++;
+    return n;
+  }
+  const cr = count("\r");
+  const crlf = count("\r\n");
+  const total = cr + count("\n") - crlf;
+  if (total === 0) return fallback;
+  return cr > total / 2 ? "\r\n" : "\n";
+}
+
+/**
+ * Show new text for the open file (it changed on disk) as one edit of the
+ * changed stretch, so Undo takes it back and the cursor, selections and
+ * scroll stay where they were.
+ */
+function reloadModelText(text) {
+  const model = currentModel;
+  const eol = eolFor(text, model.getEOL());
+  applyingReload = true;
+  try {
+    model.pushStackElement();
+    if (eol !== model.getEOL()) {
+      model.pushEOL(eol === "\r\n" ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF);
+    }
+    const next = text.indexOf("\r") === -1 && eol === "\n" ? text : text.replace(/\r\n|\r|\n/g, eol);
+    const old = model.getValue();
+    const limit = Math.min(old.length, next.length);
+    let start = 0;
+    while (start < limit && old.charCodeAt(start) === next.charCodeAt(start)) start++;
+    let oldEnd = old.length;
+    let nextEnd = next.length;
+    while (oldEnd > start && nextEnd > start && old.charCodeAt(oldEnd - 1) === next.charCodeAt(nextEnd - 1)) {
+      oldEnd--;
+      nextEnd--;
+    }
+    // Never cut a CRLF or a surrogate pair in half.
+    const splits = function (s, i) {
+      if (i <= 0 || i >= s.length) return false;
+      const before = s.charCodeAt(i - 1);
+      const after = s.charCodeAt(i);
+      return (before === 13 && after === 10) || (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff);
+    };
+    while (start > 0 && (splits(old, start) || splits(next, start))) start--;
+    while (oldEnd < old.length && nextEnd < next.length && (splits(old, oldEnd) || splits(next, nextEnd))) {
+      oldEnd++;
+      nextEnd++;
+    }
+    if (start === oldEnd && start === nextEnd) return;
+    const range = monaco.Range.fromPositions(model.getPositionAt(start), model.getPositionAt(oldEnd));
+    model.pushEditOperations(
+      editor.getSelections() || [],
+      [{ range: range, text: next.substring(start, nextEnd) }],
+      function () {
+        return null;
+      }
+    );
+    model.pushStackElement();
+  } finally {
+    applyingReload = false;
+  }
+}
+
+function openNewModel(cmd) {
   currentFilePath = cmd.file_path || "";
   const language = cmd.language || "plaintext";
 
@@ -791,7 +883,6 @@ function handleOpenFile(cmd) {
 
   // Reset undo stack by setting the model fresh
   editor.focus();
-  sendToHost({ type: "FileOpened" });
 }
 
 function handleSetTheme(cmd) {
@@ -892,6 +983,16 @@ function handleApplyDiagnostics(cmd) {
   monaco.editor.setModelMarkers(currentModel, "lsp", markers);
 }
 
+/** A 0-based range from Swift as a 1-based Monaco range. */
+function monacoRange(range) {
+  return {
+    startLineNumber: range.start_line + 1,
+    startColumn: range.start_column + 1,
+    endLineNumber: range.end_line + 1,
+    endColumn: range.end_column + 1,
+  };
+}
+
 function handleResolveCompletions(cmd) {
   const resolve = pendingCompletions.get(cmd.request_id);
   if (!resolve) return;
@@ -908,13 +1009,14 @@ function handleResolveCompletions(cmd) {
       suggestion.insertTextRules = item.insert_text_rules;
     }
     if (item.range) {
-      suggestion.range = {
-        startLineNumber: item.range.start_line + 1,
-        startColumn: item.range.start_column + 1,
-        endLineNumber: item.range.end_line + 1,
-        endColumn: item.range.end_column + 1,
-      };
+      const insert = monacoRange(item.range);
+      // Insert/replace edits: Monaco picks one by the accept mode.
+      suggestion.range = item.replace_range
+        ? { insert: insert, replace: monacoRange(item.replace_range) }
+        : insert;
     }
+    if (item.sort_text) suggestion.sortText = item.sort_text;
+    if (item.filter_text) suggestion.filterText = item.filter_text;
     if (item.additional_text_edits && item.additional_text_edits.length > 0) {
       suggestion.additionalTextEdits = item.additional_text_edits.map(
         function (edit) {

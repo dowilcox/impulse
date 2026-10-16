@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// The FFI bridge to impulse-core/impulse-editor Rust code.
   let core = ImpulseCore()
 
-  /// Shared serial queue for all LSP FFI calls. The LSP backend is owned by
+  /// Shared serial queue for all LSP registry calls. The LSP backend is owned by
   /// `core`, so all windows must use one queue rather than issuing requests
   /// concurrently from per-window queues.
   let lspQueue = DispatchQueue(label: "dev.impulse.lsp", qos: .userInitiated)
@@ -95,8 +95,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     DesktopNotifier.shared.activate()
     // Before any terminal starts, so they get IMPULSE_SOCKET.
-    ControlServer.shared.handler = { [weak self] request, reply in
-      self?.handleControl(request, reply: reply)
+    ControlServer.shared.handler = { [weak self] request, caller, reply in
+      self?.handleControl(request, caller: caller, reply: reply)
     }
     ControlServer.shared.start()
     // The Dock badge counts terminals (in any window) that need attention.
@@ -423,7 +423,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     sessionAutosaveTimer?.invalidate()
     sessionAutosaveTimer = nil
-    persistSessionStateFromOpenWindows()
+    persistSessionStateFromOpenWindows(synchronously: true)
+    // The last window to close (which quit the app) may still be writing.
+    SessionState.finishWriting()
     ControlServer.shared.stop()
 
     // Persist window geometry from the frontmost window.
@@ -471,23 +473,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Route an `impulse` request to the window holding the calling pane, or
   /// the frontmost window.
-  private func handleControl(_ request: ControlRequest, reply: @escaping (ControlResponse) -> Void) {
+  private func handleControl(
+    _ request: ControlRequest, caller: ControlCaller, reply: @escaping (ControlResponse) -> Void
+  ) {
     if let token = request.token {
       for controller in windowControllers {
         if let terminal = controller.terminal(controlToken: token) {
-          controller.handleControl(request, terminal: terminal, reply: reply)
+          controller.handleControl(request, terminal: terminal, caller: caller, reply: reply)
           return
         }
       }
     }
+    // The Quick Terminal is in no window: the front one acts for it, and
+    // with none open, it still flags itself and tracks its agent.
+    let quickTerminal = request.token.flatMap { QuickTerminal.shared.terminal(controlToken: $0) }
     guard
       let controller = windowControllers.first(where: { $0.window?.isKeyWindow == true })
         ?? windowControllers.first
     else {
+      if let quickTerminal, let response = MainWindowController.handlePaneControl(request, terminal: quickTerminal) {
+        return reply(response)
+      }
       reply(ControlResponse(ok: false, message: "No Impulse window is open."))
       return
     }
-    controller.handleControl(request, terminal: nil, reply: reply)
+    controller.handleControl(request, terminal: quickTerminal, caller: caller, reply: reply)
   }
 
   /// Reopen every saved window (the first reuses the launch window), then
@@ -543,10 +553,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   /// Captures the restorable editor/image session while windows still own
-  /// their tabs. If every window has already closed, keep the most recent
-  /// snapshot written by the closing window.
-  func persistSessionStateFromOpenWindows() {
-    guard AppState.persistenceEnabled, !windowControllers.isEmpty else { return }
+  /// their tabs, and writes it off the main thread (`synchronously` at
+  /// quit). If every window has already closed, keep the most recent
+  /// snapshot written by the closing window. Nothing is saved while a
+  /// window is still restoring: its tabs aren't back yet, and saving would
+  /// replace the session and its scrollback with the part that is.
+  func persistSessionStateFromOpenWindows(synchronously: Bool = false) {
+    guard AppState.persistenceEnabled, !windowControllers.isEmpty,
+      !windowControllers.contains(where: \.isRestoringSession)
+    else { return }
     var seen = Set<String>()
     let openFiles = windowControllers.flatMap { $0.restorableOpenFiles() }.filter { path in
       guard !seen.contains(path) else { return false }
@@ -559,9 +574,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let activeWindowIndex =
       windowControllers.firstIndex { $0.window?.isKeyWindow == true }
       ?? (windows.isEmpty ? nil : 0)
-    var state = SessionState.snapshot(windows: windows, activeWindowIndex: activeWindowIndex)
-    SessionScrollback.store(&state)
-    state.save()
+    // Transcripts are read here (the terminal core is reached from main);
+    // writing them, and skipping the ones already saved, happens off it.
+    let state = SessionState.snapshot(windows: windows, activeWindowIndex: activeWindowIndex)
+    SessionState.persist(state, synchronously: synchronously)
   }
 
   /// The session is otherwise saved only when a window closes or the app

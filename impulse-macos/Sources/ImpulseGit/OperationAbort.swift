@@ -42,6 +42,9 @@ public enum OperationAbort {
     public let undo: SafetySnapshot?
     /// The incoming commit, for reopening a merge on Undo.
     public let incoming: String?
+    /// What went wrong once the reset had begun (the work from before
+    /// couldn't all be put back). Undo still brings everything back.
+    public var problem: GitOperationError? = nil
   }
 
   /// The operations this applies to (rebase aborts reliably already).
@@ -63,8 +66,10 @@ public enum OperationAbort {
     let (name, incoming) = (found.name, found.commit)
     if let record = loadRecord(gitDir: gitDir), record.head == head, record.incoming == incoming { return }
     let headFile = (gitDir as NSString).appendingPathComponent(name)
+    // A head file from the future (a planted one) is as stale as an old
+    // one; a second or two allows for clock granularity.
     guard let modified = (try? FileManager.default.attributesOfItem(atPath: headFile))?[.modificationDate] as? Date,
-      Date().timeIntervalSince(modified) <= maxAge
+      (-2...maxAge).contains(Date().timeIntervalSince(modified))
     else { return }
     let paths = workFromBefore(root: root, name: name, incoming: incoming)
     var snapshot: String?
@@ -105,8 +110,12 @@ public enum OperationAbort {
       source = undo.commit
     }
 
+    // From here on the files have changed: whatever fails, the result
+    // carries the undo snapshot, so nothing is lost.
+    var aborted = Aborted(outcome: .reset(kept: kept, exact: exact), undo: undo, incoming: incoming.commit)
     if case .failure(let error) = GitOperations.git(["reset", "--hard", "-q", "HEAD"], in: root) {
-      return .failure(error)
+      aborted.problem = error
+      return .success(aborted)
     }
     // A cherry-pick or revert of several commits keeps a sequencer.
     switch operation {
@@ -117,10 +126,10 @@ public enum OperationAbort {
     if !kept.isEmpty {
       let restored = GitOperations.git(
         GitOperations.literal(["restore", "--overlay", "--source=\(source)", "--worktree", "--"] + kept), in: root)
-      if case .failure(let error) = restored { return .failure(error) }
+      if case .failure(let error) = restored { aborted.problem = error }
     }
     if let gitDir { removeRecord(gitDir: gitDir) }
-    return .success(Aborted(outcome: .reset(kept: kept, exact: exact), undo: undo, incoming: incoming.commit))
+    return .success(aborted)
   }
 
   /// Undo an abort: reopen a merge (its conflicts come back) and put every
@@ -139,23 +148,25 @@ public enum OperationAbort {
 
   /// The files with uncommitted work that the incoming side doesn't change.
   static func workFromBefore(root: String, name: String, incoming: String) -> [String] {
-    guard case .success(let dirty) = GitOperations.git(["diff", "--name-only", "--no-renames", "HEAD"], in: root)
+    // -z: otherwise git quotes names with non-ASCII characters
+    // ("caf\303\251.txt"), which then match no file.
+    guard case .success(let dirty) = GitOperations.git(["diff", "--name-only", "-z", "--no-renames", "HEAD"], in: root)
     else { return [] }
     let changed: Set<String>
     if name == "MERGE_HEAD" {
       guard let base = mergeBase("HEAD", incoming, root: root),
         case .success(let incomingChanges) = GitOperations.git(
-          ["diff", "--name-only", "--no-renames", base, incoming], in: root)
+          ["diff", "--name-only", "-z", "--no-renames", base, incoming], in: root)
       else { return [] }
-      changed = Set(lines(incomingChanges.stdout))
+      changed = Set(paths(incomingChanges.stdout))
     } else {
       guard
         case .success(let commitChanges) = GitOperations.git(
-          ["diff-tree", "-r", "--root", "--no-commit-id", "--name-only", "--no-renames", incoming], in: root)
+          ["diff-tree", "-r", "-z", "--root", "--no-commit-id", "--name-only", "--no-renames", incoming], in: root)
       else { return [] }
-      changed = Set(lines(commitChanges.stdout))
+      changed = Set(paths(commitChanges.stdout))
     }
-    return lines(dirty.stdout).filter { !changed.contains($0) }
+    return paths(dirty.stdout).filter { !changed.contains($0) }
   }
 
   /// The operation's head file and the commit in it.
@@ -208,5 +219,10 @@ public enum OperationAbort {
 
   private static func lines(_ text: String) -> [String] {
     text.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+  }
+
+  /// A NUL-separated path list (`-z`).
+  private static func paths(_ text: String) -> [String] {
+    text.split(separator: "\0").map(String.init).filter { !$0.isEmpty }
   }
 }

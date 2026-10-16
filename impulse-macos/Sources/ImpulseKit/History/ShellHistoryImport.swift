@@ -19,8 +19,7 @@ public enum ShellHistoryImport {
       pending = nil
     }
 
-    for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-      var line = String(line)
+    for var line in lines(text, omittingEmpty: false) {
       if let current = pending {
         // Continuation of a multi-line command.
         let continues = line.hasSuffix("\\")
@@ -49,23 +48,32 @@ public enum ShellHistoryImport {
     return entries
   }
 
+  /// bash from the file's bytes (see `bash(_:)` for text).
+  public static func bash(_ data: Data) -> [HistoryEntry] {
+    bash(decode(data))
+  }
+
   /// bash: one command per line, optionally preceded by `#<timestamp>`
   /// lines (HISTTIMEFORMAT).
   public static func bash(_ text: String) -> [HistoryEntry] {
     var entries: [HistoryEntry] = []
     var date: Date?
-    for line in text.split(separator: "\n") {
-      if line.hasPrefix("#"), let seconds = Double(line.dropFirst()) {
+    for command in lines(text, omittingEmpty: true) {
+      if command.hasPrefix("#"), let seconds = Double(command.dropFirst()) {
         date = Date(timeIntervalSince1970: seconds)
         continue
       }
-      let command = String(line)
       if HistoryEntry.shouldRecord(command) {
         entries.append(HistoryEntry(command: command, startedAt: date ?? .distantPast))
       }
       date = nil
     }
     return entries
+  }
+
+  /// fish from the file's bytes (see `fish(_:)` for text).
+  public static func fish(_ data: Data) -> [HistoryEntry] {
+    fish(decode(data))
   }
 
   /// fish: YAML-like `- cmd: <command>` / `  when: <seconds>` records, with
@@ -83,7 +91,7 @@ public enum ShellHistoryImport {
       date = nil
     }
 
-    for line in text.split(separator: "\n") {
+    for line in lines(text, omittingEmpty: true) {
       if line.hasPrefix("- cmd: ") {
         flush()
         command = unescapeFish(String(line.dropFirst(7)))
@@ -110,6 +118,22 @@ public enum ShellHistoryImport {
     }
     if escaping { result.append("\\") }
     return result
+  }
+
+  /// A history file as text. A stray invalid byte becomes U+FFFD in its
+  /// line rather than losing the whole file.
+  static func decode(_ data: Data) -> String {
+    String(decoding: data, as: UTF8.self)
+  }
+
+  /// The lines of `text`, split at each `\n` scalar (a `Character` split
+  /// would keep `\r\n` together) and without a trailing `\r`.
+  static func lines(_ text: String, omittingEmpty: Bool) -> [String] {
+    text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: omittingEmpty).compactMap { scalars in
+      var line = String(Substring(scalars))
+      if line.unicodeScalars.last == "\r" { line.unicodeScalars.removeLast() }
+      return omittingEmpty && line.isEmpty ? nil : line
+    }
   }
 
   /// Undo zsh's metafication: 0x83 marks that the next byte was XORed with 32.
