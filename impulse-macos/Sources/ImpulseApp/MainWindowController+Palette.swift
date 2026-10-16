@@ -88,6 +88,10 @@ extension MainWindowController: PaletteHost {
       presentOpenWorkspacePanel()
     }
   }
+
+  func paletteClearRecentWorkspaces() {
+    clearRecentWorkspaces()
+  }
   var paletteCurrentBranch: String? { windowModel.gitBranch }
   var paletteHasEditor: Bool { tabManager.selectedEditor != nil }
 

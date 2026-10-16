@@ -173,6 +173,19 @@ extension MainWindowController {
     }
   }
 
+  /// Empty the switcher's recent folders, with Undo.
+  func clearRecentWorkspaces() {
+    let cleared = RecentWorkspaces.clear()
+    guard !cleared.isEmpty else {
+      toasts.show(Toast(kind: .info, message: "No recent workspaces to clear"))
+      return
+    }
+    toasts.show(
+      Toast(
+        kind: .success, message: "Cleared \(cleared.count) recent workspace\(cleared.count == 1 ? "" : "s")",
+        actionTitle: "Undo", action: { RecentWorkspaces.restore(cleared) }, lifetime: 15))
+  }
+
   /// Close a workspace after confirming its unsaved files and running
   /// processes. Without `recordForUndo` there's no Undo Close (archiving a
   /// task has its own Undo). `cancelled` runs when the user keeps it open.

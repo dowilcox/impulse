@@ -21,6 +21,8 @@ protocol PaletteHost: AnyObject {
   func paletteSelectWorkspace(_ id: UUID)
   /// Open a folder as a workspace; nil asks for one.
   func paletteOpenWorkspace(folder: String?)
+  /// Empty the recent folders list.
+  func paletteClearRecentWorkspaces()
   /// The focused terminal's folder and repository, for history filters.
   var paletteHistoryContext: (cwd: String?, repo: String?) { get }
   /// Put a command from history at the prompt (not run).
@@ -805,6 +807,15 @@ final class PaletteModel {
       ) { [weak self] in
         self?.host?.paletteOpenWorkspace(folder: nil)
       })
+    if !recents.isEmpty {
+      built.append(
+        PaletteRow(
+          id: "workspace:clear-recents", glyph: .lucide(.trash2), title: "Clear Recent Workspaces",
+          trailing: "\(recents.count) recent"
+        ) { [weak self] in
+          self?.host?.paletteClearRecentWorkspaces()
+        })
+    }
     rows = built
     emptyMessage = "No matching workspaces"
   }

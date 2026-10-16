@@ -77,11 +77,10 @@ final class Workspace {
   }
 }
 
-/// Recently opened workspace folders, newest first, for the workspace
-/// switcher.
+/// Every workspace folder ever opened, newest first, for the workspace
+/// switcher. Kept until cleared.
 enum RecentWorkspaces {
   private static let key = "recentWorkspaceFolders"
-  private static let limit = 20
 
   static var folders: [String] {
     UserDefaults.standard.stringArray(forKey: key) ?? []
@@ -91,10 +90,24 @@ enum RecentWorkspaces {
     guard AppState.persistenceEnabled else { return }
     var list = folders.filter { $0 != folder }
     list.insert(folder, at: 0)
-    UserDefaults.standard.set(Array(list.prefix(limit)), forKey: key)
+    UserDefaults.standard.set(list, forKey: key)
   }
 
   static func forget(_ folder: String) {
     UserDefaults.standard.set(folders.filter { $0 != folder }, forKey: key)
+  }
+
+  /// Empty the list, returning what it held for `restore`.
+  @discardableResult
+  static func clear() -> [String] {
+    let cleared = folders
+    UserDefaults.standard.removeObject(forKey: key)
+    return cleared
+  }
+
+  /// Put back a cleared list behind any folder opened since.
+  static func restore(_ cleared: [String]) {
+    let current = folders
+    UserDefaults.standard.set(current + cleared.filter { !current.contains($0) }, forKey: key)
   }
 }

@@ -143,10 +143,11 @@ Like `@`, it needs an editor in front with a language server for its language: t
 1. The window's open workspaces, with each folder (or "Follows the active tab" for Scratch) and its number of tabs. The active one is marked `current`.
 2. Folders you opened recently that aren't open now and still exist, marked `recent`.
 3. **Open Folder as Workspace…**, to choose another folder.
+4. **Clear Recent Workspaces**, when there are recent folders, with how many there are.
 
 ![The palette in workspace mode: Scratch, trailhead (current) and fix-elevation, then the recent folders trail-ui and trailhead-infra, and Open Folder as Workspace…](images/command-palette-workspaces.png)
 
-↩ on an open workspace switches to it; on a recent folder it opens the folder as a workspace again. See [Workspaces, tabs and panes](workspaces-and-tabs.md#workspaces).
+↩ on an open workspace switches to it; on a recent folder it opens the folder as a workspace again. **Clear Recent Workspaces** (also a palette command) empties the list of recent folders; the notice's **Undo** puts it back. See [Workspaces, tabs and panes](workspaces-and-tabs.md#workspaces).
 
 ## Branches (`b:`)
 
@@ -234,7 +235,7 @@ Two modes don't match fuzzily: `%` matches literal text in files, and `:` reads 
 
 - **Commands.** The last 20 commands you ran from the palette are remembered across windows and launches. They're listed first when you open `>` and get a boost when you type.
 - **Files.** With nothing typed, file mode lists the files open in the window.
-- **Workspaces.** `w:` lists the folders you opened recently (Impulse remembers the last 20).
+- **Workspaces.** `w:` lists every folder you've opened as a workspace, newest first, until you clear the list with **Clear Recent Workspaces**.
 - **History.** `h:` starts with your most recent commands.
 
 ## Related

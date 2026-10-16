@@ -259,6 +259,10 @@ enum CommandRegistry {
         keywords: ["project", "folder", "open"], icon: .folderOpen
       ) { [weak controller] in controller?.presentOpenWorkspacePanel() },
       AppCommand(
+        id: "clear_recent_workspaces", title: "Clear Recent Workspaces", category: "Workspaces",
+        keywords: ["project", "folder", "recent", "history", "forget"], icon: .trash2
+      ) { [weak controller] in controller?.clearRecentWorkspaces() },
+      AppCommand(
         id: "rename_workspace", title: "Rename Workspace…", category: "Workspaces",
         keywords: ["project", "name"], icon: .pencil
       ) { [weak controller] in
