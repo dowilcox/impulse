@@ -199,8 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     if DebugSnapshot.isActive {
       NSApp.setActivationPolicy(.accessory)
-      DebugSnapshot.run { [weak self] action in
-        self?.windowControllers.first?.performDebugAction(action)
+      DebugSnapshot.run { [weak self] action, done in
+        guard let controller = self?.windowControllers.first else { return done() }
+        controller.performDebugAction(action, done: done)
       }
     } else {
       NSApp.activate(ignoringOtherApps: true)

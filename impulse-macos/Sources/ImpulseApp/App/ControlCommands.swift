@@ -65,7 +65,8 @@ extension MainWindowController {
         return reply(ControlResponse(ok: false, message: "\(path) isn't a regular file."))
       }
       window?.makeKeyAndOrderFront(nil)
-      NSApp.activate(ignoringOtherApps: true)
+      // A headless snapshot run never takes focus from the app you're in.
+      if !DebugSnapshot.isActive { NSApp.activate(ignoringOtherApps: true) }
       if type == S_IFDIR {
         tabManager.openWorkspace(folder: path)
         return reply(ControlResponse(ok: true))

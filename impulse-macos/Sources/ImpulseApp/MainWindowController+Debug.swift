@@ -2,6 +2,7 @@ import AppKit
 import ImpulseGit
 import ImpulseKit
 import SwiftUI
+import WebKit
 import os.log
 
 extension MainWindowController {
@@ -23,15 +24,14 @@ extension MainWindowController {
     case "changes": showChangesPanel()
     case "review-split":
       for case .diffReview(_, let review) in tabManager.allSurfaces { review.setLayout("split") }
+    case "review-agent": reviewLastAgentTurn()
     case _ where action.hasPrefix("review-"):
       for case .diffReview(_, let review) in tabManager.allSurfaces {
         review.debugAction(String(action.dropFirst(7)))
       }
     default:
       if action.hasPrefix("open=") {
-        let relative = String(action.dropFirst(5))
-        let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
-        openFile(path: (base as NSString).appendingPathComponent(relative))
+        openFile(path: debugPath(String(action.dropFirst(5))))
       } else if action.hasPrefix("beside=") {
         let relative = String(action.dropFirst(7))
         let base = DebugSnapshot.initialDirectory ?? fileTreeRootPath
@@ -316,8 +316,6 @@ extension MainWindowController {
         }
       } else if action == "agent-submit" {
         tabManager.selectedTerminal?.activeTerminal?.agentEvent(.submit)
-      } else if action == "review-agent" {
-        reviewLastAgentTurn()
       } else if action == "close-pane" {
         requestCloseFocusedPane()
       } else if action == "reopen" {
@@ -348,6 +346,383 @@ extension MainWindowController {
       } else {
         NSLog("DebugSnapshot: unknown action '\(action)'")
       }
+    }
+  }
+
+  // MARK: - Smoke Checks
+
+  /// `performDebugAction` for the smoke checks (scripts/smoke/run.py), with
+  /// actions that take time: `done` runs when the action has finished.
+  ///
+  ///     sleep=<seconds>
+  ///     until=[<seconds>:]<condition>   wait until it holds (30 s by default; see
+  ///                                     `debugCondition`); a timeout is reported
+  ///                                     as a failure and the run goes on
+  ///     js=<label>:<body>               an async function body run in the selected
+  ///                                     editor's page; its result is reported
+  ///     dump=<name>                     the window's state, as <name>.json
+  ///     save                            save the selected editor as ⌘S does
+  ///                                     (reports save:<file name> when written)
+  ///     write-file=<path>|<text>        rewrite a file in place, as `>` does
+  ///     read-file=<label>|<path>        report a file's text (null if missing)
+  ///     sheet-button=<title>            press a button in a sheet (or a window)
+  ///     toast-action=<text>             press the action of the last toast with text
+  ///     save-session                    save the session now (needs
+  ///                                     --impulse-snapshot-persist)
+  ///     run-quoted=<command>|<path>     run command with path quoted for the shell
+  ///     select-tab=<index>              select a tab (across all workspaces)
+  ///     select-terminal                 select the last tab with a terminal
+  ///     select-editor=<path suffix>     select the tab showing that file
+  func performDebugAction(_ action: String, done: @escaping () -> Void) {
+    if action.hasPrefix("sleep="), let seconds = Double(action.dropFirst(6)) {
+      DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: done)
+    } else if action.hasPrefix("until=") {
+      debugWait(until: String(action.dropFirst(6)), done: done)
+    } else if action.hasPrefix("js="), let colon = action.firstIndex(of: ":") {
+      let label = String(action[action.index(action.startIndex, offsetBy: 3)..<colon])
+      debugJavaScript(String(action[action.index(after: colon)...])) { value in
+        DebugSnapshot.results[label] = value ?? NSNull()
+        done()
+      }
+    } else if action.hasPrefix("dump=") {
+      debugDump(name: String(action.dropFirst(5)), done: done)
+    } else if action == "save" {
+      // Doesn't wait: a save can ask first (a sheet the next actions answer).
+      if let editor = tabManager.selectedEditor {
+        let name = ((editor.filePath ?? "untitled") as NSString).lastPathComponent
+        saveEditorTab(editor) { saved in DebugSnapshot.results["save:\(name)"] = saved }
+      } else {
+        DebugSnapshot.failures.append("save: no editor is selected")
+      }
+      done()
+    } else if action.hasPrefix("write-file="), let bar = action.firstIndex(of: "|") {
+      let path = debugPath(String(action[action.index(action.startIndex, offsetBy: 11)..<bar]))
+      let data = Data(action[action.index(after: bar)...].utf8)
+      if let handle = FileHandle(forWritingAtPath: path) {
+        try? handle.truncate(atOffset: 0)
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+      } else {
+        FileManager.default.createFile(atPath: path, contents: data)
+      }
+      done()
+    } else if action.hasPrefix("read-file="), let bar = action.firstIndex(of: "|") {
+      let label = String(action[action.index(action.startIndex, offsetBy: 10)..<bar])
+      let path = debugPath(String(action[action.index(after: bar)...]))
+      DebugSnapshot.results[label] = (try? String(contentsOfFile: path, encoding: .utf8)) ?? NSNull()
+      done()
+    } else if action.hasPrefix("sheet-button=") {
+      let title = String(action.dropFirst(13))
+      if !Self.debugPressButton(title) { DebugSnapshot.failures.append("sheet-button: no “\(title)” button") }
+      done()
+    } else if action.hasPrefix("toast-action=") {
+      let text = String(action.dropFirst(13))
+      if let run = DebugSnapshot.toastLog.last(where: { $0.message.contains(text) })?.action {
+        run()
+      } else {
+        DebugSnapshot.failures.append("toast-action: no toast with “\(text)” and an action")
+      }
+      done()
+    } else if action == "save-session" {
+      (NSApp.delegate as? AppDelegate)?.persistSessionStateFromOpenWindows(synchronously: true)
+      done()
+    } else if action.hasPrefix("run-quoted="), let bar = action.firstIndex(of: "|"),
+      let terminal = tabManager.selectedTerminal?.activeTerminal
+    {
+      let command = String(action[action.index(action.startIndex, offsetBy: 11)..<bar])
+      let path = String(action[action.index(after: bar)...])
+      terminal.runCommand(command + " " + path.shellEscaped(for: terminal.shellType))
+      done()
+    } else if action.hasPrefix("select-tab="), let index = Int(action.dropFirst(11)) {
+      tabManager.selectTab(index: index)
+      done()
+    } else if action == "select-terminal" {
+      let index = tabManager.tabs.lastIndex { tab in
+        tab.surfaces.contains { surface in
+          if case .terminal = surface { return true }
+          return false
+        }
+      }
+      if let index { tabManager.selectTab(index: index) }
+      done()
+    } else if action.hasPrefix("select-editor=") {
+      let suffix = String(action.dropFirst(14))
+      let index = tabManager.tabs.firstIndex { tab in
+        tab.surfaces.contains { surface in
+          if case .editor(let editor) = surface { return editor.filePath?.hasSuffix(suffix) == true }
+          return false
+        }
+      }
+      if let index { tabManager.selectTab(index: index) }
+      done()
+    } else {
+      performDebugAction(action)
+      done()
+    }
+  }
+
+  private func debugWait(until spec: String, done: @escaping () -> Void) {
+    let parts = spec.split(separator: ":", maxSplits: 1).map(String.init)
+    let timeout = parts.count == 2 ? Double(parts[0]) : nil
+    let condition = timeout == nil ? spec : parts[1]
+    let deadline = Date().addingTimeInterval(timeout ?? 30)
+    func poll() {
+      debugCondition(condition) { holds in
+        if holds {
+          done()
+        } else if Date() > deadline {
+          DebugSnapshot.failures.append("until \(condition): timed out")
+          done()
+        } else {
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { poll() }
+        }
+      }
+    }
+    poll()
+  }
+
+  /// Conditions for `until=`:
+  ///
+  ///     prompt              the selected terminal's shell is at a prompt
+  ///     blocks:<n>          the selected terminal has n finished command blocks
+  ///     editor              the selected editor has its file loaded
+  ///     js:<expression>     true in the selected editor's page
+  ///     file:<path>, no-file:<path>
+  ///     sheet, no-sheet     a sheet is (not) showing
+  ///     agent:<state>       the selected terminal's agent is in that state
+  ///     toast:<text>        a toast with that text was shown
+  ///     result:<label>      something was reported under label
+  ///     tabs:<n>            at least n tabs
+  ///     panes:<n>           at least n panes in the selected tab
+  ///     tool:<title>        a tool tab whose title contains title is open
+  private func debugCondition(_ condition: String, answer: @escaping (Bool) -> Void) {
+    let parts = condition.split(separator: ":", maxSplits: 1).map(String.init)
+    let argument = parts.count > 1 ? parts[1] : ""
+    let count = Int(argument) ?? 1
+    let terminal = tabManager.selectedTerminal?.activeTerminal
+    switch parts.first ?? "" {
+    case "prompt":
+      answer(terminal.map { $0.renderer.tracksPrompts && !$0.isCommandRunning } ?? false)
+    case "blocks":
+      answer((terminal?.backend?.commandBlocks().filter { $0.endedAtMs != nil }.count ?? 0) >= count)
+    case "editor":
+      debugJavaScript("return editor !== null && editor.getModel() !== null && currentFilePath !== ''") {
+        answer($0 as? Bool == true)
+      }
+    case "js":
+      debugJavaScript("return !!(\(argument))") { answer($0 as? Bool == true) }
+    case "file":
+      answer(FileManager.default.fileExists(atPath: debugPath(argument)))
+    case "no-file":
+      answer(!FileManager.default.fileExists(atPath: debugPath(argument)))
+    case "sheet":
+      answer(NSApp.windows.contains { $0.attachedSheet != nil })
+    case "no-sheet":
+      answer(!NSApp.windows.contains { $0.attachedSheet != nil })
+    case "agent":
+      answer(terminal?.agentState?.rawValue == argument)
+    case "toast":
+      answer(DebugSnapshot.toastLog.contains { $0.message.contains(argument) || $0.detail?.contains(argument) == true })
+    case "result":
+      answer(DebugSnapshot.results[argument] != nil)
+    case "tabs":
+      answer(tabManager.tabs.count >= count)
+    case "panes":
+      answer((tabManager.selectedTab?.surfaces.count ?? 0) >= count)
+    case "tool":
+      answer(
+        tabManager.allSurfaces.contains { surface in
+          if case .tool(let view) = surface { return view.toolTitle.contains(argument) }
+          return false
+        })
+    default:
+      DebugSnapshot.failures.append("until: unknown condition “\(condition)”")
+      answer(true)
+    }
+  }
+
+  /// Runs an async function body in the selected editor's page. Nil without
+  /// an editor; a script error comes back as {"error": message}.
+  private func debugJavaScript(_ body: String, result: @escaping (Any?) -> Void) {
+    guard let webView = tabManager.selectedEditor?.webView else { return result(nil) }
+    webView.callAsyncJavaScript(body, arguments: [:], in: nil, in: .page) { outcome in
+      switch outcome {
+      case .success(let value):
+        result(value)
+      case .failure(let error):
+        let info = (error as NSError).userInfo
+        result(["error": info["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription])
+      }
+    }
+  }
+
+  /// A path from an action: absolute, under ~ (the demo home), or relative
+  /// to the starting folder.
+  private func debugPath(_ path: String) -> String {
+    let expanded = (path as NSString).expandingTildeInPath
+    if expanded.hasPrefix("/") { return expanded }
+    return ((DebugSnapshot.initialDirectory ?? fileTreeRootPath) as NSString).appendingPathComponent(expanded)
+  }
+
+  /// Writes `<name>.json`: workspaces, tabs and what each pane holds
+  /// (terminals with their blocks and output, editors with both Impulse's
+  /// copy of the text and Monaco's), toasts, sheets, results and failures.
+  private func debugDump(name: String, done: @escaping () -> Void) {
+    guard let directory = DebugSnapshot.outputDirectory else { return done() }
+    var editors: [(EditorTab, NSMutableDictionary)] = []
+    var tabs: [[String: Any]] = []
+    for (index, tab) in tabManager.tabs.enumerated() {
+      let workspace = tabManager.workspaceID(ofTabAt: index).flatMap { tabManager.workspace($0) }
+      tabs.append([
+        "workspace": workspace?.name ?? NSNull(),
+        "selected": index == tabManager.selectedIndex,
+        "title": tab.title,
+        "surfaces": tab.surfaces.flatMap { debugDescription(of: $0, editors: &editors) },
+      ])
+    }
+    let state: [String: Any] = [
+      "workspaces": tabManager.workspaces.map { workspace -> [String: Any] in
+        [
+          "name": workspace.name, "root": workspace.root, "kind": "\(workspace.kind)", "task": workspace.isTask,
+          "active": workspace.id == tabManager.activeWorkspaceID, "trusted": Trust.shared.isTrusted(workspace.root),
+        ]
+      },
+      "trustEnabled": Trust.shared.isEnabled,
+      "tabs": tabs,
+      "toasts": DebugSnapshot.toastLog.map { toast -> [String: Any] in
+        [
+          "kind": "\(toast.kind)", "message": toast.message, "detail": toast.detail ?? NSNull(),
+          "action": toast.actionTitle ?? NSNull(),
+        ]
+      },
+      "sheets": NSApp.windows.compactMap(\.attachedSheet).map { Self.debugContents(of: $0) },
+      "results": Self.debugJSONSafe(DebugSnapshot.results),
+      "failures": DebugSnapshot.failures,
+    ]
+    // Monaco's own text, asked of each editor's page.
+    let group = DispatchGroup()
+    for (editor, entry) in editors {
+      guard let webView = editor.webView else { continue }
+      group.enter()
+      var left = false
+      let leave = {
+        guard !left else { return }
+        left = true
+        group.leave()
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5) { leave() }
+      webView.evaluateJavaScript("editor ? editor.getValue() : null") { value, _ in
+        entry["monaco"] = value as? String ?? NSNull()
+        leave()
+      }
+    }
+    group.notify(queue: .main) {
+      if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) {
+        try? data.write(to: directory.appendingPathComponent("\(name).json"))
+      }
+      done()
+    }
+  }
+
+  private func debugDescription(of surface: TabEntry, editors: inout [(EditorTab, NSMutableDictionary)])
+    -> [Any]
+  {
+    switch surface {
+    case .terminal(let container):
+      return container.terminals.map { terminal -> [String: Any] in
+        let blocks = (terminal.backend?.commandBlocks() ?? []).map { block -> [String: Any] in
+          [
+            "command": block.command ?? NSNull(), "cwd": block.cwd ?? NSNull(),
+            "exit": block.exitCode.map { Int($0) } ?? NSNull(), "finished": block.endedAtMs != nil,
+          ]
+        }
+        return [
+          "kind": "terminal", "shell": terminal.shellType.rawValue, "cwd": terminal.currentWorkingDirectory,
+          "running": terminal.isCommandRunning, "agent": terminal.agent?.id ?? NSNull(),
+          "agentState": terminal.agentState?.rawValue ?? NSNull(), "blocks": blocks,
+          "transcript": terminal.backend?.transcript(maxRows: 400) ?? "",
+        ]
+      }
+    case .editor(let editor):
+      let entry: NSMutableDictionary = [
+        "kind": "editor", "path": editor.filePath ?? NSNull(), "modified": editor.isModified,
+        "language": editor.language, "largeFile": editor.isLargeFile, "swift": editor.content,
+      ]
+      editors.append((editor, entry))
+      return [entry]
+    case .imagePreview(let path, _):
+      return [["kind": "image", "path": path]]
+    case .diffReview(let root, _):
+      return [["kind": "review", "root": root]]
+    case .history(let root, _):
+      return [["kind": "history", "root": root]]
+    case .tool(let view):
+      return [["kind": "tool", "title": view.toolTitle]]
+    case .split:
+      return []
+    }
+  }
+
+  /// Texts and buttons in a window, read through accessibility so SwiftUI
+  /// content counts as well as AppKit's.
+  private static func debugContents(of window: NSWindow) -> [String: Any] {
+    var texts: [String] = []
+    var buttons: [String] = []
+    _ = debugWalk(window) { role, element in
+      switch role {
+      case .staticText?, .textArea?, .textField?:
+        if let text = element.accessibilityValue() as? String ?? element.accessibilityLabel(), !text.isEmpty {
+          texts.append(text)
+        }
+      case .button?, .checkBox?:
+        if let title = element.accessibilityTitle() ?? element.accessibilityLabel(), !title.isEmpty {
+          buttons.append(title)
+        }
+      default:
+        break
+      }
+      return false
+    }
+    return ["texts": texts, "buttons": buttons]
+  }
+
+  /// Presses the first button titled `title`, looking in sheets first.
+  /// (An alert's buttons say they weren't pressed when they end the sheet.)
+  private static func debugPressButton(_ title: String) -> Bool {
+    let windows = NSApp.windows.compactMap(\.attachedSheet) + NSApp.windows.filter(\.isVisible)
+    return windows.contains { window in
+      debugWalk(window) { role, element in
+        guard role == .button, (element.accessibilityTitle() ?? element.accessibilityLabel()) == title else {
+          return false
+        }
+        _ = element.accessibilityPerformPress()
+        return true
+      }
+    }
+  }
+
+  /// Visits the accessibility tree under `root` until `visit` returns true.
+  private static func debugWalk(
+    _ root: Any, visit: (NSAccessibility.Role?, NSAccessibilityProtocol) -> Bool
+  ) -> Bool {
+    var stack: [Any] = [root]
+    var visited = 0
+    while let next = stack.popLast(), visited < 5000 {
+      visited += 1
+      guard let element = next as? NSAccessibilityProtocol else { continue }
+      if visit(element.accessibilityRole(), element) { return true }
+      stack.append(contentsOf: (element.accessibilityChildren() ?? []).reversed())
+    }
+    return false
+  }
+
+  /// What JSONSerialization takes: anything else becomes its description.
+  private static func debugJSONSafe(_ value: Any) -> Any {
+    switch value {
+    case let dictionary as [String: Any]: return dictionary.mapValues { debugJSONSafe($0) }
+    case let array as [Any]: return array.map { debugJSONSafe($0) }
+    case is String, is NSNumber, is NSNull: return value
+    default: return String(describing: value)
     }
   }
 }

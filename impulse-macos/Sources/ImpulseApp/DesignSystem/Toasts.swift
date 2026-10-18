@@ -34,6 +34,7 @@ final class ToastCenter {
   }
 
   func show(_ toast: Toast) {
+    DebugSnapshot.noteToast(toast)
     toasts.append(toast)
     if toasts.count > 3 { toasts.removeFirst(toasts.count - 3) }
     presenter?.update()

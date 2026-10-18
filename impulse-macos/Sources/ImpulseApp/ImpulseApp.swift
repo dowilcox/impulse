@@ -20,7 +20,7 @@ struct ImpulseApp {
             args.contains("--dev")
             || (Bundle.main.bundleIdentifier?.hasSuffix(".Devel") ?? false)
         DebugSnapshot.configure(arguments: args)
-        if DebugSnapshot.isActive {
+        if DebugSnapshot.isActive && !DebugSnapshot.persists {
             AppState.persistenceEnabled = false
         }
 

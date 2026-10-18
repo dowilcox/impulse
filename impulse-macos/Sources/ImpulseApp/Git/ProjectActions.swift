@@ -5,15 +5,23 @@ import ImpulseKit
 /// Trusted project.toml files, remembered across launches.
 enum ProjectTrustStore {
   private static let key = "projectTrust"
+  /// Snapshot runs start with nothing trusted and keep what they trust in
+  /// memory: never the dev build's own answers.
+  nonisolated(unsafe) private static var snapshotTrust = ProjectTrust()
 
   static var current: ProjectTrust {
     get {
+      if DebugSnapshot.isActive { return snapshotTrust }
       guard let data = UserDefaults.standard.data(forKey: key),
         let trust = try? JSONDecoder().decode(ProjectTrust.self, from: data)
       else { return ProjectTrust() }
       return trust
     }
     set {
+      if DebugSnapshot.isActive {
+        snapshotTrust = newValue
+        return
+      }
       if let data = try? JSONEncoder().encode(newValue) { UserDefaults.standard.set(data, forKey: key) }
     }
   }
