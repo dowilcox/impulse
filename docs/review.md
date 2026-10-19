@@ -207,6 +207,15 @@ Comments appear as cards under the last line they cover, with the line range ("l
 
 A comment remembers the text of the lines it was written on. If those lines change (you or an agent edited them, or the hunk was staged or reverted so it's no longer in this diff), the comment is outdated: it moves to the top of its file, under "Outdated comments — their lines changed or aren't in this diff", with a gray edge instead of the accent color.
 
+### Comments an agent addressed
+
+An agent working through your review can mark a comment addressed, with a note saying what it did ([`impulse comments resolve`](cli.md#impulse-comments), or `resolve_review_comment` through [Impulse's MCP server](agents.md#impulses-mcp-server)). The comment stays where it is, with a green edge and the agent's note under its text ("Claude Code: Expired entries now count as evictions."). Check what it did, then:
+
+- **Accept**: it's dealt with, and the comment is deleted.
+- **Reopen**: it isn't; the note goes and the comment is open again.
+
+An agent can't delete or edit your comments.
+
 ### Where comments live
 
 - Comments belong to the repository, not to a scope or a tab: the same comments show in every scope where their file and lines appear.
@@ -245,6 +254,8 @@ const TTL_MS = 60_000;
 ```
 Ten minutes is a big jump from one. Was that on purpose?
 ````
+
+Agents with [Impulse's MCP server](agents.md#impulses-mcp-server) can also read your comments themselves (`list_review_comments`, or `impulse comments`), so "address my review comments" is enough, without sending anything.
 
 Comments stay after you send them, so you can check each one against what the agent did. Delete them (one by one, or with **Delete All Comments in Repository…**) once they're addressed.
 

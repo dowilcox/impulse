@@ -74,6 +74,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
   private var emptyMessage = ""
   private var changeListener: UUID?
   private var checkpointObserver: NSObjectProtocol?
+  /// An agent marked a comment addressed.
+  private var commentsObserver: NSObjectProtocol?
   private var refreshWork: DispatchWorkItem?
   /// What changed in the repository since the last refresh started. While
   /// the review is behind another tab it only collects here.
@@ -135,6 +137,12 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
       forName: .impulseSettingsDidChange, object: nil, queue: .main
     ) { [weak self] _ in
       self?.applySettings()
+    }
+    commentsObserver = NotificationCenter.default.addObserver(
+      forName: .reviewCommentsChanged, object: nil, queue: .main
+    ) { [weak self] note in
+      guard let self, note.userInfo?["root"] as? String == self.repository.root else { return }
+      self.reloadComments()
     }
   }
 
@@ -291,6 +299,8 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     changeListener = nil
     if let checkpointObserver { NotificationCenter.default.removeObserver(checkpointObserver) }
     checkpointObserver = nil
+    if let commentsObserver { NotificationCenter.default.removeObserver(commentsObserver) }
+    commentsObserver = nil
     if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
     settingsObserver = nil
     refreshWork?.cancel()
@@ -928,6 +938,12 @@ final class ReviewSurface: NSView, ReviewDiffHandler {
     }
     reloadComments(path.map { [$0] })
     focus()
+  }
+
+  func reviewReopenComment(id: String) {
+    let path = comments.comments.first { $0.id == id }?.path
+    comments.resolve(id: id, resolution: nil)
+    reloadComments(path.map { [$0] })
   }
 
   func reviewDeleteComment(id: String) {

@@ -57,6 +57,10 @@ enum CommandRegistry {
         keywords: ["claude", "codex", "hooks", "status", "setup"], icon: .plug
       ) { [weak controller] in controller?.presentAgentHooksSheet() },
       AppCommand(
+        id: "agent_mcp_server", title: "Install Impulse's MCP Server…", category: "Agents",
+        keywords: ["mcp", "claude", "codex", "tools", "tasks", "model context protocol"], icon: .plug
+      ) { [weak controller] in controller?.presentAgentHooksSheet(part: .mcp) },
+      AppCommand(
         id: "editor_integration", title: "Use Impulse as $EDITOR in Terminals", category: "Terminal",
         keywords: ["git commit", "visual", "editor", "wait"], icon: .pencil
       ) { [weak controller] in controller?.toggleEditorIntegration() },

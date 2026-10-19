@@ -27,10 +27,21 @@ public struct TaskRecord: Codable, Equatable, Sendable {
   /// Made from a remote branch (New Task from Branch…), possibly someone
   /// else's: its folder stays restricted until it's trusted itself.
   public var fromRemote: Bool?
+  /// "agent" when an agent asked for it (`impulse tasks new`, the MCP
+  /// server's create_task) and you approved, "user" when you made it; nil
+  /// for tasks from before this was kept.
+  public var createdBy: String?
+  /// For an agent's task: which agent, in which workspace ("Claude Code in
+  /// trailhead").
+  public var requestedBy: String?
+  /// The workspace the request came from, for telling a chain of agent
+  /// tasks (an agent in an agent's task asking for another).
+  public var requestedFrom: String?
 
   public init(
     path: String, branch: String, base: String? = nil, remote: String? = nil, slot: Int? = nil,
-    created: Date = Date(), start: String? = nil, pushedForReview: Date? = nil, fromRemote: Bool? = nil
+    created: Date = Date(), start: String? = nil, pushedForReview: Date? = nil, fromRemote: Bool? = nil,
+    createdBy: String? = nil, requestedBy: String? = nil, requestedFrom: String? = nil
   ) {
     self.path = path
     self.branch = branch
@@ -41,7 +52,12 @@ public struct TaskRecord: Codable, Equatable, Sendable {
     self.start = start
     self.pushedForReview = pushedForReview
     self.fromRemote = fromRemote
+    self.createdBy = createdBy
+    self.requestedBy = requestedBy
+    self.requestedFrom = requestedFrom
   }
+
+  public var isFromAgent: Bool { createdBy == "agent" }
 
   /// `origin/main`, or `main` for a local base; nil when unknown.
   public var baseRef: String? {
@@ -71,6 +87,15 @@ public struct TaskRegistry: Codable, Equatable, Sendable {
     let path = Self.canonical(path)
     return tasks.first { Self.canonical($0.path) == path }
   }
+
+  /// A task named the way `impulse tasks` and the MCP tools name one: its
+  /// folder's name or its branch.
+  public func record(named name: String) -> TaskRecord? {
+    tasks.first { ($0.path as NSString).lastPathComponent == name } ?? record(forBranch: name)
+  }
+
+  /// Tasks agents asked for that are still there.
+  public var agentTaskCount: Int { tasks.filter(\.isFromAgent).count }
 
   /// The task with `branch` checked out, if any.
   public func record(forBranch branch: String) -> TaskRecord? {

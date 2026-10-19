@@ -44,6 +44,16 @@ final class ReviewCommentStore {
     save()
   }
 
+  /// Mark a comment addressed (`resolution`) or open again (nil); false
+  /// when there's no such comment.
+  @discardableResult
+  func resolve(id: String, resolution: ReviewComment.Resolution?) -> Bool {
+    guard let index = comments.firstIndex(where: { $0.id == id }) else { return false }
+    comments[index].resolution = resolution
+    save()
+    return true
+  }
+
   func remove(id: String) {
     comments.removeAll { $0.id == id }
     save()

@@ -317,7 +317,7 @@ Every diagnostic the language servers report, for open files and for any other f
 - The **Filter** field keeps problems whose message, file path, source or code contains the text.
 - **Fix with Agent** sends the visible problems, as a list of `path:line:column` entries with their messages, to a coding agent running in this window (one **Send to …** item per agent), or copies the same text with **Copy as Prompt**. See [Agents](agents.md).
 
-The tab updates live as servers report.
+The tab updates live as servers report. Agents can read the same list themselves with `impulse problems` or the MCP server's `get_diagnostics` (see [Impulse's MCP server](agents.md#impulses-mcp-server)).
 
 ## Go to symbol
 

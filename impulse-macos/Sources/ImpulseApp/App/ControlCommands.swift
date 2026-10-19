@@ -64,9 +64,15 @@ extension MainWindowController {
       guard type == S_IFREG || type == S_IFDIR else {
         return reply(ControlResponse(ok: false, message: "\(path) isn't a regular file."))
       }
-      window?.makeKeyAndOrderFront(nil)
-      // A headless snapshot run never takes focus from the app you're in.
-      if !DebugSnapshot.isActive { NSApp.activate(ignoringOtherApps: true) }
+      if args["background"] == nil {
+        window?.makeKeyAndOrderFront(nil)
+        // A headless snapshot run never takes focus from the app you're in.
+        if !DebugSnapshot.isActive { NSApp.activate(ignoringOtherApps: true) }
+      } else if !NSApp.isActive {
+        // An agent's open_file: the tab opens where it is, and the pane
+        // asks for attention instead of taking focus from another app.
+        terminal?.setAttentionFromAgent()
+      }
       if type == S_IFDIR {
         tabManager.openWorkspace(folder: path)
         return reply(ControlResponse(ok: true))
@@ -87,6 +93,12 @@ extension MainWindowController {
 
     case "review":
       if args["scope"] == "last-turn" {
+        let recorded =
+          terminal.flatMap { AgentCheckpoints.shared.lastTurn(terminalID: $0.id) }
+          ?? windowModel.repository.flatMap { AgentCheckpoints.shared.lastTurn(inRepo: $0.root) }
+        guard recorded != nil || args["via"] == nil else {
+          return reply(ControlResponse(ok: false, message: "No agent turns recorded yet in this repository."))
+        }
         reviewLastAgentTurn(terminalID: terminal?.id)
         return reply(ControlResponse(ok: true))
       }
@@ -102,15 +114,18 @@ extension MainWindowController {
         guard let self, let state else {
           return reply(ControlResponse(ok: false, message: "Not in a git repository."))
         }
-        self.window?.makeKeyAndOrderFront(nil)
+        if args["background"] == nil { self.window?.makeKeyAndOrderFront(nil) }
         self.tabManager.addReviewTab(repository: state, scope: scope, focusPath: nil, host: self)
         reply(ControlResponse(ok: true))
       }
 
-    case "split" where !fromShell, "tab" where !fromShell, "checkpoint" where !fromShell:
-      // These start commands or run git, as Impulse (with whatever privacy
-      // access it has), so only the pane's own shell, or a program it
-      // started, may ask: not any process that can reach the socket.
+    case "split" where !fromShell, "tab" where !fromShell, "checkpoint" where !fromShell,
+      "comments" where !fromShell && args["resolve"] != nil,
+      "tasks" where !fromShell && (args["new"] ?? args["finish"] ?? args["archive"]) != nil:
+      // These start commands, run git or change what's saved, as Impulse
+      // (with whatever privacy access it has), so only the pane's own
+      // shell, or a program it started (an agent's `impulse mcp`), may ask:
+      // not any process that can reach the socket.
       guard terminal != nil else { return reply(insideTerminal) }
       reply(
         ControlResponse(
@@ -132,6 +147,12 @@ extension MainWindowController {
       tabManager.addTerminalTab(directory: cwd ?? NSHomeDirectory(), initialCommand: args["command"])
       reply(ControlResponse(ok: true))
 
+    case "status" where args["via"] == "mcp" && terminal?.agentReportsByHook == true:
+      // Hooks are exact: an MCP status mustn't argue with them.
+      reply(
+        ControlResponse(
+          ok: true, message: "Impulse's hooks report this agent's state, so set_status changed nothing."))
+
     case "notify", "status":
       guard let terminal, let response = Self.handlePaneControl(request, terminal: terminal) else {
         return reply(insideTerminal)
@@ -152,7 +173,10 @@ extension MainWindowController {
 
     case "tasks":
       guard let cwd else { return reply(insideTerminal) }
-      handleTasksCommand(request, cwd: cwd, caller: caller, reply: reply)
+      handleTasksCommand(request, cwd: cwd, terminal: terminal, caller: caller, reply: reply)
+
+    case "turns", "comments", "problems", "blocks", "unsaved", "project", "mcp-tools":
+      handleWorkspaceCommand(request, terminal: terminal, cwd: cwd, reply: reply)
 
     case "checkpoint":
       guard let cwd else { return reply(insideTerminal) }
@@ -208,7 +232,7 @@ extension MainWindowController {
       let command = terminal.currentCommand ?? ""
       let words = command.split(separator: " ")
       let alone =
-        words.count >= 2 && (words[0] == "impulse" || words[0].hasSuffix("/impulse")) && words[1] == "status"
+        args["via"] != "mcp" && words.count >= 2 && (words[0] == "impulse" || words[0].hasSuffix("/impulse")) && words[1] == "status"
         && !command.contains(where: { ";&|".contains($0) })
       return ControlResponse(
         ok: true,
@@ -228,6 +252,7 @@ extension MainWindowController {
       default: hook = nil  // other events (tools starting, subagents, compaction) don't change state
       }
       if let hook { terminal.agentHook(hook, agentID: agentID) }
+      terminal.agentReportsByHook = true
       if let agentID, let session = args["session"], !session.isEmpty {
         terminal.agentSession = (agentID, session)
       }

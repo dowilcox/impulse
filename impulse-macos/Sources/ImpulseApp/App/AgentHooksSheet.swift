@@ -3,12 +3,22 @@ import ImpulseKit
 import SwiftUI
 
 /// Installs (or removes) the hooks that let agents report their state to
-/// Impulse, showing the exact change to the agent's config first.
+/// Impulse, and Impulse's MCP server (`impulse mcp`), showing the exact
+/// change to the agent's config first.
 @Observable
 final class AgentHooksModel {
   enum Agent: String, CaseIterable, Identifiable {
     case claude = "Claude Code"
     case codex = "Codex"
+    /// Agents Impulse doesn't configure: the MCP entry to copy.
+    case other = "Other"
+    var id: String { rawValue }
+  }
+
+  /// What's being set up.
+  enum Part: String, CaseIterable, Identifiable {
+    case hooks = "Hooks"
+    case mcp = "MCP Server"
     var id: String { rawValue }
   }
 
@@ -18,8 +28,20 @@ final class AgentHooksModel {
     var id: String { rawValue }
   }
 
+  var part: Part = .hooks {
+    didSet {
+      if part == .hooks, agent == .other { agent = .claude } else { reload() }
+    }
+  }
   var agent: Agent = .claude { didSet { reload() } }
   var scope: Scope = .user { didSet { reload() } }
+  /// The bundled CLI's path, for the MCP entry's fallback outside Impulse.
+  let fallbackCLI: String
+  /// For Claude Code's MCP server: the `claude` command that makes the
+  /// change (Claude Code rewrites its own config file while it runs, so
+  /// Impulse doesn't edit it); nil when `claude` isn't on PATH.
+  private(set) var claudeCommand: [String]?
+  @ObservationIgnored private var claudeExecutable: String?
   /// The project for project-local Claude hooks, if any.
   let projectRoot: String?
   /// The repository's main checkout, when `projectRoot` is a task worktree
@@ -40,18 +62,30 @@ final class AgentHooksModel {
   /// new content.
   private(set) var refreshed = false
 
-  init(projectRoot: String?, mainCheckout: String? = nil) {
+  init(projectRoot: String?, mainCheckout: String? = nil, fallbackCLI: String = AgentMCPInstaller.defaultCLI) {
     self.projectRoot = projectRoot
     self.mainCheckout = mainCheckout
+    self.fallbackCLI = fallbackCLI
     reload()
   }
 
   var diff: [String] {
+    if part == .mcp, agent == .other {
+      return AgentMCPInstaller.genericSnippet(fallbackCLI: fallbackCLI).components(separatedBy: "\n")
+    }
+    if part == .mcp, agent == .claude {
+      guard let claudeCommand else { return [] }
+      return ["$ " + (["claude"] + claudeCommand).map { ShellQuoting.quoted($0, for: .zsh) }.joined(separator: " ")]
+    }
     guard let after else { return [] }
     return AgentHookInstaller.diffLines(before: before, after: after)
   }
 
+  /// What the sheet installs, in its messages.
+  var what: String { part == .hooks ? "hooks" : "MCP server" }
+
   func reload() {
+    if part == .mcp { return reloadMCP() }
     let home = NSHomeDirectory()
     switch agent {
     case .claude:
@@ -95,6 +129,62 @@ final class AgentHooksModel {
     }
   }
 
+  private func reloadMCP() {
+    let home = NSHomeDirectory()
+    error = nil
+    refreshed = false
+    outdated = false
+    claudeCommand = nil
+    switch agent {
+    case .claude:
+      path = home + "/.claude.json"
+      let data = FileManager.default.contents(atPath: path)
+      previewed = data
+      before = ""
+      let scope: AgentMCPInstaller.ClaudeScope = self.scope == .project && projectRoot != nil ? .local : .user
+      let status = AgentMCPInstaller.claudeStatus(
+        data, scope: scope, project: projectRoot, fallbackCLI: fallbackCLI)
+      installed = status == .installed
+      outdated = status == .outdated
+      claudeExecutable = LoginShell.which("claude")
+      if claudeExecutable == nil {
+        after = nil
+        error = "The claude command isn't on PATH. Install Claude Code, or run: claude "
+          + AgentMCPInstaller.claudeAddArguments(scope: scope, fallbackCLI: fallbackCLI)
+          .map { ShellQuoting.quoted($0, for: .zsh) }.joined(separator: " ")
+      } else {
+        claudeCommand =
+          installed
+          ? AgentMCPInstaller.claudeRemoveArguments(scope: scope)
+          : AgentMCPInstaller.claudeAddArguments(scope: scope, fallbackCLI: fallbackCLI)
+        after = ""
+      }
+    case .codex:
+      path = home + "/.codex/config.toml"
+      let data = FileManager.default.contents(atPath: path)
+      previewed = data
+      before = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+      let status = AgentMCPInstaller.codexStatus(data == nil ? nil : before, fallbackCLI: fallbackCLI)
+      installed = status == .installed
+      outdated = status == .outdated
+      if installed {
+        after = AgentMCPInstaller.removingCodexMCP(from: before)
+        if after == nil { error = "The [mcp_servers.impulse] table isn't the one Impulse wrote; remove it from config.toml by hand." }
+      } else {
+        switch AgentMCPInstaller.installingCodexMCP(into: data == nil ? nil : before, fallbackCLI: fallbackCLI) {
+        case .success(let text): after = text
+        case .failure(let failure): fail(failure)
+        }
+      }
+    case .other:
+      path = ""
+      previewed = nil
+      before = ""
+      installed = false
+      after = nil
+    }
+  }
+
   private func fail(_ failure: AgentHookInstaller.InstallError) {
     after = nil
     switch failure {
@@ -113,6 +203,35 @@ final class AgentHooksModel {
   /// Write the previewed change, unless the file changed since the preview
   /// was made (the agent rewrote its settings, say): then the preview is
   /// made again from what's there now, and nothing is written.
+  /// `apply`, or for Claude Code's MCP server the `claude` command, off
+  /// the main thread.
+  func applyInBackground(completion: @escaping (Outcome) -> Void) {
+    guard part == .mcp, agent == .claude else { return completion(apply()) }
+    guard let executable = claudeExecutable, let arguments = claudeCommand else {
+      return completion(.failed(error ?? "Nothing to change."))
+    }
+    let directory = projectRoot ?? NSHomeDirectory()
+    DispatchQueue.global(qos: .userInitiated).async {
+      var environment = ProcessInfo.processInfo.environment
+      environment["PATH"] = LoginShell.loginPath()
+      let outcome: Outcome
+      do {
+        let output = try ChildProcess.run(
+          executable, arguments, in: directory, environment: environment, timeout: 30)
+        if output.status == 0 {
+          outcome = .written
+        } else {
+          let message = String(decoding: output.stderr.isEmpty ? output.stdout : output.stderr, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+          outcome = .failed(message.isEmpty ? "claude exited with status \(output.status)" : message)
+        }
+      } catch {
+        outcome = .failed(error.localizedDescription)
+      }
+      DispatchQueue.main.async { completion(outcome) }
+    }
+  }
+
   func apply() -> Outcome {
     guard let after else { return .failed(error ?? "Nothing to change.") }
     guard FileManager.default.contents(atPath: path) == previewed else {
@@ -146,21 +265,34 @@ struct AgentHooksSheetView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("Agent Hooks")
-        .font(ChromeFont.ui(15, weight: .semibold))
-        .foregroundStyle(chrome.text)
-      Text("Hooks make the agent tell Impulse exactly when it starts working, needs you, and finishes — no guessing from output. They only do anything inside Impulse terminals.")
+      HStack {
+        Text("Agent Integration")
+          .font(ChromeFont.ui(15, weight: .semibold))
+          .foregroundStyle(chrome.text)
+        Spacer()
+        Picker("", selection: $model.part) {
+          ForEach(AgentHooksModel.Part.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 200)
+      }
+      Text(
+        model.part == .hooks
+          ? "Hooks make the agent tell Impulse exactly when it starts working, needs you, and finishes — no guessing from output. They only do anything inside Impulse terminals."
+          : "The MCP server gives the agent Impulse's tools: the repository's tasks (and starting one, which asks you first), your review comments, the language servers' problems, other terminals' output, unsaved files and the project's scripts. It only has tools inside Impulse terminals."
+      )
         .font(ChromeFont.ui(11.5))
         .foregroundStyle(chrome.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
 
       HStack(spacing: 12) {
         Picker("", selection: $model.agent) {
-          ForEach(AgentHooksModel.Agent.allCases) { Text($0.rawValue).tag($0) }
+          ForEach(AgentHooksModel.Agent.allCases.filter { model.part == .mcp || $0 != .other }) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(width: 220)
+        .frame(width: model.part == .mcp ? 280 : 220)
         if model.agent == .claude {
           Picker("", selection: $model.scope) {
             ForEach(AgentHooksModel.Scope.allCases) { scope in
@@ -176,7 +308,14 @@ struct AgentHooksSheetView: View {
 
       HStack(spacing: 6) {
         StatusDot(color: model.installed ? chrome.success : model.outdated ? chrome.warning : chrome.textTertiary, size: 7)
-        Text(model.installed ? "Installed" : model.outdated ? "Out of date: install again to add the newer hooks" : "Not installed")
+        Text(
+          model.agent == .other
+            ? "Add this to the agent's own MCP settings (each agent keeps them in its own file)"
+            : model.installed
+              ? "Installed"
+              : model.outdated
+                ? (model.part == .hooks ? "Out of date: install again to add the newer hooks" : "Out of date: install again to update it")
+                : "Not installed")
           .font(ChromeFont.ui(11.5, weight: .medium))
           .foregroundStyle(chrome.textSecondary)
         Text(TabManager.abbreviateHomePath(model.path))
@@ -232,22 +371,32 @@ struct AgentHooksSheetView: View {
         Spacer()
         ChromeButton(title: "Close", kind: .secondary) { onClose(nil) }
           .keyboardShortcut(.cancelAction)
-        if model.after != nil {
+        if model.agent == .other {
+          ChromeButton(title: "Copy", icon: .copy, kind: .primary) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(model.diff.joined(separator: "\n"), forType: .string)
+            onClose("Copied Impulse's MCP server entry.")
+          }
+          .keyboardShortcut(.defaultAction)
+        } else if model.after != nil {
           ChromeButton(
-            title: model.installed ? "Remove Hooks" : "Install Hooks",
+            title: "\(model.installed ? "Remove" : "Install") \(model.part == .hooks ? "Hooks" : "MCP Server")",
             icon: model.installed ? .trash2 : .check, kind: model.installed ? .secondary : .primary
           ) {
             let wasInstalled = model.installed
-            switch model.apply() {
-            case .failed(let failure):
-              onClose("Couldn't update \(TabManager.abbreviateHomePath(model.path)): \(failure)")
-            case .changed:
-              break  // the sheet stays open on the new preview
-            case .written:
-              onClose(
-                wasInstalled
-                  ? "Removed Impulse's \(model.agent.rawValue) hooks."
-                  : "Installed \(model.agent.rawValue) hooks. Restart running agents to pick them up.")
+            let what = model.what
+            model.applyInBackground { outcome in
+              switch outcome {
+              case .failed(let failure):
+                onClose("Couldn't update \(TabManager.abbreviateHomePath(model.path)): \(failure)")
+              case .changed:
+                break  // the sheet stays open on the new preview
+              case .written:
+                onClose(
+                  wasInstalled
+                    ? "Removed Impulse's \(model.agent.rawValue) \(what)."
+                    : "Installed the \(model.agent.rawValue) \(what). Restart running agents to pick it up.")
+              }
             }
           }
           .keyboardShortcut(.defaultAction)
@@ -261,12 +410,14 @@ struct AgentHooksSheetView: View {
 }
 
 extension MainWindowController {
-  func presentAgentHooksSheet() {
+  func presentAgentHooksSheet(part: AgentHooksModel.Part = .hooks) {
     guard let window else { return }
     let projectRoot = windowModel.repository?.root
     let mainCheckout = projectRoot.map(Self.mainCheckoutRoot(of:))
     let model = AgentHooksModel(
-      projectRoot: projectRoot, mainCheckout: mainCheckout == projectRoot ? nil : mainCheckout)
+      projectRoot: projectRoot, mainCheckout: mainCheckout == projectRoot ? nil : mainCheckout,
+      fallbackCLI: TerminalTab.cliPath ?? AgentMCPInstaller.defaultCLI)
+    model.part = part
     let palette = windowModel.palette
     let sheet = NSWindow.themedSheet(palette: palette)
     window.beginThemedSheet(

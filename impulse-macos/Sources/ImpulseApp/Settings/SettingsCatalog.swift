@@ -286,6 +286,17 @@ enum SettingsCatalog {
     toggle(
       "agent_hook_dependencies", "Tell agents when dependency files changed", \.agentHookDependencies, .terminal,
       "Agents", detail: "After an agent's git pull, merge or checkout brings in a changed lock file or Dockerfile."),
+    choice(
+      "agent_task_creation", "When an agent asks to start a task", \.agentTaskCreation, .terminal, "Agents",
+      [("ask", "Ask me"), ("trusted_projects", "Start it in trusted projects"), ("off", "Don't allow it")],
+      detail: "From impulse tasks new or the MCP server's create_task. Asking shows New Task filled in. Trusted projects: a trusted repository whose project settings you trusted, otherwise ask; moving your changes, and a task asked for from inside an agent's task, always ask."),
+    integer(
+      "agent_task_limit", "Open tasks agents may start", \.agentTaskLimit, .terminal, "Agents", range: 0...50,
+      zeroLabel: "No limit", detail: "Per repository. Archive or finish one to make room."),
+    choice(
+      "agent_tool_terminal_output", "Agents may read terminal output", \.agentToolTerminalOutput, .terminal, "Agents",
+      [("workspace", "In their own workspace"), ("window", "In the whole window"), ("off", "Never")],
+      detail: "The commands and output of other terminals, through the MCP server's list_command_blocks and get_block_output (and impulse blocks). Output can hold secrets."),
     toggle("terminal_copy_on_select", "Copy on select", \.terminalCopyOnSelect, .terminal, "Behavior"),
     toggle("terminal_scroll_on_output", "Scroll to bottom on output", \.terminalScrollOnOutput, .terminal, "Behavior"),
     toggle("terminal_allow_hyperlink", "Clickable links", \.terminalAllowHyperlink, .terminal, "Behavior"),

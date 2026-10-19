@@ -114,6 +114,13 @@ class EditorTab: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// someone else's change (an agent, git) from our own.
     private var diskStamp: TextFile.Stamp?
     private var diskTextHash: Int?
+
+    /// The file on disk changed since it was loaded or last saved (by
+    /// another program: an agent, a checkout). Reads the file's stamp.
+    var changedOnDisk: Bool {
+        guard let filePath, let diskStamp else { return false }
+        return TextFile.stamp(filePath) != diskStamp
+    }
     /// The disk text a "changed on disk" notice was already shown for.
     private var noticedDiskHash: Int?
     /// The text the last successful save wrote.

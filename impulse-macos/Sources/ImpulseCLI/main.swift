@@ -15,6 +15,43 @@ func fail(_ message: String, code: Int32 = 1) -> Never {
   exit(code)
 }
 
+/// The app's version, from the bundle this tool is in
+/// (Contents/Resources/bin/impulse); "dev" for a build outside one.
+func appVersion() -> String {
+  let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+  let plist = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Info.plist")
+  guard let data = try? Data(contentsOf: plist),
+    let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+    let version = info["CFBundleShortVersionString"] as? String
+  else { return "dev" }
+  return version
+}
+
+// `impulse mcp`: serve MCP on stdin/stdout until the agent closes stdin.
+// Outside Impulse it still answers (with no tools), so a server registered
+// for every project never shows up as broken.
+if arguments.first == "mcp" {
+  if arguments.count > 1, arguments[1] == "-h" || arguments[1] == "--help" {
+    print("impulse mcp: an MCP server on standard input and output, for agents in Impulse terminals.")
+    exit(0)
+  }
+  signal(SIGPIPE, SIG_IGN)
+  let output = NSLock()
+  let server = MCPServer.standard(
+    environment: environment, cwd: FileManager.default.currentDirectoryPath, version: appVersion()
+  ) { line in
+    output.lock()
+    defer { output.unlock() }
+    FileHandle.standardOutput.write(line)
+  }
+  while let line = readLine(strippingNewline: true) {
+    server.handle(line: Data(line.utf8))
+  }
+  server.cancelAll()
+  exit(0)
+}
+
 var request: ControlRequest
 switch ControlProtocol.request(
   arguments: arguments, environment: environment,
@@ -82,40 +119,26 @@ if request.command == "open", let path = request.arguments["path"] {
   }
 }
 
-let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-guard fd >= 0 else { fail("impulse: couldn't create a socket") }
-var address = sockaddr_un()
-address.sun_family = sa_family_t(AF_UNIX)
-let pathBytes = Array(socketPath.utf8)
-guard pathBytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
-  fail("impulse: socket path too long")
+// `impulse tasks new --brief-file notes.md`: the brief travels in the
+// request (the app may not be able to read the file, and it shouldn't be
+// read twice).
+if let path = request.arguments.removeValue(forKey: "briefFile") {
+  guard let input = FileHandle(forReadingAtPath: path),
+    let data = try? input.read(upToCount: ControlProtocol.briefLimit + 1)
+  else { fail("impulse tasks new: couldn't read \(path)") }
+  guard data.count <= ControlProtocol.briefLimit else { fail("impulse tasks new: \(path) holds more than 16 KB") }
+  request.arguments["brief"] = String(decoding: data, as: UTF8.self)
 }
-withUnsafeMutableBytes(of: &address.sun_path) { buffer in
-  for (index, byte) in pathBytes.enumerated() { buffer[index] = byte }
-}
-let connected = withUnsafePointer(to: &address) {
-  $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-    connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-  }
-}
-guard connected == 0 else {
+
+// An `edit` (or a `tasks wait`) waits here until it completes.
+let reply: ControlResponse
+switch ControlClient(socketPath: socketPath).send(request) {
+case .success(let answer):
+  reply = answer
+case .failure(.unreachable):
   if isHook { exit(0) }
   fail("impulse: couldn't reach Impulse (is it still running?)")
-}
-
-guard let line = try? ControlProtocol.encodeLine(request) else { fail("impulse: couldn't encode the request") }
-_ = line.withUnsafeBytes { write(fd, $0.baseAddress, line.count) }
-
-// Read one line of response (an `edit` waits here until its tab closes).
-var response = Data()
-var byte: UInt8 = 0
-while read(fd, &byte, 1) == 1 {
-  if byte == 0x0A { break }
-  response.append(byte)
-}
-close(fd)
-
-guard let reply = try? ControlProtocol.decode(ControlResponse.self, from: response) else {
+case .failure(.noAnswer):
   if isHook { exit(0) }
   fail("impulse: no answer from Impulse")
 }
