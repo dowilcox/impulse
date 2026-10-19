@@ -455,7 +455,8 @@ struct AgentHooksSheetView: View {
       }
     }
     .padding(20)
-    .frame(width: 620)
+    // Room for four agents and Claude Code's scope menu on one row.
+    .frame(width: 660)
     .background(chrome.overlay)
   }
 }
