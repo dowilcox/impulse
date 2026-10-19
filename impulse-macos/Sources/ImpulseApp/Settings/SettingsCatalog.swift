@@ -275,14 +275,15 @@ enum SettingsCatalog {
       detail: "Once per pair of workspaces, when the main checkout or a task starts changing files another one changes."),
     toggle(
       "agent_hook_task_summary", "Tell agents about other tasks when they start", \.agentHookTaskSummary, .terminal,
-      "Agents", detail: "Claude Code (with Impulse's hooks) gets a short summary of the repository's other workspaces."),
+      "Agents",
+      detail: "Claude Code and opencode (with Impulse's hooks) get a short summary of the repository's other workspaces."),
     toggle(
       "agent_hook_shared_files", "Tell agents when they edit a file another task changes", \.agentHookSharedFiles,
       .terminal, "Agents", detail: "Once per file, naming the other workspace and its agent."),
     toggle(
       "agent_hook_merge_guard", "Ask before an agent merges a branch still being worked on", \.agentHookMergeGuard,
       .terminal, "Agents",
-      detail: "When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files."),
+      detail: "When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files. opencode can't ask you from a plugin: the command is stopped once, telling it to ask, and goes ahead when it runs again."),
     toggle(
       "agent_hook_dependencies", "Tell agents when dependency files changed", \.agentHookDependencies, .terminal,
       "Agents", detail: "After an agent's git pull, merge or checkout brings in a changed lock file or Dockerfile."),

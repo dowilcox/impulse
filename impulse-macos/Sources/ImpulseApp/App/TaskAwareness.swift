@@ -4,11 +4,11 @@ import ImpulseKit
 import ImpulseProtocol
 
 // Letting agents see each other. Each agent only knows its own folder; the
-// `impulse tasks` command and Impulse's Claude Code hooks tell it about the
-// repository's other workspaces: a summary when it starts, a note when it
-// edits a file another workspace changes, a question before it merges a
-// branch a task is still working on, and dependency files that changed
-// under it.
+// `impulse tasks` command and Impulse's hooks for Claude Code and opencode
+// tell it about the repository's other workspaces: a summary when it
+// starts, a note when it edits a file another workspace changes, a question
+// before it merges a branch a task is still working on (opencode can only
+// be stopped, once), and dependency files that changed under it.
 
 extension MainWindowController {
   // MARK: The listing
@@ -201,20 +201,25 @@ extension MainWindowController {
 
   // MARK: Hooks
 
-  /// What Impulse answers a Claude Code hook with (nil: nothing to say).
+  /// What Impulse answers a Claude Code hook, or an event from its
+  /// opencode plugin, with (nil: nothing to say).
   func agentHookReply(_ request: ControlRequest, terminal: TerminalTab, completion: @escaping (String?) -> Void) {
     let args = request.arguments
     let settings = SettingsStore.shared.settings
     let cwd = args["hookCwd"] ?? terminal.currentWorkingDirectory ?? NSHomeDirectory()
-    switch (args["event"], args["tool"]) {
-    case ("SessionStart", _) where settings.agentHookTaskSummary:
-      taskListing(cwd: cwd) { completion($0?.sessionSummary()) }
+    let opencode = args["agent"] == "opencode"
+    // Claude Code takes a note as JSON (a SessionStart hook's plain output
+    // is context already); the opencode plugin, as its own JSON.
+    let context = { (text: String) in opencode ? AgentHookReply.opencodeContext(text) : AgentHookReply.context(text) }
+    switch AgentHookEvents.reply(agent: args["agent"], event: args["event"] ?? "", tool: args["tool"]) {
+    case .sessionSummary where settings.agentHookTaskSummary:
+      taskListing(cwd: cwd) { completion($0?.sessionSummary().map { opencode ? context($0) : $0 }) }
 
-    case ("PostToolUse", let tool?) where ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains(tool):
+    case .editedFile:
       guard settings.agentHookSharedFiles, let file = args["toolFile"] else { return completion(nil) }
-      completion(sharedFileNote(file: file, terminal: terminal).map { AgentHookReply.context($0) })
+      completion(sharedFileNote(file: file, terminal: terminal).map(context))
 
-    case ("PostToolUse", "Bash"?):
+    case .ranShell:
       guard settings.agentHookDependencies, let command = args["toolCommand"], GitCommandInspector.movesHead(command)
       else { return completion(nil) }
       DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -224,15 +229,23 @@ extension MainWindowController {
           // Commands go to the agent only from settings the user trusts.
           let config = self.alreadyTrustedProjectConfig(root: change.root)
           let note = Self.dependencyNote(changed: change.changed, trusted: config)
-          completion(note.map { AgentHookReply.context($0) })
+          completion(note.map(context))
         }
       }
 
-    case ("PreToolUse", "Bash"?):
+    case .beforeShell:
       guard settings.agentHookMergeGuard, let command = args["toolCommand"] else { return completion(nil) }
       let refs = GitCommandInspector.mergedRefs(in: command)
       guard !refs.isEmpty else { return completion(nil) }
-      mergeGuard(refs: refs, cwd: cwd) { reason in completion(reason.map(AgentHookReply.ask)) }
+      // opencode's plugin can't ask you, only stop the command: once, so
+      // the agent asks, then the same command again goes ahead.
+      if opencode, terminal.stoppedMerges.remove(command) != nil { return completion(nil) }
+      mergeGuard(refs: refs, cwd: cwd) { reason in
+        guard let reason else { return completion(nil) }
+        guard opencode else { return completion(AgentHookReply.ask(reason)) }
+        terminal.stoppedMerges.insert(command)
+        completion(AgentHookReply.opencodeStop(reason))
+      }
 
     default:
       completion(nil)

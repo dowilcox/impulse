@@ -54,6 +54,9 @@
     @Test func resumeCommands() {
       #expect(KnownAgents.resumeCommand(agentID: "claude", session: "3f2a-91bc") == "claude --resume 3f2a-91bc")
       #expect(KnownAgents.resumeCommand(agentID: "codex", session: "abc_1") == "codex resume abc_1")
+      #expect(
+        KnownAgents.resumeCommand(agentID: "opencode", session: "ses_3a1f9c2e7ffeQ2xVbN8kLm4pRt")
+          == "opencode --session ses_3a1f9c2e7ffeQ2xVbN8kLm4pRt")
       #expect(KnownAgents.resumeCommand(agentID: "claude", session: "x; rm -rf ~") == nil)
       #expect(KnownAgents.resumeCommand(agentID: "aider", session: "s") == nil)
     }
@@ -175,6 +178,60 @@
       #expect(machine.state == .needsInput)
       machine.handle(.hook(.stopped), at: at(120))
       #expect(machine.state == .done)
+    }
+
+    @Test func opencodePluginEventsDriveTheState() {
+      func hook(_ event: String, tool: String? = nil) -> AgentHook? {
+        AgentHookEvents.hook(agent: "opencode", event: event, tool: tool, message: nil)
+      }
+      #expect(hook("start") == .sessionStarted)
+      #expect(hook("session.start") == nil, "the summary request changes nothing")
+      #expect(hook("chat.message") == .promptSubmitted)
+      #expect(hook("tool.execute.before", tool: "bash") == nil)
+      #expect(hook("tool.execute.after", tool: "bash") == .usedTool("bash"))
+      #expect(hook("session.idle") == .stopped)
+      // opencode's names mean nothing from another agent; Claude Code's
+      // events mean the same from any.
+      #expect(AgentHookEvents.hook(agent: "codex", event: "session.idle", tool: nil, message: nil) == nil)
+      #expect(AgentHookEvents.hook(agent: "gemini", event: "Stop", tool: nil, message: nil) == .stopped)
+
+      var machine = AgentStateMachine(now: t0)
+      let turn: [(String, String?)] = [
+        ("start", nil), ("chat.message", nil), ("permission.asked", "bash"), ("permission.replied", nil),
+        ("tool.execute.after", "bash"), ("question.asked", nil),
+      ]
+      var states: [AgentState] = []
+      for (offset, (event, tool)) in turn.enumerated() {
+        machine.handle(.hook(hook(event, tool: tool)!), at: at(Double(offset)))
+        states.append(machine.state)
+      }
+      #expect(states == [.idle, .working, .needsInput, .working, .working, .needsInput])
+      machine.handle(.hook(hook("question.rejected")!), at: at(10))
+      #expect(machine.state == .working)
+      machine.handle(.hook(hook("session.idle")!), at: at(11))
+      #expect(machine.state == .done)
+      // An edit's permission is answered by its reply, not by the tool
+      // (opencode asks for "edit" whichever tool writes).
+      machine.handle(.hook(hook("chat.message")!), at: at(12))
+      machine.handle(.hook(hook("permission.asked", tool: "edit")!), at: at(13))
+      machine.handle(.hook(hook("tool.execute.after", tool: "write")!), at: at(14))
+      #expect(machine.state == .needsInput)
+      machine.handle(.hook(hook("permission.replied")!), at: at(15))
+      #expect(machine.state == .working)
+    }
+
+    @Test func onlyClaudeCodeAndOpencodeGetAnswers() {
+      #expect(AgentHookEvents.reply(agent: "claude", event: "SessionStart", tool: nil) == .sessionSummary)
+      #expect(AgentHookEvents.reply(agent: "claude", event: "PostToolUse", tool: "MultiEdit") == .editedFile)
+      #expect(AgentHookEvents.reply(agent: "claude", event: "PreToolUse", tool: "Bash") == .beforeShell)
+      #expect(AgentHookEvents.reply(agent: "claude", event: "PostToolUse", tool: "Read") == nil)
+      #expect(AgentHookEvents.reply(agent: "opencode", event: "session.start", tool: nil) == .sessionSummary)
+      #expect(AgentHookEvents.reply(agent: "opencode", event: "tool.execute.after", tool: "apply_patch") == .editedFile)
+      #expect(AgentHookEvents.reply(agent: "opencode", event: "tool.execute.after", tool: "bash") == .ranShell)
+      #expect(AgentHookEvents.reply(agent: "opencode", event: "tool.execute.before", tool: "bash") == .beforeShell)
+      #expect(AgentHookEvents.reply(agent: "opencode", event: "tool.execute.before", tool: "edit") == nil)
+      #expect(AgentHookEvents.reply(agent: "opencode", event: "PreToolUse", tool: "Bash") == nil)
+      #expect(AgentHookEvents.reply(agent: "codex", event: "agent-turn-complete", tool: nil) == nil)
     }
 
     @Test func aToolRunningAnswersItsOwnApproval() {

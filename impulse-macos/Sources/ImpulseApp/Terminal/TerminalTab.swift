@@ -44,6 +44,9 @@ class TerminalTab: NSView {
   /// Files an agent here was told another workspace also changes (told once
   /// each).
   var sharedFileNotes = Set<String>()
+  /// Merge commands opencode's plugin was stopped from running once, so
+  /// the agent would ask: the next try goes ahead.
+  var stoppedMerges = Set<String>()
   /// The message from the last `impulse status` (shown with the agent's
   /// state), cleared when the agent ends.
   var agentStatusMessage: String?

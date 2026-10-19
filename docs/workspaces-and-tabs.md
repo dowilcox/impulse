@@ -404,7 +404,7 @@ What comes back:
 - Each window's workspaces in their sidebar order (Scratch included), their names and whether their tabs were listed in the sidebar, and the active workspace.
 - Tabs in order, pins, splits and pane sizes, and the selected tab and pane.
 - Terminals in the folder they were in. With **Restore terminal scrollback** (`restore_scrollback`, on by default) their earlier output is shown again; the shells themselves are new.
-- Coding agent sessions: when Claude Code or Codex was running in a terminal and its [hooks](agents.md) are installed, the restored terminal's input bar holds the command that resumes that session, such as `claude --resume …`. Press ↩ to run it, or clear it.
+- Coding agent sessions: when Claude Code, Codex or opencode was running in a terminal and its [hooks](agents.md) are installed, the restored terminal's input bar holds the command that resumes that session, such as `claude --resume …`. Press ↩ to run it, or clear it.
 - Editors, at the line and column you were on, and image previews.
 - Review and History tabs.
 - The sidebar's visibility and width, and the height of the workspaces section.

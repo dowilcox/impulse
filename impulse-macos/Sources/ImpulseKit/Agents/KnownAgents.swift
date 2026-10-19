@@ -31,6 +31,7 @@ public enum KnownAgents {
     switch agentID {
     case "claude": return "claude --resume \(session)"
     case "codex": return "codex resume \(session)"
+    case "opencode": return "opencode --session \(session)"
     default: return nil
     }
   }

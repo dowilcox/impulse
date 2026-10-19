@@ -92,7 +92,8 @@ public enum ControlProtocol {
       impulse blocks show <id> [--lines <n>] one command's output
       impulse unsaved [--json]              files open with unsaved edits
       impulse project [--json]              the trusted project settings: scripts, actions
-      impulse hook <claude|codex> [event]   for agent hooks (reads hook input on stdin)
+      impulse hook <claude|codex|opencode> [event]
+                                            for agent hooks (reads hook input on stdin)
       impulse mcp                           an MCP server (stdio) for agents, with the
                                             same commands as tools
 
@@ -302,17 +303,19 @@ public enum ControlProtocol {
       }
 
     case "hook":
-      guard let agent = rest.first else { return .failure(UsageError("usage: impulse hook <claude|codex> [event]")) }
+      guard let agent = rest.first else {
+        return .failure(UsageError("usage: impulse hook <claude|codex|opencode> [event]"))
+      }
       request.arguments["agent"] = agent
       // An explicit event name, and/or a JSON payload: Codex passes its
-      // notification as the last argument; Claude Code writes hook input to
-      // stdin.
+      // notification as the last argument; Claude Code, and Impulse's
+      // opencode plugin, write hook input to stdin.
       var event: String?
       var payload: Data?
       for word in rest.dropFirst() {
         if word.hasPrefix("{") { payload = Data(word.utf8) } else if event == nil { event = word }
       }
-      if payload == nil, agent == "claude" { payload = stdin() }
+      if payload == nil, agent == "claude" || agent == "opencode" { payload = stdin() }
       var message: String?
       if let payload,
         let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any]
@@ -333,7 +336,7 @@ public enum ControlProtocol {
         if let hookCwd = object["cwd"] as? String { request.arguments["hookCwd"] = hookCwd }
       }
       guard let event, !event.isEmpty else {
-        return .failure(UsageError("usage: impulse hook <claude|codex> <event>"))
+        return .failure(UsageError("usage: impulse hook <claude|codex|opencode> <event>"))
       }
       request.arguments["event"] = event
       if let message { request.arguments["message"] = message }

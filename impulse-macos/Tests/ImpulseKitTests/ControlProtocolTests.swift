@@ -116,6 +116,21 @@
       #expect(old.data == nil)
     }
 
+    @Test func opencodePluginEventsReadStdin() {
+      let edit = parse(
+        ["hook", "opencode", "tool.execute.after"],
+        stdin: #"{"session_id":"ses_1","cwd":"/repo","tool_name":"write","tool_input":{"file_path":"/repo/src/a.ts"}}"#)
+      #expect(
+        edit?.arguments == [
+          "agent": "opencode", "event": "tool.execute.after", "session": "ses_1", "hookCwd": "/repo", "tool": "write",
+          "toolFile": "/repo/src/a.ts",
+        ])
+      let start = parse(["hook", "opencode", "start"], stdin: #"{"cwd":"/repo"}"#)
+      #expect(start?.arguments["event"] == "start")
+      #expect(start?.arguments["session"] == nil)
+      #expect(parse(["hook", "opencode"], stdin: "{}") == nil, "the plugin always names its event")
+    }
+
     @Test func codexNotifyPassesJSONAsAnArgument() {
       let turn = parse(["hook", "codex", #"{"type":"agent-turn-complete","last-assistant-message":"All done"}"#])
       #expect(turn?.arguments == ["agent": "codex", "event": "agent-turn-complete", "message": "All done"])
