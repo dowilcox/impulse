@@ -289,12 +289,17 @@ struct AgentHooksSheetView: View {
         .fixedSize(horizontal: false, vertical: true)
 
       HStack(spacing: 12) {
+        let agents = AgentHooksModel.Agent.allCases.filter { model.part == .mcp || $0 != .other }
         Picker("", selection: $model.agent) {
-          ForEach(AgentHooksModel.Agent.allCases.filter { model.part == .mcp || $0 != .other }) { Text($0.rawValue).tag($0) }
+          ForEach(agents) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(width: model.part == .mcp ? 280 : 220)
+        // Its own width, at the leading edge (a set width centers it, or
+        // lets it spill over the scope menu), and a new control when the
+        // segments change: the native one keeps its old segment widths.
+        .fixedSize()
+        .id(model.part)
         if model.agent == .claude {
           Picker("", selection: $model.scope) {
             ForEach(AgentHooksModel.Scope.allCases) { scope in

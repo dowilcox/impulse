@@ -47,9 +47,12 @@ extension MainWindowController {
         tabManager.addTerminalTab()
       } else if action == "close-workspace" {
         tabManager.closeWorkspace(tabManager.activeWorkspaceID)
-      } else if action.hasPrefix("click="), let window {
-        // A click at x:y (points from the window's top-left; snapshot checks).
-        let parts = action.dropFirst(6).split(separator: ":").compactMap { Double($0) }
+      } else if action.hasPrefix("click=") || action.hasPrefix("sheet-click="),
+        let window = action.hasPrefix("sheet-click=") ? window?.attachedSheet : window
+      {
+        // A click at x:y (points from the window's top-left, or the sheet's
+        // that's up; snapshot checks).
+        let parts = action.drop(while: { $0 != "=" }).dropFirst().split(separator: ":").compactMap { Double($0) }
         if parts.count == 2 {
           let point = NSPoint(x: parts[0], y: window.frame.height - parts[1])
           for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
@@ -370,6 +373,8 @@ extension MainWindowController {
   ///                                     answer the New Task sheet that's up
   ///     agent-sheet=<hooks|mcp>:<claude|codex|other>[:project]
   ///                                     open Agent Integration on that choice
+  ///     agent-sheet-part=<hooks|mcp>    switch the open sheet's half, and
+  ///     agent-sheet-agent=<claude|codex|other>  its agent, as clicking does
   ///     agent-sheet-apply               press its Install/Remove (waits for it;
   ///                                     reports agent-sheet:<outcome>)
   ///     agent-sheet-close               close it
@@ -435,6 +440,18 @@ extension MainWindowController {
         if parts.count > 2, parts[2] == "project" { model.scope = .project }
       } else {
         DebugSnapshot.failures.append("\(action): the sheet didn't open")
+      }
+      done()
+    } else if action.hasPrefix("agent-sheet-part=") || action.hasPrefix("agent-sheet-agent=") {
+      let value = String(action[action.index(after: action.firstIndex(of: "=")!)...])
+      if let model = DebugSnapshot.agentSheet?.model {
+        if action.hasPrefix("agent-sheet-part=") {
+          model.part = value == "mcp" ? .mcp : .hooks
+        } else if let agent = AgentHooksModel.Agent.allCases.first(where: { $0.rawValue.lowercased().hasPrefix(value) }) {
+          model.agent = agent
+        }
+      } else {
+        DebugSnapshot.failures.append("\(action): no Agent Integration sheet is up")
       }
       done()
     } else if action == "agent-sheet-apply" {
