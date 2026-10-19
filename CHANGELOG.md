@@ -2,7 +2,7 @@
 
 All notable changes to Impulse are documented in this file.
 
-## Unreleased
+## 0.34.0
 
 **Agents can ask Impulse.** Impulse has an MCP server, `impulse mcp`,
 that any agent loading Model Context Protocol servers can use: it lists
@@ -23,9 +23,32 @@ command.
 - The Agent Hooks sheet is Agent Integration, with Hooks and MCP Server.
 - **Agents may read terminal output** decides which terminals agents' tools see: their own workspace's (the default), the window's, or none.
 
-### Fixes
+### Terminal
+
+- **Option as Meta** (Settings ▸ Terminal, off by default) makes Option send Esc + key, on the left, right or both sides. Off, Option types what your layout gives it (`@`, `[`, `{`, `|` on non-US layouts).
+- Scrolling back through output is no longer pulled to the bottom by programs that redraw in place, command blocks stay exact once scrollback is full, and kitty keyboard, IME and mouse reporting got fixes.
+
+### Workspaces
+
+- Switch Workspace remembers every folder you open, not only the last 20. **Clear Recent Workspaces** (in the list and the palette) empties it, with Undo.
+
+### Security
 
 - History, and every other git read, no longer checks commit signatures. With `log.showSignature` on (in your config, or in a repository's own), git ran the signing program for every signed commit, so a repository you hadn't trusted could run a program of its choosing, and the program's output got mixed into what Impulse read.
+- Git reads in folders you haven't trusted run without fsmonitor, hooks, filters or merge drivers. A task made from a remote branch stays restricted inside a trusted repository, and archiving a task takes back its folder's trust.
+- Project settings you haven't trusted never reach agents: their `[on_change]` commands are only passed to Claude Code from a trusted `project.toml`. The trust question lists every command, and Project Setup only trusts what it wrote.
+- Completion, paste and drag and drop quote names for the terminal's own shell (fish included), and the input bar drops control characters. Shell-integration marks need the terminal's own key once one has arrived, so printed output can't fake a command block, and oversized escape sequences can't use up memory.
+- `impulse split`, `tab`, `checkpoint` and `edit` of a new file only work from the pane's own shell or a program it started.
+- Hints never open `file://` links, the Markdown preview's Run button only runs a single visible command in a trusted folder, and a language server's edits that create, move or delete files, or reach outside the project, ask first.
+
+### Fixes
+
+- Moving changes into a task and archiving never delete a repository or submodule inside it. Undo of a move takes a snapshot first, and keeps the task when it can't put files back.
+- A landed branch is only deleted if it hasn't moved; stash and uncommit act on what you saw; a failed Undo says so; archiving warns about ignored files it would remove.
+- The editor reloads a file changed on disk in place, as one undoable edit, never takes a failed formatter's output, and notices changes made around opening and saving.
+- Quitting while a session is being restored no longer wipes it, and edits to `settings.json` made outside Impulse are merged with Impulse's own.
+- A very large port value no longer crashes Impulse at launch, and `impulse edit` on a pipe or device fails at once instead of hanging.
+- Typing, terminal output, Review, History, the file tree and Quick Open do far less work, so Impulse stays responsive with many tabs and busy terminals.
 
 ## 0.33.1
 
