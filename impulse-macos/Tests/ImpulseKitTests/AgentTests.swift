@@ -27,6 +27,24 @@
       #expect(KnownAgents.match(executablePath: "/bin/bash", arguments: ["bash", "deploy.sh"]) == nil)
     }
 
+    @Test func matchesOpencodeHoweverItsInstalled() {
+      func id(_ executable: String, _ arguments: [String]) -> String? {
+        KnownAgents.match(executablePath: executable, arguments: arguments)?.id
+      }
+      // npm (opencode-ai): its postinstall links the native binary in as bin/opencode.exe.
+      #expect(id("/Users/me/.npm-global/lib/node_modules/opencode-ai/bin/opencode.exe", ["opencode"]) == "opencode")
+      // Older npm releases: a node script that starts the platform package's binary.
+      #expect(id("/usr/local/bin/node", ["node", "/usr/local/lib/node_modules/opencode-ai/bin/opencode"]) == "opencode")
+      #expect(
+        id("/usr/local/lib/node_modules/opencode-ai/node_modules/opencode-darwin-arm64/bin/opencode", ["opencode"])
+          == "opencode")
+      // Homebrew, and the curl installer.
+      #expect(id("/opt/homebrew/Cellar/opencode/1.18.34/bin/opencode", ["opencode"]) == "opencode")
+      #expect(id("/Users/me/.opencode/bin/opencode", ["/Users/me/.opencode/bin/opencode", "--continue"]) == "opencode")
+      // Crush (once the Go project called opencode) is its own agent.
+      #expect(id("/opt/homebrew/bin/crush", ["crush"]) == "crush")
+    }
+
     @Test func ignoresOrdinaryPrograms() {
       #expect(KnownAgents.match(executablePath: "/usr/bin/vim", arguments: ["vim", "claude.md"]) == nil)
       #expect(KnownAgents.match(executablePath: "/usr/local/bin/node", arguments: ["node", "server.js"]) == nil)

@@ -26,7 +26,7 @@ Run the agent the way you normally do, in any Impulse terminal. Nothing needs to
 
 When a command starts in a terminal, Impulse looks at the terminal's foreground process shortly after it starts, then every two seconds while it runs. A process counts as an agent when:
 
-- its executable or its first argument is one of the commands above (`claude`, `codex`, …), with or without a `.js`, `.mjs`, `.cjs` or `.py` extension;
+- its executable or its first argument is one of the commands above (`claude`, `codex`, …), with or without a `.js`, `.mjs`, `.cjs`, `.py` or `.exe` extension (opencode's npm package installs it as `opencode.exe`, even on macOS);
 - it's an interpreter (`node`, `bun`, `deno`, `python`, `ruby`, `uv`, `uvx`, `npx`, `pnpm`, `bunx`, or a shell such as `sh`, `bash`, `zsh`) running a script with one of those names, or a script from the agent's package (for example `node …/@anthropic-ai/claude-code/cli.js`);
 - or it's one level down from the foreground process, so wrappers such as `caffeinate claude` work.
 
