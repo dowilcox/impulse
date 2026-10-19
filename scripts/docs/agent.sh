@@ -11,10 +11,20 @@
 #   claude finish    mid-turn, asks Impulse to finish its own task (as the
 #                    MCP server's finish_task does), saving the answer in
 #                    ~/mcp/finish.txt, then keeps working
+#   claude mcp …     what Agent Integration runs to install Impulse's MCP
+#                    server: recorded in ~/mcp/<agent>-mcp.txt, one call a
+#                    line, as JSON
 #   claude           sits at an empty prompt
 
 agent=$(basename "$0")
 mode=${1:-idle}
+
+if [ "$mode" = mcp ]; then
+  mkdir -p "$HOME/mcp"
+  python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@" >> "$HOME/mcp/$agent-mcp.txt"
+  echo "Added stdio MCP server to user config (demo agent)"
+  exit 0
+fi
 dim=$'\e[2m' bold=$'\e[1m' green=$'\e[32m' yellow=$'\e[33m' cyan=$'\e[36m' reset=$'\e[0m'
 
 hook() { command -v impulse >/dev/null && impulse hook "$agent" "$1" "${2:-{\}}" >/dev/null 2>&1; }

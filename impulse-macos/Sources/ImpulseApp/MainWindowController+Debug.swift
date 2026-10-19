@@ -368,6 +368,11 @@ extension MainWindowController {
   ///     sheet-button=<title>            press a button in a sheet (or a window)
   ///     task-sheet-create, task-sheet-cancel
   ///                                     answer the New Task sheet that's up
+  ///     agent-sheet=<hooks|mcp>:<claude|codex|other>[:project]
+  ///                                     open Agent Integration on that choice
+  ///     agent-sheet-apply               press its Install/Remove (waits for it;
+  ///                                     reports agent-sheet:<outcome>)
+  ///     agent-sheet-close               close it
   ///     toast-action=<text>             press the action of the last toast with text
   ///     save-session                    save the session now (needs
   ///                                     --impulse-snapshot-persist)
@@ -419,6 +424,32 @@ extension MainWindowController {
       } else {
         DebugSnapshot.failures.append("\(action): no New Task sheet is up")
       }
+      done()
+    } else if action.hasPrefix("agent-sheet=") {
+      let parts = action.dropFirst(12).split(separator: ":").map(String.init)
+      presentAgentHooksSheet(part: parts.first == "mcp" ? .mcp : .hooks)
+      if let model = DebugSnapshot.agentSheet?.model {
+        model.agent =
+          AgentHooksModel.Agent.allCases.first { $0.rawValue.lowercased().hasPrefix(parts.count > 1 ? parts[1] : "") }
+          ?? .claude
+        if parts.count > 2, parts[2] == "project" { model.scope = .project }
+      } else {
+        DebugSnapshot.failures.append("\(action): the sheet didn't open")
+      }
+      done()
+    } else if action == "agent-sheet-apply" {
+      guard let sheet = DebugSnapshot.agentSheet else {
+        DebugSnapshot.failures.append("agent-sheet-apply: no Agent Integration sheet is up")
+        return done()
+      }
+      // What its Install/Remove button does.
+      sheet.model.applyInBackground { outcome in
+        DebugSnapshot.results["agent-sheet"] = "\(outcome)"
+        if outcome == .written { sheet.close() }
+        done()
+      }
+    } else if action == "agent-sheet-close" {
+      DebugSnapshot.agentSheet?.close()
       done()
     } else if action.hasPrefix("sheet-button=") {
       let title = String(action.dropFirst(13))
@@ -605,6 +636,13 @@ extension MainWindowController {
         ]
       },
       "sheets": NSApp.windows.compactMap(\.attachedSheet).map { Self.debugContents(of: $0) },
+      "agentSheet": DebugSnapshot.agentSheet.map { sheet -> [String: Any] in
+        let model = sheet.model
+        return [
+          "part": model.part.rawValue, "agent": model.agent.rawValue, "installed": model.installed,
+          "outdated": model.outdated, "path": model.path, "diff": model.diff, "error": model.error ?? NSNull(),
+        ]
+      } ?? NSNull(),
       "taskSheet": DebugSnapshot.taskSheet.map { sheet -> [String: Any] in
         let model = sheet.model
         return [

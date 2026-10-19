@@ -169,9 +169,11 @@ public enum GitCLI {
     let result: ChildProcess.Output
     do {
       // In its own process group, so a timeout also stops hooks, ssh and
-      // LFS processes the command started.
+      // LFS processes the command started. Never checking signatures:
+      // `log.showSignature` (a repository's own, too) makes log, show and
+      // reflog run `gpg.program` and print its lines among their output.
       result = try ChildProcess.run(
-        git, arguments, in: directory, environment: mergedEnvironment(extra: environment),
+        git, alwaysArguments + arguments, in: directory, environment: mergedEnvironment(extra: environment),
         stdin: stdin, timeout: timeout, onStderr: onOutputLine == nil ? nil : { errLines.feed($0) })
     } catch {
       return .failure(
@@ -202,6 +204,9 @@ public enum GitCLI {
   /// Environment for git: the app's environment with the login PATH, no
   /// interactive prompts (a GUI can't answer them), and English messages so
   /// `classify` can recognise them.
+  /// Before every command's own arguments.
+  static let alwaysArguments = ["-c", "log.showSignature=false"]
+
   static func mergedEnvironment(extra: [String: String]) -> [String: String] {
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = LoginShell.loginPath()
