@@ -66,7 +66,9 @@
         let current = lines
         lock.unlock()
         if current.count >= count { return current }
-        if arrived.wait(timeout: .now() + 5) == .timedOut { return current }
+        // Generous: the whole suite runs at once, and this only bounds a
+        // failure.
+        if arrived.wait(timeout: .now() + 20) == .timedOut { return current }
       }
     }
   }
@@ -107,19 +109,71 @@
       #expect(lines[0]["result"]?["protocolVersion"] == "2025-06-18")
       #expect(lines[0]["result"]?["serverInfo"]?["version"] == "1.2.3")
       #expect(lines[0]["result"]?["capabilities"]?["tools"] != nil)
+      #expect(lines[0]["result"]?["resultType"] == nil)
       #expect(lines[1]["result"]?["protocolVersion"] == .string(MCPServer.protocolVersions[0]))
     }
 
-    @Test func discoverListsEveryVersion() {
+    /// `_meta` naming the 2026-07-28 revision, as a stateless client sends.
+    private let stateless =
+      #""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#
+
+    @Test func discoverDescribesTheStatelessRevision() {
       let (server, output, _, _) = makeServer()
-      send(server, #"{"jsonrpc":"2.0","id":"d","method":"server/discover"}"#)
+      send(server, #"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"# + stateless + "}}")
       let result = output.wait(for: 1)[0]["result"]
-      guard case .array(let versions)? = result?["supportedVersions"] else {
-        Issue.record("no versions")
-        return
-      }
-      #expect(versions.contains(.string(MCPServer.statelessVersion)))
-      #expect(versions.contains("2025-11-25"))
+      #expect(result?["supportedVersions"] == ["2026-07-28"])
+      #expect(result?["resultType"] == "complete")
+      #expect(result?["capabilities"]?["tools"] != nil)
+      #expect(result?["ttlMs"]?.int != nil)
+      #expect(result?["cacheScope"] == "private")
+      #expect(result?["_meta"]?["io.modelcontextprotocol/serverInfo"]?["name"] == "impulse")
+      #expect(result?["instructions"]?.string != nil)
+      // Not initialize's fields.
+      #expect(result?["protocolVersion"] == nil)
+      #expect(result?["serverInfo"] == nil)
+    }
+
+    @Test func statelessRequestsGetTheirRevisionsShape() {
+      let (server, output, _, _) = makeServer()
+      send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"# + stateless + "}}")
+      send(
+        server,
+        #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tasks","arguments":{},"# + stateless
+          + "}}")
+      send(
+        server,
+        #"{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01","io.modelcontextprotocol/clientCapabilities":{}}}}"#
+      )
+      send(
+        server,
+        #"{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#
+      )
+      // A session's requests keep the older shape.
+      send(server, #"{"jsonrpc":"2.0","id":5,"method":"tools/list"}"#)
+      let lines = output.wait(for: 5)
+      let byID = Dictionary(lines.map { ($0["id"]?.int ?? 0, $0) }, uniquingKeysWith: { a, _ in a })
+      #expect(byID[1]?["result"]?["resultType"] == "complete")
+      #expect(byID[1]?["result"]?["ttlMs"]?.int == MCPServer.toolsTTL)
+      #expect(byID[1]?["result"]?["cacheScope"] == "private")
+      #expect(byID[2]?["result"]?["resultType"] == "complete")
+      #expect(byID[2]?["result"]?["isError"] == false)
+      #expect(byID[2]?["result"]?["_meta"]?["io.modelcontextprotocol/serverInfo"]?["version"] == "1.2.3")
+      #expect(byID[3]?["error"]?["code"] == -32022)
+      #expect(byID[3]?["error"]?["data"]?["requested"] == "2099-01-01")
+      #expect(byID[3]?["error"]?["data"]?["supported"] == ["2026-07-28"])
+      #expect(byID[4]?["error"]?["code"] == -32602)
+      #expect(byID[5]?["result"]?["tools"] != nil)
+      #expect(byID[5]?["result"]?["resultType"] == nil)
+      #expect(byID[5]?["result"]?["ttlMs"] == nil)
+    }
+
+    @Test func noOutputSchema() {
+      // With one, clients reject a successful result without structured
+      // content, and "Done." has none.
+      for tool in MCPTools.all { #expect(tool.listing["outputSchema"] == nil, "\(tool.name)") }
+      let result = MCPServer.toolResult(ControlResponse(ok: true))
+      #expect(result["structuredContent"] == nil)
+      #expect(result["isError"] == false)
     }
 
     @Test func notificationsGetNoAnswerAndUnknownMethodsAnError() {
@@ -243,6 +297,13 @@
       let (refusing, refusals, _, _) = makeServer { _ in .success(ControlResponse(ok: false, message: "Not in a git repository.")) }
       send(refusing, #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tasks"}}"#)
       #expect(refusals.wait(for: 1)[0]["result"]?["isError"] == true)
+    }
+
+    @Test func finishLetsAToolListGoOut() {
+      let (server, output, _, _) = makeServer()
+      send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+      server.finish()
+      #expect(output.wait(for: 1).first?["id"] == 1)
     }
 
     @Test func aCancelledCallHangsUpAndGetsNoAnswer() {

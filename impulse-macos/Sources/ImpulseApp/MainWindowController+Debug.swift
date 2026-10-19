@@ -366,6 +366,8 @@ extension MainWindowController {
   ///     write-file=<path>|<text>        rewrite a file in place, as `>` does
   ///     read-file=<label>|<path>        report a file's text (null if missing)
   ///     sheet-button=<title>            press a button in a sheet (or a window)
+  ///     task-sheet-create, task-sheet-cancel
+  ///                                     answer the New Task sheet that's up
   ///     toast-action=<text>             press the action of the last toast with text
   ///     save-session                    save the session now (needs
   ///                                     --impulse-snapshot-persist)
@@ -410,6 +412,13 @@ extension MainWindowController {
       let label = String(action[action.index(action.startIndex, offsetBy: 10)..<bar])
       let path = debugPath(String(action[action.index(after: bar)...]))
       DebugSnapshot.results[label] = (try? String(contentsOfFile: path, encoding: .utf8)) ?? NSNull()
+      done()
+    } else if action == "task-sheet-create" || action == "task-sheet-cancel" {
+      if let sheet = DebugSnapshot.taskSheet {
+        action == "task-sheet-create" ? sheet.create() : sheet.cancel()
+      } else {
+        DebugSnapshot.failures.append("\(action): no New Task sheet is up")
+      }
       done()
     } else if action.hasPrefix("sheet-button=") {
       let title = String(action.dropFirst(13))
@@ -596,6 +605,14 @@ extension MainWindowController {
         ]
       },
       "sheets": NSApp.windows.compactMap(\.attachedSheet).map { Self.debugContents(of: $0) },
+      "taskSheet": DebugSnapshot.taskSheet.map { sheet -> [String: Any] in
+        let model = sheet.model
+        return [
+          "title": model.draft.title, "base": model.draft.base, "command": model.draft.command,
+          "brief": model.draft.brief, "requestedBy": model.agentRequest?.requestedBy ?? NSNull(),
+          "branch": model.branch, "error": model.error ?? NSNull(),
+        ]
+      } ?? NSNull(),
       "results": Self.debugJSONSafe(DebugSnapshot.results),
       "failures": DebugSnapshot.failures,
     ]

@@ -57,7 +57,11 @@ extension MainWindowController {
 
     case "unsaved":
       let root = workspaceRoot(of: terminal, cwd: cwd)
-      let editors = workspaceOf(terminal).map { tabManager.editors(inWorkspace: $0.id) } ?? allEditorTabs
+      // Outside a workspace (the Quick Terminal): the window's editors
+      // under the caller's folder.
+      let editors =
+        workspaceOf(terminal).map { tabManager.editors(inWorkspace: $0.id) }
+        ?? allEditorTabs.filter { $0.filePath?.hasPrefix(root + "/") == true }
       let files = editors.filter(\.isModified).compactMap { editor -> UnsavedList.File? in
         guard let path = editor.filePath else { return nil }
         return UnsavedList.File(path: Self.relative(path, to: root), changedOnDisk: editor.changedOnDisk)
@@ -217,12 +221,22 @@ extension MainWindowController {
       return .failure(ToolFailure(message: "Reading other terminals is turned off in Impulse's settings (agent_tool_terminal_output)."))
     }
     // The caller's workspace, or the window; the Quick Terminal is in no
-    // window's tabs, so it's never among them.
-    let terminals: [TerminalTab] = {
-      if scope == .workspace, let workspace = workspaceOf(caller) { return tabManager.terminals(inWorkspace: workspace.id) }
-      if scope == .workspace { return tabManager.terminals(inWorkspace: tabManager.activeWorkspace.id) }
-      return tabManager.workspaces.flatMap { tabManager.terminals(inWorkspace: $0.id) }
-    }()
+    // window's tabs, so it's never among them (and, in no workspace, sees
+    // none unless the setting says the window).
+    let terminals: [TerminalTab]
+    switch scope {
+    case .workspace:
+      guard let workspace = workspaceOf(caller) else {
+        return .failure(
+          ToolFailure(
+            message:
+              "This terminal isn't in a workspace, so there are no terminals beside it to read (agent_tool_terminal_output is workspace)."
+          ))
+      }
+      terminals = tabManager.terminals(inWorkspace: workspace.id)
+    case .window, .off:
+      terminals = tabManager.workspaces.flatMap { tabManager.terminals(inWorkspace: $0.id) }
+    }
 
     if let id = request.arguments["show"] {
       guard let parts = BlockList.parse(id),

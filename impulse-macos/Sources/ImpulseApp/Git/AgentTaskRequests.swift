@@ -12,7 +12,11 @@ import ImpulseProtocol
 
 extension MainWindowController {
   /// Windows with an agent's New Task sheet up: one request at a time.
-  private static var windowsAskingForTasks = Set<ObjectIdentifier>()
+  /// (Weak, so a window that closed with the sheet up isn't counted.)
+  private static let windowsAskingForTasks = NSHashTable<MainWindowController>.weakObjects()
+  /// Tasks being created without asking, by repository (main checkout),
+  /// which the limit counts before they're in the registry.
+  private static var creatingWithoutAsking: [String: Int] = [:]
 
   /// `impulse tasks new` / create_task.
   func requestTaskFromAgent(
@@ -37,6 +41,7 @@ extension MainWindowController {
     let moving = args["move"] != nil
     let settings = SettingsStore.shared.settings
     let callerWorkspace = terminal.flatMap { tabManager.workspace(ofTerminal: $0) }
+    let callerWorkspaceRoot = callerWorkspace?.root
     let agentName = terminal?.agent?.displayName ?? "An agent"
 
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -45,7 +50,11 @@ extension MainWindowController {
       }
       let main = Self.mainCheckoutRoot(of: callerRoot)
       let registry = TaskRegistryStore.registry(root: main)
-      let fromAgentTask = registry?.record(forPath: callerRoot)?.isFromAgent == true
+      // From inside an agent's task: where the request says it runs, or
+      // the caller's workspace (a `cd` doesn't leave it).
+      let fromAgentTask =
+        registry?.record(forPath: callerRoot)?.isFromAgent == true
+        || callerWorkspaceRoot.flatMap { TaskRegistryStore.record(forPath: $0) }?.isFromAgent == true
       let installed = agent.map { kind in kind.names.first.flatMap { LoginShell.which($0) } != nil } ?? true
       let hasSettings = Self.loadProjectConfig(root: main) != nil
       DispatchQueue.main.async {
@@ -61,7 +70,8 @@ extension MainWindowController {
           setting: AgentTaskPolicy.Setting(setting: settings.agentTaskCreation),
           repositoryTrusted: Trust.shared.isTrusted(main),
           projectTrusted: !hasSettings || self.alreadyTrustedProjectConfig(root: main) != nil,
-          agentTasks: registry?.agentTaskCount ?? 0, limit: settings.agentTaskLimit, fromAgentTask: fromAgentTask,
+          agentTasks: (registry?.agentTaskCount ?? 0) + Self.creatingWithoutAsking[TaskRegistry.canonical(main), default: 0],
+          limit: settings.agentTaskLimit, fromAgentTask: fromAgentTask,
           movesChanges: moving)
         let finished: ((path: String, branch: String)?) -> Void = { [weak self] created in
           guard let created else {
@@ -73,25 +83,50 @@ extension MainWindowController {
         case .refuse(let reason):
           reply(ControlResponse(ok: false, message: reason))
         case .ask:
-          let key = ObjectIdentifier(self)
-          guard !Self.windowsAskingForTasks.contains(key) else {
+          // The sheet branches from the repository the request names: the
+          // caller's workspace when it's that one, else one open on it (a
+          // terminal can be in another repository than its workspace).
+          let mainPath = TaskRegistry.canonical(main)
+          let inRepository = { (workspace: Workspace) in
+            workspace.repository.map { TaskRegistry.canonical(Self.mainCheckoutRoot(of: $0.root)) == mainPath } ?? false
+          }
+          guard
+            let sheetWorkspace = [callerWorkspace].compactMap({ $0 }).first(where: inRepository)
+              ?? self.tabManager.workspaces.first(where: inRepository)
+          else {
+            return reply(
+              ControlResponse(
+                ok: false,
+                message: "\((main as NSString).lastPathComponent) isn't open in this Impulse window, so a task can't be started there. Ask the user to open it."))
+          }
+          guard !Self.windowsAskingForTasks.contains(self) else {
             return reply(ControlResponse(ok: false, message: "Another task request is waiting for the user. Try again once they've answered it."))
           }
-          Self.windowsAskingForTasks.insert(key)
+          Self.windowsAskingForTasks.add(self)
           // The question is in this window: make sure it's seen.
           terminal?.setAttentionFromAgent()
           if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
           self.presentNewTaskSheet(
-            from: callerWorkspace?.id, title: title, command: agent?.names.first ?? "", base: args["base"],
+            from: sheetWorkspace.id, title: title, command: agent?.names.first ?? "", base: args["base"],
             movingChanges: moving, agentRequest: requester, brief: brief
-          ) { created in
-            Self.windowsAskingForTasks.remove(key)
+          ) { [weak self] created in
+            Self.windowsAskingForTasks.remove(self)
             finished(created)
           }
         case .create:
+          let repository = TaskRegistry.canonical(main)
+          Self.creatingWithoutAsking[repository, default: 0] += 1
+          let done = { Self.creatingWithoutAsking[repository, default: 1] -= 1 }
           self.createTaskWithoutAsking(
             title: title, base: args["base"], agent: agent, brief: brief, root: main, requester: requester,
-            finished: finished, failed: { reply(ControlResponse(ok: false, message: "The task wasn't created: \($0)")) })
+            finished: { created in
+              done()
+              finished(created)
+            },
+            failed: {
+              done()
+              reply(ControlResponse(ok: false, message: "The task wasn't created: \($0)"))
+            })
         }
       }
     }
@@ -149,18 +184,20 @@ extension MainWindowController {
   }
 
   /// For agents whose command takes no first prompt: type the brief in (and
-  /// submit it) once the agent is up in `terminal`, giving up after a
-  /// minute and a half.
+  /// submit it) once the agent is up in `terminal`, after the setup script
+  /// has run, giving up after ten minutes.
   static func typeBriefWhenAgentStarts(_ brief: String, into terminal: TerminalTab) {
     var waited = 0.0
     Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak terminal] timer in
       waited += 1
-      guard let terminal, waited < 90 else { return timer.invalidate() }
+      guard let terminal, waited < 600 else { return timer.invalidate() }
       guard terminal.agent != nil, terminal.agentState == .idle || terminal.agentState == .done else { return }
       timer.invalidate()
-      // Its prompt may still be drawing.
+      // Its prompt may still be drawing. Only into the agent: if it quit
+      // meanwhile, the brief mustn't run as a shell command.
       DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak terminal] in
-        terminal?.paste(brief, submit: true)
+        guard let terminal, terminal.agent != nil else { return }
+        terminal.paste(brief, submit: true)
       }
     }
   }
@@ -209,7 +246,7 @@ extension MainWindowController {
     DispatchQueue.global(qos: .userInitiated).async {
       let record = GitClient.repoRoot(forPath: cwd).flatMap { TaskRegistryStore.registry(root: $0) }?.record(named: name)
       DispatchQueue.main.async { [weak self] in
-        guard let self else { return }
+        guard let self else { return completion(.failure(ToolFailure(message: "The window closed."))) }
         guard let record else { return completion(.failure(ToolFailure(message: "impulse tasks: no task named \(name)"))) }
         let canonical = TaskRegistry.canonical(record.path)
         if let open = self.tabManager.workspaces.first(where: { TaskRegistry.canonical($0.root) == canonical }) {
@@ -233,8 +270,9 @@ extension MainWindowController {
     reply: @escaping (ControlResponse) -> Void
   ) {
     let requester = terminal?.agent?.displayName ?? "An agent"
+    let requesterTerminal = terminal?.id
     agentTaskWorkspace(name, cwd: cwd) { [weak self] result in
-      guard let self else { return }
+      guard let self else { return reply(ControlResponse(ok: false, message: "The window closed.")) }
       let workspace: Workspace
       switch result {
       case .success(let found): workspace = found
@@ -244,17 +282,25 @@ extension MainWindowController {
         return reply(ControlResponse(ok: false, message: "Finish Task couldn't open for \(name)."))
       }
       if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
-      model.stopsBeforeLanding = requester
-      model.onStopped = { [weak model] in
-        guard let model else { return }
-        model.onStopped = nil
-        reply(Self.finishAnswer(model))
+      // A run you started yourself goes on as you started it; the agent
+      // hears where it stops.
+      if !model.isRunning {
+        model.stopsBeforeLanding = requester
+        model.requesterTerminal = requesterTerminal
       }
-      caller.onHangUp = { [weak model] in model?.onStopped = nil }
+      let waiter = UUID()
+      model.stopWaiters[waiter] = { model in
+        reply(
+          model.map(Self.finishAnswer)
+            ?? ControlResponse(ok: false, message: "The Finish tab for \(name) was closed before it stopped."))
+      }
+      caller.onHangUp = { [weak model] in model?.stopWaiters[waiter] = nil }
       self.startFinishWhenLoaded(model) { problem in
-        guard let problem else { return }
-        model.onStopped = nil
-        model.stopsBeforeLanding = nil
+        guard let problem, model.stopWaiters.removeValue(forKey: waiter) != nil else { return }
+        if !model.isRunning {
+          model.stopsBeforeLanding = nil
+          model.requesterTerminal = nil
+        }
         reply(ControlResponse(ok: false, message: problem))
       }
     }
@@ -298,7 +344,10 @@ extension MainWindowController {
     let answer = Answer(task: model.name, steps: steps, stoppedAt: stoppedAt, waitingForUser: waiting, finished: finished)
     var text = steps.map { "\($0.step): \($0.status). \($0.text)" }.joined(separator: "\n")
     if waiting {
-      text = "Ready to land; the user lands it from the Finish tab.\n\n" + text
+      text =
+        (model.alreadyMerged
+          ? "Already merged; the user cleans it up from the Finish tab."
+          : "Ready to land; the user lands it from the Finish tab.") + "\n\n" + text
     } else if let stoppedAt {
       text = "Finish stopped at \(stoppedAt). Fix that, then call finish_task again.\n\n" + text
     } else {
@@ -313,7 +362,7 @@ extension MainWindowController {
     _ name: String, cwd: String, caller: ControlCaller, reply: @escaping (ControlResponse) -> Void
   ) {
     agentTaskWorkspace(name, cwd: cwd) { [weak self] result in
-      guard let self else { return }
+      guard let self else { return reply(ControlResponse(ok: false, message: "The window closed.")) }
       let workspace: Workspace
       switch result {
       case .success(let found): workspace = found
@@ -328,10 +377,14 @@ extension MainWindowController {
         return reply(ControlResponse(ok: false, message: "\(name) can't be archived now (Impulse says why in its window)."))
       }
       // It asks first; once it's past the questions the workspace closes
-      // and the folder goes a moment later.
+      // and the folder goes once the archive script (up to two minutes)
+      // has run.
       var closedAt: Date?
       let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
-        guard let self else { return timer.invalidate() }
+        guard let self else {
+          timer.invalidate()
+          return reply(ControlResponse(ok: false, message: "The window closed before \(name) was archived."))
+        }
         if !FileManager.default.fileExists(atPath: root) {
           timer.invalidate()
           return reply(ControlResponse(ok: true, message: "Archived \(name). Its branch is kept, and the user can Undo."))
@@ -339,10 +392,13 @@ extension MainWindowController {
         guard !self.archivingTasks.contains(id) else { return }
         guard self.tabManager.workspace(id) == nil else {
           timer.invalidate()
-          return reply(ControlResponse(ok: false, message: "\(name) wasn't archived: the user declined."))
+          // Declined, or stopped (a repository inside it, say).
+          return reply(
+            ControlResponse(
+              ok: false, message: "\(name) wasn't archived: the user declined, or Impulse said why in its window."))
         }
         closedAt = closedAt ?? Date()
-        if let closedAt, Date().timeIntervalSince(closedAt) > 120 {
+        if let closedAt, Date().timeIntervalSince(closedAt) > 300 {
           timer.invalidate()
           reply(ControlResponse(ok: false, message: "\(name)'s workspace closed, but its folder is still there (Impulse says why in its window)."))
         }

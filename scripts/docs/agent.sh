@@ -8,6 +8,9 @@
 #   claude working   keeps working on a prompt
 #   claude turn      makes one edit (a checkpointed turn), then waits
 #   claude done      finishes a turn without editing anything
+#   claude finish    mid-turn, asks Impulse to finish its own task (as the
+#                    MCP server's finish_task does), saving the answer in
+#                    ~/mcp/finish.txt, then keeps working
 #   claude           sits at an empty prompt
 
 agent=$(basename "$0")
@@ -51,6 +54,18 @@ case "$mode" in
     printf '    2. Yes, and allow edits for the rest of this session\n'
     printf '    3. No, and say what to do instead\n'
     hook Notification '{"message":"Needs your permission to edit src/trails.ts","session_id":"demo-session"}'
+    ;;
+  finish)
+    hook UserPromptSubmit '{"session_id":"demo-session"}'
+    prompt_line "Finish this task."
+    sleep 1
+    step "Finish" "${PWD##*/}"
+    mkdir -p "$HOME/mcp"
+    impulse tasks finish "${PWD##*/}" > "$HOME/mcp/finish.tmp" 2>&1
+    echo "exit $?" >> "$HOME/mcp/finish.tmp"
+    mv "$HOME/mcp/finish.tmp" "$HOME/mcp/finish.txt"
+    detail "$(head -1 "$HOME/mcp/finish.txt")"
+    while true; do sleep 1; done
     ;;
   working)
     hook UserPromptSubmit '{"session_id":"demo-session"}'

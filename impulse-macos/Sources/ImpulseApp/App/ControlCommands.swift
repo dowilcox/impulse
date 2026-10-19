@@ -10,10 +10,12 @@ import ImpulseProtocol
 // The token only names a pane; it isn't proof the request comes from it
 // (any process that sees a shell's environment can read it). So commands
 // that start processes, write files or run git where the caller says
-// (split, tab, checkpoint, creating a file to edit) also need the caller to
-// be the pane's shell or a program started from it. The rest only change
-// what Impulse shows, and keep working with the token alone, from inside
-// tmux too (whose sessions leave the shell's process tree).
+// (split, tab, checkpoint, creating a file to edit, starting, finishing or
+// archiving a task, marking a comment addressed), and reading other
+// terminals' output (blocks), also need the caller to be the pane's shell
+// or a program started from it. The rest only change what Impulse shows or
+// read the caller's workspace, and keep working with the token alone, from
+// inside tmux too (whose sessions leave the shell's process tree).
 
 extension MainWindowController {
   /// The terminal with a control token, if it's in this window.
@@ -121,11 +123,13 @@ extension MainWindowController {
 
     case "split" where !fromShell, "tab" where !fromShell, "checkpoint" where !fromShell,
       "comments" where !fromShell && args["resolve"] != nil,
-      "tasks" where !fromShell && (args["new"] ?? args["finish"] ?? args["archive"]) != nil:
+      "tasks" where !fromShell && (args["new"] ?? args["finish"] ?? args["archive"]) != nil,
+      "blocks" where !fromShell:
       // These start commands, run git or change what's saved, as Impulse
-      // (with whatever privacy access it has), so only the pane's own
-      // shell, or a program it started (an agent's `impulse mcp`), may ask:
-      // not any process that can reach the socket.
+      // (with whatever privacy access it has), or read what other
+      // terminals printed, so only the pane's own shell, or a program it
+      // started (an agent's `impulse mcp`), may ask: not any process that
+      // can reach the socket.
       guard terminal != nil else { return reply(insideTerminal) }
       reply(
         ControlResponse(
@@ -175,7 +179,12 @@ extension MainWindowController {
       guard let cwd else { return reply(insideTerminal) }
       handleTasksCommand(request, cwd: cwd, terminal: terminal, caller: caller, reply: reply)
 
-    case "turns", "comments", "problems", "blocks", "unsaved", "project", "mcp-tools":
+    case "turns", "comments", "problems", "blocks", "unsaved", "project":
+      // They read the caller's workspace: without a pane, there's none.
+      guard terminal != nil else { return reply(insideTerminal) }
+      handleWorkspaceCommand(request, terminal: terminal, cwd: cwd, reply: reply)
+
+    case "mcp-tools":
       handleWorkspaceCommand(request, terminal: terminal, cwd: cwd, reply: reply)
 
     case "checkpoint":

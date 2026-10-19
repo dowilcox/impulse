@@ -30,8 +30,9 @@ public struct MCPTool: Sendable {
       "title": .string(title),
       "description": .string(description),
       "inputSchema": inputSchema,
-      // Every answer is a JSON object; its fields are described above.
-      "outputSchema": ["type": "object"],
+      // No outputSchema: with one, clients reject a result without
+      // structured content, and some answers are only text (an older app's,
+      // or "Done.").
       "annotations": [
         "title": .string(title),
         "readOnlyHint": .bool(readOnly),
@@ -84,7 +85,7 @@ public enum MCPTools {
       """
       The repository's workspaces: its main checkout and every task (a branch in its own worktree folder) \
       Impulse made, with each one's branch, base, how far ahead and behind its base it is, its agent and \
-      that agent's state (working, needs input, finished, idle), its uncommitted files, and the files it \
+      that agent's state (working, needs input, finished, idle), how many files are uncommitted, and the files it \
       changes that your workspace changes too. Yours is marked isCaller. Check it before merging a branch \
       or making sweeping edits: another agent may be working on the same files.
       """,
@@ -340,7 +341,7 @@ public enum MCPTools {
       properties: [
         "title": string("What the task is about; becomes its branch and folder name."),
         "base": string("The branch or commit to start from (default: what New Task would pick, usually origin/main)."),
-        "agent": string("The agent to start there: claude, codex, gemini, aider, opencode, amp, copilot, cursor or goose. Omit for a plain terminal."),
+        "agent": string("The agent to start there: claude, codex, gemini, aider, opencode, amp, copilot, cursor, goose, qwen or crush. Omit for a plain terminal."),
         "brief": string("The agent's first prompt, and the task's description (at most 16 KB)."),
         "move_changes": ["type": "boolean", "description": "Take the main checkout's uncommitted files into the task."],
       ], required: ["title"], waits: true
@@ -364,8 +365,8 @@ public enum MCPTools {
       """
       Open Impulse's Finish for a task and run its steps: everything committed, synced with its base, \
       the project's check passed, then landed (merged and pushed, or pushed for review) and cleaned up. \
-      Landing always waits for the user. Answers with the step it stopped at and why, so you can fix a \
-      failing check and call again.
+      Landing (for a task already merged, the clean-up) always waits for the user. Answers with the step \
+      it stopped at and why, so you can fix a failing check and call again.
       """,
       properties: ["task": string("The task's folder name or branch.")], required: ["task"], destructive: true,
       waits: true

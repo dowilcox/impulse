@@ -676,9 +676,15 @@ def setup_mcp() -> None:
         mcp_call(3, "tools/call", {"name": "list_tasks", "arguments": {}}),
         mcp_call(4, "tools/call", {"name": "get_project_config", "arguments": {}}),
         mcp_call(5, "tools/call", {"name": "create_task", "arguments": {
-            "title": "From the agent", "brief": "Say hello from the task.\nThen stop."}}),
+            "title": "From the agent", "brief": "- Say hello from the task.\n- Then stop."}}),
+        # Answered while create_task waits for the sheet.
+        mcp_call(6, "tools/call", {"name": "notify", "arguments": {"title": "From the smoke check"}}),
+        mcp_call(7, "tools/call", {"name": "list_command_blocks", "arguments": {}}),
+        mcp_call(8, "tools/call", {"name": "list_unsaved_files", "arguments": {}}),
     ]
     write(MCP_DIR / "in.jsonl", "\n".join(lines) + "\n")
+    # How work lands is settled, so an agent's Finish runs up to Land.
+    write(REPO_ROOT / ".git" / "impulse" / "project.toml", '[finish]\nland = "merge"\n')
 
 
 MCP_ACTIONS = [
@@ -686,7 +692,14 @@ MCP_ACTIONS = [
     # Standard input stays open while create_task waits for the sheet.
     f"run=(cat {MCP_DIR / 'in.jsonl'}; sleep 120) | impulse mcp > {MCP_DIR / 'out.jsonl'} &",
     "until=30:sheet", "sleep=2", "dump=asks",
-    "sheet-button=Create Task", f"until=60:file:{WORKTREES / 'from-the-agent'}", "sleep=4", "dump=created",
+    "task-sheet-create", f"until=60:file:{WORKTREES / 'from-the-agent'}", "sleep=4", "dump=created",
+    # The task's agent commits, then, mid-turn, asks to finish its own task:
+    # Finish doesn't wait for it, and stops at Land for the user.
+    "until=20:prompt",
+    f"run=echo 'from the agent' >> README.md && git commit -qam 'Change from the agent' && touch {MCP_DIR / 'committed'}",
+    f"until=20:file:{MCP_DIR / 'committed'}", "until=20:prompt",
+    "run=claude finish", "until=30:agent:working", f"until=180:file:{MCP_DIR / 'finish.txt'}", "sleep=1",
+    "dump=agent-finish",
 ]
 
 
@@ -709,20 +722,39 @@ def check_mcp(run) -> None:
     run.expect("check" in json.dumps(project.get("structuredContent", {})), "get_project_config lists the trusted scripts",
                project)
 
-    asks = run.dump("asks")["sheets"]
-    texts = " ".join(t for sheet in asks for t in sheet["texts"])
-    run.expect("wants to start this task" in texts, "create_task shows New Task, saying an agent asked", asks)
+    sheet = run.dump("asks").get("taskSheet") or {}
+    run.expect(sheet.get("title") == "From the agent" and "smoke-repo" in (sheet.get("requestedBy") or ""),
+               "create_task shows New Task filled in, saying an agent asked", sheet)
+    run.expect(sheet.get("brief", "").startswith("- Say hello"), "the sheet shows the brief", sheet)
 
     created = answers.get(5, {}).get("result", {})
     run.expect(created.get("isError") is False, "create_task answers once the task is created", created)
+    run.expect(created.get("structuredContent", {}).get("workspace", {}).get("name") == "from-the-agent",
+               "create_task answers with the new task", created)
+    notified = answers.get(6, {}).get("result", {})
+    run.expect(notified.get("isError") is False and "structuredContent" not in notified,
+               "a text-only answer (notify) is a plain result", notified)
+    blocks = answers.get(7, {}).get("result", {}).get("structuredContent", {}).get("terminals", [])
+    run.expect(any(t.get("isCaller") for t in blocks), "list_command_blocks lists the caller's terminal", blocks)
+    unsaved = answers.get(8, {}).get("result", {})
+    run.expect(unsaved.get("isError") is False and unsaved.get("structuredContent", {}).get("files") == [],
+               "list_unsaved_files answers", unsaved)
     run.expect((WORKTREES / "from-the-agent").exists(), "the task's worktree is there")
     registry = json.loads((REPO_ROOT / ".git" / "impulse" / "tasks.json").read_text())
     record = next((t for t in registry["tasks"] if t["branch"] == "from-the-agent"), {})
-    run.expect(record.get("createdBy") == "agent", "the task is recorded as an agent's", record)
+    run.expect(record.get("createdBy") == "agent" and "smoke-repo" in (record.get("requestedBy") or ""),
+               "the task is recorded as an agent's, with who asked", record)
     brief = REPO_ROOT / ".git" / "impulse" / "tasks" / "from-the-agent" / "brief.md"
-    run.expect(brief.exists() and "Say hello" in brief.read_text(), "the brief is kept with the task")
+    run.expect(brief.exists() and brief.read_text().startswith("- Say hello"), "the brief is kept with the task")
     status = git(REPO_ROOT, "status", "--porcelain")
     run.expect(status == "", "nothing is written into the main checkout", status)
+
+    finish = (MCP_DIR / "finish.txt").read_text() if (MCP_DIR / "finish.txt").exists() else ""
+    run.expect("Ready to land" in finish and "exit 0" in finish,
+               "an agent finishing its own task, mid-turn, gets to Land", finish)
+    run.expect("is working in this task" not in finish, "Finish doesn't wait for the agent that asked", finish)
+    landed = git(REPO_REMOTE, "log", "main", "--format=%s")
+    run.expect("Change from the agent" not in landed, "landing waits for the user", landed)
 
 
 # ---------------------------------------------------------------------------
@@ -769,9 +801,10 @@ SCENARIOS = [
     {"name": "tasks", "about": "new task, Finish Task (merge), archive and Undo, nested repositories",
      "session": folder_session(REPO_ROOT), "setup": setup_tasks, "actions": TASK_ACTIONS, "check": check_tasks,
      "timeout": 360},
-    {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet",
+    {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet, "
+                             "an agent finishing its own task",
      "session": folder_session(REPO_ROOT), "setup": setup_mcp, "actions": MCP_ACTIONS, "check": check_mcp,
-     "timeout": 240},
+     "timeout": 360},
     {"name": "session", "about": "workspaces, tabs, splits, editors and output survive a relaunch",
      "session": ONE, "persist": True, "actions": SESSION_ACTIONS, "relaunch": ["sleep=4", "dump=after"],
      "check": check_session},

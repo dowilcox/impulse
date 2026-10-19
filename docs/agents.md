@@ -223,7 +223,7 @@ The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environ
 
 ### Install hooks
 
-![The Agent Hooks sheet with Claude Code and "All projects" selected, "Not installed ~/.claude/settings.json", and a preview of the lines that will be added](images/agents-hooks-sheet.png)
+![The Agent Integration sheet on Hooks, with Claude Code and "All projects" selected, "Not installed ~/.claude/settings.json", and a preview of the lines that will be added](images/agents-hooks-sheet.png)
 
 1. Run **Install Agent Hooks…** from the command palette, or click **Agent hooks give exact status…** at the bottom of the agent list. The Agent Integration sheet opens on **Hooks** (its other half sets up [Impulse's MCP server](#impulses-mcp-server)).
 2. Choose **Claude Code** or **Codex**.
@@ -360,7 +360,7 @@ The path after `:-` is the app that installed it. If you move Impulse, the sheet
 
 | Tool                              | What the agent gets                                                                                                                                                                                                                   | Same as                               |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `list_tasks`                      | The repository's workspaces: branches, bases, agents and their state, uncommitted files, files shared with the caller.                                                                                                                | `impulse tasks`                       |
+| `list_tasks`                      | The repository's workspaces: branches, bases, agents and their state, how many files are uncommitted, files shared with the caller.                                                                                                   | `impulse tasks`                       |
 | `get_task`                        | One task: also its changed files, commits ahead of its base, whether it's merged, its ports and its brief.                                                                                                                            | `impulse tasks show`                  |
 | `wait_for_task`                   | Waits until a task's agent stops working, or until its timeout (50 seconds unless it asks for longer, at most 10 minutes), then says which.                                                                                           | `impulse tasks wait`                  |
 | `create_task`                     | Asks for a new task, with an agent started on a brief. See [Tasks agents start](tasks.md#tasks-agents-start).                                                                                                                         | `impulse tasks new`                   |
@@ -377,7 +377,7 @@ The path after `:-` is the app that installed it. If you move Impulse, the sheet
 | `set_status`, `notify`            | For agents without Impulse's hooks: their state in the tab and agent list, and a notification. Where hooks report the agent's state, `set_status` changes nothing.                                                                    | `impulse status`, `impulse notify`    |
 | `create_checkpoint`, `list_turns` | A snapshot of the repository, and the agent's recorded turns with their checkpoint refs. Restoring stays in Impulse.                                                                                                                  | `impulse checkpoint`, `impulse turns` |
 
-The tools that start or change something (`create_task`, `finish_task`, `archive_task`, `resolve_review_comment`, `create_checkpoint`) only work when the server runs in the pane's own process tree, like `impulse split`; inside tmux the agent gets the rest. Tools that wait report progress every 15 seconds, and stop waiting when the agent cancels them.
+The tools that start or change something (`create_task`, `finish_task`, `archive_task`, `resolve_review_comment`, `create_checkpoint`), and the two that read other terminals' output (`list_command_blocks`, `get_block_output`), only work when the server runs in the pane's own process tree, like `impulse split`; inside tmux the agent gets the rest. Tools that wait report progress every 15 seconds, and stop waiting when the agent cancels them.
 
 Nothing an agent asks for gets past [workspace trust](getting-started.md) or the project file's trust, and Impulse still never calls a model: the server only answers the agent.
 

@@ -304,6 +304,7 @@ struct TaskSheetView: View {
         Spacer()
         ChromeButton(title: "Cancel", kind: .secondary) { onCancel() }
           .keyboardShortcut(.cancelAction)
+          .disabled(model.isCreating)
         ChromeButton(
           title: model.isCreating ? "Creating…" : "Create Task", icon: .gitBranchPlus, kind: .primary
         ) { onCreate() }
@@ -454,21 +455,30 @@ extension MainWindowController {
 
     let palette = windowModel.palette
     let sheet = NSWindow.themedSheet(palette: palette)
+    let cancel: () -> Void = { [weak window, weak sheet] in
+      // Once Create is under way the task gets made: Cancel (or Esc) can't
+      // take it back, and mustn't say it was declined.
+      guard !model.isCreating else { return }
+      DebugSnapshot.taskSheet = nil
+      if let sheet { window?.endSheet(sheet) }
+      onOutcome?(nil)
+    }
+    let create: () -> Void = { [weak self, weak window, weak sheet] in
+      self?.createTask(model) {
+        DebugSnapshot.taskSheet = nil
+        if let sheet { window?.endSheet(sheet) }
+      }
+    }
+    if DebugSnapshot.isActive { DebugSnapshot.taskSheet = (model, create, cancel) }
     window.beginThemedSheet(
       sheet, palette: palette,
       content: TaskSheetView(
         model: model,
-        onCancel: { [weak window, weak sheet] in
-          if let sheet { window?.endSheet(sheet) }
-          onOutcome?(nil)
-        },
-        onCreate: { [weak self, weak window, weak sheet] in
-          self?.createTask(model) {
-            if let sheet { window?.endSheet(sheet) }
-          }
-        },
+        onCancel: cancel,
+        onCreate: create,
         onFetch: { [weak self] in self?.fetchForTaskSheet(model) },
         onSetUp: { [weak self, weak window, weak sheet] in
+          DebugSnapshot.taskSheet = nil
           if let sheet { window?.endSheet(sheet) }
           onOutcome?(nil)
           self?.openProjectSetup(from: workspaceID)

@@ -3,6 +3,7 @@
   import Testing
 
   @testable import ImpulseKit
+  import ImpulseProtocol
 
   /// What Impulse answers agents with (the MCP tools and their `impulse`
   /// commands), whether it starts a task an agent asks for, and how it
@@ -160,8 +161,8 @@
       let claude = KnownAgents.builtIn.first { $0.id == "claude" }!
       let aider = KnownAgents.builtIn.first { $0.id == "aider" }!
       let path = "/repo/.git/impulse/tasks/fix it/brief.md"
-      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .zsh) == #"claude "$(cat '/repo/.git/impulse/tasks/fix it/brief.md')""#)
-      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .fish) == "claude (cat '/repo/.git/impulse/tasks/fix it/brief.md' | string collect)")
+      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .zsh) == #"claude -- "$(cat '/repo/.git/impulse/tasks/fix it/brief.md')""#)
+      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .fish) == "claude -- (cat '/repo/.git/impulse/tasks/fix it/brief.md' | string collect)")
       #expect(AgentTaskPolicy.command(agent: claude, briefPath: nil, shell: .zsh) == "claude")
       #expect(AgentTaskPolicy.command(agent: aider, briefPath: path, shell: .zsh) == nil, "typed in once it's up")
     }
@@ -229,6 +230,45 @@
       #expect((try? AgentMCPInstaller.installingCodexMCP(into: theirs, fallbackCLI: cli).get()) == nil)
       #expect(AgentMCPInstaller.removingCodexMCP(from: theirs) == nil)
       #expect(AgentMCPInstaller.codexStatus(theirs, fallbackCLI: cli) == .outdated)
+    }
+
+    @Test func codexServerDefinedOtherwiseIsLeftAlone() throws {
+      // Another spelling of the table, a dotted key, or a key in
+      // [mcp_servers]: a second definition would stop Codex reading the file.
+      for theirs in [
+        "[mcp_servers.\"impulse\"]\ncommand = \"impulse\"\n",
+        "[ mcp_servers.impulse ] # mine\ncommand = \"impulse\"\n",
+        "mcp_servers.impulse.command = \"impulse\"\n",
+        "[mcp_servers]\nimpulse = { command = \"impulse\" }\n",
+      ] {
+        #expect((try? AgentMCPInstaller.installingCodexMCP(into: theirs, fallbackCLI: cli).get()) == nil, "\(theirs)")
+        #expect(AgentMCPInstaller.codexStatus(theirs, fallbackCLI: cli) == .outdated, "\(theirs)")
+        #expect(AgentMCPInstaller.removingCodexMCP(from: theirs) == nil, "\(theirs)")
+      }
+      // Other servers are someone else's business.
+      let others = "[mcp_servers]\nimpulsive = { command = \"x\" }\n\n[mcp_servers.docs]\ncommand = \"d\"\n"
+      #expect(AgentMCPInstaller.codexStatus(others, fallbackCLI: cli) == .notInstalled)
+      #expect((try? AgentMCPInstaller.installingCodexMCP(into: others, fallbackCLI: cli).get()) != nil)
+    }
+
+    @Test func codexTableInACRLFFile() throws {
+      let original = "model = \"o3\"\r\n"
+      let installed = try AgentMCPInstaller.installingCodexMCP(into: original, fallbackCLI: cli).get()
+      let crlf = installed.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r\n")
+      #expect(AgentMCPInstaller.codexStatus(crlf, fallbackCLI: cli) == .installed)
+      let removed = try #require(AgentMCPInstaller.removingCodexMCP(from: crlf))
+      #expect(!removed.contains("mcp_servers"))
+      #expect(removed.hasPrefix("model = \"o3\""))
+      // Installing again doesn't add a second table.
+      let again = try AgentMCPInstaller.installingCodexMCP(into: crlf, fallbackCLI: "/elsewhere").get()
+      #expect(again.components(separatedBy: "[mcp_servers.impulse]").count == 2)
+    }
+
+    @Test func createTaskNamesEveryKnownAgent() {
+      let description = MCPTools.named("create_task")?.inputSchema["properties"]?["agent"]?["description"]?.string ?? ""
+      for agent in KnownAgents.builtIn {
+        #expect(description.contains(agent.id), "\(agent.id)")
+      }
     }
   }
 #endif

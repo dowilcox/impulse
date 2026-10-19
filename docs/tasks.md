@@ -249,7 +249,7 @@ impulse tasks new Fix elevation units --agent claude --brief-file brief.md
 
 1. **You're asked.** Impulse opens New Task in the agent's window, filled in from the request, with a line naming who asked ("Claude Code in trailhead (main checkout) wants to start this task.") and the brief under **Start**. Change anything (title, From, agent, brief), then **Create Task**, or **Cancel**. The agent's terminal asks for attention while the sheet waits, and a second request gets "Another task request is waiting for the user." until you answer.
 2. **The task is made as yours would be.** The same folder, copies, slot and values, trust and setup script as [Create Task](#what-happens-when-you-click-create-task), in the same order. A request never trusts anything.
-3. **The agent starts on its brief.** The brief is saved as `.git/impulse/tasks/<task>/brief.md`, outside the task's folder so it's never committed. Claude Code and Codex start with it as their first prompt, read from that file (`claude "$(cat …/brief.md)"`), so a long brief isn't typed into the shell or kept in its history. Other agents start as usual, and the brief is typed in once Impulse sees them.
+3. **The agent starts on its brief.** The brief is saved as `.git/impulse/tasks/<task>/brief.md`, outside the task's folder so it's never committed. Claude Code and Codex start with it as their first prompt, read from that file (`claude -- "$(cat …/brief.md)"`), so a long brief isn't typed into the shell or kept in its history. Other agents start as usual, and the brief is typed in once Impulse sees them.
 4. **The agent hears what happened.** The new task, as `impulse tasks show` describes it, with your changes; or "The user declined: no task was created."
 
 The task's row, on hover, says who it was started for ("started for Claude Code in trailhead"), and `impulse tasks` (`list_tasks`) shows it and the brief's first line. `impulse tasks show <task>` (`get_task`) shows the whole brief.
@@ -266,7 +266,7 @@ Whatever the setting, the sheet always comes up when the request takes the main 
 
 ### Finishing and archiving from an agent
 
-`impulse tasks finish <task>` (`finish_task`) opens the task's Finish tab and runs it: commit, sync and check, then it stops at **Land**, which says the agent asked and waits for you to click **Continue**. The agent hears each step's outcome, so a failing check comes back to it to fix. The first Finish in a repository asks how work lands there, so the agent's waits for you to choose.
+`impulse tasks finish <task>` (`finish_task`) opens the task's Finish tab and runs it: commit, sync and check, then it stops at **Land**, which says the agent asked and waits for you to click **Continue**. For a task that's already merged there's nothing to land, so it stops before updating the main checkout and archiving, until you click **Clean Up**. The agent hears each step's outcome, so a failing check comes back to it to fix. It can be the agent working in that task: Finish waits for any other agent working there, not for the one that asked. The first Finish in a repository asks how work lands there, so the agent's waits for you to choose.
 
 `impulse tasks archive <task>` (`archive_task`) runs [Archive Task…](#archive-the-task), with its questions and its Undo, and tells the agent whether it was archived.
 

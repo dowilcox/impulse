@@ -48,7 +48,7 @@ if arguments.first == "mcp" {
   while let line = readLine(strippingNewline: true) {
     server.handle(line: Data(line.utf8))
   }
-  server.cancelAll()
+  server.finish()
   exit(0)
 }
 
@@ -123,9 +123,14 @@ if request.command == "open", let path = request.arguments["path"] {
 // request (the app may not be able to read the file, and it shouldn't be
 // read twice).
 if let path = request.arguments.removeValue(forKey: "briefFile") {
-  guard let input = FileHandle(forReadingAtPath: path),
-    let data = try? input.read(upToCount: ControlProtocol.briefLimit + 1)
-  else { fail("impulse tasks new: couldn't read \(path)") }
+  guard let input = FileHandle(forReadingAtPath: path) else { fail("impulse tasks new: couldn't read \(path)") }
+  let data: Data
+  do {
+    // Nil at the end of the file: an empty brief.
+    data = try input.read(upToCount: ControlProtocol.briefLimit + 1) ?? Data()
+  } catch {
+    fail("impulse tasks new: couldn't read \(path)")
+  }
   guard data.count <= ControlProtocol.briefLimit else { fail("impulse tasks new: \(path) holds more than 16 KB") }
   request.arguments["brief"] = String(decoding: data, as: UTF8.self)
 }

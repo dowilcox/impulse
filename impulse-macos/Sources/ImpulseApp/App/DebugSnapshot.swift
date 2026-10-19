@@ -46,6 +46,9 @@ enum DebugSnapshot {
   static var toastLog: [Toast] = []
   static var results: [String: Any] = [:]
   static var failures: [String] = []
+  /// The New Task sheet that's up (its SwiftUI content is out of the
+  /// accessibility walk's reach): what it holds, and its buttons.
+  static var taskSheet: (model: TaskSheetModel, create: () -> Void, cancel: () -> Void)?
   /// The action running now (for reports).
   private static var currentAction = "launch"
 

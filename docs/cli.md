@@ -288,7 +288,7 @@ impulse blocks show <id> [--lines <n>]
 
 The terminals in this workspace, each with an id, its title and folder, its agent, and its last 20 [command blocks](terminal.md#command-blocks): the block's id (`3f2a91c0:1042`), its command, folder, exit status, and whether it's still running. `show` prints one block's output, its last 200 lines unless `--lines` says otherwise (at most 2,000).
 
-Settings ▸ Terminal ▸ Agents ▸ **Agents may read terminal output** (`agent_tool_terminal_output`) decides which terminals these see: the workspace's (the default), the window's, or none, in which case `impulse blocks` refuses. The Quick Terminal is never included.
+Settings ▸ Terminal ▸ Agents ▸ **Agents may read terminal output** (`agent_tool_terminal_output`) decides which terminals these see: the workspace's (the default), the window's, or none, in which case `impulse blocks` refuses. The Quick Terminal is never included, and isn't in a workspace, so from it `blocks` sees nothing unless the setting is the window's. Terminal output can hold secrets, so `blocks` only works from the pane's own shell or a program started from it, not inside tmux.
 
 ### `impulse unsaved`
 
@@ -337,7 +337,7 @@ Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does 
 
 ## Inside tmux or screen
 
-`IMPULSE_PANE_TOKEN` names a pane, but any program that can see a shell's environment could read it. So the commands that start programs, run git or change what's saved where they're asked to also check where the request comes from: `split`, `tab`, `checkpoint`, `tasks new`, `tasks finish`, `tasks archive`, `comments resolve`, and `edit` of a file that doesn't exist yet only work from the pane's own shell or a program started from it (an agent's `impulse mcp` is one). The others (`open`, `edit` of an existing file, `review`, `notify`, `status`, `tasks`, `turns`, `comments`, `problems`, `blocks`, `unsaved`, `project` and `hook`) only need the token.
+`IMPULSE_PANE_TOKEN` names a pane, but any program that can see a shell's environment could read it. So the commands that start programs, run git or change what's saved where they're asked to, and the one that reads other terminals' output, also check where the request comes from: `split`, `tab`, `checkpoint`, `tasks new`, `tasks finish`, `tasks archive`, `comments resolve`, `blocks`, and `edit` of a file that doesn't exist yet only work from the pane's own shell or a program started from it (an agent's `impulse mcp` is one). The others (`open`, `edit` of an existing file, `review`, `notify`, `status`, `tasks`, `turns`, `comments`, `problems`, `unsaved`, `project` and `hook`) only need the token.
 
 tmux and screen run their shells in a server of their own, not under the shell you started them from, and their panes keep the token of the Impulse pane the server started in. Inside them:
 
