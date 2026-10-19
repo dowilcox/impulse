@@ -108,8 +108,13 @@ public enum AgentMCPInstaller {
       "command = \"sh\"",
       "args = [\"-c\", \(quoted(launcher(fallbackCLI: fallbackCLI)))]",
       "env_vars = [\(forwardedVariables.map(quoted).joined(separator: ", "))]",
+      "tool_timeout_sec = \(codexToolTimeout)",
     ].joined(separator: "\n") + "\n"
   }
+
+  /// Codex gives up on a tool call after 5 minutes (progress doesn't reset
+  /// it), and create_task and finish_task wait for the user: an hour.
+  static let codexToolTimeout = 3600
 
   /// A line without its line ending, surrounding blanks and trailing
   /// comment (a `#` outside quotes is rare enough in these lines to cut at).

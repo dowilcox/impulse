@@ -73,7 +73,8 @@ public enum MCPTools {
   }
 
   /// The longest `wait_for_task` waits by default and at most, in seconds.
-  /// The default stays under Codex's 60-second tool timeout.
+  /// The default stays under the MCP SDKs' 60-second request timeout, for
+  /// agents that don't let progress extend it.
   public static let defaultWait = 50
   public static let maxWait = 600
 

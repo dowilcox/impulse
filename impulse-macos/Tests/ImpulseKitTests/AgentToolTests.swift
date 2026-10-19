@@ -221,6 +221,7 @@
       #expect(installed.hasPrefix(original))
       #expect(installed.contains("[mcp_servers.impulse]\ncommand = \"sh\""))
       #expect(installed.contains(#"env_vars = ["IMPULSE_SOCKET", "IMPULSE_PANE_TOKEN", "IMPULSE_CLI"]"#))
+      #expect(installed.contains("\ntool_timeout_sec = 3600\n"), "create_task waits for the user longer than Codex's 5 minutes")
       #expect(AgentMCPInstaller.codexStatus(installed, fallbackCLI: cli) == .installed)
       #expect(AgentMCPInstaller.codexStatus(installed, fallbackCLI: "/elsewhere") == .outdated)
       #expect(AgentMCPInstaller.removingCodexMCP(from: installed) == original)
