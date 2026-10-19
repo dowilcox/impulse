@@ -1,6 +1,6 @@
-# MCP server for tasks: plan
+# MCP server: plan
 
-Plan, proposed 19 Oct 2026; nothing decided or built yet. Unlike the plans in `docs/plans/`, this one is published with the docs so it can be read and discussed in one place. **Nothing described here ships in Impulse today**: for what agents can do now, see [Agents](agents.md) and [`impulse tasks`](cli.md#impulse-tasks).
+Plan, proposed 19 Oct 2026, extended the same day beyond tasks; nothing decided or built yet. Unlike the plans in `docs/plans/`, this one is published with the docs so it can be read and discussed in one place. **Nothing described here ships in Impulse today**: for what agents can do now, see [Agents](agents.md) and [`impulse tasks`](cli.md#impulse-tasks).
 
 Impulse already tells agents about each other's work. The `impulse tasks` command lists a repository's workspaces, and Claude Code hooks push notes into a session (a summary at start, shared files, a question before merging a moving branch). Two things are missing:
 
@@ -9,14 +9,17 @@ Impulse already tells agents about each other's work. The `impulse tasks` comman
 
 The [Model Context Protocol](https://modelcontextprotocol.io) (MCP) is how every agent Impulse supports takes tools from outside: Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor Agent, Goose, opencode and Amp all load MCP servers. An Impulse MCP server would give each of them the same typed tools: list the tasks, look at one, wait for one, and **create one**, with the agent's brief and an agent already started in it.
 
+Tasks come first, but they aren't the only thing Impulse knows that an agent's shell can't easily find out. Impulse already has three ways to hand an agent something by typing it into its prompt: **Send Comments to …** in [Review](review.md#sending-comments-to-an-agent), **Send to agent** on a [command block](terminal.md#sending-a-block-to-an-agent) and **Fix with Agent** in [Problems](editor.md#problems). Each becomes a tool the agent can call when it needs it, as structured data, while you can still send. [Beyond tasks](#beyond-tasks) covers those and a few smaller tools.
+
 ## Goals
 
 1. Any MCP-capable agent running in an Impulse terminal can list the repository's tasks and read one task's state as structured data.
 2. An agent can ask Impulse to create a task, optionally starting an agent there with a brief, through the same steps New Task… takes (copies, slot and values, trust, setup script).
 3. You stay in charge: by default nothing is created until you approve it in Impulse, and nothing an agent asks for gets past workspace trust or the project file's trust.
 4. One behavior, two doors: every MCP tool is a control-socket command the `impulse` CLI can also send, so agents without MCP (and your scripts) get the same thing.
+5. An agent can read what Impulse knows about the work in front of it: your review comments, the language servers' problems, the output of commands in the panes beside it, the files you haven't saved, and the project's trusted scripts. It can also hand its work back to you (open a file or a review) and report its state when it has no hooks.
 
-Not goals: Impulse calling a model (it [never does](#what-stays-the-same)), messages typed into another agent's terminal, anything that needs a hosting platform, and an MCP server reachable from outside Impulse terminals.
+Not goals: Impulse calling a model (it [never does](#what-stays-the-same)), messages typed into another agent's terminal, anything that needs a hosting platform, an MCP server reachable from outside Impulse terminals, and anything listed under [Left out on purpose](#left-out-on-purpose).
 
 ## What exists to build on
 
@@ -32,6 +35,12 @@ Not goals: Impulse calling a model (it [never does](#what-stays-the-same)), mess
 | [`AgentHookInstaller`](../impulse-macos/Sources/ImpulseKit/Agents/AgentHookInstaller.swift) and the Hooks sheet | Already edits `~/.claude/settings.json`, `.claude/settings.local.json` and `~/.codex/config.toml` with a preview, a backup, a changed-since-preview check and Remove. Registering an MCP server is the same kind of edit.         |
 | [`KnownAgents`](../impulse-macos/Sources/ImpulseKit/Agents/KnownAgents.swift)                                   | Stable agent ids (`claude`, `codex`, `gemini`, …): the set an MCP request may name, instead of an arbitrary command line.                                                                                                         |
 | [`ShellQuoting`](../impulse-macos/Sources/ImpulseKit/Completion/ShellQuoting.swift)                             | Quoting for the new terminal's shell, so a brief passed to `claude "…"` can't break out of its argument.                                                                                                                          |
+| [`ReviewComment`](../impulse-macos/Sources/ImpulseKit/Review/ReviewComments.swift) and `ReviewCommentStore`     | Comments per repository in Impulse's data folder: path, side, line range, the anchored snippet and the text. `ReviewCommentAnchoring` already tells which are outdated.                                                           |
+| [`Problems`](../impulse-macos/Sources/ImpulseKit/Problems.swift)                                                | The diagnostics behind the Problems tab, with counts, filtering, grouping and the **Fix with Agent** prompt (`Problems.prompt`).                                                                                                  |
+| `impulse_terminal_command_blocks` / `impulse_terminal_command_block` ([FFI](../impulse-macos/CImpulseFFI))      | A terminal's command blocks listed without their output, and one block (with output) fetched by id: the shape a tool listing blocks, then reading one, needs.                                                                     |
+| [`AgentCheckpoints`](../impulse-macos/Sources/ImpulseApp/Git/AgentCheckpoints.swift)                            | Each agent turn's start and end snapshots per terminal (`turns(terminalID:)`), under `refs/impulse/checkpoints/`.                                                                                                                 |
+| [`EditorTab`](../impulse-macos/Sources/ImpulseApp/Editor/EditorTab.swift)                                       | `isModified` for each open file: which files have edits you haven't saved.                                                                                                                                                        |
+| [`ProjectConfig`](../impulse-macos/Sources/ImpulseKit/Project/ProjectConfig.swift) and project-file trust       | The check and setup scripts, palette actions, `[on_change]` rules and per-task values, and whether you've trusted the exact file they come from.                                                                                  |
 
 ## Shape of the server
 
@@ -74,18 +83,33 @@ Outside an Impulse terminal (`IMPULSE_SOCKET` unset), `impulse mcp` still starts
 
 Every tool returns `structuredContent` with an `outputSchema`, plus the same in text (`TaskListing.text()`) for clients that only read text. Annotations say which tools are read-only. Names are the agent-facing API, so they're short and stable; they appear to Claude Code as `mcp__impulse__list_tasks` and so on.
 
-| Tool            | Control command        | Kind                    | Phase |
-| --------------- | ---------------------- | ----------------------- | ----- |
-| `list_tasks`    | `tasks` (`--json`)     | read-only               | 1     |
-| `get_task`      | `tasks show <task>`    | read-only               | 1     |
-| `wait_for_task` | `tasks wait <task>`    | read-only, long-running | 1     |
-| `create_task`   | `tasks new`            | creates, asks           | 2     |
-| `finish_task`   | `tasks finish <task>`  | lands, asks             | 3     |
-| `archive_task`  | `tasks archive <task>` | removes a folder, asks  | 3     |
+"Caller" in the table is the rule from [Who is calling](#who-is-calling): **token** tools only need the pane's token, as `open` and `tasks` do today; **tree** tools also need the caller in the pane's process tree, as `split` and `checkpoint` do.
+
+| Tool                     | Control command         | Kind                             | Caller | Phase |
+| ------------------------ | ----------------------- | -------------------------------- | ------ | ----- |
+| `list_tasks`             | `tasks` (`--json`)      | read-only                        | token  | 1     |
+| `get_task`               | `tasks show <task>`     | read-only                        | token  | 1     |
+| `wait_for_task`          | `tasks wait <task>`     | read-only, long-running          | token  | 1     |
+| `open_file`              | `open`                  | shows you something              | token  | 1     |
+| `open_review`            | `review`                | shows you something              | token  | 1     |
+| `set_status`             | `status`                | changes the pane's agent state   | token  | 1     |
+| `notify`                 | `notify`                | flags the pane, notifies         | token  | 1     |
+| `create_checkpoint`      | `checkpoint`            | writes a ref                     | tree   | 1     |
+| `list_turns`             | `turns`                 | read-only                        | token  | 1     |
+| `list_review_comments`   | `comments`              | read-only                        | token  | 2     |
+| `resolve_review_comment` | `comments resolve <id>` | marks a comment, you accept      | tree   | 2     |
+| `get_diagnostics`        | `problems`              | read-only                        | token  | 2     |
+| `list_command_blocks`    | `blocks`                | read-only, behind a setting      | token  | 2     |
+| `get_block_output`       | `blocks show <id>`      | read-only, behind a setting      | token  | 2     |
+| `list_unsaved_files`     | `unsaved`               | read-only                        | token  | 2     |
+| `get_project_config`     | `project`               | read-only, trusted settings only | token  | 2     |
+| `create_task`            | `tasks new`             | creates, asks                    | tree   | 3     |
+| `finish_task`            | `tasks finish <task>`   | lands, asks                      | tree   | 4     |
+| `archive_task`           | `tasks archive <task>`  | removes a folder, asks           | tree   | 4     |
 
 ### `list_tasks`
 
-No arguments. The repository's workspaces from the caller's point of view: exactly `TaskListing`, so the CLI's `--json` and the tool can't drift apart. Each workspace gains two fields from phase 2's provenance: `createdBy` (`user` or `agent`) and `brief` (its first line).
+No arguments. The repository's workspaces from the caller's point of view: exactly `TaskListing`, so the CLI's `--json` and the tool can't drift apart. Each workspace gains two fields from phase 3's provenance: `createdBy` (`user` or `agent`) and `brief` (its first line).
 
 ### `get_task`
 
@@ -121,14 +145,79 @@ How the brief reaches the new agent: `claude '<brief>'` and `codex '<brief>'` st
 
 The work itself is `createTask`, unchanged, called with a `TaskSheetModel` filled from the request: the same copies, cloned folders, slot, values, trust carry-over, project-file trust prompt and setup script, in the same order. An agent can't get a task that New Task… wouldn't have made.
 
-### `finish_task` and `archive_task` (phase 3)
+### `finish_task` and `archive_task` (phase 4)
 
 The open item from [Parallel tasks](plans/parallel-tasks.md) ("an agent starting Finish, with Impulse asking you to approve the land step"). `finish_task` opens the Finish tab for the task and runs its steps; the land step always stops for your approval, and the tool answers with the step it stopped at and why, so the agent can fix a failing check and call again. `archive_task` asks the same questions Archive Task… asks and keeps its Undo. Neither ever runs without a sheet: both push, remove folders or delete branches.
 
+## Beyond tasks
+
+The rule for choosing these: expose what Impulse knows and the agent's shell can't easily find out, scoped to the caller's workspace, and nothing that lets one agent reach into another's terminal. Every one reads the caller's workspace (its repository, its panes, its open files) unless it says otherwise, and paths in answers are relative to the workspace's folder.
+
+### `list_review_comments` and `resolve_review_comment` (phase 2)
+
+Comments live in Impulse's data folder, never in the repository, so today an agent sees them only when you send them. `list_review_comments` returns the repository's comments from `ReviewCommentStore`:
+
+```json
+{
+  "comments": [
+    {
+      "id": "6F1C…",
+      "location": "src/lib/cache.ts:16-18",
+      "side": "new",
+      "snippet": "    if (!entry || entry.expires <= this.now()) {\n …",
+      "text": "Expired entries count as misses here. Is that what the metrics should report?",
+      "outdated": false,
+      "resolution": null
+    }
+  ]
+}
+```
+
+Arguments: `path` (only that file's) and `include_outdated` (default true, since an outdated comment is often one the agent already acted on). `outdated` comes from `ReviewCommentAnchoring`, as Review shows it.
+
+`resolve_review_comment` takes `{ "id": "6F1C…", "note": "Expired entries now count separately as evictions." }` and marks the comment **addressed** with the agent's note. It never deletes: Review shows the comment with "Addressed by Claude Code" and the note, and **Accept** (deletes it) or **Reopen** (clears the mark). `ReviewComment` gains an optional `resolution` (who, when, note), so stored comments read as before. "Address my review comments" then works without sending anything, and you check each answer where you wrote the comment.
+
+### `get_diagnostics` (phase 2)
+
+What the Problems tab shows, from the language servers already running: `{ "path": "src/forecast.ts", "severity": "error" }`, both optional. Each problem has its path, line, column, severity, message, source and code, as `Problems.prompt` lists them for **Fix with Agent**. At most 200, errors first, with a `truncated` count; the counts (`ProblemCounts`) always cover everything.
+
+It never starts a server or opens a document: servers run only in trusted folders, and only for documents a configured server serves. When none is running for the workspace, the answer says why ("Language servers don't run in this folder because it isn't trusted", or "No language server is configured for TypeScript") rather than an empty list that reads as "no problems". Each answer names the files whose diagnostics are current (open in the editor, or reported by a server that checks the whole project), so the agent knows an absent file is unknown, not clean.
+
+### `list_command_blocks` and `get_block_output` (phase 2)
+
+How an agent sees the failing dev server or test watcher in the pane beside it. `list_command_blocks` lists the terminals in the caller's workspace (id, title, folder, whether an agent runs there), each with its recent blocks from `impulse_terminal_command_blocks`: id, command, folder, exit status, start time and duration, and whether it's still running. No output, as the FFI already lists them. `get_block_output` takes `{ "block": 1042, "lines": 200 }` and returns that block's output from `impulse_terminal_command_block`, the last 200 lines by default (at most 2,000), as **Send to agent** does.
+
+Terminal output holds whatever was printed, secrets included, so a setting, `agent_tool_terminal_output`, decides which terminals these tools see: `workspace` (the default: the caller's workspace), `window`, or `off` (the tools aren't listed). The Quick Terminal is never included, and neither is a block from a program on the alternate screen (an editor, `less`), which has no output to give. A terminal's bookmarks and block flags aren't exposed.
+
+### `list_unsaved_files` (phase 2)
+
+The files in the caller's workspace that are open in the editor with edits you haven't saved (`EditorTab.isModified`), each with whether the file also changed on disk since. An agent that rewrites one of them makes the editor reload a file you were in the middle of changing; with this, it can leave that file alone or ask you to save first. Paths only, never the unsaved text: what you haven't saved is yours until you save it.
+
+### `get_project_config` (phase 2)
+
+How this repository is checked and set up, from `.impulse/project.toml` and the local `.git/impulse/project.toml` as Impulse merges them: the check and setup scripts, palette actions (name and command), `[on_change]` rules, the env file's name (never its contents), and for a task its slot and own values. **Only from a file you've trusted**, by the same rule the dependency hook follows: an untrusted file's commands mustn't reach the agent as Impulse's advice. Before you've trusted it, the answer says so and lists only what Impulse detected on its own (`ProjectDetector`: the package manager, lock files, a Compose file).
+
+### `open_file` and `open_review` (phase 1)
+
+`impulse open` and `impulse review`, for handing work back to you: `{ "path": "src/forecast.ts", "line": 14 }` opens the file at that line in the caller's window, and `{ "scope": "last-turn" }` (or `uncommitted`, `staged`, `unstaged`) opens Review, so an agent can end with "I'm done, here's the review". Unlike the CLI, neither brings Impulse to the front when you're in another app: the tab opens and the pane is flagged for attention, as when an agent finishes. The tool doesn't create files (`impulse edit` of a new file is a tree command); a path that doesn't exist is an error.
+
+### `set_status` and `notify` (phase 1)
+
+`impulse status` and `impulse notify`, for agents without Impulse's hooks (Gemini CLI, opencode, Goose and the rest): `set_status` takes `working`, `waiting`, `done` or `idle` with a message, and `notify` a title and message, which flag the pane and send a desktop notification. The status lasts while `impulse mcp` runs, which is the agent's session. For a pane whose agent sends hook events, hooks win: they're exact, and `set_status` there changes nothing (the answer says so), so an agent can't hold its tab on "working" against what its hooks report. The tool descriptions say to use them only when the agent has no Impulse integration.
+
+### `create_checkpoint` and `list_turns` (phase 1)
+
+`create_checkpoint` is `impulse checkpoint`: a snapshot of the repository under `refs/impulse/checkpoints/manual/`, with a message, before a risky step. It answers with the ref. `list_turns` lists the caller's pane's agent turns from `AgentCheckpoints`: when each started and ended, and its start and end refs, so the agent can `git diff <start> <end>` to see what an earlier turn changed. Restoring a checkpoint or turn stays in Impulse's UI, behind its usual confirmation.
+
 ### Left out on purpose
 
-- **Sending messages to another task's agent.** Typing into another agent's terminal lets one agent prompt another with whatever it read, a direct path for prompt injection across tasks. The brief at creation, which you approve, is the only text one agent hands another. Revisit only with a design that shows you the message first.
+- **Sending messages to another task's agent, or typing into any other pane.** Typing into another agent's terminal lets one agent prompt another with whatever it read, a direct path for prompt injection across tasks. The brief at creation, which you approve, is the only text one agent hands another. Revisit only with a design that shows you the message first.
 - **Running commands in a task.** Agents already have a shell; `impulse split` and `impulse tab` cover the pane's own workspace.
+- **Changing workspace trust, settings or keybindings.** Trust is the line every other rule leans on; an agent asking to move it is the case it exists for.
+- **Command history.** `CommandHistoryDatabase` is a private record of everything you've typed, in every project.
+- **Destructive git.** Reverting, discarding, restoring a checkpoint, deleting a branch or stash: never without a sheet in Impulse, so not as tools. Agents that need git have git, and Impulse's safety snapshots still cover what Impulse itself does.
+- **Language-server edits.** Rename and code actions reach across files, and Impulse asks before applying the ones that create, move or delete files or leave the server's root. Agents edit files themselves; read-only lookups (definition, references, hover) could come later if diagnostics prove useful.
+- **The unsaved text of open files, and the editor's selection.** See [`list_unsaved_files`](#list_unsaved_files-phase-2) and [Open questions](#open-questions).
 - **Resources and subscriptions.** A `impulse://tasks` resource that updates as tasks change would suit clients that subscribe, but few agents act on resource updates mid-turn today, and the hooks already push the notes that matter. Reconsider once tools are in use.
 
 ## Approval
@@ -198,12 +287,20 @@ New control commands, also reachable from the CLI so agents without MCP and your
 
 ```
 impulse tasks show <task> [--json]
+impulse turns [--json]
+impulse comments [<path>] [--json]
+impulse comments resolve <id> [note…]
+impulse problems [<path>] [--errors] [--json]
+impulse blocks [--json]
+impulse blocks show <id> [--lines <n>]
+impulse unsaved [--json]
+impulse project [--json]
 impulse tasks new <title> [--from <base>] [--agent <id>] [--brief-file <path> | --brief -] [--move-changes]
-impulse tasks finish <task>       (phase 3)
-impulse tasks archive <task>      (phase 3)
+impulse tasks finish <task>       (phase 4)
+impulse tasks archive <task>      (phase 4)
 ```
 
-`tasks new`, `finish` and `archive` join `split`, `tab` and `checkpoint` in needing the caller in the pane's process tree.
+`open`, `review`, `status`, `notify` and `checkpoint` exist already. `comments resolve`, `tasks new`, `finish` and `archive` join `split`, `tab` and `checkpoint` in needing the caller in the pane's process tree. `blocks` follows `agent_tool_terminal_output` from the CLI too, so the setting can't be sidestepped by running the command instead of calling the tool.
 
 ## Provenance
 
@@ -219,27 +316,30 @@ The sidebar row shows a small mark on agent-made tasks with the requester in its
 
 Sizes as in the other plans: **S** is a day or two, **M** about a week.
 
-| Phase | What                                                                                                                                                                    | Size   | Needs |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----- |
-| 0     | `ControlRequest.input` / `ControlResponse.data`; `impulse tasks show`                                                                                                   | S      |       |
-| 1     | `impulse mcp` (JSON-RPC over stdio, `initialize` and `server/discover`, no tools outside Impulse), `list_tasks`, `get_task`, `wait_for_task`; registration in the sheet | M      | 0     |
-| 2     | `impulse tasks new` and `create_task`: the prefilled sheet, briefs, provenance, `agent_task_creation`, the cap and Undo                                                 | M      | 1     |
-| 3     | `finish_task` and `archive_task` behind their sheets                                                                                                                    | S to M | 2     |
+| Phase | What                                                                                                                                                                                                                                                                                                       | Size   | Needs |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----- |
+| 0     | `ControlRequest.input` / `ControlResponse.data`; `impulse tasks show`, `impulse turns`                                                                                                                                                                                                                     | S      |       |
+| 1     | `impulse mcp` (JSON-RPC over stdio, `initialize` and `server/discover`, no tools outside Impulse), `list_tasks`, `get_task`, `wait_for_task`; registration in the sheet. The thin wrappers over commands that exist: `open_file`, `open_review`, `set_status`, `notify`, `create_checkpoint`, `list_turns` | M      | 0     |
+| 2     | Workspace context: `list_review_comments` and `resolve_review_comment` (with Review's **Accept** and **Reopen**), `get_diagnostics`, `list_command_blocks` and `get_block_output` with `agent_tool_terminal_output`, `list_unsaved_files`, `get_project_config`, and their CLI commands                    | M      | 1     |
+| 3     | `impulse tasks new` and `create_task`: the prefilled sheet, briefs, provenance, `agent_task_creation`, the cap and Undo                                                                                                                                                                                    | M      | 1     |
+| 4     | `finish_task` and `archive_task` behind their sheets                                                                                                                                                                                                                                                       | S to M | 3     |
 
-Phase 1 is useful by itself: Codex and other agents without Impulse's hook replies get the same picture Claude Code gets, as typed data.
+Phase 1 is useful by itself: Codex and other agents without Impulse's hook replies get the same picture Claude Code gets, as typed data, and agents without hooks get tab states and notifications. Phases 2 and 3 only share phase 1's server and can go in either order; 2 comes first here because its tools are read-only (apart from marking a comment) and its data already exists.
 
 ## Testing
 
 - **ImpulseKitTests, beside `ControlProtocolTests`:** JSON-RPC framing (partial lines, batches, notifications without ids, malformed input answered with JSON-RPC errors, never a crash), `initialize` and `server/discover` answers, the tool catalog and its schemas, argument validation (unknown agent ids, briefs over the limit, a missing title), and the mapping to and from `ControlRequest` / `ControlResponse`.
 - **ImpulseKitTests, task registry:** `TaskRecord` decoding with and without the new fields; `TaskListing` with provenance.
-- **App:** `create_task` against a mock window: ask, decline, a second request while one waits, the cap, the process-tree check, and that a request never trusts a folder or a project file.
-- **Smoke:** a scenario in `scripts/smoke/scenarios.py` that pipes MCP messages into `impulse mcp` from a pane of the demo repository (with a debug action standing in for clicking **Create Task**) and checks the new worktree, its `tasks.json` entry, its brief and the first terminal's command.
+- **ImpulseKitTests, review comments:** `ReviewComment` decoding with and without `resolution`; resolving, reopening and accepting.
+- **App:** `create_task` against a mock window: ask, decline, a second request while one waits, the cap, the process-tree check, and that a request never trusts a folder or a project file. For the phase 2 tools: `get_diagnostics` in an untrusted folder (an explanation, not an empty list), `get_project_config` before and after trusting the file (no commands before), `list_command_blocks` under each `agent_tool_terminal_output` value and never the Quick Terminal, `list_unsaved_files` returning paths only, `set_status` ignored for a pane with hooks, and `open_file` not activating the app.
+- **Smoke:** a scenario in `scripts/smoke/scenarios.py` that pipes MCP messages into `impulse mcp` from a pane of the demo repository (with a debug action standing in for clicking **Create Task**) and checks the new worktree, its `tasks.json` entry, its brief and the first terminal's command. A second one runs a failing `npm test` in one pane, then from another reads the block's output, review comments the scenario adds through Review, and resolves one, checking the dump.
 - **Against real clients:** Claude Code and Codex each list the tools, call `list_tasks`, and create a task with a brief, before each phase ships.
 
 ## What stays the same
 
 - **Impulse never calls a model.** The server only answers agents; it doesn't sample, summarize or plan.
-- **Git only.** Every tool works from git and the task registry, on any host.
+- **Git only.** Every tool works from git, the task registry and what Impulse already holds (comments, diagnostics, terminals), on any host.
+- **Trust.** No tool starts a language server, runs a project command or reads an untrusted project file's commands; the tools only report what trusted parts of Impulse already have.
 - **The app is the authority.** The CLI adapter holds no state and makes no decisions; each call is checked in the app as `impulse` commands are today.
 - **Hooks stay.** Nothing they do moves to the server.
 
@@ -252,10 +352,14 @@ Each has a recommendation; none is decided.
 3. **Where the brief lives.** `.git/impulse/tasks/<task>/brief.md` (recommended: outside the work tree, never committed by accident), or a file in the task folder that the agent can see and edit.
 4. **The cap.** Four open agent-made tasks per repository (recommended), per Mac, or none.
 5. **Claude Code registration.** Through `claude mcp add` (recommended), or editing `~/.claude.json` with the installer's usual safeguards.
-6. **Phase 3 at all.** `finish_task` was asked for in Parallel tasks; `archive_task` might be enough as a Finish step. Recommended: build `finish_task`, leave `archive_task` out unless asked.
+6. **Phase 4 at all.** `finish_task` was asked for in Parallel tasks; `archive_task` might be enough as a Finish step. Recommended: build `finish_task`, leave `archive_task` out unless asked.
+7. **Terminal output default.** `agent_tool_terminal_output` as `workspace` (recommended: the panes an agent's own work runs in, and the reason the tool exists), `off` until you turn it on, or `window`.
+8. **Resolving comments.** Marked addressed for you to accept (recommended), or deleted outright by the agent. Deleting is simpler but loses the check that each comment was really dealt with.
+9. **Fresh diagnostics.** Report only what servers already have (recommended for phase 2), or let `get_diagnostics` open a file that isn't open (a `didOpen` with no tab) so its server checks it. The second gives better answers in trusted folders but starts work in a server on the agent's say-so.
+10. **The editor's selection.** A `get_selection` tool (the file and lines you have selected, as Claude Code's IDE integrations offer) would let "fix this" mean what you're looking at. Recommended: later, after phase 2 shows how the read tools are used, and with a setting, since it reveals where you are as you work.
 
 ## Also to do
 
-- **User docs.** A new section in [Agents](agents.md) (the server, the tools, approval, registering it), `impulse tasks show` and `new` in [Command-line tool](cli.md#impulse-tasks), agent-made tasks and their mark in [Tasks](tasks.md#tasks-in-the-sidebar), the setting in [Settings and themes](settings-and-themes.md). When phase 1 ships, this page becomes the record of what was decided, as `docs/plans/parallel-tasks.md` is.
+- **User docs.** A new section in [Agents](agents.md) (the server, the tools, approval, registering it), `impulse tasks show` and `new` in [Command-line tool](cli.md#impulse-tasks), agent-made tasks and their mark in [Tasks](tasks.md#tasks-in-the-sidebar), the settings in [Settings and themes](settings-and-themes.md), addressed comments with **Accept** and **Reopen** in [Review › Comments](review.md#comments), the tools' view of Problems in [Editor](editor.md#problems) and of command blocks in [Terminal](terminal.md#command-blocks). When phase 1 ships, this page becomes the record of what was decided, as `docs/plans/parallel-tasks.md` is.
 - **CLAUDE.md and AGENTS.md.** `impulse mcp` in the CLI's command list in the architecture tree; the MCP adapter in ImpulseProtocol's description; the Agents key pattern (`create_task` through `createTask`, the approval rule, provenance in `TaskRecord`).
 - **CHANGELOG.md.** Each phase under the release it ships in.

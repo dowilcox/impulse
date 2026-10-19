@@ -38,7 +38,7 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 
 Proposals under discussion. They describe what Impulse might do, not what it does today.
 
-- [MCP server for tasks](mcp-plan.md): letting agents list tasks and start new ones through the Model Context Protocol.
+- [MCP server](mcp-plan.md): letting agents list and start tasks, and read review comments, problems and terminal output, through the Model Context Protocol.
 
 ## Common workflows
 
