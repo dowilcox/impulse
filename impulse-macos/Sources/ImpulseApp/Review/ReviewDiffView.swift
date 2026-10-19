@@ -20,6 +20,8 @@ protocol ReviewDiffHandler: AnyObject {
   func reviewEditComment(_ id: String?, path: String)
   func reviewSaveComment(id: String, text: String)
   func reviewDeleteComment(id: String)
+  /// An agent's "addressed" mark: open the comment again.
+  func reviewReopenComment(id: String)
   func reviewOpenFile(path: String, line: Int?, diff: Bool)
   func reviewCopyPath(_ path: String)
   func reviewNeedsDiff(_ path: String)
@@ -389,7 +391,8 @@ final class ReviewDiffController: NSObject, NSTableViewDataSource, NSTableViewDe
       }
       if file.editingComment == id { return ReviewMetrics.editingCommentHeight }
       return metrics.commentHeight(
-        comment.text, tableWidth: width, layout: context.layout)
+        comment.text, resolution: comment.resolution.map { "\($0.by): \($0.note)" }, tableWidth: width,
+        layout: context.layout)
     case .line(let path, let hunk, let line):
       guard let text = lineText(path: path, hunk: hunk, line: line) else { return metrics.lineHeight }
       let codeWidth = metrics.codeWidth(tableWidth: width, layout: .unified)

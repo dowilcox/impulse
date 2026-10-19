@@ -27,11 +27,19 @@ public struct TaskListing: Codable, Equatable, Sendable {
     public var behind: Int?
     /// Files it changes that the caller's workspace changes too.
     public var sharedWithCaller: [String]
+    /// "agent" for a task an agent asked for (`impulse tasks new`), "user"
+    /// for one you made; nil for the main checkout and older tasks.
+    public var createdBy: String?
+    /// Who asked for it: "Claude Code in trailhead".
+    public var requestedBy: String?
+    /// The first line of the brief it was started with.
+    public var brief: String?
 
     public init(
       name: String, path: String, branch: String?, base: String?, head: String?, isMainCheckout: Bool,
       isCaller: Bool, agent: String? = nil, agentState: String? = nil, uncommitted: Int = 0, ahead: Int? = nil,
-      behind: Int? = nil, sharedWithCaller: [String] = []
+      behind: Int? = nil, sharedWithCaller: [String] = [], createdBy: String? = nil, requestedBy: String? = nil,
+      brief: String? = nil
     ) {
       self.name = name
       self.path = path
@@ -46,6 +54,9 @@ public struct TaskListing: Codable, Equatable, Sendable {
       self.ahead = ahead
       self.behind = behind
       self.sharedWithCaller = sharedWithCaller
+      self.createdBy = createdBy
+      self.requestedBy = requestedBy
+      self.brief = brief
     }
   }
 
@@ -80,6 +91,8 @@ public struct TaskListing: Codable, Equatable, Sendable {
       lines.append(branch)
       lines.append("  \(workspace.path)")
       if let agent = workspace.agent { lines.append("  \(agent): \(workspace.agentState ?? "running")") }
+      if let requestedBy = workspace.requestedBy { lines.append("  started at the request of \(requestedBy)") }
+      if let brief = workspace.brief, !brief.isEmpty { lines.append("  brief: \(brief)") }
       if workspace.uncommitted > 0 {
         lines.append("  \(workspace.uncommitted) uncommitted file\(workspace.uncommitted == 1 ? "" : "s")")
       }
@@ -110,7 +123,8 @@ public struct TaskListing: Codable, Equatable, Sendable {
       return other.name + (other.isMainCheckout ? " (main checkout)" : "") + (parts.isEmpty ? "" : " — " + parts.joined(separator: ", "))
     }
     lines.append("Other workspaces: " + others.joined(separator: "; ") + ".")
-    lines.append("Run `impulse tasks` before merging a branch or making sweeping edits, to see what they're changing.")
+    lines.append(
+      "Run `impulse tasks` (or Impulse's list_tasks tool, if you have its MCP server) before merging a branch or making sweeping edits, to see what they're changing.")
     return lines.joined(separator: "\n")
   }
 }

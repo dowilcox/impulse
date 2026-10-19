@@ -225,7 +225,7 @@ The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environ
 
 ![The Agent Hooks sheet with Claude Code and "All projects" selected, "Not installed ~/.claude/settings.json", and a preview of the lines that will be added](images/agents-hooks-sheet.png)
 
-1. Run **Install Agent Hooks…** from the command palette, or click **Agent hooks give exact status…** at the bottom of the agent list.
+1. Run **Install Agent Hooks…** from the command palette, or click **Agent hooks give exact status…** at the bottom of the agent list. The Agent Integration sheet opens on **Hooks** (its other half sets up [Impulse's MCP server](#impulses-mcp-server)).
 2. Choose **Claude Code** or **Codex**.
 3. For Claude Code, choose **All projects** or **This project only** (only available when the window is in a git repository).
 4. Check the status line ("Installed" or "Not installed", and the file that will change) and the preview of the change: added lines are marked `+`, removed lines `-`.
@@ -306,14 +306,92 @@ Press Return to resume, or clear it to start fresh. This only applies to Claude 
 
 The `impulse` command-line tool, available in every Impulse terminal, has commands for agents and for scripts that wrap them. See [Command-line tool](cli.md) for the full reference.
 
-| Command                                                    | Use                                                                                                                                                                                                    |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `impulse hook <claude\|codex> [event]`                     | What the installed hooks run. Reads the hook's JSON from standard input (Claude Code) or its last argument (Codex).                                                                                    |
-| `impulse status <working\|waiting\|done\|idle> [message…]` | Report a state (and a message shown with it) from a program running in this pane: a wrapper around an agent without hooks, or your own long-running script.                                            |
-| `impulse notify <title> [message…]`                        | Flag this pane and send a desktop notification.                                                                                                                                                        |
-| `impulse checkpoint [message…]`                            | Snapshot the repository under `refs/impulse/checkpoints/manual/`.                                                                                                                                      |
-| `impulse tasks [--json]`                                   | List the repository's workspaces: what each task's agent is doing, uncommitted files, and the files they share with this one. `impulse tasks wait <task>` waits until that task's agent stops working. |
-| `impulse review last-turn`                                 | Open Review on the last agent turn.                                                                                                                                                                    |
+| Command                                                        | Use                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `impulse hook <claude\|codex> [event]`                         | What the installed hooks run. Reads the hook's JSON from standard input (Claude Code) or its last argument (Codex).                                                                                    |
+| `impulse status <working\|waiting\|done\|idle> [message…]`     | Report a state (and a message shown with it) from a program running in this pane: a wrapper around an agent without hooks, or your own long-running script.                                            |
+| `impulse notify <title> [message…]`                            | Flag this pane and send a desktop notification.                                                                                                                                                        |
+| `impulse checkpoint [message…]`                                | Snapshot the repository under `refs/impulse/checkpoints/manual/`.                                                                                                                                      |
+| `impulse tasks [--json]`                                       | List the repository's workspaces: what each task's agent is doing, uncommitted files, and the files they share with this one. `impulse tasks wait <task>` waits until that task's agent stops working. |
+| `impulse tasks new <title…>`                                   | Ask for a task, with an agent started on a brief. Impulse shows New Task first. See [Tasks agents start](tasks.md#tasks-agents-start).                                                                 |
+| `impulse comments`, `problems`, `blocks`, `unsaved`, `project` | What Impulse knows about the workspace: review comments, language-server problems, other terminals' commands, unsaved files, the trusted project scripts.                                              |
+| `impulse review last-turn`                                     | Open Review on the last agent turn.                                                                                                                                                                    |
+| `impulse mcp`                                                  | All of the above as tools, for agents that load MCP servers. See [Impulse's MCP server](#impulses-mcp-server).                                                                                         |
+
+## Impulse's MCP server
+
+Hooks tell Impulse what an agent is doing. Impulse's MCP server works the other way: it gives the agent tools to ask Impulse about the work around it, and to start tasks. Any agent that loads [Model Context Protocol](https://modelcontextprotocol.io) servers can use it: Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor Agent, Goose, opencode, Amp and others.
+
+The server is the `impulse mcp` command, which the agent starts itself. Each tool is one of the [`impulse` commands](cli.md#commands), so the agent gets the same answers as you do in a terminal. The server keeps nothing between calls and decides nothing: Impulse checks every call as it checks the command. Outside an Impulse terminal it starts but offers no tools, so registering it for all projects is safe.
+
+### Install the server
+
+1. Run **Install Impulse's MCP Server…** from the command palette. The Agent Integration sheet opens on **MCP Server**.
+2. Choose **Claude Code**, **Codex** or **Other**.
+3. For Claude Code, choose **All projects** or **This project only**.
+4. Check the preview, then click **Install MCP Server**. Restart running agents to pick it up.
+
+| Agent       | What Impulse does                                                                                                                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code | Runs `claude mcp add-json --scope user impulse …` (or `--scope local` for this project only), as the preview shows. Claude Code rewrites its own `~/.claude.json` while it runs, so Impulse never edits that file; it only reads it to show the status. Needs `claude` on your PATH. |
+| Codex       | Adds an `[mcp_servers.impulse]` table to the end of `~/.codex/config.toml`, keeping the previous file as `config.toml.impulse-backup`, as for its hook.                                                                                                                              |
+| Other       | Shows the entry to add to the agent's own MCP settings, and **Copy** puts it on the clipboard.                                                                                                                                                                                       |
+
+The entry runs the bundled `impulse` through `$IMPULSE_CLI`, and forwards `IMPULSE_SOCKET`, `IMPULSE_PANE_TOKEN` and `IMPULSE_CLI`, which tell it which window and pane it's called from:
+
+```json
+{
+  "command": "sh",
+  "args": [
+    "-c",
+    "exec \"${IMPULSE_CLI:-/Applications/Impulse.app/Contents/Resources/bin/impulse}\" mcp"
+  ],
+  "env": {
+    "IMPULSE_CLI": "${IMPULSE_CLI:-}",
+    "IMPULSE_PANE_TOKEN": "${IMPULSE_PANE_TOKEN:-}",
+    "IMPULSE_SOCKET": "${IMPULSE_SOCKET:-}"
+  }
+}
+```
+
+The path after `:-` is the app that installed it. If you move Impulse, the sheet says the server is out of date: install it again. Remove it from the same sheet; for Claude Code that runs `claude mcp remove`.
+
+### The tools
+
+| Tool                              | What the agent gets                                                                                                                                                                                                                   | Same as                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `list_tasks`                      | The repository's workspaces: branches, bases, agents and their state, uncommitted files, files shared with the caller.                                                                                                                | `impulse tasks`                       |
+| `get_task`                        | One task: also its changed files, commits ahead of its base, whether it's merged, its ports and its brief.                                                                                                                            | `impulse tasks show`                  |
+| `wait_for_task`                   | Waits until a task's agent stops working, or until its timeout (50 seconds unless it asks for longer, at most 10 minutes), then says which.                                                                                           | `impulse tasks wait`                  |
+| `create_task`                     | Asks for a new task, with an agent started on a brief. See [Tasks agents start](tasks.md#tasks-agents-start).                                                                                                                         | `impulse tasks new`                   |
+| `finish_task`                     | Opens Finish for a task and runs it up to landing, which waits for you.                                                                                                                                                               | `impulse tasks finish`                |
+| `archive_task`                    | Archive Task…, with its questions and Undo.                                                                                                                                                                                           | `impulse tasks archive`               |
+| `list_review_comments`            | Your [review comments](review.md#comments) on the repository: file, lines, the code they were written on, their text, whether they're outdated or addressed.                                                                          | `impulse comments`                    |
+| `resolve_review_comment`          | Marks a comment addressed with a note. You accept or reopen it in Review.                                                                                                                                                             | `impulse comments resolve`            |
+| `get_diagnostics`                 | What the [Problems](editor.md#problems) tab shows for the workspace, errors first, at most 200, and which files are checked. It never starts a language server.                                                                       | `impulse problems`                    |
+| `list_command_blocks`             | The workspace's terminals and their recent commands, with exit status and timing, without output.                                                                                                                                     | `impulse blocks`                      |
+| `get_block_output`                | One command's output, its last 200 lines unless the agent asks for more (at most 2,000).                                                                                                                                              | `impulse blocks show`                 |
+| `list_unsaved_files`              | Files open in the editor with edits you haven't saved, so the agent leaves them alone. Never their text.                                                                                                                              | `impulse unsaved`                     |
+| `get_project_config`              | The [project settings'](project-config.md) check and setup scripts, actions and `[on_change]` rules, and a task's ports. Only from settings you've trusted; before that, only what Impulse found itself (lock files, a Compose file). | `impulse project`                     |
+| `open_file`, `open_review`        | Opens a file or Review in your window, without taking focus from another app.                                                                                                                                                         | `impulse open`, `impulse review`      |
+| `set_status`, `notify`            | For agents without Impulse's hooks: their state in the tab and agent list, and a notification. Where hooks report the agent's state, `set_status` changes nothing.                                                                    | `impulse status`, `impulse notify`    |
+| `create_checkpoint`, `list_turns` | A snapshot of the repository, and the agent's recorded turns with their checkpoint refs. Restoring stays in Impulse.                                                                                                                  | `impulse checkpoint`, `impulse turns` |
+
+The tools that start or change something (`create_task`, `finish_task`, `archive_task`, `resolve_review_comment`, `create_checkpoint`) only work when the server runs in the pane's own process tree, like `impulse split`; inside tmux the agent gets the rest. Tools that wait report progress every 15 seconds, and stop waiting when the agent cancels them.
+
+Nothing an agent asks for gets past [workspace trust](getting-started.md) or the project file's trust, and Impulse still never calls a model: the server only answers the agent.
+
+### Settings
+
+In Settings ▸ Terminal ▸ Agents:
+
+| Setting                            | Key                          | Values                             | Default     |
+| ---------------------------------- | ---------------------------- | ---------------------------------- | ----------- |
+| When an agent asks to start a task | `agent_task_creation`        | `ask`, `trusted_projects`, `off`   | `ask`       |
+| Open tasks agents may start        | `agent_task_limit`           | 0 (no limit) to 50, per repository | 4           |
+| Agents may read terminal output    | `agent_tool_terminal_output` | `workspace`, `window`, `off`       | `workspace` |
+
+With `agent_task_creation` set to `off`, the server doesn't offer `create_task`; with `agent_tool_terminal_output` set to `off`, it doesn't offer the two block tools (and `impulse blocks` refuses too). Terminal output can hold secrets: `workspace` lets an agent read only the terminals of the workspace it runs in, and never the Quick Terminal.
 
 ## Run agents in parallel
 
@@ -332,6 +410,6 @@ Several agents in one checkout get in each other's way. Give each one its own ta
 - [Tasks](tasks.md): one worktree per agent, so agents work in parallel
 - [Review](review.md): the Review surface, comments and sending them to agents
 - [Terminal](terminal.md): shell integration, command blocks and the input bar
-- [Command-line tool](cli.md): `impulse hook`, `status`, `notify`, `checkpoint` and `review`
+- [Command-line tool](cli.md): `impulse hook`, `status`, `notify`, `checkpoint`, `review` and `mcp`
 - [Workspaces and tabs](workspaces-and-tabs.md): session restore
 - [Keyboard shortcuts](keyboard-shortcuts.md)

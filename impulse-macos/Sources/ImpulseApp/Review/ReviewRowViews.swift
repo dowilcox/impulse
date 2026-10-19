@@ -294,6 +294,13 @@ struct ReviewCommentRow: View {
         if editing {
           ReviewActionButton(title: "Cancel", help: "Cancel (Esc)") { handler?.reviewEditComment(nil, path: comment.path) }
           ReviewActionButton(title: "Save", kind: .primary, help: "Save (⌘↩)") { save() }
+        } else if comment.resolution != nil {
+          ReviewActionButton(title: "Reopen", help: "Not addressed yet: clear the agent's mark") {
+            handler?.reviewReopenComment(id: comment.id)
+          }
+          ReviewActionButton(title: "Accept", kind: .primary, help: "Addressed: remove this comment") {
+            handler?.reviewDeleteComment(id: comment.id)
+          }
         } else {
           ReviewActionButton(title: "Edit", help: "Edit comment") { handler?.reviewEditComment(comment.id, path: comment.path) }
           ReviewActionButton(title: "Delete", kind: .danger, help: "Remove this comment") {
@@ -330,6 +337,18 @@ struct ReviewCommentRow: View {
           .textSelection(.enabled)
           .fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
+        if let resolution = comment.resolution {
+          Text("\(resolution.by): \(resolution.note)")
+            .font(ChromeFont.ui(11.5))
+            .foregroundStyle(chrome.textSecondary)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(chrome.raised))
+            .padding(.top, 6)
+            .accessibilityLabel("Addressed by \(resolution.by): \(resolution.note)")
+        }
       }
     }
     .padding(.vertical, 8)
@@ -339,7 +358,7 @@ struct ReviewCommentRow: View {
       RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(chrome.hairlineStrong, lineWidth: 1))
     .overlay(alignment: .leading) {
       UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 6, style: .continuous)
-        .fill(outdated ? chrome.textTertiary : chrome.accent)
+        .fill(outdated ? chrome.textTertiary : comment.resolution != nil ? chrome.success : chrome.accent)
         .frame(width: 3)
     }
     .opacity(outdated ? 0.85 : 1)

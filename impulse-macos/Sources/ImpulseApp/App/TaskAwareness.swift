@@ -59,6 +59,7 @@ extension MainWindowController {
 
     let mainSnapshot = GitClient.snapshot(forPath: main)
     let mainPath = TaskRegistry.canonical(main)
+    let common = GitClient.commonGitDirectory(forPath: main)
     var workspaces = [
       TaskListing.Workspace(
         name: (main as NSString).lastPathComponent, path: mainPath, branch: mainSnapshot?.branch, base: nil,
@@ -70,37 +71,108 @@ extension MainWindowController {
       let path = TaskRegistry.canonical(task.path)
       let branch = "refs/heads/\(task.branch)"
       let counts = task.baseRef.flatMap { GitOperations.aheadBehind(branch, base: $0, root: main) }
+      let name = (task.path as NSString).lastPathComponent
+      let brief = common.flatMap { TaskBrief.read(task: name, commonGitDirectory: $0) }
       workspaces.append(
         .init(
-          name: (task.path as NSString).lastPathComponent, path: path, branch: task.branch, base: task.baseRef,
+          name: name, path: path, branch: task.branch, base: task.baseRef,
           head: GitClient.resolveCommit(repoPath: main, revision: branch), isMainCheckout: false, isCaller: path == caller,
           uncommitted: GitClient.snapshot(forPath: task.path)?.changedFileCount ?? 0, ahead: counts?.ahead,
-          behind: counts?.behind, sharedWithCaller: shared(path)))
+          behind: counts?.behind, sharedWithCaller: shared(path), createdBy: task.createdBy,
+          requestedBy: task.requestedBy, brief: brief.flatMap { TaskBrief.summary($0) }))
     }
     return TaskListing(repository: (main as NSString).lastPathComponent, workspaces: workspaces)
   }
 
-  /// `impulse tasks [--json]` and `impulse tasks wait <task>`.
+  /// `impulse tasks`: the listing (`--json`), and `wait`, `show`, `new`,
+  /// `finish` and `archive` for one task. Answers carry the listing (or the
+  /// task) as JSON data too, for the MCP server.
   func handleTasksCommand(
-    _ request: ControlRequest, cwd: String, caller: ControlCaller, reply: @escaping (ControlResponse) -> Void
+    _ request: ControlRequest, cwd: String, terminal: TerminalTab?, caller: ControlCaller,
+    reply: @escaping (ControlResponse) -> Void
   ) {
-    if let name = request.arguments["wait"] {
-      return waitForTask(name, cwd: cwd, caller: caller, reply: reply)
+    let args = request.arguments
+    if let name = args["wait"] {
+      let timeout = args["timeout"].flatMap { TimeInterval($0) }
+      return waitForTask(name, cwd: cwd, timeout: timeout, caller: caller, reply: reply)
     }
+    if let name = args["show"] { return showTask(name, cwd: cwd, json: args["json"] != nil, reply: reply) }
+    if args["new"] != nil { return requestTaskFromAgent(request, cwd: cwd, terminal: terminal, caller: caller, reply: reply) }
+    if let name = args["finish"] {
+      return finishTaskFromAgent(name, cwd: cwd, terminal: terminal, caller: caller, reply: reply)
+    }
+    if let name = args["archive"] { return archiveTaskFromAgent(name, cwd: cwd, caller: caller, reply: reply) }
     taskListing(cwd: cwd) { listing in
       guard let listing else { return reply(ControlResponse(ok: false, message: "Not in a git repository.")) }
-      reply(ControlResponse(ok: true, message: request.arguments["json"] == nil ? listing.text() : listing.json()))
+      let json = listing.json()
+      reply(ControlResponse(ok: true, message: args["json"] == nil ? listing.text() : json, data: Data(json.utf8)))
     }
   }
 
+  /// `impulse tasks show <task>` (the MCP server's get_task): the listing's
+  /// entry plus its files, commits, merged state, values and brief.
+  private func showTask(_ name: String, cwd: String, json: Bool, reply: @escaping (ControlResponse) -> Void) {
+    taskListing(cwd: cwd) { listing in
+      guard let listing else { return reply(ControlResponse(ok: false, message: "Not in a git repository.")) }
+      guard let workspace = listing.workspaces.first(where: { $0.name == name || $0.branch == name }) else {
+        return reply(ControlResponse(ok: false, message: "impulse tasks: no task named \(name)"))
+      }
+      // Git reads in a folder that isn't trusted run no hooks or filters.
+      let trusted = Trust.shared.isTrusted(workspace.path)
+      DispatchQueue.global(qos: .userInitiated).async {
+        let detail = Self.taskDetail(workspace, cwd: cwd, trusted: trusted)
+        let data = AgentToolJSON.data(detail)
+        DispatchQueue.main.async {
+          reply(
+            ControlResponse(
+              ok: true, message: json ? AgentToolJSON.string(detail) : detail.text(), data: data))
+        }
+      }
+    }
+  }
+
+  /// One workspace in detail. Off the main thread.
+  static func taskDetail(_ workspace: TaskListing.Workspace, cwd: String, trusted: Bool) -> TaskDetail {
+    var detail = TaskDetail(workspace: workspace)
+    detail.uncommittedFiles = OverlapMonitor.uncommitted(GitClient.snapshot(forPath: workspace.path)).sorted()
+    guard !workspace.isMainCheckout, let callerRoot = GitClient.repoRoot(forPath: cwd) else { return detail }
+    let main = mainCheckoutRoot(of: callerRoot)
+    guard let registry = TaskRegistryStore.registry(root: main),
+      let record = registry.record(forPath: workspace.path)
+    else { return detail }
+    let branch = "refs/heads/\(record.branch)"
+    if let base = record.baseRef {
+      if let mergeBase = GitOperations.mergeBase(base, branch, root: main) {
+        detail.changedFiles = GitOperations.changedPaths(from: mergeBase, to: branch, root: main).sorted()
+      }
+      detail.commits = GitOperations.commitsAhead(branch, base: base, root: main, limit: TaskDetail.commitLimit)
+        .map { TaskDetail.Commit(id: $0.id, subject: $0.subject) }
+      detail.moreCommits = max(0, (workspace.ahead ?? 0) - detail.commits.count)
+      // A branch with no commits of its own isn't "merged".
+      let head = GitClient.resolveCommit(repoPath: main, revision: branch)
+      detail.merged = head != nil && head != record.start
+        && GitOperations.isMerged(branch, into: base, root: main, trusted: trusted)
+    }
+    detail.slot = record.slot
+    if let slot = record.slot, let settings = try? loadProjectConfig(root: main)?.config.get(), !settings.ports.isEmpty {
+      detail.ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset) ?? [:]
+    }
+    if let common = GitClient.commonGitDirectory(forPath: main) {
+      detail.brief = TaskBrief.read(task: workspace.name, commonGitDirectory: common)
+    }
+    return detail
+  }
+
   /// Answer once the task's agents stop working (checked every 2 seconds),
-  /// or stop checking when the caller gives up.
+  /// or after `timeout` seconds (the MCP server's wait_for_task), or stop
+  /// checking when the caller gives up.
   private func waitForTask(
-    _ name: String, cwd: String, caller: ControlCaller, reply: @escaping (ControlResponse) -> Void
+    _ name: String, cwd: String, timeout: TimeInterval?, caller: ControlCaller,
+    reply: @escaping (ControlResponse) -> Void
   ) {
     DispatchQueue.global(qos: .userInitiated).async {
       let registry = GitClient.repoRoot(forPath: cwd).flatMap { TaskRegistryStore.registry(root: $0) }
-      let task = registry?.tasks.first { ($0.path as NSString).lastPathComponent == name || $0.branch == name }
+      let task = registry?.record(named: name)
       DispatchQueue.main.async {
         guard let task else {
           return reply(ControlResponse(ok: false, message: "impulse tasks: no task named \(name)"))
@@ -108,11 +180,19 @@ extension MainWindowController {
         func busy() -> Bool {
           (AppDelegate.shared?.agents(inFolder: task.path) ?? []).contains { $0.state == .working || $0.state == .needsInput }
         }
-        guard busy() else { return reply(ControlResponse(ok: true, message: "\(name): no agent is working.")) }
+        func answer(_ stopped: Bool, _ text: String) {
+          reply(ControlResponse(ok: true, message: text, data: AgentToolJSON.data(WaitAnswer(task: name, stopped: stopped))))
+        }
+        guard busy() else { return answer(true, "\(name): no agent is working.") }
+        let deadline = timeout.map { Date().addingTimeInterval($0) }
         let timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { timer in
-          guard !busy() else { return }
-          timer.invalidate()
-          reply(ControlResponse(ok: true, message: "\(name): its agent stopped working."))
+          if !busy() {
+            timer.invalidate()
+            answer(true, "\(name): its agent stopped working.")
+          } else if let deadline, Date() >= deadline {
+            timer.invalidate()
+            answer(false, "\(name): its agent is still working after \(Int(timeout ?? 0)) seconds. Wait again, or check on it with get_task.")
+          }
         }
         caller.onHangUp = { timer.invalidate() }
       }
@@ -230,4 +310,11 @@ extension MainWindowController {
       }
     }
   }
+}
+
+/// What `tasks wait` answers with, as data.
+private struct WaitAnswer: Encodable {
+  let task: String
+  /// False when it gave up waiting (its timeout).
+  let stopped: Bool
 }

@@ -151,6 +151,16 @@ struct Settings: Codable {
     var agentHookSharedFiles: Bool = true
     var agentHookMergeGuard: Bool = true
     var agentHookDependencies: Bool = true
+    /// What happens when an agent asks for a task (`impulse tasks new`, the
+    /// MCP server's create_task): ask, trusted_projects (create without
+    /// asking where the repository and its project settings are trusted)
+    /// or off.
+    var agentTaskCreation: String = "ask"
+    /// Open tasks agents asked for, per repository (0: no limit).
+    var agentTaskLimit: Int = AgentTaskPolicy.defaultLimit
+    /// Which terminals agents' tools may read commands and output from:
+    /// workspace (the caller's), window or off.
+    var agentToolTerminalOutput: String = "workspace"
     /// The drop-down quick terminal and its global shortcut.
     var quickTerminalEnabled: Bool = false
     var quickTerminalShortcut: String = "Ctrl+`"
@@ -286,6 +296,9 @@ struct Settings: Codable {
         case agentHookSharedFiles = "agent_hook_shared_files"
         case agentHookMergeGuard = "agent_hook_merge_guard"
         case agentHookDependencies = "agent_hook_dependencies"
+        case agentTaskCreation = "agent_task_creation"
+        case agentTaskLimit = "agent_task_limit"
+        case agentToolTerminalOutput = "agent_tool_terminal_output"
         case quickTerminalEnabled = "quick_terminal_enabled"
         case quickTerminalShortcut = "quick_terminal_shortcut"
         case editorInlayHints = "editor_inlay_hints"
@@ -450,6 +463,10 @@ struct Settings: Codable {
         agentHookSharedFiles = (try? c.decode(Bool.self, forKey: .agentHookSharedFiles)) ?? d.agentHookSharedFiles
         agentHookMergeGuard = (try? c.decode(Bool.self, forKey: .agentHookMergeGuard)) ?? d.agentHookMergeGuard
         agentHookDependencies = (try? c.decode(Bool.self, forKey: .agentHookDependencies)) ?? d.agentHookDependencies
+        agentTaskCreation = (try? c.decode(String.self, forKey: .agentTaskCreation)) ?? d.agentTaskCreation
+        agentTaskLimit = (try? c.decode(Int.self, forKey: .agentTaskLimit)) ?? d.agentTaskLimit
+        agentToolTerminalOutput =
+            (try? c.decode(String.self, forKey: .agentToolTerminalOutput)) ?? d.agentToolTerminalOutput
         quickTerminalEnabled =
             (try? c.decode(Bool.self, forKey: .quickTerminalEnabled)) ?? d.quickTerminalEnabled
         quickTerminalShortcut =
@@ -666,6 +683,8 @@ extension Settings {
         default: terminalCursorShape = "block"
         }
         terminalOptionAsMeta = KeyEncoder.OptionAsMeta(setting: terminalOptionAsMeta).rawValue
+        agentTaskCreation = AgentTaskPolicy.Setting(setting: agentTaskCreation).rawValue
+        if !["workspace", "window", "off"].contains(agentToolTerminalOutput) { agentToolTerminalOutput = "workspace" }
         windowWidth = max(400, min(10000, windowWidth))
         windowHeight = max(300, min(10000, windowHeight))
     }

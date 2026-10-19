@@ -35,9 +35,12 @@ enum TaskRegistryStore {
   /// held: `origin/main` is split into the remote and its branch, anything
   /// else is kept as typed (empty: the main checkout's branch).
   /// `fromRemote`: the task is a remote branch's checkout.
+  /// `provenance`: who made it ("user" or "agent"), and for an agent's
+  /// request who asked and from which workspace folder.
   @discardableResult
   static func recordCreated(
     path: String, branch: String, base: String, root: String, fromRemote: Bool = false,
+    provenance: (createdBy: String, requestedBy: String?, requestedFrom: String?) = ("user", nil, nil),
     available: @escaping (Int) -> Bool = { _ in true }
   ) -> TaskRecord? {
     guard let common = GitClient.commonGitDirectory(forPath: root) else { return nil }
@@ -53,7 +56,9 @@ enum TaskRegistryStore {
     return try? TaskRegistry.update(commonGitDirectory: common) { registry in
       let record = TaskRecord(
         path: path, branch: branch, base: baseBranch, remote: remote, slot: registry.nextSlot(available: available),
-        start: GitClient.resolveCommit(repoPath: path, revision: "HEAD"), fromRemote: fromRemote ? true : nil)
+        start: GitClient.resolveCommit(repoPath: path, revision: "HEAD"), fromRemote: fromRemote ? true : nil,
+        createdBy: provenance.createdBy, requestedBy: provenance.requestedBy,
+        requestedFrom: provenance.requestedFrom.map(TaskRegistry.canonical))
       registry.add(record)
       return record
     }

@@ -6,7 +6,7 @@
 
 Impulse is a Mac-first terminal IDE written in Swift (AppKit + SwiftUI), with the terminal emulation core in Rust.
 
-- `impulse-macos/` — the Swift package. `Sources/ImpulseApp` is the app; `Sources/ImpulseKit` holds Foundation-only logic (headless-testable); `Sources/ImpulseGit` wraps a vendored libgit2 (reads) plus the `git` CLI (writes); `Sources/ImpulseLSP` is the language-server client. `web/` holds the Monaco editor glue (the review is native).
+- `impulse-macos/` — the Swift package. `Sources/ImpulseApp` is the app; `Sources/ImpulseKit` holds Foundation-only logic (headless-testable); `Sources/ImpulseGit` wraps a vendored libgit2 (reads) plus the `git` CLI (writes); `Sources/ImpulseLSP` is the language-server client; `Sources/ImpulseProtocol` is the control-socket protocol and the MCP server that `Sources/ImpulseCLI` (`impulse`, `impulse mcp`) runs. `web/` holds the Monaco editor glue (the review is native).
 - `impulse-terminal/` — Rust terminal emulation on `alacritty_terminal` (PTY, grid, OSC 133/7/9/6973 scanning, command blocks, history).
 - `impulse-ffi/` — the C FFI over `impulse-terminal`, linked into the app as a static library.
 - `vendor/` — Monaco, monaco-vim, fonts, highlight.js and lucide (refresh with the `scripts/vendor-*.sh` scripts; never hand-edit).

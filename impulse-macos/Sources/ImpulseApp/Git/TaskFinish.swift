@@ -23,6 +23,9 @@ final class TaskFinishModel {
     case done(String)
     case skipped(String)
     case failed(String)
+    /// Stopped on purpose, for the user (an agent's Finish stops before
+    /// landing).
+    case waiting(String)
   }
 
   /// What a stopped step offers besides Continue.
@@ -62,6 +65,11 @@ final class TaskFinishModel {
   var landedCommit: String?
   /// Pushed for review in this tab.
   var pushedForReview = false
+  /// An agent asked for this Finish (`impulse tasks finish`): it runs up to
+  /// the land step and waits there for the user. Who asked.
+  var stopsBeforeLanding: String?
+  /// Called each time a run stops: done, stopped at a step, or waiting.
+  @ObservationIgnored var onStopped: (() -> Void)?
 
   @ObservationIgnored var onFinish: (() -> Void)?
   @ObservationIgnored var onRemedy: ((Remedy) -> Void)?
@@ -294,6 +302,7 @@ struct TaskFinishView: View {
       case .done(let text): return (text, chrome.textSecondary)
       case .skipped(let text): return (text, chrome.textTertiary)
       case .failed(let text): return (text, chrome.danger)
+      case .waiting(let text): return (text, chrome.text)
       }
     }()
     return HStack(alignment: .top, spacing: 10) {
@@ -341,6 +350,7 @@ struct TaskFinishView: View {
     case .done: Icon(.circleCheck, size: 13).foregroundStyle(chrome.success)
     case .skipped: Icon(.minus, size: 13).foregroundStyle(chrome.textTertiary)
     case .failed: Icon(.circleX, size: 13).foregroundStyle(chrome.danger)
+    case .waiting: Icon(.circleAlert, size: 13).foregroundStyle(chrome.accent)
     }
   }
 
@@ -364,11 +374,12 @@ struct TaskFinishView: View {
 extension MainWindowController {
   /// "Finish Task…" for the task workspace `workspaceID` (else the active
   /// one): opens (or shows) its Finish tab.
-  func openFinishTask(from workspaceID: UUID? = nil) {
+  @discardableResult
+  func openFinishTask(from workspaceID: UUID? = nil) -> TaskFinishModel? {
     let id = workspaceID ?? tabManager.activeWorkspaceID
     guard let workspace = tabManager.workspace(id), workspace.kind == .folder, workspace.isTask else {
       toasts.show(Toast(kind: .info, message: "Finish Task works in a task's workspace."))
-      return
+      return nil
     }
     let root = workspace.root
     tabManager.activateWorkspace(id)
@@ -377,9 +388,9 @@ extension MainWindowController {
       let surface = tabManager.openTool(
         kind: TaskFinishSurface.kind(root), make: { TaskFinishSurface(root: root, palette: palette) })
         as? TaskFinishSurface
-    else { return }
+    else { return nil }
     let model = surface.model
-    guard !model.isRunning else { return }
+    guard !model.isRunning else { return model }
     model.workspaceID = id
     model.onFinish = { [weak self, weak model] in
       guard let self, let model else { return }
@@ -402,6 +413,27 @@ extension MainWindowController {
       self.requestCloseTab(index: location.tabIndex)
     }
     loadFinish(model, root: root)
+    return model
+  }
+
+  /// Start a Finish that's been opened, once it has loaded (`then` gets
+  /// nil when it started, else why it can't).
+  func startFinishWhenLoaded(_ model: TaskFinishModel, then: @escaping (String?) -> Void) {
+    guard !model.isLoading else {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self, weak model] in
+        guard let self, let model else { return then("The Finish tab was closed.") }
+        self.startFinishWhenLoaded(model, then: then)
+      }
+      return
+    }
+    if let unavailable = model.unavailable { return then(unavailable) }
+    if model.isRunning { return then(nil) }
+    if model.landing == nil, !model.alreadyMerged {
+      return then(
+        "This is the first Finish in \(model.mainName), so the user has to choose how work lands there. The Finish tab is open for them.")
+    }
+    startFinish(model)
+    then(nil)
   }
 
   private func loadFinish(_ model: TaskFinishModel, root: String) {
@@ -485,6 +517,18 @@ extension MainWindowController {
   private func advanceFinish(_ model: TaskFinishModel, to step: TaskFinishModel.Step?) {
     guard let step else {
       model.isRunning = false
+      model.onStopped?()
+      return
+    }
+    // An agent's Finish: landing is the user's to start.
+    if step == .land, let requester = model.stopsBeforeLanding {
+      model.stopsBeforeLanding = nil
+      model.statuses[.land] = .waiting(
+        "\(requester) asked to finish \(model.name). Click Continue to \(model.effectiveLanding == .review ? "push it for review" : "land it in \(model.baseRef)").")
+      model.resumeAt = .land
+      model.remedy = nil
+      model.isRunning = false
+      model.onStopped?()
       return
     }
     let next = TaskFinishModel.Step(rawValue: step.rawValue + 1)
@@ -499,6 +543,7 @@ extension MainWindowController {
       model.resumeAt = resume
       model.remedy = remedy
       model.isRunning = false
+      model.onStopped?()
     }
     switch step {
     case .commit: finishCommitStep(model, proceed: proceed, stop: stop)

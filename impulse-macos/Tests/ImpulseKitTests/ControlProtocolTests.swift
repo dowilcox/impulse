@@ -71,6 +71,51 @@
       #expect(parse(["tasks", "everything"]) == nil)
     }
 
+    @Test func tasksShowNewFinishAndArchive() {
+      #expect(parse(["tasks", "show", "fix-elevation"])?.arguments == ["show": "fix-elevation"])
+      #expect(parse(["tasks", "show", "fix-elevation", "--json"])?.arguments == ["show": "fix-elevation", "json": "1"])
+      #expect(parse(["tasks", "show"]) == nil)
+      #expect(parse(["tasks", "finish", "x"])?.wait == true)
+      #expect(parse(["tasks", "archive", "x"])?.arguments == ["archive": "x"])
+      let new = parse(["tasks", "new", "Fix", "the", "units", "--from", "origin/main", "--agent", "claude", "--move-changes"])
+      #expect(new?.arguments == ["new": "Fix the units", "base": "origin/main", "agent": "claude", "move": "1"])
+      #expect(new?.wait == true)
+      let piped = parse(["tasks", "new", "Docs", "--brief", "-"], stdin: "Write the docs.")
+      #expect(piped?.arguments["brief"] == "Write the docs.")
+      #expect(parse(["tasks", "new", "Docs", "--brief-file", "notes.md"])?.arguments["briefFile"] == "/repo/sub/notes.md")
+      #expect(parse(["tasks", "new", "Docs", "--brief", "notes.md"]) == nil)
+      #expect(parse(["tasks", "new", "--agent", "claude"]) == nil)
+      #expect(parse(["tasks", "new", "x", "--force"]) == nil)
+      #expect(parse(["tasks", "new", "--", "--odd", "title"])?.arguments["new"] == "--odd title")
+      let large = String(repeating: "x", count: ControlProtocol.briefLimit + 1)
+      #expect(parse(["tasks", "new", "x", "--brief", "-"], stdin: large) == nil)
+    }
+
+    @Test func workspaceCommands() {
+      #expect(parse(["turns", "--json"])?.arguments == ["json": "1"])
+      #expect(parse(["turns", "extra"]) == nil)
+      #expect(parse(["comments"])?.arguments == [:])
+      #expect(parse(["comments", "../src/a.ts", "--json"])?.arguments == ["path": "/repo/src/a.ts", "json": "1"])
+      #expect(parse(["comments", "resolve", "c1", "Fixed", "it"])?.arguments == ["resolve": "c1", "note": "Fixed it"])
+      #expect(parse(["comments", "resolve"]) == nil)
+      #expect(parse(["problems", "--errors"])?.arguments == ["errors": "1"])
+      #expect(parse(["problems", "a.ts", "b.ts"]) == nil)
+      #expect(parse(["blocks", "show", "ab12:7", "--lines", "20"])?.arguments == ["show": "ab12:7", "lines": "20"])
+      #expect(parse(["blocks", "show", "ab12:7", "--lines", "none"]) == nil)
+      #expect(parse(["blocks", "everything"]) == nil)
+      #expect(parse(["unsaved"])?.command == "unsaved")
+      #expect(parse(["project", "--json"])?.arguments == ["json": "1"])
+    }
+
+    @Test func responsesCarryStructuredData() throws {
+      let response = ControlResponse(ok: true, message: "text", data: Data(#"{"a":1}"#.utf8))
+      let line = try ControlProtocol.encodeLine(response)
+      #expect(try ControlProtocol.decode(ControlResponse.self, from: line.dropLast()) == response)
+      // An older app's answer has no data.
+      let old = try ControlProtocol.decode(ControlResponse.self, from: Data(#"{"ok":true,"message":"hi"}"#.utf8))
+      #expect(old.data == nil)
+    }
+
     @Test func codexNotifyPassesJSONAsAnArgument() {
       let turn = parse(["hook", "codex", #"{"type":"agent-turn-complete","last-assistant-message":"All done"}"#])
       #expect(turn?.arguments == ["agent": "codex", "event": "agent-turn-complete", "message": "All done"])

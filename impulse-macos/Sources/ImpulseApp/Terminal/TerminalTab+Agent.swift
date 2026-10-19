@@ -86,6 +86,7 @@ extension TerminalTab {
     recordTurnBoundary(from: before, to: .exited)
     agent = nil
     agentFromHooks = false
+    agentReportsByHook = false
     agentSession = nil
     agentStatusMessage = nil
     // Text queued for this agent isn't for whatever runs next.

@@ -36,7 +36,7 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 
 ## Plans
 
-Proposals under discussion. They describe what Impulse might do, not what it does today.
+How bigger features were planned, and what was decided while building them.
 
 - [MCP server](mcp-plan.md): letting agents list and start tasks, and read review comments, problems and terminal output, through the Model Context Protocol.
 
@@ -49,6 +49,7 @@ Proposals under discussion. They describe what Impulse might do, not what it doe
 | See exactly what an agent changed in its last turn, or undo it | [Agents › Checkpoints and turns](agents.md#checkpoints-and-turns), [Review](review.md) |
 | Commit part of a file                                          | [Review › Staging, unstaging and reverting](review.md#staging-unstaging-and-reverting) |
 | Send review comments back to an agent                          | [Review › Comments](review.md#comments)                                                |
+| Let an agent start tasks, or read your comments and problems   | [Agents › Impulse's MCP server](agents.md#impulses-mcp-server)                         |
 | Find when a line changed, and who changed it                   | [History](history.md), [Editor › Inline blame](editor.md#inline-blame)                 |
 | Run your project's dev server or tests from the palette        | [Project configuration › Project actions](project-config.md#project-actions)           |
 | Make `git commit` open its message in Impulse                  | [Command-line tool](cli.md#use-impulse-as-your-editor)                                 |

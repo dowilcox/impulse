@@ -15,6 +15,18 @@ struct TaskDraft {
   var base = ""
   /// Command for the first terminal ("" for none).
   var command = ""
+  /// What the agent started there is asked to do (its first prompt), from
+  /// an agent's request; "" for none.
+  var brief = ""
+}
+
+/// An agent asked for this task (`impulse tasks new`, the MCP server's
+/// create_task).
+struct AgentTaskRequest {
+  /// "Claude Code in trailhead (main checkout)".
+  let requestedBy: String
+  /// The workspace folder the request came from.
+  let fromPath: String
 }
 
 @Observable
@@ -55,6 +67,15 @@ final class TaskSheetModel {
   var headName = "HEAD"
   /// An agent working in the main checkout: its files can't move mid-turn.
   var moveBlocker: String?
+  /// The agent that asked for the task, when one did.
+  var agentRequest: AgentTaskRequest?
+  /// Called once the task's workspace is open (its folder and branch).
+  @ObservationIgnored var onCreated: ((_ path: String, _ branch: String) -> Void)?
+  /// Called when creating it failed (the sheet shows why; without a sheet,
+  /// this is the only word of it).
+  @ObservationIgnored var onFailed: ((String) -> Void)?
+  /// Created without the sheet: its toast offers Undo.
+  var createdWithoutAsking = false
 
   init(repoRoot: String, base: String) {
     self.repoRoot = repoRoot
@@ -143,6 +164,15 @@ struct TaskSheetView: View {
         .font(ChromeFont.ui(11.5))
         .foregroundStyle(chrome.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
+      if let request = model.agentRequest {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Icon(.bot, size: 11).foregroundStyle(chrome.accent)
+          Text("\(request.requestedBy) wants to start this task. Check it, change anything, then create it or cancel.")
+            .font(ChromeFont.ui(11.5, weight: .medium))
+            .foregroundStyle(chrome.text)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
 
       field("Task") {
         TextField("e.g. Fix the flaky login test", text: $model.draft.title)
@@ -180,6 +210,21 @@ struct TaskSheetView: View {
         }
         .labelsHidden()
         .frame(width: 220)
+      }
+      if model.agentRequest != nil || !model.draft.brief.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(model.draft.command.isEmpty ? "Brief (kept with the task; no agent starts)" : "Brief (the agent's first prompt)")
+            .font(ChromeFont.ui(11))
+            .foregroundStyle(chrome.textTertiary)
+          TextEditor(text: $model.draft.brief)
+            .font(ChromeFont.mono(11))
+            .scrollContentBackground(.hidden)
+            .padding(4)
+            .frame(height: 110)
+            .background(RoundedRectangle(cornerRadius: Metrics.radius).fill(chrome.content))
+            .accessibilityLabel("Brief")
+        }
+        .padding(.leading, 54)
       }
       if model.offersMove {
         VStack(alignment: .leading, spacing: 4) {
@@ -314,12 +359,18 @@ extension MainWindowController {
   /// "New Task…": ask for a title and what to start, then create it (from
   /// `workspaceID`'s repository, or the active workspace's). `title`,
   /// `command` and `base` prefill the sheet.
+  ///
+  /// From an agent's request (`agentRequest`), the sheet says who asked and
+  /// shows the brief; `onOutcome` hears whether a task was created (its
+  /// folder and branch) or the sheet was cancelled (nil).
   func presentNewTaskSheet(
     from workspaceID: UUID? = nil, title: String = "", command: String = "", base: String? = nil,
-    movingChanges: Bool = false, movePaths: [String]? = nil
+    movingChanges: Bool = false, movePaths: [String]? = nil, agentRequest: AgentTaskRequest? = nil,
+    brief: String = "", onOutcome: ((_ created: (path: String, branch: String)?) -> Void)? = nil
   ) {
     guard let window, let repository = taskRepository(from: workspaceID) else {
       toasts.show(Toast(kind: .info, message: "Open a folder in a git repository to start a task."))
+      onOutcome?(nil)
       return
     }
     // Tasks branch from the main checkout, even when started from a task:
@@ -335,6 +386,9 @@ extension MainWindowController {
     }
     model.draft.title = title
     model.draft.command = command
+    model.draft.brief = brief
+    model.agentRequest = agentRequest
+    if let onOutcome { model.onCreated = { path, branch in onOutcome((path, branch)) } }
     model.fetchesOnItsOwn = Trust.shared.isTrusted(root)
     model.movesChanges = movingChanges
     model.movePaths = movePaths
@@ -406,6 +460,7 @@ extension MainWindowController {
         model: model,
         onCancel: { [weak window, weak sheet] in
           if let sheet { window?.endSheet(sheet) }
+          onOutcome?(nil)
         },
         onCreate: { [weak self, weak window, weak sheet] in
           self?.createTask(model) {
@@ -415,6 +470,7 @@ extension MainWindowController {
         onFetch: { [weak self] in self?.fetchForTaskSheet(model) },
         onSetUp: { [weak self, weak window, weak sheet] in
           if let sheet { window?.endSheet(sheet) }
+          onOutcome?(nil)
           self?.openProjectSetup(from: workspaceID)
         }
       ))
@@ -488,7 +544,7 @@ extension MainWindowController {
       patterns: WorktreeTasks.includePatterns(fromFile: include) + projectCopies, root: root)
   }
 
-  private func createTask(_ model: TaskSheetModel, done: @escaping () -> Void) {
+  func createTask(_ model: TaskSheetModel, done: @escaping () -> Void) {
     model.isCreating = true
     model.error = nil
     let root = model.repoRoot
@@ -497,6 +553,8 @@ extension MainWindowController {
     let base = model.draft.base.trimmingCharacters(in: .whitespaces)
     let copies = model.copies
     let command = model.draft.command
+    let brief = model.draft.brief.trimmingCharacters(in: .whitespacesAndNewlines)
+    let agentRequest = model.agentRequest
     let moving = model.movesChanges && model.offersMove && model.moveUnavailable == nil
     let movePaths = model.movePaths
     if moving, let blocker = moveBlocker(root: root) {
@@ -528,8 +586,19 @@ extension MainWindowController {
         let settings = try? Self.loadProjectConfig(root: path)?.config.get()
         Self.copyFiles(copies + Self.envFileCopy(settings, root: root, copies: copies), from: root, to: path)
         for folder in settings?.worktreeClone ?? [] { FolderClone.clone(folder, from: root, to: path) }
-        record = TaskRegistryStore.recordCreated(path: path, branch: branch, base: base, root: root) { slot in
+        var provenance: (createdBy: String, requestedBy: String?, requestedFrom: String?) = ("user", nil, nil)
+        if let agentRequest { provenance = ("agent", agentRequest.requestedBy, agentRequest.fromPath) }
+        record = TaskRegistryStore.recordCreated(
+          path: path, branch: branch, base: base, root: root, provenance: provenance
+        ) { slot in
           TaskRegistryStore.portsAreFree(settings, slot: slot)
+        }
+      }
+      var briefPath: String?
+      if failure == nil, !brief.isEmpty, let common = GitClient.commonGitDirectory(forPath: root) {
+        let name = (path as NSString).lastPathComponent
+        if TaskBrief.write(brief, task: name, commonGitDirectory: common) {
+          briefPath = TaskBrief.path(task: name, commonGitDirectory: common)
         }
       }
       var moved: ChangeMove.Moved?
@@ -545,6 +614,7 @@ extension MainWindowController {
         if let failure {
           model.error = failure
           if DebugSnapshot.isActive { NSLog("DebugSnapshot: task failed: \(failure)") }
+          model.onFailed?(failure)
           return
         }
         done()
@@ -555,10 +625,38 @@ extension MainWindowController {
         // into its env file, then the setup script runs before the agent.
         self.trustProjectConfig(root: path) { [weak self] config in
           Self.prepareTask(config, root: root, path: path, slot: record?.slot) {
-            let first = [config?.setupScript, command.isEmpty ? nil : command].compactMap { $0 }
-            self?.tabManager.openWorkspace(
+            // The agent starts on its brief: as its first prompt where its
+            // command takes one, else typed in once it's up.
+            let agent = KnownAgents.builtIn.first { $0.names.first == command }
+            var start = command
+            var typeBrief = false
+            if let agent, briefPath != nil {
+              if let withBrief = AgentTaskPolicy.command(
+                agent: agent, briefPath: briefPath, shell: LoginShell.detectShellType(LoginShell.defaultShellPath()))
+              {
+                start = withBrief
+              } else {
+                typeBrief = true
+              }
+            }
+            let first = [config?.setupScript, start.isEmpty ? nil : start].compactMap { $0 }
+            let workspace = self?.tabManager.openWorkspace(
               folder: path, initialCommand: first.isEmpty ? nil : first.joined(separator: " && "))
-            if let moved {
+            if typeBrief, let workspace, let terminal = self?.tabManager.terminals(inWorkspace: workspace.id).first {
+              Self.typeBriefWhenAgentStarts(brief, into: terminal)
+            }
+            model.onCreated?(path, branch)
+            model.onCreated = nil
+            if model.createdWithoutAsking {
+              let startCommit = record?.start
+              self?.toasts.show(
+                Toast(
+                  kind: .success,
+                  message: "\(agentRequest?.requestedBy ?? "An agent") started task \(branch).",
+                  actionTitle: "Undo",
+                  action: { [weak self] in self?.undoAgentTask(path: path, branch: branch, root: root, start: startCommit) },
+                  lifetime: 20))
+            } else if let moved {
               let main = (root as NSString).lastPathComponent
               self?.toasts.show(
                 Toast(

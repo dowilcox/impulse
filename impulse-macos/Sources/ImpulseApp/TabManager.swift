@@ -1284,6 +1284,32 @@ final class TabManager: NSObject {
     records.indices.filter { records[$0].workspaceID == id }
   }
 
+  /// The workspace a terminal is in (any pane of any tab).
+  func workspace(ofTerminal terminal: TerminalTab) -> Workspace? {
+    location(ofTerminal: terminal).flatMap { workspaceID(ofTabAt: $0.tabIndex) }.flatMap { workspace($0) }
+  }
+
+  /// A workspace's terminals (each terminal surface's active one), in tab
+  /// and pane order.
+  func terminals(inWorkspace id: UUID) -> [TerminalTab] {
+    tabIndices(inWorkspace: id).flatMap { index in
+      records[index].entry.surfaces.compactMap { surface -> TerminalTab? in
+        guard case .terminal(let container) = surface else { return nil }
+        return container.activeTerminal
+      }
+    }
+  }
+
+  /// A workspace's editors, in tab and pane order.
+  func editors(inWorkspace id: UUID) -> [EditorTab] {
+    tabIndices(inWorkspace: id).flatMap { index in
+      records[index].entry.surfaces.compactMap { surface -> EditorTab? in
+        guard case .editor(let editor) = surface else { return nil }
+        return editor
+      }
+    }
+  }
+
   /// Indexes of the tabs the strip shows (the active workspace's).
   var visibleTabIndices: [Int] { tabIndices(inWorkspace: activeWorkspaceID) }
 
@@ -1489,6 +1515,7 @@ final class TabManager: NSObject {
     guard let record = TaskRegistryStore.record(forPath: root) else { return nil }
     var parts = ["Task" + (record.slot.map { " slot \($0)" } ?? "")]
     if let base = record.baseRef { parts.append("from \(base)") }
+    if let requestedBy = record.requestedBy { parts.append("started for \(requestedBy)") }
     if let slot = record.slot, let settings = try? MainWindowController.loadProjectConfig(root: root)?.config.get(),
       !settings.ports.isEmpty, let ports = TaskEnvironment.ports(settings.ports, slot: slot, offset: settings.portOffset)
     {

@@ -39,12 +39,21 @@ If your shell startup files replace `PATH` outright (rather than adding to it), 
 | `impulse status <working\|waiting\|done\|idle> [message…]`  | Report an agent state from a program running in this pane.                                      |
 | `impulse checkpoint [message…]`                             | Snapshot the repository's files.                                                                |
 | `impulse tasks [--json]`                                    | List the repository's workspaces: branches, agents, uncommitted files, files shared with yours. |
+| `impulse tasks show\|wait\|finish\|archive <task>`          | Look at one task, wait for its agent, finish it or archive it.                                  |
+| `impulse tasks new <title…> [options]`                      | Ask for a new task, with an agent started on a brief. Impulse asks you first.                   |
+| `impulse turns [--json]`                                    | This pane's agent turns and their checkpoints.                                                  |
+| `impulse comments [<file>] [--json]`                        | The repository's review comments. `comments resolve <id> <note…>` marks one addressed.          |
+| `impulse problems [<file>] [--errors] [--json]`             | The language servers' problems in this workspace.                                               |
+| `impulse blocks [--json]`, `impulse blocks show <id>`       | This workspace's terminals and their commands; one command's output.                            |
+| `impulse unsaved [--json]`                                  | Files open in the editor with unsaved edits.                                                    |
+| `impulse project [--json]`                                  | The trusted project settings: check and setup scripts, actions, `[on_change]` rules.            |
 | `impulse hook <claude\|codex> [event]`                      | Used by agent hooks.                                                                            |
+| `impulse mcp`                                               | Impulse's MCP server, for agents. See [`impulse mcp`](#impulse-mcp).                            |
 | `impulse help`                                              | Print the usage summary. `-h` and `--help` do the same, as does `impulse` alone.                |
 
 Relative paths are resolved against your current directory, and `~` is expanded.
 
-`impulse` has no options other than `-h` and `--help`, which print the usage summary after any command too (`impulse edit --help`). Any other word starting with `-` where an option could go is a usage error: `impulse edit --wait notes.md` prints `impulse edit: unknown option '--wait'` and exits with status 2, rather than opening a file named `--wait`. For `open` and `edit` that's every argument; for `split`, `tab`, `notify` and `checkpoint` only the first word, so a command you run keeps its own options (`impulse tab ls -la`). Put `--` before a name that starts with a dash: `impulse open -- -notes.md`.
+Besides the options a command lists (`--json`, `--errors`, `--lines`, and `tasks new`'s), `impulse` has only `-h` and `--help`, which print the usage summary after any command too (`impulse edit --help`). Any other word starting with `-` where an option could go is a usage error: `impulse edit --wait notes.md` prints `impulse edit: unknown option '--wait'` and exits with status 2, rather than opening a file named `--wait`. For `open` and `edit` that's every argument; for `split`, `tab`, `notify` and `checkpoint` only the first word, so a command you run keeps its own options (`impulse tab ls -la`). Put `--` before a name that starts with a dash: `impulse open -- -notes.md`.
 
 ### `impulse open`
 
@@ -226,6 +235,85 @@ It's meant for agents as much as for you: an agent only knows its own folder, an
 
 `impulse tasks wait <task>` waits until no agent is working (or waiting for input) in that task, named by its folder or branch, then exits: a way to let a branch stop moving before merging it. Press ⌃C to stop waiting.
 
+### `impulse tasks show`, `new`, `finish` and `archive`
+
+```
+impulse tasks show <task> [--json]
+impulse tasks new <title…> [--from <base>] [--agent <id>] [--brief-file <path> | --brief -] [--move-changes]
+impulse tasks finish <task>
+impulse tasks archive <task>
+```
+
+`show` prints one workspace from `impulse tasks` in detail: the files its branch changes against its base, its uncommitted files, its commits ahead of the base (up to 50), whether it's merged into its base (squash merges included), its slot and port values, and the brief it was started with. Name the task by its folder or its branch; the main checkout's name works too.
+
+`new` asks Impulse to start a task, which opens New Task filled in and waits until you create it or cancel; the output is the new task as `show` prints it. `--agent` starts an agent there (`claude`, `codex`, `gemini`, …: an agent Impulse knows, never a command line), on the brief from `--brief-file` or standard input (`--brief -`), at most 16 KB. `--from` is the base; `--move-changes` takes the main checkout's uncommitted files along. See [Tasks agents start](tasks.md#tasks-agents-start) for when Impulse skips the sheet.
+
+`finish` opens the task's Finish tab and runs it up to landing, which waits for you, then prints each step's outcome. `archive` runs Archive Task…, with its questions, and says whether the task was archived. Both wait for their answer; ⌃C stops waiting.
+
+`new`, `finish` and `archive` only work from the pane's own shell or a program it started, like `split`.
+
+### `impulse turns`
+
+```
+impulse turns [--json]
+```
+
+The agent turns Impulse recorded in this pane, oldest first: the agent, when each started, and its start and end checkpoint refs, so `git diff <start> <end>` shows what that turn changed. See [Checkpoints and turns](agents.md#checkpoints-and-turns).
+
+### `impulse comments`
+
+```
+impulse comments [<file>] [--json]
+impulse comments resolve <id> <note…>
+```
+
+Your [review comments](review.md#comments) on the repository, by file and line, each with its id, the lines it was written on, its text, and whether it's outdated (those lines read differently now) or addressed. With a file, only that file's.
+
+`resolve` marks a comment addressed, with a note saying what was done: Review then shows the note under the comment, with **Accept** (which deletes it) and **Reopen**. It's meant for agents working through your review, and only works from the pane's own shell or a program it started.
+
+### `impulse problems`
+
+```
+impulse problems [<file>] [--errors] [--json]
+```
+
+What the [Problems](editor.md#problems) tab shows for this workspace: each problem's file, line, column, severity, message, source and code, errors first, at most 200, with the counts of everything. `--errors` keeps only errors; a file keeps only that file's. It also lists which files the language servers have checked: a file it doesn't name is unknown, not clean. It never starts a server, so in a folder you haven't trusted it says no servers run there.
+
+### `impulse blocks`
+
+```
+impulse blocks [--json]
+impulse blocks show <id> [--lines <n>]
+```
+
+The terminals in this workspace, each with an id, its title and folder, its agent, and its last 20 [command blocks](terminal.md#command-blocks): the block's id (`3f2a91c0:1042`), its command, folder, exit status, and whether it's still running. `show` prints one block's output, its last 200 lines unless `--lines` says otherwise (at most 2,000).
+
+Settings ▸ Terminal ▸ Agents ▸ **Agents may read terminal output** (`agent_tool_terminal_output`) decides which terminals these see: the workspace's (the default), the window's, or none, in which case `impulse blocks` refuses. The Quick Terminal is never included.
+
+### `impulse unsaved`
+
+```
+impulse unsaved [--json]
+```
+
+The files in this workspace that are open in the editor with edits you haven't saved, and whether each also changed on disk since. Paths only, never the unsaved text.
+
+### `impulse project`
+
+```
+impulse project [--json]
+```
+
+How the repository is set up and checked, from its [project settings](project-config.md): the check, setup and archive scripts, the actions, the `[on_change]` rules, the env file's name and, in a task, its slot and ports. Commands are only listed from settings you've trusted; before that, it lists what Impulse found itself (lock files and their install commands, a Compose file).
+
+### `impulse mcp`
+
+```
+impulse mcp
+```
+
+Impulse's [MCP server](agents.md#impulses-mcp-server): the agent starts it, and talks to it on standard input and output, one JSON-RPC message per line. Its tools are the commands on this page (`list_tasks` is `impulse tasks`, `create_task` is `impulse tasks new`, and so on). Outside an Impulse terminal it answers but offers no tools. You don't run it yourself; install it for your agent with **Install Impulse's MCP Server…**.
+
 ### `impulse hook`
 
 ```
@@ -249,7 +337,7 @@ Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does 
 
 ## Inside tmux or screen
 
-`IMPULSE_PANE_TOKEN` names a pane, but any program that can see a shell's environment could read it. So the commands that start programs or run git where they're asked to also check where the request comes from: `split`, `tab`, `checkpoint`, and `edit` of a file that doesn't exist yet only work from the pane's own shell or a program started from it. The others (`open`, `edit` of an existing file, `review`, `notify`, `status`, `tasks` and `hook`) only need the token.
+`IMPULSE_PANE_TOKEN` names a pane, but any program that can see a shell's environment could read it. So the commands that start programs, run git or change what's saved where they're asked to also check where the request comes from: `split`, `tab`, `checkpoint`, `tasks new`, `tasks finish`, `tasks archive`, `comments resolve`, and `edit` of a file that doesn't exist yet only work from the pane's own shell or a program started from it (an agent's `impulse mcp` is one). The others (`open`, `edit` of an existing file, `review`, `notify`, `status`, `tasks`, `turns`, `comments`, `problems`, `blocks`, `unsaved`, `project` and `hook`) only need the token.
 
 tmux and screen run their shells in a server of their own, not under the shell you started them from, and their panes keep the token of the Impulse pane the server started in. Inside them:
 

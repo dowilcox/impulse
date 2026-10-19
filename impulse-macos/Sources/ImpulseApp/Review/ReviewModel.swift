@@ -366,16 +366,22 @@ struct ReviewMetrics {
       || (0x20000...0x3FFFD).contains(v)
   }
 
-  /// Height of a comment card holding `text` in a table this wide.
-  func commentHeight(_ text: String, tableWidth: CGFloat, layout: ReviewLayout) -> CGFloat {
+  /// Height of a comment card holding `text` in a table this wide, with an
+  /// agent's "addressed" note under it when there is one.
+  func commentHeight(_ text: String, resolution: String? = nil, tableWidth: CGFloat, layout: ReviewLayout) -> CGFloat {
     let width = max(
       80, tableWidth - Self.cardInset * 2 - Self.commentIndent(layout) - Self.codeTrailing - 26)
-    let body = (text as NSString).boundingRect(
-      with: NSSize(width: width, height: .greatestFiniteMagnitude),
-      options: [.usesLineFragmentOrigin, .usesFontLeading],
-      attributes: [.font: NSFont.systemFont(ofSize: 12)]
-    ).height
+    func height(_ text: String, size: CGFloat) -> CGFloat {
+      (text as NSString).boundingRect(
+        with: NSSize(width: width, height: .greatestFiniteMagnitude),
+        options: [.usesLineFragmentOrigin, .usesFontLeading],
+        attributes: [.font: NSFont.systemFont(ofSize: size)]
+      ).height
+    }
     // Margins 4 + 8, padding 8 + 8, meta line 18.
-    return ceil(body) + 46
+    var total = ceil(height(text, size: 12)) + 46
+    // The note: a 6 pt gap, its text, padding 6 + 6.
+    if let resolution { total += ceil(height(resolution, size: 11.5)) + 18 }
+    return total
   }
 }

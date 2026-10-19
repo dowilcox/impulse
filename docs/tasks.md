@@ -239,6 +239,37 @@ Tasks keep agents' files apart, but not everything else: two agents can still ch
 - **Check after a big merge.** A merge without conflicts can still break code that relied on something the other side changed. After merging a large change, reinstall dependencies and run the type checker or tests before anything else (in trailhead, `npm ci && npm test`).
 - **Clean up worktrees you made yourself.** Impulse archives its own tasks. For worktrees made with `git worktree add`, `git worktree list` shows them all, `git worktree remove <path>` removes one, and `git worktree prune` forgets folders you deleted by hand.
 
+## Tasks agents start
+
+An agent that has split its work into independent pieces can ask Impulse to start a task for each one, with an agent working on a brief it wrote. It asks with [Impulse's MCP server](agents.md#impulses-mcp-server) (`create_task`) or the command line:
+
+```sh
+impulse tasks new Fix elevation units --agent claude --brief-file brief.md
+```
+
+1. **You're asked.** Impulse opens New Task in the agent's window, filled in from the request, with a line naming who asked ("Claude Code in trailhead (main checkout) wants to start this task.") and the brief under **Start**. Change anything (title, From, agent, brief), then **Create Task**, or **Cancel**. The agent's terminal asks for attention while the sheet waits, and a second request gets "Another task request is waiting for the user." until you answer.
+2. **The task is made as yours would be.** The same folder, copies, slot and values, trust and setup script as [Create Task](#what-happens-when-you-click-create-task), in the same order. A request never trusts anything.
+3. **The agent starts on its brief.** The brief is saved as `.git/impulse/tasks/<task>/brief.md`, outside the task's folder so it's never committed. Claude Code and Codex start with it as their first prompt, read from that file (`claude "$(cat …/brief.md)"`), so a long brief isn't typed into the shell or kept in its history. Other agents start as usual, and the brief is typed in once Impulse sees them.
+4. **The agent hears what happened.** The new task, as `impulse tasks show` describes it, with your changes; or "The user declined: no task was created."
+
+The task's row, on hover, says who it was started for ("started for Claude Code in trailhead"), and `impulse tasks` (`list_tasks`) shows it and the brief's first line. `impulse tasks show <task>` (`get_task`) shows the whole brief.
+
+### When Impulse doesn't ask
+
+Settings ▸ Terminal ▸ Agents ▸ **When an agent asks to start a task** (`agent_task_creation`):
+
+- **Ask me** (`ask`, the default): always the sheet.
+- **Start it in trusted projects** (`trusted_projects`): in a [trusted](getting-started.md) repository whose project settings you've trusted, the task is created without the sheet, and a toast says so with **Undo**, which closes it, archives its folder (keeping what it holds in a snapshot) and deletes its branch if nothing was committed on it. Anywhere else, the sheet.
+- **Don't allow it** (`off`): requests are refused, and the MCP server doesn't offer `create_task`.
+
+Whatever the setting, the sheet always comes up when the request takes the main checkout's uncommitted files (`--move-changes`), and when it comes from inside a task an agent started, so agents can't start chains of tasks without you. **Open tasks agents may start** (`agent_task_limit`, 4 per repository by default; 0 for no limit) refuses requests past the limit, until you finish or archive one.
+
+### Finishing and archiving from an agent
+
+`impulse tasks finish <task>` (`finish_task`) opens the task's Finish tab and runs it: commit, sync and check, then it stops at **Land**, which says the agent asked and waits for you to click **Continue**. The agent hears each step's outcome, so a failing check comes back to it to fix. The first Finish in a repository asks how work lands there, so the agent's waits for you to choose.
+
+`impulse tasks archive <task>` (`archive_task`) runs [Archive Task…](#archive-the-task), with its questions and its Undo, and tells the agent whether it was archived.
+
 ## Finish a task
 
 ### Finish Task

@@ -35,6 +35,9 @@ class TerminalTab: NSView {
   /// The agent was announced by its hooks (keep it while the command runs
   /// even if the process isn't one Impulse recognizes).
   var agentFromHooks = false
+  /// The agent's own hooks (`impulse hook`) have reported in: its state
+  /// comes from them, and `set_status` from the MCP server leaves it be.
+  var agentReportsByHook = false
   /// The agent's session (from its hooks), so a restored terminal can
   /// offer to resume it.
   var agentSession: (agentID: String, id: String)?

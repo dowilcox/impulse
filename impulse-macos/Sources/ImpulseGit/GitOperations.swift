@@ -599,6 +599,20 @@ public enum GitOperations {
     return counts.count == 2 ? (counts[0], counts[1]) : nil
   }
 
+  /// The commits on `branch` that `base` lacks, newest first, as (id,
+  /// subject): at most `limit`.
+  public static func commitsAhead(_ branch: String, base: String, root: String, limit: Int) -> [(id: String, subject: String)] {
+    guard
+      case .success(let result) = git(
+        ["log", "--format=%H%x09%s", "-n", String(limit), "\(base)..\(branch)", "--"], in: root)
+    else { return [] }
+    return result.stdout.split(separator: "\n").compactMap { line in
+      let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+      guard let id = parts.first, !id.isEmpty else { return nil }
+      return (id, parts.count > 1 ? parts[1] : "")
+    }
+  }
+
   /// HEAD's latest move from its reflog: when it happened, how ("pull:
   /// Fast-forward"), and the commits before and after. Nil without two
   /// reflog entries.

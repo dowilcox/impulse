@@ -31,11 +31,16 @@ public struct ControlRequest: Codable, Equatable, Sendable {
 
 public struct ControlResponse: Codable, Equatable, Sendable {
   public var ok: Bool
+  /// What `impulse` prints: text, or JSON when `--json` asked for it.
   public var message: String?
+  /// The same answer as one JSON object, for `impulse mcp`'s structured
+  /// tool results (and `--json`). Older apps don't send it.
+  public var data: Data?
 
-  public init(ok: Bool, message: String? = nil) {
+  public init(ok: Bool, message: String? = nil, data: Data? = nil) {
     self.ok = ok
     self.message = message
+    self.data = data
   }
 }
 
@@ -73,9 +78,26 @@ public enum ControlProtocol {
       impulse tasks [--json]                this repository's workspaces: branches, agents,
                                             uncommitted files, files shared with yours
       impulse tasks wait <task>             wait until that task's agent stops working
+      impulse tasks show <task> [--json]    one task: its files, commits, merged state, brief
+      impulse tasks new <title…> [--from <base>] [--agent <id>] [--brief-file <path> | --brief -]
+                        [--move-changes]    ask to start a task (Impulse shows New Task first)
+      impulse tasks finish <task>           open Finish for a task (landing asks you)
+      impulse tasks archive <task>          archive a task (asks you, with Undo)
+      impulse turns [--json]                this pane's agent turns and their checkpoints
+      impulse comments [<file>] [--json]    the repository's review comments
+      impulse comments resolve <id> <note…> mark a comment addressed, for you to accept
+      impulse problems [<file>] [--errors] [--json]
+                                            the language servers' problems in this workspace
+      impulse blocks [--json]               this workspace's terminals and their commands
+      impulse blocks show <id> [--lines <n>] one command's output
+      impulse unsaved [--json]              files open with unsaved edits
+      impulse project [--json]              the trusted project settings: scripts, actions
       impulse hook <claude|codex> [event]   for agent hooks (reads hook input on stdin)
+      impulse mcp                           an MCP server (stdio) for agents, with the
+                                            same commands as tools
 
-    Outside an Impulse terminal, `impulse hook` does nothing and exits 0.
+    Outside an Impulse terminal, `impulse hook` does nothing and exits 0, and
+    `impulse mcp` offers no tools.
     """
 
   public struct UsageError: Error, Equatable {
@@ -199,12 +221,84 @@ public enum ControlProtocol {
         request.arguments["json"] = "1"
         words.removeFirst()
       }
-      if words.first == "wait" {
-        guard words.count == 2 else { return .failure(UsageError("usage: impulse tasks wait <task>")) }
-        request.arguments["wait"] = words[1]
+      switch words.first {
+      case nil:
+        break
+      case "wait", "show", "finish", "archive":
+        let verb = words[0]
+        if verb == "show", words.last == "--json" {
+          request.arguments["json"] = "1"
+          words.removeLast()
+        }
+        guard words.count == 2, !words[1].hasPrefix("-") else {
+          return .failure(UsageError("usage: impulse tasks \(verb) <task>"))
+        }
+        request.arguments[verb] = words[1]
+        // Waiting, or until you answer Finish's or Archive's questions.
+        request.wait = verb != "show"
+      case "new":
+        switch newTask(Array(words.dropFirst()), cwd: cwd, stdin: stdin) {
+        case .success(let arguments): request.arguments.merge(arguments) { _, new in new }
+        case .failure(let error): return .failure(error)
+        }
+        // Until you create the task or cancel.
         request.wait = true
-      } else if let word = words.first {
+      case let word?:
         return .failure(UsageError("impulse tasks: unknown argument '\(word)'\n\n" + usage))
+      }
+
+    case "turns", "unsaved", "project":
+      var words = rest
+      takeFlag("--json", from: &words, into: &request, as: "json")
+      if let word = words.first {
+        return .failure(UsageError("impulse \(command): unknown argument '\(word)'\n\n" + usage))
+      }
+
+    case "comments":
+      var words = rest
+      takeFlag("--json", from: &words, into: &request, as: "json")
+      if words.first == "resolve" {
+        guard words.count >= 2, !words[1].hasPrefix("-") else {
+          return .failure(UsageError("usage: impulse comments resolve <id> <note…>"))
+        }
+        request.arguments["resolve"] = words[1]
+        request.arguments["note"] = words.dropFirst(2).joined(separator: " ")
+      } else if let word = words.first {
+        if let error = optionError(word, command: command) { return .failure(error) }
+        guard words.count == 1 else { return .failure(UsageError("usage: impulse comments [<file>] [--json]")) }
+        request.arguments["path"] = absolute(word, cwd: cwd)
+      }
+
+    case "problems":
+      var words = rest
+      takeFlag("--json", from: &words, into: &request, as: "json")
+      takeFlag("--errors", from: &words, into: &request, as: "errors")
+      if let word = words.first {
+        if let error = optionError(word, command: command) { return .failure(error) }
+        guard words.count == 1 else {
+          return .failure(UsageError("usage: impulse problems [<file>] [--errors] [--json]"))
+        }
+        request.arguments["path"] = absolute(word, cwd: cwd)
+      }
+
+    case "blocks":
+      var words = rest
+      takeFlag("--json", from: &words, into: &request, as: "json")
+      if words.first == "show" {
+        var operands = Array(words.dropFirst())
+        if let index = operands.firstIndex(of: "--lines") {
+          guard index + 1 < operands.count, let lines = Int(operands[index + 1]), lines > 0 else {
+            return .failure(UsageError("usage: impulse blocks show <id> [--lines <n>]"))
+          }
+          request.arguments["lines"] = String(lines)
+          operands.removeSubrange(index...(index + 1))
+        }
+        guard operands.count == 1, !operands[0].hasPrefix("-") else {
+          return .failure(UsageError("usage: impulse blocks show <id> [--lines <n>]"))
+        }
+        request.arguments["show"] = operands[0]
+      } else if let word = words.first {
+        return .failure(UsageError("impulse blocks: unknown argument '\(word)'\n\n" + usage))
       }
 
     case "hook":
@@ -251,6 +345,71 @@ public enum ControlProtocol {
       return .failure(UsageError("impulse: unknown command '\(command)'\n\n" + usage))
     }
     return .success(request)
+  }
+
+  /// Remove `flag` wherever it is among `words`, noting it as `key`.
+  static func takeFlag(_ flag: String, from words: inout [String], into request: inout ControlRequest, as key: String) {
+    guard words.contains(flag) else { return }
+    words.removeAll { $0 == flag }
+    request.arguments[key] = "1"
+  }
+
+  /// The most a task's brief may hold, in bytes.
+  public static let briefLimit = 16 * 1024
+
+  /// `impulse tasks new`'s words: the title, and its options anywhere
+  /// among them. `--brief -` reads the brief from standard input;
+  /// `--brief-file` is read by the command-line tool (`briefFile`).
+  static func newTask(
+    _ words: [String], cwd: String, stdin: () -> Data?
+  ) -> Result<[String: String], UsageError> {
+    let usageLine =
+      "usage: impulse tasks new <title…> [--from <base>] [--agent <id>] [--brief-file <path> | --brief -] [--move-changes]"
+    var arguments: [String: String] = [:]
+    var title: [String] = []
+    var index = 0
+    var optionsEnded = false
+    while index < words.count {
+      let word = words[index]
+      index += 1
+      if optionsEnded || !word.hasPrefix("-") || word == "-" {
+        title.append(word)
+        continue
+      }
+      func value() -> String? {
+        guard index < words.count else { return nil }
+        index += 1
+        return words[index - 1]
+      }
+      switch word {
+      case "--":
+        optionsEnded = true
+      case "--move-changes":
+        arguments["move"] = "1"
+      case "--from", "--agent":
+        guard let given = value(), !given.isEmpty else { return .failure(UsageError(usageLine)) }
+        arguments[word == "--from" ? "base" : "agent"] = given
+      case "--brief-file":
+        guard let path = value() else { return .failure(UsageError(usageLine)) }
+        arguments["briefFile"] = absolute(path, cwd: cwd)
+      case "--brief":
+        guard value() == "-" else { return .failure(UsageError("impulse tasks new: --brief takes - (standard input); use --brief-file for a file")) }
+        let data = stdin() ?? Data()
+        guard data.count <= briefLimit else {
+          return .failure(UsageError("impulse tasks new: the brief holds more than 16 KB"))
+        }
+        arguments["brief"] = String(decoding: data, as: UTF8.self)
+      default:
+        if let error = optionError(word, command: "tasks new") { return .failure(error) }
+      }
+    }
+    if arguments["brief"] != nil, arguments["briefFile"] != nil {
+      return .failure(UsageError("impulse tasks new: give --brief or --brief-file, not both"))
+    }
+    let joined = title.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+    guard !joined.isEmpty else { return .failure(UsageError(usageLine)) }
+    arguments["new"] = joined
+    return .success(arguments)
   }
 
   /// "src/a.swift:12:3" → ("src/a.swift", 12, 3). A trailing non-number

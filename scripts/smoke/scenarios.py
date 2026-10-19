@@ -654,6 +654,78 @@ def check_tasks(run) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The MCP server: an agent's tool calls, through `impulse mcp` in a pane,
+# list the tasks, read the review comments and ask for a task, which waits
+# for the New Task sheet.
+
+
+MCP_DIR = HOME / "mcp"
+
+
+def mcp_call(id: int, method: str, params: dict | None = None) -> str:
+    return json.dumps({"jsonrpc": "2.0", "id": id, "method": method, "params": params or {}})
+
+
+def setup_mcp() -> None:
+    setup_tasks()
+    lines = [
+        mcp_call(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                                   "clientInfo": {"name": "smoke", "version": "1"}}),
+        json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        mcp_call(2, "tools/list"),
+        mcp_call(3, "tools/call", {"name": "list_tasks", "arguments": {}}),
+        mcp_call(4, "tools/call", {"name": "get_project_config", "arguments": {}}),
+        mcp_call(5, "tools/call", {"name": "create_task", "arguments": {
+            "title": "From the agent", "brief": "Say hello from the task.\nThen stop."}}),
+    ]
+    write(MCP_DIR / "in.jsonl", "\n".join(lines) + "\n")
+
+
+MCP_ACTIONS = [
+    "until=prompt", "trust-project-settings",
+    # Standard input stays open while create_task waits for the sheet.
+    f"run=(cat {MCP_DIR / 'in.jsonl'}; sleep 120) | impulse mcp > {MCP_DIR / 'out.jsonl'} &",
+    "until=30:sheet", "sleep=2", "dump=asks",
+    "sheet-button=Create Task", f"until=60:file:{WORKTREES / 'from-the-agent'}", "sleep=4", "dump=created",
+]
+
+
+def check_mcp(run) -> None:
+    answers = {}
+    out = MCP_DIR / "out.jsonl"
+    for line in (out.read_text().splitlines() if out.exists() else []):
+        message = json.loads(line)
+        if "id" in message:
+            answers[message["id"]] = message
+    run.expect(answers.get(1, {}).get("result", {}).get("serverInfo", {}).get("name") == "impulse",
+               "initialize names the server", answers.get(1))
+    tools = [t["name"] for t in answers.get(2, {}).get("result", {}).get("tools", [])]
+    run.expect({"list_tasks", "create_task", "get_diagnostics", "list_review_comments"} <= set(tools),
+               "tools/list offers Impulse's tools", tools)
+    listing = answers.get(3, {}).get("result", {})
+    run.expect(listing.get("structuredContent", {}).get("repository") == "smoke-repo",
+               "list_tasks answers with the repository's workspaces", listing)
+    project = answers.get(4, {}).get("result", {})
+    run.expect("check" in json.dumps(project.get("structuredContent", {})), "get_project_config lists the trusted scripts",
+               project)
+
+    asks = run.dump("asks")["sheets"]
+    texts = " ".join(t for sheet in asks for t in sheet["texts"])
+    run.expect("wants to start this task" in texts, "create_task shows New Task, saying an agent asked", asks)
+
+    created = answers.get(5, {}).get("result", {})
+    run.expect(created.get("isError") is False, "create_task answers once the task is created", created)
+    run.expect((WORKTREES / "from-the-agent").exists(), "the task's worktree is there")
+    registry = json.loads((REPO_ROOT / ".git" / "impulse" / "tasks.json").read_text())
+    record = next((t for t in registry["tasks"] if t["branch"] == "from-the-agent"), {})
+    run.expect(record.get("createdBy") == "agent", "the task is recorded as an agent's", record)
+    brief = REPO_ROOT / ".git" / "impulse" / "tasks" / "from-the-agent" / "brief.md"
+    run.expect(brief.exists() and "Say hello" in brief.read_text(), "the brief is kept with the task")
+    status = git(REPO_ROOT, "status", "--porcelain")
+    run.expect(status == "", "nothing is written into the main checkout", status)
+
+
+# ---------------------------------------------------------------------------
 # Session restore: workspaces, tabs, a split, an editor and terminal output
 # saved by one launch come back in the next.
 
@@ -697,6 +769,9 @@ SCENARIOS = [
     {"name": "tasks", "about": "new task, Finish Task (merge), archive and Undo, nested repositories",
      "session": folder_session(REPO_ROOT), "setup": setup_tasks, "actions": TASK_ACTIONS, "check": check_tasks,
      "timeout": 360},
+    {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet",
+     "session": folder_session(REPO_ROOT), "setup": setup_mcp, "actions": MCP_ACTIONS, "check": check_mcp,
+     "timeout": 240},
     {"name": "session", "about": "workspaces, tabs, splits, editors and output survive a relaunch",
      "session": ONE, "persist": True, "actions": SESSION_ACTIONS, "relaunch": ["sleep=4", "dump=after"],
      "check": check_session},

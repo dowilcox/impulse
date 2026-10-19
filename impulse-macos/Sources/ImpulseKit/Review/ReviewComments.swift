@@ -14,10 +14,26 @@ public struct ReviewComment: Codable, Equatable, Identifiable, Sendable {
   public var snippet: String
   public var text: String
   public var createdAt: Date
+  /// An agent marked it addressed (`impulse comments resolve`), for you to
+  /// accept (delete) or reopen. Comments saved before this read as nil.
+  public var resolution: Resolution?
+
+  public struct Resolution: Codable, Equatable, Sendable {
+    /// Who addressed it: the agent's name ("Claude Code").
+    public var by: String
+    public var note: String
+    public var at: Date
+
+    public init(by: String, note: String, at: Date = Date()) {
+      self.by = by
+      self.note = note
+      self.at = at
+    }
+  }
 
   public init(
     id: String = UUID().uuidString, path: String, side: Side, line: Int, endLine: Int,
-    snippet: String, text: String, createdAt: Date = Date()
+    snippet: String, text: String, createdAt: Date = Date(), resolution: Resolution? = nil
   ) {
     self.id = id
     self.path = path
@@ -27,6 +43,7 @@ public struct ReviewComment: Codable, Equatable, Identifiable, Sendable {
     self.snippet = snippet
     self.text = text
     self.createdAt = createdAt
+    self.resolution = resolution
   }
 
   /// "path:12" or "path:12-14".

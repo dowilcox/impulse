@@ -2,6 +2,27 @@
 
 All notable changes to Impulse are documented in this file.
 
+## Unreleased
+
+**Agents can ask Impulse.** Impulse has an MCP server, `impulse mcp`,
+that any agent loading Model Context Protocol servers can use: it lists
+the repository's tasks and looks at one, waits for a task's agent, and
+starts a new task with an agent working on a brief, after you approve it
+in New Task. It also hands agents your review comments, the language
+servers' problems, other terminals' commands and output, files you
+haven't saved, and the trusted project scripts. Install it with
+**Install Impulse's MCP Server…**; every tool is also an `impulse`
+command.
+
+### Agents
+
+- New Task opens filled in when an agent asks (`impulse tasks new`, `create_task`), saying who asked and showing the brief; Claude Code and Codex start with the brief as their first prompt. **When an agent asks to start a task** can create them without asking in trusted projects, or not at all; **Open tasks agents may start** limits them to 4 per repository.
+- Finish Task can be started by an agent (`impulse tasks finish`): it runs up to Land and waits for you. Archive Task… too (`impulse tasks archive`), with its questions and Undo.
+- An agent can mark a review comment addressed with a note; Review shows it with **Accept** and **Reopen**.
+- New commands: `impulse tasks show`, `turns`, `comments`, `problems`, `blocks`, `unsaved` and `project`.
+- The Agent Hooks sheet is Agent Integration, with Hooks and MCP Server.
+- **Agents may read terminal output** decides which terminals agents' tools see: their own workspace's (the default), the window's, or none.
+
 ## 0.33.1
 
 **Project Setup shows what's saved, and saves what it shows.** A field
