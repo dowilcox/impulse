@@ -99,23 +99,27 @@ public enum AgentTaskPolicy {
   /// the brief saved at `briefPath` as its first prompt for the agents whose
   /// command takes one. The brief is read from its file when the command
   /// runs, so a long or many-line brief is never typed into the shell (or
-  /// kept in its history), after `--` so a brief that starts with a dash
-  /// (a Markdown list) isn't taken for an option, with `command cat` so a
-  /// function or alias called cat (`cat=bat`) can't change or lose it. Nil
-  /// when the agent's command takes no prompt: the brief is typed into the
-  /// agent once it's up.
+  /// kept in its history), after `--` or as an option's `=` value so a brief
+  /// that starts with a dash (a Markdown list) isn't taken for an option,
+  /// with `command cat` so a function or alias called cat (`cat=bat`) can't
+  /// change or lose it. Nil when the agent's command takes no prompt: the
+  /// brief is typed into the agent once it's up.
   public static func command(agent: AgentKind, briefPath: String?, shell: ShellType) -> String? {
     guard let name = agent.names.first else { return nil }
     guard let briefPath else { return name }
-    guard takesPrompt.contains(agent.id) else { return nil }
+    guard let prompt = promptArgument[agent.id] else { return nil }
     let file = ShellQuoting.quoted(briefPath, for: shell)
     switch shell {
-    case .fish: return "\(name) -- (command cat \(file) | string collect)"
-    case .bash, .zsh: return "\(name) -- \"$(command cat \(file))\""
+    case .fish: return "\(name) \(prompt)(command cat \(file) | string collect)"
+    case .bash, .zsh: return "\(name) \(prompt)\"$(command cat \(file))\""
     }
   }
 
-  /// Agents whose command line takes a first prompt as its argument and
-  /// stays interactive.
-  public static let takesPrompt: Set<String> = ["claude", "codex"]
+  /// How the command lines that take a first prompt and stay interactive
+  /// take it: after `--` (Claude Code, Codex), or as the value of opencode's
+  /// `--prompt` (its bare argument is the folder to open).
+  public static let promptArgument: [String: String] = ["claude": "-- ", "codex": "-- ", "opencode": "--prompt="]
+
+  /// Agents whose command line takes a first prompt and stays interactive.
+  public static var takesPrompt: Set<String> { Set(promptArgument.keys) }
 }

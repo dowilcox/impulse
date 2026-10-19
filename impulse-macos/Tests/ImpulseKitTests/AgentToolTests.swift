@@ -165,6 +165,11 @@
       #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .fish) == "claude -- (command cat '/repo/.git/impulse/tasks/fix it/brief.md' | string collect)")
       #expect(AgentTaskPolicy.command(agent: claude, briefPath: nil, shell: .zsh) == "claude")
       #expect(AgentTaskPolicy.command(agent: aider, briefPath: path, shell: .zsh) == nil, "typed in once it's up")
+      // opencode's bare argument is the folder to open: the brief is --prompt's value.
+      let opencode = KnownAgents.builtIn.first { $0.id == "opencode" }!
+      #expect(AgentTaskPolicy.command(agent: opencode, briefPath: path, shell: .bash) == #"opencode --prompt="$(command cat '/repo/.git/impulse/tasks/fix it/brief.md')""#)
+      #expect(AgentTaskPolicy.command(agent: opencode, briefPath: path, shell: .fish) == "opencode --prompt=(command cat '/repo/.git/impulse/tasks/fix it/brief.md' | string collect)")
+      #expect(AgentTaskPolicy.takesPrompt == ["claude", "codex", "opencode"])
     }
 
     @Test func briefsAreKeptBesideTheRegistry() throws {
