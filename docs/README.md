@@ -34,6 +34,12 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 - [Keyboard shortcuts](keyboard-shortcuts.md): every shortcut, in the menus and inside panels.
 - [Accessibility](accessibility.md): VoiceOver, Reduce Motion, Increase Contrast and keyboard-only use.
 
+## Plans
+
+Proposals under discussion. They describe what Impulse might do, not what it does today.
+
+- [MCP server for tasks](mcp-plan.md): letting agents list tasks and start new ones through the Model Context Protocol.
+
 ## Common workflows
 
 | To…                                                            | See                                                                                    |
