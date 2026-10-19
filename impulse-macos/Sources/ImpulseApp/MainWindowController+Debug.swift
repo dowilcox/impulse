@@ -712,7 +712,10 @@ extension MainWindowController {
         return [
           "kind": "terminal", "shell": terminal.shellType.rawValue, "cwd": terminal.currentWorkingDirectory,
           "running": terminal.isCommandRunning, "agent": terminal.agent?.id ?? NSNull(),
-          "agentState": terminal.agentState?.rawValue ?? NSNull(), "blocks": blocks,
+          "agentState": terminal.agentState?.rawValue ?? NSNull(),
+          "resume": terminal.agentSession.flatMap { KnownAgents.resumeCommand(agentID: $0.agentID, session: $0.id) }
+            ?? NSNull(),
+          "blocks": blocks,
           "transcript": terminal.backend?.transcript(maxRows: 400) ?? "",
         ]
       }

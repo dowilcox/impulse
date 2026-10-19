@@ -108,6 +108,8 @@ def launch(scenario: dict, out: Path, actions: list[str], session_file: Path) ->
         "open", "-g", "-n", "-W", "-a", str(capture.APP),
         "--env", f"CFFIXED_USER_HOME={make_demo.HOME}", "--env", f"HOME={make_demo.HOME}",
         "--env", "USER=impulse-docs", "--env", f"SHELL={scenario.get('shell', '/bin/zsh')}",
+        # Where Agent Integration finds opencode's config: the demo home's.
+        "--env", f"XDG_CONFIG_HOME={make_demo.HOME / '.config'}",
         "--env", "PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
         "--args",
         *pinned,
