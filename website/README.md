@@ -19,15 +19,35 @@ python3 scripts/build-site.py --check    # one build; fails on a broken link, an
 | `404.html`                | The page GitHub Pages serves for a missing URL.                                                    |
 | `templates/doc.html`      | The layout of every docs page and the changelog.                                                   |
 | `templates/_*.html`       | Partials: `_topbar.html` is `{{topbar}}`, `_search.html` is `{{search}}`.                           |
-| `assets/site.css`, `site.js` | Shared by every page: colors (Tokyo Night, the app's default theme), the top bar, search, docs. |
+| `assets/site.css`, `site.js` | Shared by every page: colors (Tokyo Night), the top bar, search, docs.                        |
 | `assets/home.css`, `home.js` | The homepage and its animations.                                                                |
-| `assets/demo.js`          | The interactive demo window: a scripted shell, editor, Review, palette and agent.                  |
-| `assets/demo-files.js`    | The demo's example project, `trailhead` (the same one `scripts/docs/make_demo.py` builds).         |
+| `assets/demo.js`, `demo.css` | The interactive demo window, drawn to look like the app: a scripted shell, editor, Review, palette, tasks and agents. |
+| `assets/demo-files.js`    | The demo's example project, `trailhead` (the same one `scripts/docs/make_demo.py` builds), with its tasks' changes. |
 
 The build adds the rest: the fonts and highlight.js from `vendor/`, the logo, the
 docs screenshots, `assets/themes.js` (every built-in theme, read from
 `impulse-macos/Sources/ImpulseKit/Resources/Themes/`, so the demo's theme picker
-always matches the app), `assets/search-index.js`, `sitemap.xml` and `CNAME`.
+always matches the app), `assets/demo-icons.js`, `assets/search-index.js`,
+`sitemap.xml` and `CNAME`.
+
+### How the demo matches the app
+
+The demo starts in Nord, the app's default theme. For each theme, `themes.js`
+carries what the app works out from the theme file: the resolved colors
+(`ThemeStore.resolveTheme`) and the Monaco theme (`themeToMonaco`), both ported
+to Python in `build-site.py`. The build fails if that port stops matching the
+app's golden fixtures in `impulse-macos/Tests/ImpulseKitTests/Fixtures/themes/`.
+`demo.js` derives the chrome colors the way `ChromePalette` does, tokenizes code
+with Monaco's own TypeScript, JSON and Markdown rules (Review uses highlight.js,
+as the app does), and colors brackets and their guides as Monaco does.
+
+`assets/demo-icons.js` inlines the icons the demo draws: the Lucide icons that
+`demo.js` names with `icon("…")` and `index.html` with `data-icon="…"`, from
+`vendor/lucide/icons`, and the Material file and folder icons for the demo
+project's files, chosen from `assets/icons/material/icon-mapping.json` the way
+`FileIcons.swift` chooses them. Name icons literally: the build fails on an
+`icon()` call it can't read a name from. A Lucide icon the app doesn't vendor
+has to be added to `scripts/vendor-lucide.sh` first.
 
 ## The docs
 
