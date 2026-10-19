@@ -267,9 +267,13 @@ enum JSONCEdit {
     // keeping a trailing comma's style.
     var end = object.close
     while end > object.open + 1, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[end - 1]) { end -= 1 }
-    var changes: [Change] = [(end..<end, "\n" + indent + memberText(indent) + (last.comma == nil ? "" : ","))]
-    if last.comma == nil { changes.append((last.valueEnd..<last.valueEnd, ",")) }
-    return changes
+    let member = "\n" + indent + memberText(indent)
+    guard last.comma == nil else { return [(end..<end, member + ",")] }
+    // The last member gets a separator: in the same change when nothing
+    // comes between it and the new one (an object on one line), since two
+    // changes at one offset could go in either order.
+    if end == last.valueEnd { return [(end..<end, "," + member)] }
+    return [(end..<end, member), (last.valueEnd..<last.valueEnd, ",")]
   }
 
   /// Take `member` out of `object`: its lines when it has them to itself,

@@ -352,6 +352,16 @@
       #expect(tabs.contains("\n\t\"mcp\": {\n\t\t\"impulse\": {\n\t\t\t\"type\": \"local\""), "the file's own indent")
     }
 
+    @Test func opencodeConfigOnOneLineStaysValid() throws {
+      for original in ["{\"theme\": \"opencode\"}", "{\"mcp\": {\"docs\": {\"type\": \"remote\", \"url\": \"x\"}}}"] {
+        let installed = try AgentMCPInstaller.installingOpencodeMCP(into: original, fallbackCLI: cli).get()
+        #expect((try? JSONSerialization.jsonObject(with: Data(installed.utf8))) != nil, "plain JSON still: \(installed)")
+        #expect(AgentMCPInstaller.opencodeStatus(installed, fallbackCLI: cli) == .installed, "\(installed)")
+        let removed = try #require(AgentMCPInstaller.removingOpencodeMCP(from: installed))
+        #expect(AgentMCPInstaller.opencodeStatus(removed, fallbackCLI: cli) == .notInstalled, "\(removed)")
+      }
+    }
+
     @Test func opencodeConfigEntryIsReplacedOnlyWhenItsImpulses() throws {
       let older = try AgentMCPInstaller.installingOpencodeMCP(into: nil, fallbackCLI: "/Old/impulse").get()
       #expect(AgentMCPInstaller.opencodeStatus(older, fallbackCLI: cli) == .outdated)
