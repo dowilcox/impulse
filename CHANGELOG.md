@@ -2,6 +2,29 @@
 
 All notable changes to Impulse are documented in this file.
 
+## 0.35.0
+
+**opencode joins Claude Code and Codex.** Agent Integration installs
+Impulse's plugin for opencode, so its tab shows exactly when it's
+working, needs you or has finished, and its session comes back after a
+restart. In a repository with tasks it hears about the other workspaces,
+like Claude Code: a summary when it starts, notes about shared files and
+changed dependencies, and a stop before it merges a branch another task
+is still working on. New Task can start it on a brief, and Impulse's MCP
+server installs into opencode's own config.
+
+### Agents
+
+- Agent Integration has opencode for hooks (a plugin, `~/.config/opencode/plugins/impulse.js`) and for the MCP server (an `impulse` entry in its `opencode.json` or `opencode.jsonc`, edited in place so your comments and formatting stay). Its plugins can't ask you before a command runs, so a risky merge is stopped once, telling opencode why and to ask you, and goes ahead when it runs again.
+- Codex's MCP entry gives Impulse's tools an hour: Codex gave up after 5 minutes while `create_task` waited for you to answer New Task, or `finish_task` for the check script. Install it again from Agent Integration.
+- `list_turns` and `impulse turns` give the latest 10 turns (`--limit` for more) and say how many earlier ones they left out, instead of every turn the terminal ever recorded.
+
+### Fixes
+
+- A task started for an agent starts it on its brief even when your shell has a function or alias called `cat` (fish's `cat=bat`, say): the brief came out empty, and the agent started with no prompt.
+- `create_task`'s answer no longer marks the new task as the asking agent's own workspace.
+- Agent Integration is wider, so Claude Code's scope menu fits beside four agents instead of pushing the sheet's content aside.
+
 ## 0.34.0
 
 **Agents can ask Impulse.** Impulse has an MCP server, `impulse mcp`,
