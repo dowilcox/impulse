@@ -23,6 +23,10 @@ command.
 - The Agent Hooks sheet is Agent Integration, with Hooks and MCP Server.
 - **Agents may read terminal output** decides which terminals agents' tools see: their own workspace's (the default), the window's, or none.
 
+### Fixes
+
+- History, and every other git read, no longer checks commit signatures. With `log.showSignature` on (in your config, or in a repository's own), git ran the signing program for every signed commit, so a repository you hadn't trusted could run a program of its choosing, and the program's output got mixed into what Impulse read.
+
 ## 0.33.1
 
 **Project Setup shows what's saved, and saves what it shows.** A field

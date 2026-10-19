@@ -132,15 +132,27 @@
       #expect(GitOperations.headReflogSubject(root: repo.root).map(DependencyChanges.move) == .checkout)
     }
 
-    @Test func commitsAheadAreNewestFirstAndNeverRunGPG() throws {
+    @Test func commitsAheadAreNewestFirst() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }
       try repo.commit(["a.txt": "1\n"], message: "base")
       try repo.git("switch", "-q", "-c", "task")
       try repo.commit(["a.txt": "2\n"], message: "first")
       try repo.commit(["a.txt": "3\n"], message: "second\twith a tab")
-      // A signed commit on top, in a repository whose own config would run a
-      // program to check it.
+      let commits = GitOperations.commitsAhead("task", base: "main", root: repo.root, limit: 50)
+      #expect(commits.map(\.subject) == ["second\twith a tab", "first"])
+      #expect(commits.first?.id == (try repo.git("rev-parse", "task")))
+      #expect(GitOperations.commitsAhead("task", base: "main", root: repo.root, limit: 1).count == 1)
+      #expect(GitOperations.commitsAhead("main", base: "task", root: repo.root, limit: 50).isEmpty)
+    }
+
+    /// A repository whose own config shows signatures runs its
+    /// `gpg.program` from `git log`, `show` and `reflog` on a signed commit:
+    /// no read of Impulse's may, and their output stays parseable.
+    @Test func noReadRunsTheRepositorysGPGProgram() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"], message: "base")
       let tree = try repo.git("write-tree")
       let parent = try repo.git("rev-parse", "HEAD")
       let signed = try repo.git(
@@ -158,24 +170,27 @@
           signed
 
           """)
-      try repo.git("update-ref", "refs/heads/task", signed)
+      try repo.git("update-ref", "-m", "commit: signed", "HEAD", signed)
       let marker = (repo.root as NSString).appendingPathComponent("gpg-ran")
       let program = (repo.root as NSString).appendingPathComponent("fake-gpg")
       try repo.write("fake-gpg", "#!/bin/sh\ntouch '\(marker)'\nexit 1\n")
       chmod(program, 0o755)
       try repo.git("config", "log.showSignature", "true")
       try repo.git("config", "gpg.program", program)
-      // What a plain `git log` would do here.
-      _ = try? repo.git("log", "--format=%s", "main..task")
-      #expect(FileManager.default.fileExists(atPath: marker), "the setup runs the program without the flag")
+      // The setup does what it should: a plain `git log` runs the program.
+      _ = try? repo.git("log", "-1", "--format=%s")
+      #expect(FileManager.default.fileExists(atPath: marker))
       try FileManager.default.removeItem(atPath: marker)
 
-      let commits = GitOperations.commitsAhead("task", base: "main", root: repo.root, limit: 50)
-      #expect(commits.map(\.subject) == ["signed", "second\twith a tab", "first"])
-      #expect(commits.first?.id == (try repo.git("rev-parse", "task")))
-      #expect(GitOperations.commitsAhead("task", base: "main", root: repo.root, limit: 1).count == 1)
-      #expect(GitOperations.commitsAhead("main", base: "task", root: repo.root, limit: 50).isEmpty)
-      #expect(!FileManager.default.fileExists(atPath: marker))
+      #expect(GitOperations.headMessage(root: repo.root) == "signed")
+      #expect(GitOperations.commitDate("HEAD", root: repo.root) != nil)
+      #expect(GitOperations.commitsAhead("HEAD", base: parent, root: repo.root, limit: 5).map(\.subject) == ["signed"])
+      #expect(GitOperations.headReflogSubject(root: repo.root) == "commit: signed")
+      #expect(GitOperations.lastHeadMove(root: repo.root)?.to == signed)
+      #expect(try GitLog.entries(root: repo.root).get().first?.subject == "signed")
+      #expect(try GitLog.decorations(root: repo.root).get()[signed] != nil)
+      #expect(GitLog.details(root: repo.root, sha: signed)?.message.hasPrefix("signed") == true)
+      #expect(!FileManager.default.fileExists(atPath: marker), "a read ran the repository's gpg.program")
     }
 
     @Test func commitDateIsTheCommittersDate() throws {

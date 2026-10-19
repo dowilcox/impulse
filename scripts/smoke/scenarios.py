@@ -654,6 +654,50 @@ def check_tasks(run) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Agent Integration installs Impulse's MCP server: a table in Codex's
+# config.toml (read back as installed), and `claude mcp add-json` for
+# Claude Code (the stand-in agent records the call).
+
+
+AGENT_INTEGRATION_ACTIONS = [
+    "agent-sheet=mcp:codex", "sleep=1", "dump=codex-preview", "agent-sheet-apply", "sleep=1",
+    "agent-sheet=mcp:codex", "sleep=1", "dump=codex-installed", "agent-sheet-close", "sleep=1",
+    "agent-sheet=mcp:claude", "sleep=2", "dump=claude-preview", "agent-sheet-apply", "sleep=1", "dump=claude-installed",
+]
+
+
+def check_agent_integration(run) -> None:
+    preview = run.dump("codex-preview").get("agentSheet") or {}
+    run.expect(preview.get("part") == "MCP Server" and not preview.get("installed"),
+               "the sheet opens on the MCP server for Codex, not installed", preview)
+    run.expect(any(line.startswith("+") and "[mcp_servers.impulse]" in line for line in preview.get("diff", [])),
+               "its preview adds the [mcp_servers.impulse] table", preview.get("diff"))
+    config = (HOME / ".codex" / "config.toml").read_text() if (HOME / ".codex" / "config.toml").exists() else ""
+    run.expect('[mcp_servers.impulse]\ncommand = "sh"' in config, "Install writes the table to ~/.codex/config.toml",
+               config)
+    run.expect('env_vars = ["IMPULSE_SOCKET", "IMPULSE_PANE_TOKEN", "IMPULSE_CLI"]' in config,
+               "it forwards the pane's variables (Codex clears the environment)", config)
+    run.expect("/Contents/Resources/bin/impulse" in config, "it falls back to the app's own impulse", config)
+    installed = run.dump("codex-installed").get("agentSheet") or {}
+    run.expect(installed.get("installed") is True, "reopened, the sheet says it's installed", installed)
+
+    claude = run.dump("claude-preview").get("agentSheet") or {}
+    run.expect(any(line.startswith("$ claude mcp add-json --scope user impulse") for line in claude.get("diff", [])),
+               "for Claude Code the sheet shows the claude command it runs", claude)
+    calls = [json.loads(line) for line in (HOME / "mcp" / "claude-mcp.txt").read_text().splitlines()] \
+        if (HOME / "mcp" / "claude-mcp.txt").exists() else []
+    run.expect(len(calls) == 1 and calls[0][:5] == ["mcp", "add-json", "--scope", "user", "impulse"],
+               "Install runs claude mcp add-json --scope user impulse", calls)
+    if calls and len(calls[0]) == 6:
+        entry = json.loads(calls[0][5])
+        run.expect(entry.get("command") == "sh" and entry.get("type") == "stdio", "the entry runs sh", entry)
+        run.expect(entry.get("env", {}).get("IMPULSE_SOCKET") == "${IMPULSE_SOCKET:-}",
+                   "the entry passes the pane's socket through", entry)
+    run.expect(run.dump("claude-installed")["results"].get("agent-sheet") == "written", "the install succeeds",
+               run.dump("claude-installed")["results"])
+
+
+# ---------------------------------------------------------------------------
 # The MCP server: an agent's tool calls, through `impulse mcp` in a pane,
 # list the tasks, read the review comments and ask for a task, which waits
 # for the New Task sheet.
@@ -801,6 +845,9 @@ SCENARIOS = [
     {"name": "tasks", "about": "new task, Finish Task (merge), archive and Undo, nested repositories",
      "session": folder_session(REPO_ROOT), "setup": setup_tasks, "actions": TASK_ACTIONS, "check": check_tasks,
      "timeout": 360},
+    {"name": "agent-integration", "about": "Agent Integration installs the MCP server for Codex and Claude Code",
+     "session": ONE, "actions": AGENT_INTEGRATION_ACTIONS,
+     "check": check_agent_integration},
     {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet, "
                              "an agent finishing its own task",
      "session": folder_session(REPO_ROOT), "setup": setup_mcp, "actions": MCP_ACTIONS, "check": check_mcp,

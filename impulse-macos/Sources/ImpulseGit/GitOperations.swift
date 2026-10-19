@@ -600,12 +600,11 @@ public enum GitOperations {
   }
 
   /// The commits on `branch` that `base` lacks, newest first, as (id,
-  /// subject): at most `limit`. Never checks signatures (a repository's
-  /// `log.showSignature` would run its `gpg.program`).
+  /// subject): at most `limit`.
   public static func commitsAhead(_ branch: String, base: String, root: String, limit: Int) -> [(id: String, subject: String)] {
     guard
       case .success(let result) = git(
-        ["log", "--no-show-signature", "--format=%H%x09%s", "-n", String(limit), "\(base)..\(branch)", "--"], in: root)
+        ["log", "--format=%H%x09%s", "-n", String(limit), "\(base)..\(branch)", "--"], in: root)
     else { return [] }
     return result.stdout.split(separator: "\n").compactMap { line in
       let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)

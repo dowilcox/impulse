@@ -49,6 +49,8 @@ enum DebugSnapshot {
   /// The New Task sheet that's up (its SwiftUI content is out of the
   /// accessibility walk's reach): what it holds, and its buttons.
   static var taskSheet: (model: TaskSheetModel, create: () -> Void, cancel: () -> Void)?
+  /// The Agent Integration sheet that's up, and how to close it.
+  static var agentSheet: (model: AgentHooksModel, close: () -> Void)?
   /// The action running now (for reports).
   private static var currentAction = "launch"
 

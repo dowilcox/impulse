@@ -422,9 +422,16 @@ extension MainWindowController {
     model.part = part
     let palette = windowModel.palette
     let sheet = NSWindow.themedSheet(palette: palette)
+    if DebugSnapshot.isActive {
+      DebugSnapshot.agentSheet = (model, { [weak window, weak sheet] in
+        DebugSnapshot.agentSheet = nil
+        if let sheet { window?.endSheet(sheet) }
+      })
+    }
     window.beginThemedSheet(
       sheet, palette: palette,
       content: AgentHooksSheetView(model: model) { [weak self, weak window, weak sheet] message in
+        DebugSnapshot.agentSheet = nil
         if let sheet { window?.endSheet(sheet) }
         if let message { self?.toasts.show(Toast(kind: .success, message: message)) }
       })
