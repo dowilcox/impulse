@@ -60,6 +60,9 @@ DOCS = ROOT / "docs"
 WEBSITE = ROOT / "website"
 TEMPLATES = WEBSITE / "templates"
 THEMES = ROOT / "impulse-macos/Sources/ImpulseKit/Resources/Themes"
+MONACO_FIXTURES = ROOT / "impulse-macos/Tests/ImpulseKitTests/Fixtures/themes"
+LUCIDE = ROOT / "vendor/lucide/icons"
+MATERIAL = ROOT / "assets/icons/material"
 DEFAULT_OUT = WEBSITE / "_site"
 
 REPO_URL = "https://github.com/dowilcox/impulse"
@@ -69,6 +72,167 @@ DOMAIN = "www.impulse-terminal.app"
 # Written into every build; the output folder is only ever emptied when it
 # holds this file, so --out can't wipe an unrelated folder.
 MARKER = ".impulse-site"
+
+
+# ── The app's themes and icons, for the demo ────────────────────────────
+
+
+def _hsl(hex_color: str) -> tuple[float, float, float]:
+    """rgbToHsl in ThemeStore.swift: (hue in degrees, saturation, lightness)."""
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    hi, lo = max(r, g, b), min(r, g, b)
+    light = (hi + lo) / 2
+    if hi == lo:
+        return 0.0, 0.0, light
+    d = hi - lo
+    sat = d / (2 - hi - lo) if light > 0.5 else d / (hi + lo)
+    if hi == r:
+        hue = (g - b) / d + (6 if g < b else 0)
+    elif hi == g:
+        hue = (b - r) / d + 2
+    else:
+        hue = (r - g) / d + 4
+    return hue * 60, sat, light
+
+
+def _hex_from_hsl(hue: float, sat: float, light: float) -> str:
+    """hslToRgb + rgbToHex in ThemeStore.swift (rounding half away from zero)."""
+    def byte(v: float) -> int:
+        return int(min(255, max(0, int(v * 255 + 0.5))))
+    if sat == 0:
+        return "#%02x%02x%02x" % ((byte(light),) * 3)
+    q = light * (1 + sat) if light < 0.5 else light + sat - light * sat
+    p = 2 * light - q
+
+    def channel(t: float) -> float:
+        t = t + 1 if t < 0 else t - 1 if t > 1 else t
+        if t < 1 / 6:
+            return p + (q - p) * 6 * t
+        if t < 1 / 2:
+            return q
+        if t < 2 / 3:
+            return p + (q - p) * (2 / 3 - t) * 6
+        return p
+    h = hue / 360
+    return "#%02x%02x%02x" % (byte(channel(h + 1 / 3)), byte(channel(h)), byte(channel(h - 1 / 3)))
+
+
+def _shift_lightness(hex_color: str, delta: float) -> str:
+    hue, sat, light = _hsl(hex_color)
+    return _hex_from_hsl(hue, sat, min(1.0, max(0.0, light + delta)))
+
+
+def _mute(hex_color: str, saturation: float, lightness_target: float) -> str:
+    hue, sat, light = _hsl(hex_color)
+    return _hex_from_hsl(hue, sat * saturation, light + (lightness_target - light) * 0.3)
+
+
+def resolve_theme(t: dict) -> dict:
+    """ThemeStore.resolveTheme (ImpulseKit): a theme file with every default
+    filled in, keyed like the app's theme fixtures."""
+    p, ui, syn = t.get("palette", {}), t.get("ui", {}), t.get("syntax", {})
+    light = t.get("variant") == "light"
+    fg_muted = ui.get("fg_muted") or p.get("muted") or _mute(p["fg"], 0.6, 0.55)
+    fg_comment = ui.get("fg_comment") or p.get("subtle") or _mute(p["fg"], 0.4, 0.60 if light else 0.40)
+    r = {
+        "is_light": light,
+        "bg": p["bg"],
+        "bg_dark": ui.get("bg_dark") or _shift_lightness(p["bg"], 0.04 if light else -0.05),
+        "bg_highlight": ui.get("bg_highlight") or _shift_lightness(p["bg"], -0.05 if light else 0.08),
+        "bg_surface": ui.get("bg_surface") or p.get("surface") or _shift_lightness(p["bg"], 0.08 if light else -0.10),
+        "border": ui.get("border") or p.get("overlay") or _shift_lightness(p["bg"], -0.08 if light else 0.04),
+        "fg": p["fg"],
+        "fg_muted": fg_muted,
+        "fg_comment": fg_comment,
+        "accent": p["accent"],
+        "selection": ui.get("selection") or p["accent"] + "40",
+        "cursor": ui.get("cursor") or p["accent"],
+        **{k: p[k] for k in ("red", "orange", "yellow", "green", "cyan", "blue", "magenta")},
+        "git_added": ui.get("git_added") or p["green"],
+        "git_modified": ui.get("git_modified") or p["yellow"],
+        "git_deleted": ui.get("git_deleted") or p["red"],
+        "git_renamed": ui.get("git_renamed") or p["blue"],
+        "git_conflict": ui.get("git_conflict") or p["orange"],
+        "git_ignored": ui.get("git_ignored") or fg_muted,
+    }
+    defaults = {"keyword": p["magenta"], "function": p["blue"], "type": p["yellow"], "string": p["green"],
+                "number": p["orange"], "constant": p["orange"], "comment": fg_comment, "operator": p["cyan"],
+                "tag": p["red"], "attribute": p["yellow"], "variable": p["fg"], "delimiter": fg_muted,
+                "escape": p["orange"], "regexp": p["red"], "link": p["blue"]}
+    for key, default in defaults.items():
+        r["syntax_" + key] = syn.get(key) or default
+    return r
+
+
+# themeToMonaco (ImpulseKit/Themes/MonacoTheme.swift): Monaco token -> the
+# resolved color it gets, in the app's rule order.
+MONACO_RULES = [
+    ("comment", "syntax_comment", "italic"), ("comment.doc", "syntax_comment", "italic"),
+    *[(k, "syntax_keyword", None) for k in (
+        "keyword", "keyword.control", "keyword.declaration", "keyword.type", "keyword.other", "keyword.flow",
+        "keyword.block", "keyword.try", "keyword.catch", "keyword.choice", "keyword.modifier")],
+    ("keyword.constant", "syntax_constant", None),
+    *[(k, "syntax_number", None) for k in ("number", "number.hex", "number.float", "number.binary", "number.octal")],
+    ("constant", "syntax_constant", None), ("string.escape", "syntax_escape", None),
+    *[(k, "syntax_string", None) for k in ("string", "string.heredoc", "string.raw", "attribute.value")],
+    ("string.key", "syntax_operator", None), ("string.link", "syntax_link", None),
+    *[(k, "syntax_operator", None) for k in ("operator", "keyword.operator", "variable.predefined", "predefined")],
+    ("type", "syntax_type", None), ("type.identifier", "syntax_type", None), ("class", "syntax_type", None),
+    ("annotation", "syntax_attribute", None), ("namespace", "syntax_type", None), ("constructor", "syntax_type", None),
+    ("attribute.name", "syntax_attribute", None),
+    *[(k, "syntax_function", None) for k in ("function", "function.declaration", "function.call", "predefined.function")],
+    ("string.escape.invalid", "syntax_tag", None), ("string.invalid", "syntax_tag", None),
+    ("regexp", "syntax_regexp", None), ("tag", "syntax_tag", None), ("metatag", "syntax_tag", None),
+    ("invalid", "syntax_tag", None), ("variable", "syntax_variable", None), ("emphasis", "syntax_variable", "italic"),
+    ("delimiter", "syntax_delimiter", None), ("strong", "orange", "bold"),
+]
+
+
+def theme_to_monaco(r: dict) -> dict:
+    """themeToMonaco, serialized the way the app's fixtures are."""
+    def strip(c: str) -> str:
+        return c.lstrip("#")
+    rules = []
+    for token, key, style in MONACO_RULES:
+        rule = {"foreground": strip(r[key]), "token": token}
+        if style:
+            rule["font_style"] = style
+        rules.append(rule)
+    colors = {
+        "editor.background": r["bg"], "editor.foreground": r["fg"],
+        "editor.lineHighlightBackground": r["bg_highlight"], "editor.selectionBackground": r["selection"],
+        "editorCursor.foreground": r["cursor"], "editorLineNumber.foreground": r["fg_comment"],
+        "editorLineNumber.activeForeground": r["fg"], "editorWidget.background": r["bg_dark"],
+        "editorSuggestWidget.background": r["bg_dark"], "editorSuggestWidget.selectedBackground": r["bg_highlight"],
+        "editorHoverWidget.background": r["bg_dark"], "editorGutter.background": r["bg"],
+        "minimap.background": r["bg_dark"], "scrollbarSlider.background": r["fg_comment"] + "40",
+        "scrollbarSlider.hoverBackground": r["fg_comment"] + "80",
+        "scrollbarSlider.activeBackground": r["fg_comment"] + "A0",
+        "impulse.diffAddedColor": r["git_added"], "impulse.diffModifiedColor": r["git_modified"],
+        "impulse.diffDeletedColor": r["git_deleted"],
+    }
+    return {"base": "vs" if r["is_light"] else "vs-dark", "colors": {k: "#" + strip(v) for k, v in colors.items()},
+            "inherit": True, "rules": rules}
+
+
+def material_file_icon(name: str, mapping: dict) -> str:
+    """IconCache.fileIcon in FileIcons.swift: exact name, then extension, then file.svg."""
+    lower = name.lower()
+    candidates = [mapping["file_stems"].get(lower)]
+    if "." in lower:
+        candidates.append(mapping["file_suffixes"].get(lower.rsplit(".", 1)[1]))
+    for icon in candidates:
+        if icon in mapping["file_icons"]:
+            return mapping["file_icons"][icon]
+    return "file.svg"
+
+
+def material_folder_icons(name: str, mapping: dict) -> list[str]:
+    """IconCache.directoryIcon: [collapsed, expanded] for a folder name."""
+    normalized = name.lower().lstrip("._").rstrip("_")
+    default = [mapping["directory_icons"]["collapsed"], mapping["directory_icons"]["expanded"]]
+    return mapping["named_directories"].get(normalized, default)
 
 
 # ── Markdown ────────────────────────────────────────────────────────────
@@ -393,6 +557,7 @@ class Site:
         self._copy_assets()
         self._write_search_index()
         self._write_themes()
+        self._write_demo_icons()
         self._write("CNAME", DOMAIN + "\n")
         self._write(".nojekyll", "")
         self._write("sitemap.xml", self._sitemap())
@@ -528,16 +693,77 @@ class Site:
         for path in sorted(THEMES.glob("*.toml")):
             with path.open("rb") as f:
                 t = tomllib.load(f)
+            resolved = resolve_theme(t)
+            monaco = theme_to_monaco(resolved)
+            self._check_monaco_fixture(path.stem, monaco)
             themes[path.stem] = {
                 "name": t.get("name", path.stem),
                 "variant": t.get("variant", "dark"),
-                "palette": t.get("palette", {}),
-                "ui": {k: v for k, v in t.get("ui", {}).items() if isinstance(v, str)},
-                "syntax": t.get("syntax", {}),
+                # What the app resolves and hands Monaco (ThemeStore.resolveTheme
+                # and themeToMonaco in ImpulseKit), so the demo's editor and
+                # chrome use the same colors as the app in every theme.
+                "colors": {k: v for k, v in resolved.items() if k != "is_light"},
                 "terminal": t.get("terminal", {}),
+                "monaco": {
+                    "rules": [[r["token"], "#" + r["foreground"]] + ([r["font_style"]] if "font_style" in r else [])
+                              for r in monaco["rules"]],
+                    "colors": monaco["colors"],
+                },
             }
         data = json.dumps(themes, separators=(",", ":"))
         self._write("assets/themes.js", f"window.IMPULSE_THEMES={data};\n")
+
+    def _check_monaco_fixture(self, theme_id: str, monaco: dict) -> None:
+        """The app's golden fixture for this theme's Monaco theme is the spec;
+        a port that drifts from it fails the build."""
+        fixture = MONACO_FIXTURES / f"{theme_id}.monaco.json"
+        if not fixture.exists():
+            return
+        expected = json.loads(fixture.read_text(encoding="utf-8"))
+        if expected != monaco:
+            self.errors.append(f"{fixture.relative_to(ROOT)}: the site's Monaco theme for {theme_id} doesn't match it "
+                               "(update theme_to_monaco in scripts/build-site.py)")
+
+    def _write_demo_icons(self) -> None:
+        """The icons the demo window draws, inlined: the Lucide icons the app's
+        chrome uses (vendor/lucide, the ones demo.js names with icon("…")) and
+        the Material file and folder icons the app's file tree would show for
+        the demo project (assets/icons/material, chosen the way FileIcons.swift
+        chooses them). index.html names icons with data-icon="…"."""
+        demo_js = (WEBSITE / "assets/demo.js").read_text(encoding="utf-8")
+        index = (WEBSITE / "index.html").read_text(encoding="utf-8")
+        wanted = set(re.findall(r'\bicon\("([a-z0-9-]+)"', demo_js)) | set(re.findall(r'data-icon="([a-z0-9-]+)"', index))
+        for line_no, line in enumerate(demo_js.splitlines(), 1):
+            for call in re.finditer(r'(?<!function )\bicon\((?!")', line):
+                if "el.dataset.icon" not in line[call.end():call.end() + 20]:
+                    self.errors.append(f"website/assets/demo.js:{line_no}: icon() needs a literal name, or the build can't include it")
+        lucide = {}
+        for name in sorted(wanted):
+            svg_path = LUCIDE / f"{name}.svg"
+            if not svg_path.exists():
+                self.errors.append(f"website/: the demo uses a Lucide icon ({name}) that vendor/lucide/icons doesn't have")
+                continue
+            svg = svg_path.read_text(encoding="utf-8")
+            lucide[name] = re.sub(r"\s*\n\s*", "", re.search(r"<svg[^>]*>(.*)</svg>", svg, re.S).group(1))
+
+        mapping = json.loads((MATERIAL / "icon-mapping.json").read_text(encoding="utf-8"))
+        files_js = (WEBSITE / "assets/demo-files.js").read_text(encoding="utf-8")
+        names, dirs = set(), set()
+        for path in json.loads(files_js[files_js.index("{"):files_js.rindex("}") + 1]):
+            *folder_names, name = path.split("/")
+            names.add(name)
+            dirs.update(folder_names)
+        files = {name: material_file_icon(name, mapping) for name in sorted(names)}
+        folders = {name: material_folder_icons(name, mapping) for name in sorted(dirs)}
+        # Any other folder, and any other file.
+        folders[""] = [mapping["directory_icons"]["collapsed"], mapping["directory_icons"]["expanded"]]
+        files[""] = "file.svg"
+        used = set(files.values()) | {svg for pair in folders.values() for svg in pair}
+        material = {svg: re.sub(r"\s*\n\s*", " ", (MATERIAL / svg).read_text(encoding="utf-8").strip())
+                    for svg in sorted(used)}
+        data = json.dumps({"lucide": lucide, "material": material, "files": files, "folders": folders},
+                          separators=(",", ":"))
+        self._write("assets/demo-icons.js", f"window.IMPULSE_ICONS={data};\n")
 
     def _sitemap(self) -> str:
         urls = [f"{SITE_URL}/"] + [f"{SITE_URL}/{p.url}" for p in self.pages.values()]
@@ -565,6 +791,7 @@ def inputs() -> list[Path]:
     paths += list(DOCS.rglob("*"))
     paths += [p for p in WEBSITE.rglob("*") if DEFAULT_OUT not in p.parents and p != DEFAULT_OUT]
     paths += list(THEMES.glob("*.toml"))
+    paths += [MATERIAL / "icon-mapping.json"]
     return [p for p in paths if p.is_file()]
 
 
@@ -580,7 +807,7 @@ def build_once(out: Path, check: bool, live_reload: bool = False) -> bool:
         print(f"  ✗ {e}", file=sys.stderr)
     pages = len(site.pages)
     took = (time.time() - started) * 1000
-    status = f"{len(site.errors)} broken link(s)" if site.errors else "all links OK"
+    status = f"{len(site.errors)} problem(s)" if site.errors else "all links OK"
     print(f"Built {pages} pages into {out} in {took:.0f} ms, {status}.")
     return not site.errors
 

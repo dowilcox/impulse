@@ -21,7 +21,7 @@ Each shot:
             {files}/<name>
 """
 
-from make_demo import session
+from make_demo import SERVER_V3, TRAILS_FIXED, session
 
 W, H = 1280, 800
 SIDEBAR_W = 260
@@ -65,6 +65,20 @@ START_AGENTS = [
 # Three finished blocks: ok, failed, ok.
 THREE_BLOCKS = ["run=git status -sb", *wait(2), "run=npm test --silent", *wait(3), "run=npm run lint --silent", *wait(3)]
 DEV_SERVER_BG = "run=npm run dev > /dev/null 2>&1 &"
+
+# The fix-elevation task's work: the elevation fallback in src/trails.ts, and
+# the trail route in src/server.ts (which the main checkout changes too).
+SERVER_FIXED = SERVER_V3.replace(
+    'import { findTrail, searchTrails } from "./trails.ts";',
+    'import { findTrail, searchTrails, trailheadElevation } from "./trails.ts";',
+).replace(
+    '    return trail ? send(res, 200, trail) : send(res, 404, { error: "no such trail" });',
+    '    if (!trail) return send(res, 404, { error: "no such trail" });\n'
+    "    return send(res, 200, { ...trail, trailheadElevationM: trailheadElevation(trail) });",
+)
+FIX_FILES = {"trails.ts": TRAILS_FIXED.lstrip("\n"), "server.ts": SERVER_FIXED.lstrip("\n")}
+# Run in fix-elevation's terminal.
+FIX_ELEVATION_WORK = "run=cp {files}/trails.ts {files}/server.ts src/"
 
 PROBLEMS = [
     {"path": "src/forecast.ts", "line": 23, "column": 25, "severity": "error",
@@ -173,6 +187,24 @@ SHOTS = [
     {"name": "tasks-archive-confirm", "session": session([trailhead(), FIX_ELEVATION], active=1),
      "actions": ["run=claude turn", *wait(8), "command=archive_task", *wait()], "delay": 8,
      "crop": "overlay", "pad": 0},
+    # fix-elevation and the main checkout both change src/server.ts. (The list
+    # the chip opens is a popover, whose glass frame snapshots can't draw.)
+    {"name": "tasks-overlap",
+     "session": session([trailhead(), FIX_ELEVATION, TRAIL_PHOTOS], active=1, sidebar_width=320),
+     "files": FIX_FILES, "actions": ["until=prompt", FIX_ELEVATION_WORK, "until=20:blocks:1", "sleep=8"],
+     "delay": 4, "crop": (0, TITLE_H, 320, 116)},
+    # Fix-elevation's agent asked to finish its own task: Finish ran up to Land
+    # and waits there for the user. The main checkout is on main (so Update
+    # can fast-forward it); the check script and how work lands are in the
+    # settings on this Mac.
+    {"name": "tasks-finish", "session": TASKS, "size": (1000, 560),
+     "files": {**FIX_FILES, "project.toml": '[scripts]\ncheck = "npm test"\n\n[finish]\nland = "merge"\n'},
+     "actions": ["until=prompt", "run=git switch -qf main && mkdir -p .git/impulse && cp {files}/project.toml .git/impulse/",
+                 "until=20:blocks:1", "select-workspace=fix-elevation", "until=prompt",
+                 FIX_ELEVATION_WORK + ' && git commit -qam "Fall back to a nearby trailhead elevation"',
+                 "until=20:blocks:1", "trust-project-settings", "run=claude finish", "until=30:agent:working",
+                 "until=180:file:~/mcp/finish.txt", "sleep=1"],
+     "delay": 6, "crop": (SIDEBAR_W, 0, 1000 - SIDEBAR_W, 560 - STATUS_H)},
 
     # ------------------------------------------------------------ agents
     {"name": "agents-tab-states", "session": ONE,
