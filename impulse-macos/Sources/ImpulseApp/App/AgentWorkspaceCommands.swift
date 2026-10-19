@@ -32,7 +32,8 @@ extension MainWindowController {
       let turns = AgentCheckpoints.shared.turns(terminalID: terminal.id).map {
         TurnList.Turn(agent: $0.agentName, started: $0.start.date, ended: $0.end?.date, start: $0.start.ref, end: $0.end?.ref)
       }
-      let list = TurnList(turns: turns)
+      let limit = request.arguments["limit"].flatMap(Int.init) ?? TurnList.defaultLimit
+      let list = TurnList(latest: turns, limit: limit)
       answer(list, text: list.text())
 
     case "comments":

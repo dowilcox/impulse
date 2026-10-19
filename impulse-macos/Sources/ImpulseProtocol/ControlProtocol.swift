@@ -83,7 +83,7 @@ public enum ControlProtocol {
                         [--move-changes]    ask to start a task (Impulse shows New Task first)
       impulse tasks finish <task>           open Finish for a task (landing asks you)
       impulse tasks archive <task>          archive a task (asks you, with Undo)
-      impulse turns [--json]                this pane's agent turns and their checkpoints
+      impulse turns [--limit <n>] [--json]  this pane's latest agent turns (10) and their checkpoints
       impulse comments [<file>] [--json]    the repository's review comments
       impulse comments resolve <id> <note…> mark a comment addressed, for you to accept
       impulse problems [<file>] [--errors] [--json]
@@ -251,6 +251,13 @@ public enum ControlProtocol {
     case "turns", "unsaved", "project":
       var words = rest
       takeFlag("--json", from: &words, into: &request, as: "json")
+      if command == "turns", let index = words.firstIndex(of: "--limit") {
+        guard index + 1 < words.count, let limit = Int(words[index + 1]), limit > 0 else {
+          return .failure(UsageError("usage: impulse turns [--limit <n>] [--json]"))
+        }
+        request.arguments["limit"] = String(limit)
+        words.removeSubrange(index...(index + 1))
+      }
       if let word = words.first {
         return .failure(UsageError("impulse \(command): unknown argument '\(word)'\n\n" + usage))
       }

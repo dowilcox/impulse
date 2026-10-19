@@ -103,6 +103,9 @@
       #expect(parse(["blocks", "show", "ab12:7", "--lines", "20"])?.arguments == ["show": "ab12:7", "lines": "20"])
       #expect(parse(["blocks", "show", "ab12:7", "--lines", "none"]) == nil)
       #expect(parse(["blocks", "everything"]) == nil)
+      #expect(parse(["turns", "--limit", "3", "--json"])?.arguments == ["limit": "3", "json": "1"])
+      #expect(parse(["turns", "--limit", "0"]) == nil)
+      #expect(parse(["unsaved", "--limit", "3"]) == nil, "only turns takes a limit")
       #expect(parse(["unsaved"])?.command == "unsaved")
       #expect(parse(["project", "--json"])?.arguments == ["json": "1"])
     }

@@ -41,7 +41,7 @@ If your shell startup files replace `PATH` outright (rather than adding to it), 
 | `impulse tasks [--json]`                                    | List the repository's workspaces: branches, agents, uncommitted files, files shared with yours. |
 | `impulse tasks show\|wait\|finish\|archive <task>`          | Look at one task, wait for its agent, finish it or archive it.                                  |
 | `impulse tasks new <title…> [options]`                      | Ask for a new task, with an agent started on a brief. Impulse asks you first.                   |
-| `impulse turns [--json]`                                    | This pane's agent turns and their checkpoints.                                                  |
+| `impulse turns [--limit <n>] [--json]`                      | This pane's latest agent turns (10 unless `--limit`) and their checkpoints.                     |
 | `impulse comments [<file>] [--json]`                        | The repository's review comments. `comments resolve <id> <note…>` marks one addressed.          |
 | `impulse problems [<file>] [--errors] [--json]`             | The language servers' problems in this workspace.                                               |
 | `impulse blocks [--json]`, `impulse blocks show <id>`       | This workspace's terminals and their commands; one command's output.                            |
@@ -255,10 +255,10 @@ impulse tasks archive <task>
 ### `impulse turns`
 
 ```
-impulse turns [--json]
+impulse turns [--limit <n>] [--json]
 ```
 
-The agent turns Impulse recorded in this pane, oldest first: the agent, when each started, and its start and end checkpoint refs, so `git diff <start> <end>` shows what that turn changed. See [Checkpoints and turns](agents.md#checkpoints-and-turns).
+The latest agent turns Impulse recorded in this pane (10 unless you give `--limit`), oldest first, saying how many earlier ones it left out: the agent, when each started, and its start and end checkpoint refs, so `git diff <start> <end>` shows what that turn changed. See [Checkpoints and turns](agents.md#checkpoints-and-turns).
 
 ### `impulse comments`
 

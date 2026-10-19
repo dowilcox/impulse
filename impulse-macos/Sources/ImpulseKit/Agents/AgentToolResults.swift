@@ -123,15 +123,33 @@ public struct TurnList: Codable, Equatable, Sendable {
     }
   }
 
+  /// How many turns `impulse turns` and list_turns show unless asked: the
+  /// latest ones, oldest first.
+  public static let defaultLimit = 10
+
   public var turns: [Turn]
-  public init(turns: [Turn]) { self.turns = turns }
+  /// Earlier turns left out.
+  public var older: Int
+  public init(turns: [Turn], older: Int = 0) {
+    self.turns = turns
+    self.older = older
+  }
+
+  /// The latest `limit` of `all`.
+  public init(latest all: [Turn], limit: Int) {
+    let limit = max(1, limit)
+    self.init(turns: Array(all.suffix(limit)), older: max(0, all.count - limit))
+  }
 
   public func text() -> String {
     guard !turns.isEmpty else { return "No agent turns recorded in this terminal yet." }
-    return turns.enumerated().map { index, turn in
+    // Numbered as the terminal's turns, earlier ones counted.
+    let lines = turns.enumerated().map { index, turn in
       let span = turn.end.map { "\(turn.start) \($0)" } ?? "\(turn.start) (still working)"
-      return "\(index + 1). \(turn.agent), \(Self.time(turn.started)): \(span)"
-    }.joined(separator: "\n")
+      return "\(older + index + 1). \(turn.agent), \(Self.time(turn.started)): \(span)"
+    }
+    guard older > 0 else { return lines.joined(separator: "\n") }
+    return (["(\(older) earlier turn\(older == 1 ? "" : "s") not shown)"] + lines).joined(separator: "\n")
   }
 
   static func time(_ date: Date) -> String {

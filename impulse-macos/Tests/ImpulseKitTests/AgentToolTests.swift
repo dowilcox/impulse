@@ -17,6 +17,19 @@
 
     // MARK: Answers
 
+    @Test func turnListShowsTheLatestAndCountsTheRest() {
+      let all = (1...12).map {
+        TurnList.Turn(agent: "Claude Code", started: Date(timeIntervalSince1970: Double($0) * 60), start: "s\($0)", end: "e\($0)")
+      }
+      let list = TurnList(latest: all, limit: 3)
+      #expect(list.turns.map(\.start) == ["s10", "s11", "s12"], "the latest, oldest first")
+      #expect(list.older == 9)
+      let text = list.text()
+      #expect(text.hasPrefix("(9 earlier turns not shown)\n10. Claude Code"), "numbered as the terminal's turns: \(text)")
+      #expect(TurnList(latest: all, limit: 50).older == 0)
+      #expect(TurnList(latest: [], limit: 10).text() == "No agent turns recorded in this terminal yet.")
+    }
+
     @Test func taskDetailText() {
       let detail = TaskDetail(
         workspace: task, changedFiles: ["src/lib/units.ts"], uncommittedFiles: ["notes.md"],

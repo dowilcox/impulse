@@ -210,11 +210,18 @@ public enum MCPTools {
     tool(
       "list_turns", "List your turns",
       """
-      The agent turns Impulse recorded in your terminal, oldest first: when each started and ended, and \
-      its start and end checkpoint refs, so `git diff <start> <end>` shows what that turn changed.
+      The latest agent turns Impulse recorded in your terminal (10 unless you ask for more), oldest first, \
+      and how many earlier ones it left out: when each started and ended, and its start and end checkpoint \
+      refs, so `git diff <start> <end>` shows what that turn changed.
       """,
-      properties: [:], readOnly: true
-    ) { _, context in .success(request("turns", context)) },
+      properties: [
+        "limit": ["type": "integer", "minimum": 1, "maximum": 500, "description": "How many of the latest turns (default 10)."]
+      ], readOnly: true
+    ) { arguments, context in
+      var values: [String: String] = [:]
+      if let limit = arguments["limit"]?.int { values["limit"] = String(min(500, max(1, limit))) }
+      return .success(request("turns", context, values))
+    },
   ]
 
   // MARK: What Impulse knows about the workspace
