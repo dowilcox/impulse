@@ -7,17 +7,17 @@ Plan, proposed 19 Oct 2026 and extended the same day beyond tasks; built the sam
 Built on 19 Oct 2026, phases 0 to 4, in one change. Where the build differs from the plan below:
 
 - **Requests stay flat strings.** `ControlRequest` didn't get an `input` field: every tool's arguments fit its string `arguments` (the brief included). `ControlResponse` did get `data`.
-- **The brief is read from its file** (open question 2). Claude Code and Codex start with `claude "$(cat …/brief.md)"` (fish: `(cat … | string collect)`), so the brief is neither typed into the shell nor kept in its history; other agents get it typed in once they're up, and submitted.
+- **The brief is read from its file** (open question 2). Claude Code and Codex start with `claude -- "$(cat …/brief.md)"` (fish: `(cat … | string collect)`; the `--` keeps a brief that starts with a dash from reading as an option), so the brief is neither typed into the shell nor kept in its history; other agents get it typed in once they're up, and submitted.
 - **No mark on the sidebar row.** The robot icon there already means an agent waiting for you, so an agent-made task says "started for Claude Code in trailhead" in the row's hover instead.
-- **Finish stops before landing, not before running.** `finish_task` runs commit, sync and check by itself and stops at Land with a new waiting state ("Claude Code asked to finish fix-elevation. Click Continue to land it."). The first Finish in a repository still needs you to choose how work lands, so the agent's waits for that.
+- **Finish stops before landing, not before running.** `finish_task` runs commit, sync and check by itself and stops at Land with a new waiting state ("Claude Code asked to finish fix-elevation. Click Continue to land it."). The first Finish in a repository still needs you to choose how work lands, so the agent's waits for that. For a task that's already merged, it stops before updating the main checkout and archiving instead.
 - **`archive_task` was built** (open question 6), behind Archive Task…'s own questions.
 - **The cap is its own setting,** `agent_task_limit` (4, 0 for no limit), beside `agent_task_creation` and `agent_tool_terminal_output`.
 - **The sheet is Agent Integration,** with Hooks and MCP Server halves; **Install Impulse's MCP Server…** in the palette opens the second. For agents other than Claude Code and Codex it shows the entry to copy.
 - **The `SessionStart` summary always names `list_tasks`,** registered or not: Impulse can't tell cheaply whether the agent has the server.
-- **Tool results declare a loose `outputSchema`** (`{"type": "object"}`), so a client that validates strictly can't reject a field the schema didn't list.
+- **Tools declare no `outputSchema`.** Answers carry their JSON as `structuredContent` when the app sends it, but some are text only ("Done.", or anything from an older app), and with a schema Claude Code rejects a result without structured content.
+- **Both protocol eras, checked against Claude Code 2.1.303 and Codex 0.145.** Claude Code probes with `server/discover` and then sends requests naming 2026-07-28 in `_meta`, which get that revision's shape (`resultType`, `ttlMs` and `cacheScope`, the server's name in `_meta`; an unknown revision gets `-32022`). Codex uses `initialize` (2025-06-18), and starts servers with a cleared environment, so its table forwards `IMPULSE_SOCKET`, `IMPULSE_PANE_TOKEN` and `IMPULSE_CLI` with `env_vars`.
+- **Reading other terminals needs the pane's own process tree,** like creating tasks: `blocks` (`list_command_blocks`, `get_block_output`) doesn't work with the token alone, and none of the workspace tools answer a request that names no pane.
 - **Progress** goes out every 15 seconds while a tool waits, when the client asked for it.
-
-Still to do: the screenshots of the sheet (`docs/images/agents-hooks-sheet.png`) show its earlier title, until `scripts/docs/capture.py` runs again.
 
 Impulse already tells agents about each other's work. The `impulse tasks` command lists a repository's workspaces, and Claude Code hooks push notes into a session (a summary at start, shared files, a question before merging a moving branch). Two things are missing:
 

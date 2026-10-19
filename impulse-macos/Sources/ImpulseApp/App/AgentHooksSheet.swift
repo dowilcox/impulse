@@ -37,10 +37,10 @@ final class AgentHooksModel {
   var scope: Scope = .user { didSet { reload() } }
   /// The bundled CLI's path, for the MCP entry's fallback outside Impulse.
   let fallbackCLI: String
-  /// For Claude Code's MCP server: the `claude` command that makes the
-  /// change (Claude Code rewrites its own config file while it runs, so
-  /// Impulse doesn't edit it); nil when `claude` isn't on PATH.
-  private(set) var claudeCommand: [String]?
+  /// For Claude Code's MCP server: the `claude` commands that make the
+  /// change, in order (Claude Code rewrites its own config file while it
+  /// runs, so Impulse doesn't edit it); nil when `claude` isn't on PATH.
+  private(set) var claudeCommands: [[String]]?
   @ObservationIgnored private var claudeExecutable: String?
   /// The project for project-local Claude hooks, if any.
   let projectRoot: String?
@@ -74,8 +74,9 @@ final class AgentHooksModel {
       return AgentMCPInstaller.genericSnippet(fallbackCLI: fallbackCLI).components(separatedBy: "\n")
     }
     if part == .mcp, agent == .claude {
-      guard let claudeCommand else { return [] }
-      return ["$ " + (["claude"] + claudeCommand).map { ShellQuoting.quoted($0, for: .zsh) }.joined(separator: " ")]
+      return (claudeCommands ?? []).map {
+        "$ " + (["claude"] + $0).map { ShellQuoting.quoted($0, for: .zsh) }.joined(separator: " ")
+      }
     }
     guard let after else { return [] }
     return AgentHookInstaller.diffLines(before: before, after: after)
@@ -85,7 +86,8 @@ final class AgentHooksModel {
   var what: String { part == .hooks ? "hooks" : "MCP server" }
 
   func reload() {
-    if part == .mcp { return reloadMCP() }
+    // Other agents only have the MCP entry to copy.
+    if part == .mcp || agent == .other { return reloadMCP() }
     let home = NSHomeDirectory()
     switch agent {
     case .claude:
@@ -93,7 +95,7 @@ final class AgentHooksModel {
         scope == .project && projectRoot != nil
         ? (projectRoot! as NSString).appendingPathComponent(".claude/settings.local.json")
         : home + "/.claude/settings.json"
-    case .codex:
+    case .codex, .other:
       path = home + "/.codex/config.toml"
     }
     let data = FileManager.default.contents(atPath: path)
@@ -113,7 +115,7 @@ final class AgentHooksModel {
       case .success(let result): after = String(decoding: result, as: UTF8.self)
       case .failure(let failure): fail(failure)
       }
-    case .codex:
+    case .codex, .other:
       installed = AgentHookInstaller.codexNotifyInstalled(before)
       outdated = false
       if installed {
@@ -134,7 +136,7 @@ final class AgentHooksModel {
     error = nil
     refreshed = false
     outdated = false
-    claudeCommand = nil
+    claudeCommands = nil
     switch agent {
     case .claude:
       path = home + "/.claude.json"
@@ -153,10 +155,10 @@ final class AgentHooksModel {
           + AgentMCPInstaller.claudeAddArguments(scope: scope, fallbackCLI: fallbackCLI)
           .map { ShellQuoting.quoted($0, for: .zsh) }.joined(separator: " ")
       } else {
-        claudeCommand =
-          installed
-          ? AgentMCPInstaller.claudeRemoveArguments(scope: scope)
-          : AgentMCPInstaller.claudeAddArguments(scope: scope, fallbackCLI: fallbackCLI)
+        let remove = AgentMCPInstaller.claudeRemoveArguments(scope: scope)
+        let add = AgentMCPInstaller.claudeAddArguments(scope: scope, fallbackCLI: fallbackCLI)
+        // `add-json` refuses a name that's taken: an older entry goes first.
+        claudeCommands = installed ? [remove] : outdated ? [remove, add] : [add]
         after = ""
       }
     case .codex:
@@ -200,38 +202,38 @@ final class AgentHooksModel {
     case failed(String)
   }
 
-  /// Write the previewed change, unless the file changed since the preview
-  /// was made (the agent rewrote its settings, say): then the preview is
-  /// made again from what's there now, and nothing is written.
   /// `apply`, or for Claude Code's MCP server the `claude` command, off
   /// the main thread.
   func applyInBackground(completion: @escaping (Outcome) -> Void) {
     guard part == .mcp, agent == .claude else { return completion(apply()) }
-    guard let executable = claudeExecutable, let arguments = claudeCommand else {
+    guard let executable = claudeExecutable, let commands = claudeCommands, !commands.isEmpty else {
       return completion(.failed(error ?? "Nothing to change."))
     }
     let directory = projectRoot ?? NSHomeDirectory()
     DispatchQueue.global(qos: .userInitiated).async {
       var environment = ProcessInfo.processInfo.environment
       environment["PATH"] = LoginShell.loginPath()
-      let outcome: Outcome
-      do {
-        let output = try ChildProcess.run(
-          executable, arguments, in: directory, environment: environment, timeout: 30)
-        if output.status == 0 {
-          outcome = .written
-        } else {
+      var outcome = Outcome.written
+      for arguments in commands {
+        do {
+          let output = try ChildProcess.run(
+            executable, arguments, in: directory, environment: environment, timeout: 30)
+          guard output.status != 0 else { continue }
           let message = String(decoding: output.stderr.isEmpty ? output.stdout : output.stderr, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
           outcome = .failed(message.isEmpty ? "claude exited with status \(output.status)" : message)
+        } catch {
+          outcome = .failed(error.localizedDescription)
         }
-      } catch {
-        outcome = .failed(error.localizedDescription)
+        break
       }
       DispatchQueue.main.async { completion(outcome) }
     }
   }
 
+  /// Write the previewed change, unless the file changed since the preview
+  /// was made (the agent rewrote its settings, say): then the preview is
+  /// made again from what's there now, and nothing is written.
   func apply() -> Outcome {
     guard let after else { return .failed(error ?? "Nothing to change.") }
     guard FileManager.default.contents(atPath: path) == previewed else {

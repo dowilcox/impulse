@@ -132,6 +132,52 @@
       #expect(GitOperations.headReflogSubject(root: repo.root).map(DependencyChanges.move) == .checkout)
     }
 
+    @Test func commitsAheadAreNewestFirstAndNeverRunGPG() throws {
+      let repo = try TempRepo.create()
+      defer { repo.destroy() }
+      try repo.commit(["a.txt": "1\n"], message: "base")
+      try repo.git("switch", "-q", "-c", "task")
+      try repo.commit(["a.txt": "2\n"], message: "first")
+      try repo.commit(["a.txt": "3\n"], message: "second\twith a tab")
+      // A signed commit on top, in a repository whose own config would run a
+      // program to check it.
+      let tree = try repo.git("write-tree")
+      let parent = try repo.git("rev-parse", "HEAD")
+      let signed = try repo.git(
+        ["hash-object", "-t", "commit", "-w", "--stdin"],
+        stdin: """
+          tree \(tree)
+          parent \(parent)
+          author Impulse Test <test@impulse.invalid> 1767225600 +0000
+          committer Impulse Test <test@impulse.invalid> 1767225600 +0000
+          gpgsig -----BEGIN PGP SIGNATURE-----
+           \("")
+           fake
+           -----END PGP SIGNATURE-----
+
+          signed
+
+          """)
+      try repo.git("update-ref", "refs/heads/task", signed)
+      let marker = (repo.root as NSString).appendingPathComponent("gpg-ran")
+      let program = (repo.root as NSString).appendingPathComponent("fake-gpg")
+      try repo.write("fake-gpg", "#!/bin/sh\ntouch '\(marker)'\nexit 1\n")
+      chmod(program, 0o755)
+      try repo.git("config", "log.showSignature", "true")
+      try repo.git("config", "gpg.program", program)
+      // What a plain `git log` would do here.
+      _ = try? repo.git("log", "--format=%s", "main..task")
+      #expect(FileManager.default.fileExists(atPath: marker), "the setup runs the program without the flag")
+      try FileManager.default.removeItem(atPath: marker)
+
+      let commits = GitOperations.commitsAhead("task", base: "main", root: repo.root, limit: 50)
+      #expect(commits.map(\.subject) == ["signed", "second\twith a tab", "first"])
+      #expect(commits.first?.id == (try repo.git("rev-parse", "task")))
+      #expect(GitOperations.commitsAhead("task", base: "main", root: repo.root, limit: 1).count == 1)
+      #expect(GitOperations.commitsAhead("main", base: "task", root: repo.root, limit: 50).isEmpty)
+      #expect(!FileManager.default.fileExists(atPath: marker))
+    }
+
     @Test func commitDateIsTheCommittersDate() throws {
       let repo = try TempRepo.create()
       defer { repo.destroy() }

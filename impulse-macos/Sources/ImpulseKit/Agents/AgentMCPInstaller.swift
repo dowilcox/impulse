@@ -108,39 +108,77 @@ public enum AgentMCPInstaller {
     ].joined(separator: "\n") + "\n"
   }
 
+  /// A line without its line ending, surrounding blanks and trailing
+  /// comment (a `#` outside quotes is rare enough in these lines to cut at).
+  private static func bare(_ line: String) -> String {
+    let content = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+    return content.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// `[mcp_servers.impulse]`, however it's quoted or spaced.
+  private static func isImpulseHeader(_ line: String) -> Bool {
+    let compact = bare(line).filter { $0 != " " && $0 != "\t" }
+    return ["[mcp_servers.impulse]", "[mcp_servers.\"impulse\"]", "[mcp_servers.'impulse']"].contains(compact)
+  }
+
   /// The lines of `toml` that hold the `[mcp_servers.impulse]` table (with
   /// Impulse's comment above it, when it's there); nil without one.
   private static func codexTableRange(_ lines: [String]) -> (range: Range<Int>, isOurs: Bool)? {
-    guard let header = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == codexHeader }) else {
-      return nil
-    }
+    guard let header = lines.firstIndex(where: isImpulseHeader) else { return nil }
     var end = header + 1
     while end < lines.count, !lines[end].trimmingCharacters(in: .whitespaces).hasPrefix("[") { end += 1 }
     // Blank lines before the next table aren't the table's, but the one
     // after it is (installing put it there).
-    while end > header + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
-    let isOurs = header > 0 && lines[header - 1] == codexComment
+    while end > header + 1, lines[end - 1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { end -= 1 }
+    let isOurs =
+      header > 0 && lines[header - 1].trimmingCharacters(in: .whitespacesAndNewlines) == codexComment
+      && lines[header].trimmingCharacters(in: .whitespacesAndNewlines) == codexHeader
     return ((isOurs ? header - 1 : header)..<end, isOurs)
+  }
+
+  /// `mcp_servers.impulse` defined some other way than its own table: a
+  /// dotted key, or `impulse = { … }` in `[mcp_servers]`. A second
+  /// definition would stop Codex from reading the file.
+  private static func definesServerElsewhere(_ lines: [String]) -> Bool {
+    var inServers = false
+    for line in lines {
+      let content = bare(line)
+      if content.hasPrefix("[") {
+        inServers = content.filter { $0 != " " } == "[mcp_servers]"
+        continue
+      }
+      let key = content.filter { $0 != " " && $0 != "\t" }
+      if key.hasPrefix("mcp_servers.impulse") || key.hasPrefix("mcp_servers.\"impulse\"") { return true }
+      if inServers, key.hasPrefix("impulse=") || key.hasPrefix("impulse.") || key.hasPrefix("\"impulse\"") {
+        return true
+      }
+    }
+    return false
   }
 
   public static func codexStatus(_ toml: String?, fallbackCLI: String) -> Status {
     guard let toml else { return .notInstalled }
     let lines = toml.components(separatedBy: "\n")
-    guard let found = codexTableRange(lines) else { return .notInstalled }
-    let table = lines[found.range].joined(separator: "\n") + "\n"
-    return table == codexTable(fallbackCLI: fallbackCLI) ? .installed : .outdated
+    guard let found = codexTableRange(lines) else {
+      return definesServerElsewhere(lines) ? .outdated : .notInstalled
+    }
+    let table = lines[found.range].map { $0.trimmingCharacters(in: .newlines) }.joined(separator: "\n") + "\n"
+    return found.isOurs && table == codexTable(fallbackCLI: fallbackCLI) ? .installed : .outdated
   }
 
   /// config.toml with Impulse's table at the end (an older one of Impulse's
-  /// replaced). Refuses when an `[mcp_servers.impulse]` table Impulse
-  /// didn't write is there.
+  /// replaced). Refuses when `mcp_servers.impulse` is defined in a way
+  /// Impulse didn't write.
   public static func installingCodexMCP(into toml: String?, fallbackCLI: String) -> Result<String, AgentHookInstaller.InstallError> {
     var text = toml ?? ""
-    if let found = codexTableRange(text.components(separatedBy: "\n")) {
+    let lines = text.components(separatedBy: "\n")
+    if let found = codexTableRange(lines) {
       guard found.isOurs else {
         return .failure(.notifyInUse("config.toml already has an [mcp_servers.impulse] table; change it by hand"))
       }
       text = removingCodexMCP(from: text) ?? text
+    } else if definesServerElsewhere(lines) {
+      return .failure(.notifyInUse("config.toml already defines mcp_servers.impulse; change it by hand"))
     }
     let table = codexTable(fallbackCLI: fallbackCLI)
     if text.isEmpty { return .success(table) }
@@ -156,9 +194,10 @@ public enum AgentMCPInstaller {
     var range = found.range
     // The blank line installing put before it; at the top of the file, the
     // one after it instead.
-    if range.lowerBound > 0, lines[range.lowerBound - 1].isEmpty {
+    let isBlank = { (index: Int) in lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    if range.lowerBound > 0, isBlank(range.lowerBound - 1) {
       range = (range.lowerBound - 1)..<range.upperBound
-    } else if range.lowerBound == 0, range.upperBound + 1 < lines.count, lines[range.upperBound].isEmpty {
+    } else if range.lowerBound == 0, range.upperBound + 1 < lines.count, isBlank(range.upperBound) {
       range = range.lowerBound..<(range.upperBound + 1)
     }
     lines.removeSubrange(range)

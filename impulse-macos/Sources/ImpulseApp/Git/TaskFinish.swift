@@ -66,10 +66,23 @@ final class TaskFinishModel {
   /// Pushed for review in this tab.
   var pushedForReview = false
   /// An agent asked for this Finish (`impulse tasks finish`): it runs up to
-  /// the land step and waits there for the user. Who asked.
+  /// the land step (for a task already merged, the update) and waits there
+  /// for the user. Who asked.
   var stopsBeforeLanding: String?
-  /// Called each time a run stops: done, stopped at a step, or waiting.
-  @ObservationIgnored var onStopped: (() -> Void)?
+  /// The agent's terminal that asked, which the commit step doesn't wait
+  /// for: it's mid-turn while it asks.
+  var requesterTerminal: UUID?
+  /// Agents' requests waiting to hear where the run stops (done, stopped
+  /// at a step, or waiting), by request: each hears once, nil when the tab
+  /// closed first.
+  @ObservationIgnored var stopWaiters: [UUID: (TaskFinishModel?) -> Void] = [:]
+
+  /// The run stopped: tell whoever is waiting.
+  func notifyStopped() {
+    let waiters = stopWaiters
+    stopWaiters = [:]
+    waiters.values.forEach { $0(self) }
+  }
 
   @ObservationIgnored var onFinish: (() -> Void)?
   @ObservationIgnored var onRemedy: ((Remedy) -> Void)?
@@ -166,6 +179,9 @@ final class TaskFinishSurface: NSView, ToolSurface {
   func cleanupTool() {
     model.checkObservers.forEach(NotificationCenter.default.removeObserver)
     model.checkObservers = []
+    let waiters = model.stopWaiters
+    model.stopWaiters = [:]
+    waiters.values.forEach { $0(nil) }
   }
 }
 
@@ -517,18 +533,21 @@ extension MainWindowController {
   private func advanceFinish(_ model: TaskFinishModel, to step: TaskFinishModel.Step?) {
     guard let step else {
       model.isRunning = false
-      model.onStopped?()
+      model.notifyStopped()
       return
     }
-    // An agent's Finish: landing is the user's to start.
-    if step == .land, let requester = model.stopsBeforeLanding {
+    // An agent's Finish: landing, and for a task that's already merged
+    // updating the main checkout and archiving, are the user's to start.
+    if step.rawValue >= TaskFinishModel.Step.land.rawValue, let requester = model.stopsBeforeLanding {
       model.stopsBeforeLanding = nil
-      model.statuses[.land] = .waiting(
-        "\(requester) asked to finish \(model.name). Click Continue to \(model.effectiveLanding == .review ? "push it for review" : "land it in \(model.baseRef)").")
-      model.resumeAt = .land
+      model.statuses[step] = .waiting(
+        model.alreadyMerged
+          ? "\(requester) asked to finish \(model.name), which is already merged into \(model.baseRef). Click Clean Up to update \(model.mainName) and archive it."
+          : "\(requester) asked to finish \(model.name). Click Continue to \(model.effectiveLanding == .review ? "push it for review" : "land it in \(model.baseRef)").")
+      model.resumeAt = step
       model.remedy = nil
       model.isRunning = false
-      model.onStopped?()
+      model.notifyStopped()
       return
     }
     let next = TaskFinishModel.Step(rawValue: step.rawValue + 1)
@@ -543,7 +562,7 @@ extension MainWindowController {
       model.resumeAt = resume
       model.remedy = remedy
       model.isRunning = false
-      model.onStopped?()
+      model.notifyStopped()
     }
     switch step {
     case .commit: finishCommitStep(model, proceed: proceed, stop: stop)
@@ -560,7 +579,10 @@ extension MainWindowController {
 
   private func finishCommitStep(_ model: TaskFinishModel, proceed: @escaping Proceed, stop: @escaping Stop) {
     model.statuses[.commit] = .running("Looking at \(model.name)…")
-    if let agent = tabManager.agents(inFolder: model.root).first(where: { $0.state == .working }) {
+    // The agent that asked for this run is mid-turn: only others count.
+    let requester = model.requesterTerminal
+    model.requesterTerminal = nil
+    if let agent = tabManager.agents(inFolder: model.root, excluding: requester).first(where: { $0.state == .working }) {
       return stop("\(agent.name) is working in this task. Let it finish its turn, then Continue.", .commit, nil)
     }
     let root = model.root
@@ -691,6 +713,7 @@ extension MainWindowController {
             model.statuses[.update] = .skipped("After \(branch) is merged into \(target).")
             model.statuses[.cleanUp] = .skipped("Once \(branch) is merged, Impulse offers to clean up.")
             model.isRunning = false
+            model.notifyStopped()
           case .failure(let error):
             stop("Couldn't push: \(error.message)", .land, nil)
           }
@@ -862,6 +885,7 @@ extension MainWindowController {
           model.statuses[.cleanUp] = .failed("The workspace stayed open, so the task wasn't archived. Continue when you're ready.")
           model.resumeAt = .cleanUp
           model.isRunning = false
+          model.notifyStopped()
         })
     }
   }
