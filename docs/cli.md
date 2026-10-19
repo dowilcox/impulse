@@ -47,7 +47,7 @@ If your shell startup files replace `PATH` outright (rather than adding to it), 
 | `impulse blocks [--json]`, `impulse blocks show <id>`       | This workspace's terminals and their commands; one command's output.                            |
 | `impulse unsaved [--json]`                                  | Files open in the editor with unsaved edits.                                                    |
 | `impulse project [--json]`                                  | The trusted project settings: check and setup scripts, actions, `[on_change]` rules.            |
-| `impulse hook <claude\|codex> [event]`                      | Used by agent hooks.                                                                            |
+| `impulse hook <claude\|codex\|opencode> [event]`            | Used by agent hooks (and Impulse's opencode plugin).                                            |
 | `impulse mcp`                                               | Impulse's MCP server, for agents. See [`impulse mcp`](#impulse-mcp).                            |
 | `impulse help`                                              | Print the usage summary. `-h` and `--help` do the same, as does `impulse` alone.                |
 
@@ -317,10 +317,10 @@ Impulse's [MCP server](agents.md#impulses-mcp-server): the agent starts it, and 
 ### `impulse hook`
 
 ```
-impulse hook <claude|codex> [event]
+impulse hook <claude|codex|opencode> [event]
 ```
 
-What the hooks installed by **Install Agent Hooks…** run; you don't normally call it yourself. Claude Code passes its hook input as JSON on standard input; Codex passes its notification JSON as the last argument. Impulse reads the event name (from the argument, or from the JSON), the message and the session id from it:
+What the hooks installed by **Install Agent Hooks…** run; you don't normally call it yourself. Claude Code, and Impulse's opencode plugin, pass their hook input as JSON on standard input; Codex passes its notification JSON as the last argument. Impulse reads the event name (from the argument, or from the JSON), the message and the session id from it:
 
 | Event                                               | Effect on the pane's agent                                                                                    |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -332,6 +332,19 @@ What the hooks installed by **Install Agent Hooks…** run; you don't normally c
 | Anything else (`PreToolUse`, subagents, compaction) | No change                                                                                                     |
 
 For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), and a question before a merge (`PreToolUse`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).
+
+Impulse's opencode plugin names opencode's own events, and reads Impulse's answer as JSON: `{"context": "…"}` to add to the agent's context, `{"block": "…"}` to stop the command with that reason.
+
+| opencode event                                                | Effect on the pane's agent                                          | Impulse answers                                                                  |
+| ------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `start` (opencode loaded the plugin)                          | **Idle**                                                            |                                                                                  |
+| `session.start` (the first prompt of a session in this run)   | No change                                                           | The other tasks' summary, kept beside opencode's instructions for the session    |
+| `chat.message` (a prompt)                                     | **Working**                                                         |                                                                                  |
+| `permission.asked`, `question.asked`                          | **Needs your input**                                                |                                                                                  |
+| `permission.replied`, `question.replied`, `question.rejected` | **Working**                                                         |                                                                                  |
+| `tool.execute.before` (shell commands)                        | No change                                                           | A stop, once, before a merge of a branch a task is still on                      |
+| `tool.execute.after` (edits and shell commands)               | **Working**, when it's the tool a permission request was waiting on | Notes about shared files and changed dependencies, added after the tool's output |
+| `session.idle` (not a subagent's)                             | **Finished**                                                        |                                                                                  |
 
 Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does nothing and exits with status 0, so the hooks never get in the agent's way. See [Agents](agents.md#agent-hooks).
 

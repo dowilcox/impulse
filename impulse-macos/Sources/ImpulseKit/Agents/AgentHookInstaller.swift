@@ -1,7 +1,8 @@
 // Edits agent configuration so the agent tells Impulse what it's doing:
 // Claude Code hooks in settings.json, Codex's `notify` program in
-// config.toml. Every hook calls the bundled CLI through $IMPULSE_CLI, which
-// only Impulse terminals set — anywhere else the hook is a no-op.
+// config.toml, and a plugin file in opencode's plugins folder. Every hook
+// calls the bundled CLI through $IMPULSE_CLI, which only Impulse terminals
+// set — anywhere else the hook is a no-op.
 
 import Foundation
 
@@ -161,6 +162,48 @@ public enum AgentHookInstaller {
   }
 
   private static let codexComment = "# Tells Impulse when Codex finishes a turn (no-op outside Impulse)."
+
+  // MARK: opencode (a plugin file)
+
+  /// Impulse's plugin in opencode's plugins folder, which opencode loads at
+  /// startup.
+  public static let opencodePluginName = "impulse.js"
+
+  /// The plugin: a file of Impulse's own, replaced or removed as a whole
+  /// (Resources/Agents/opencode-plugin.js).
+  public static let opencodePlugin: String = {
+    guard
+      let url = Bundle.kitResources.url(
+        forResource: "opencode-plugin", withExtension: "js", subdirectory: "Resources/Agents"),
+      let text = try? String(contentsOf: url, encoding: .utf8)
+    else {
+      NSLog("Missing the opencode plugin")
+      return ""
+    }
+    return text
+  }()
+
+  /// Its first line, which tells an older version of it from a file that
+  /// isn't Impulse's.
+  static let opencodePluginMarker = "// Impulse's opencode plugin"
+
+  /// Whether `text` (the plugin file, nil when there's none) is this
+  /// version of the plugin, an older one, or not there (or not Impulse's).
+  public static func opencodePluginStatus(_ text: String?) -> Status {
+    guard let text else { return .notInstalled }
+    if text == opencodePlugin { return .installed }
+    return text.hasPrefix(opencodePluginMarker) ? .outdated : .notInstalled
+  }
+
+  /// The plugin file to write over `existing`; refuses a file that isn't
+  /// Impulse's.
+  public static func installingOpencodePlugin(over existing: String?) -> Result<String, InstallError> {
+    if let existing, !existing.isEmpty, !existing.hasPrefix(opencodePluginMarker) {
+      return .failure(
+        .notifyInUse("\(opencodePluginName) in opencode's plugins folder isn't Impulse's; rename or remove it first"))
+    }
+    return .success(opencodePlugin)
+  }
 
   // MARK: Preview
 

@@ -167,8 +167,11 @@ extension MainWindowController {
       guard let terminal else { return reply(ControlResponse(ok: true)) }  // not ours: ignore quietly
       _ = Self.handlePaneControl(request, terminal: terminal)
       // What the agent should know (other tasks, shared files, dependency
-      // changes), or a question before it merges a branch still moving.
-      guard args["agent"] == "claude" else { return reply(ControlResponse(ok: true)) }
+      // changes), or a question before it merges a branch still moving:
+      // for the agents that read an answer.
+      guard
+        AgentHookEvents.reply(agent: args["agent"], event: args["event"] ?? "", tool: args["tool"]) != nil
+      else { return reply(ControlResponse(ok: true)) }
       var request = request
       // From outside the pane's shell, the hook's folder isn't where git
       // runs: the pane's is.
@@ -251,15 +254,8 @@ extension MainWindowController {
 
     case "hook":
       let agentID = args["agent"]
-      let hook: AgentHook?
-      switch args["event"] {
-      case "SessionStart": hook = .sessionStarted
-      case "UserPromptSubmit": hook = .promptSubmitted
-      case "PostToolUse": hook = .usedTool(args["tool"])
-      case "Stop", "agent-turn-complete": hook = .stopped
-      case "Notification": hook = .notification(args["message"] ?? "")
-      default: hook = nil  // other events (tools starting, subagents, compaction) don't change state
-      }
+      let hook = AgentHookEvents.hook(
+        agent: agentID, event: args["event"] ?? "", tool: args["tool"], message: args["message"])
       if let hook { terminal.agentHook(hook, agentID: agentID) }
       terminal.agentReportsByHook = true
       if let agentID, let session = args["session"], !session.isEmpty {

@@ -19,7 +19,7 @@ Use the scripts; don't replicate their steps by hand.
 - `./impulse-macos/build.sh --dev` — build `dist/Impulse Dev.app` (runs alongside the release app).
 - `impulse-macos/swiftw build` / `impulse-macos/swiftw test` — build or test the Swift package with the flags the local toolchain needs.
 - `cargo test -p impulse-terminal`, `cargo fmt`, `cargo clippy` — Rust core.
-- `python3 scripts/smoke/run.py` — smoke checks of the dev build (editor, shells, CLI, agents, language servers, tasks, session restore), headless; run before a release.
+- `python3 scripts/smoke/run.py` — smoke checks of the dev build (editor, shells, CLI, agents, language servers, tasks, session restore), headless; run before a release. The opencode scenario needs `node`.
 - `./scripts/release.sh <version> [--push]` — the only release path.
 
 ## Conventions

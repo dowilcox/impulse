@@ -77,7 +77,7 @@ struct AgentInboxView: View {
       .frame(height: 30)
       Hairline()
       if model.agents.isEmpty {
-        Text("No agents running. Start Claude Code, Codex, Gemini or another agent in any terminal.")
+        Text("No agents running. Start Claude Code, Codex, opencode, Gemini or another agent in any terminal.")
           .font(ChromeFont.ui(11.5))
           .foregroundStyle(chrome.textTertiary)
           .fixedSize(horizontal: false, vertical: true)

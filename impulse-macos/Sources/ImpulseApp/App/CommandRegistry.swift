@@ -54,11 +54,11 @@ enum CommandRegistry {
       ) { [weak controller] in controller?.showBranchSwitcher() },
       AppCommand(
         id: "agent_hooks", title: "Install Agent Hooks…", category: "Agents",
-        keywords: ["claude", "codex", "hooks", "status", "setup"], icon: .plug
+        keywords: ["claude", "codex", "opencode", "hooks", "plugin", "status", "setup"], icon: .plug
       ) { [weak controller] in controller?.presentAgentHooksSheet() },
       AppCommand(
         id: "agent_mcp_server", title: "Install Impulse's MCP Server…", category: "Agents",
-        keywords: ["mcp", "claude", "codex", "tools", "tasks", "model context protocol"], icon: .plug
+        keywords: ["mcp", "claude", "codex", "opencode", "tools", "tasks", "model context protocol"], icon: .plug
       ) { [weak controller] in controller?.presentAgentHooksSheet(part: .mcp) },
       AppCommand(
         id: "editor_integration", title: "Use Impulse as $EDITOR in Terminals", category: "Terminal",
@@ -162,21 +162,21 @@ enum CommandRegistry {
       },
       AppCommand(
         id: "review_agent_turn", title: "Review Last Agent Turn", category: "Agents",
-        keywords: ["claude", "codex", "diff", "checkpoint", "changes"], icon: .fileDiff,
+        keywords: ["claude", "codex", "opencode", "diff", "checkpoint", "changes"], icon: .fileDiff,
         keybindingId: "review_agent_turn"
       ) { [weak controller] in controller?.reviewLastAgentTurn() },
       AppCommand(
         id: "send_selection_to_agent", title: "Send Selection to Agent", category: "Agents",
-        keywords: ["claude", "codex", "code", "ask"], icon: .messageSquarePlus
+        keywords: ["claude", "codex", "opencode", "code", "ask"], icon: .messageSquarePlus
       ) { [weak controller] in controller?.sendEditorSelectionToAgent() },
       AppCommand(
         id: "agent_composer", title: "Compose Message to Agent", category: "Agents",
-        keywords: ["prompt", "claude", "codex", "write"], icon: .messageSquare,
+        keywords: ["prompt", "claude", "codex", "opencode", "write"], icon: .messageSquare,
         keybindingId: "agent_composer"
       ) { [weak controller] in controller?.toggleAgentComposer() },
       AppCommand(
         id: "next_agent", title: "Next Agent Needing You", category: "Agents",
-        keywords: ["claude", "codex", "inbox", "waiting"], icon: .bot, keybindingId: "next_agent"
+        keywords: ["claude", "codex", "opencode", "inbox", "waiting"], icon: .bot, keybindingId: "next_agent"
       ) { [weak controller] in controller?.revealNextWaitingAgent() },
       AppCommand(
         id: "command_history", title: "Command History…", category: "Terminal",

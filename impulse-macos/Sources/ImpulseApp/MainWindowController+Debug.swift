@@ -371,10 +371,11 @@ extension MainWindowController {
   ///     sheet-button=<title>            press a button in a sheet (or a window)
   ///     task-sheet-create, task-sheet-cancel
   ///                                     answer the New Task sheet that's up
-  ///     agent-sheet=<hooks|mcp>:<claude|codex|other>[:project]
+  ///     agent-sheet=<hooks|mcp>:<claude|codex|opencode|other>[:project]
   ///                                     open Agent Integration on that choice
   ///     agent-sheet-part=<hooks|mcp>    switch the open sheet's half, and
-  ///     agent-sheet-agent=<claude|codex|other>  its agent, as clicking does
+  ///     agent-sheet-agent=<claude|codex|opencode|other>
+  ///                                     its agent, as clicking does
   ///     agent-sheet-apply               press its Install/Remove (waits for it;
   ///                                     reports agent-sheet:<outcome>)
   ///     agent-sheet-close               close it
@@ -711,7 +712,10 @@ extension MainWindowController {
         return [
           "kind": "terminal", "shell": terminal.shellType.rawValue, "cwd": terminal.currentWorkingDirectory,
           "running": terminal.isCommandRunning, "agent": terminal.agent?.id ?? NSNull(),
-          "agentState": terminal.agentState?.rawValue ?? NSNull(), "blocks": blocks,
+          "agentState": terminal.agentState?.rawValue ?? NSNull(),
+          "resume": terminal.agentSession.flatMap { KnownAgents.resumeCommand(agentID: $0.agentID, session: $0.id) }
+            ?? NSNull(),
+          "blocks": blocks,
           "transcript": terminal.backend?.transcript(maxRows: 400) ?? "",
         ]
       }

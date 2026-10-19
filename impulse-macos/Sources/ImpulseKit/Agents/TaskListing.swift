@@ -129,7 +129,8 @@ public struct TaskListing: Codable, Equatable, Sendable {
   }
 }
 
-/// The JSON Claude Code hooks reply with.
+/// The JSON Claude Code hooks reply with, and the simpler JSON Impulse's
+/// opencode plugin reads.
 public enum AgentHookReply {
   /// A note added to the agent's context after a tool ran (PostToolUse).
   public static func context(_ text: String, event: String = "PostToolUse") -> String {
@@ -143,6 +144,23 @@ public enum AgentHookReply {
       "hookSpecificOutput": [
         "hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": reason,
       ]
+    ])
+  }
+
+  /// For the opencode plugin: text for the agent's context (a session's
+  /// summary goes beside opencode's instructions, a note after the tool's
+  /// output).
+  public static func opencodeContext(_ text: String) -> String {
+    encode(["context": text])
+  }
+
+  /// For the opencode plugin, whose hooks can't ask the user: stop the
+  /// command, telling the agent why and to ask. Impulse lets the same
+  /// command through when it comes again.
+  public static func opencodeStop(_ reason: String) -> String {
+    encode([
+      "block":
+        "Impulse stopped this command: \(reason)\n\nAsk the user whether to go ahead. If they say yes, run the same command again and Impulse will let it through."
     ])
   }
 

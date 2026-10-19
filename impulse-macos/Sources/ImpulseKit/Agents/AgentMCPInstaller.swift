@@ -8,7 +8,10 @@
 // itself while it runs, so Impulse only reads it (for the status) and
 // changes it with `claude mcp add-json` / `claude mcp remove`. Codex's
 // config.toml gets an `[mcp_servers.impulse]` table, with the same preview,
-// backup and Remove as its notify hook.
+// backup and Remove as its notify hook. opencode's config (JSON, or JSONC
+// with comments) gets an `impulse` entry under `mcp`, edited in place so
+// nothing else in the file changes. (opencode only writes that file when
+// asked to, and `opencode mcp add` can't remove a server.)
 
 import Foundation
 
@@ -202,6 +205,131 @@ public enum AgentMCPInstaller {
     }
     lines.removeSubrange(range)
     return lines.joined(separator: "\n")
+  }
+
+  // MARK: opencode
+
+  /// opencode's global config folder: `$XDG_CONFIG_HOME/opencode`, else
+  /// `~/.config/opencode` (on macOS too).
+  public static func opencodeConfigDirectory(environment: [String: String], home: String) -> String {
+    if let xdg = environment["XDG_CONFIG_HOME"], xdg.hasPrefix("/") {
+      return (xdg as NSString).appendingPathComponent("opencode")
+    }
+    return (home as NSString).appendingPathComponent(".config/opencode")
+  }
+
+  /// The global config file opencode itself would write to (it reads all
+  /// three): opencode.jsonc, opencode.json or config.json, whichever exists
+  /// first; a new opencode.json when there's none.
+  public static func opencodeConfigFile(
+    directory: String, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+  ) -> String {
+    let candidates = ["opencode.jsonc", "opencode.json", "config.json"].map {
+      (directory as NSString).appendingPathComponent($0)
+    }
+    return candidates.first(where: exists) ?? candidates[1]
+  }
+
+  /// The server's entry under `mcp`. opencode starts local servers with its
+  /// own environment, the terminal's, so nothing needs forwarding.
+  static func opencodeServer(fallbackCLI: String) -> KeyValuePairs<String, Any> {
+    ["type": "local", "command": ["sh", "-c", launcher(fallbackCLI: fallbackCLI)]]
+  }
+
+  /// What to add by hand when Impulse can't edit the file.
+  public static func opencodeSnippet(fallbackCLI: String) -> String {
+    let servers: KeyValuePairs<String, Any> = [serverName: opencodeServer(fallbackCLI: fallbackCLI)]
+    return "{\n  " + JSONCEdit.format("mcp", servers, indent: "  ", unit: "  ") + "\n}"
+  }
+
+  /// The `mcp` object and Impulse's entry in it, if the text has them.
+  private static func opencodeEntry(_ bytes: [UInt8]) throws -> (
+    root: JSONCEdit.Object, mcp: JSONCEdit.Member?, servers: JSONCEdit.Object?, entry: JSONCEdit.Member?
+  ) {
+    let root = try JSONCEdit.root(bytes)
+    guard let mcp = root.member("mcp") else { return (root, nil, nil, nil) }
+    guard bytes[mcp.valueStart] == UInt8(ascii: "{") else { throw JSONCEdit.Malformed() }
+    let servers = try JSONCEdit.object(bytes, mcp.valueStart)
+    return (root, mcp, servers, servers.member(serverName))
+  }
+
+  /// An entry Impulse wrote (perhaps with another fallback path), rather
+  /// than another server someone named impulse.
+  private static func isOurOpencodeEntry(_ value: Any?) -> Bool {
+    guard let entry = value as? [String: Any], entry["type"] as? String == "local",
+      let command = entry["command"] as? [String], command.count == 3, command[0] == "sh", command[1] == "-c"
+    else { return false }
+    return command[2].contains("IMPULSE_CLI") && command[2].hasSuffix(" mcp")
+  }
+
+  public static func opencodeStatus(_ text: String?, fallbackCLI: String) -> Status {
+    let bytes = Array((text ?? "").utf8)
+    guard let found = try? opencodeEntry(bytes), let entry = found.entry else { return .notInstalled }
+    let value = JSONCEdit.value(bytes, entry.valueStart, entry.valueEnd) as? NSDictionary
+    let current: NSDictionary = [
+      "type": "local", "command": ["sh", "-c", launcher(fallbackCLI: fallbackCLI)],
+    ]
+    return value == current ? .installed : .outdated
+  }
+
+  /// The config with Impulse's server under `mcp` (an older entry of
+  /// Impulse's replaced), and nothing else changed. Refuses a file it can't
+  /// read as JSONC, and a server named impulse that isn't Impulse's.
+  public static func installingOpencodeMCP(into text: String?, fallbackCLI: String) -> Result<
+    String, AgentHookInstaller.InstallError
+  > {
+    let server = opencodeServer(fallbackCLI: fallbackCLI)
+    guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      // A new file: the schema line opencode would otherwise add itself.
+      let servers: KeyValuePairs<String, Any> = [serverName: server]
+      return .success(
+        "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  "
+          + JSONCEdit.format("mcp", servers, indent: "  ", unit: "  ") + "\n}\n")
+    }
+    let bytes = Array(text.utf8)
+    guard let found = try? opencodeEntry(bytes) else {
+      return .failure(
+        .unreadable(
+          "Impulse can't edit this file without risking the rest of it (it isn't a JSON object with an \"mcp\" object, comments allowed). Add Impulse's server to it yourself:\n\n"
+            + opencodeSnippet(fallbackCLI: fallbackCLI)))
+    }
+    let unit = JSONCEdit.indentUnit(bytes)
+    let changes: [JSONCEdit.Change]
+    if let servers = found.servers {
+      if let entry = found.entry {
+        guard isOurOpencodeEntry(JSONCEdit.value(bytes, entry.valueStart, entry.valueEnd)) else {
+          return .failure(.notifyInUse("opencode's config already has an MCP server named impulse; change it by hand"))
+        }
+        let indent = JSONCEdit.lineIndent(bytes, entry.keyStart).indent
+        changes = [(entry.valueStart..<entry.valueEnd, JSONCEdit.format(server, indent: indent, unit: unit))]
+      } else {
+        changes = JSONCEdit.inserting(into: servers, bytes, unit: unit) {
+          JSONCEdit.format(serverName, server, indent: $0, unit: unit)
+        }
+      }
+    } else {
+      let servers: KeyValuePairs<String, Any> = [serverName: server]
+      changes = JSONCEdit.inserting(into: found.root, bytes, unit: unit) {
+        JSONCEdit.format("mcp", servers, indent: $0, unit: unit)
+      }
+    }
+    return .success(String(decoding: JSONCEdit.applying(changes, to: bytes), as: UTF8.self))
+  }
+
+  /// The config without Impulse's server (and without an `mcp` it leaves
+  /// empty); nil when the entry isn't Impulse's (or isn't there).
+  public static func removingOpencodeMCP(from text: String) -> String? {
+    let bytes = Array(text.utf8)
+    guard let found = try? opencodeEntry(bytes), let servers = found.servers, let entry = found.entry,
+      isOurOpencodeEntry(JSONCEdit.value(bytes, entry.valueStart, entry.valueEnd))
+    else { return nil }
+    var result = JSONCEdit.applying(JSONCEdit.removing(entry, from: servers, bytes), to: bytes)
+    if let left = try? opencodeEntry(result), let mcp = left.mcp, let servers = left.servers, servers.members.isEmpty,
+      result[(servers.open + 1)..<servers.close].allSatisfy({ [0x20, 0x09, 0x0A, 0x0D].contains($0) })
+    {
+      result = JSONCEdit.applying(JSONCEdit.removing(mcp, from: left.root, result), to: result)
+    }
+    return String(decoding: result, as: UTF8.self)
   }
 
   // MARK: Other agents

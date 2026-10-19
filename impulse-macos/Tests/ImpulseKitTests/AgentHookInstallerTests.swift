@@ -97,6 +97,41 @@
       #expect(AgentHookInstaller.removingCodexNotify(from: other) == other)
     }
 
+    @Test func opencodePluginIsReplacedWholeAndOnlyIfItsImpulses() throws {
+      let plugin = AgentHookInstaller.opencodePlugin
+      #expect(plugin.hasPrefix(AgentHookInstaller.opencodePluginMarker))
+      #expect(AgentHookInstaller.opencodePluginStatus(nil) == .notInstalled)
+      #expect(AgentHookInstaller.opencodePluginStatus(plugin) == .installed)
+      let older = AgentHookInstaller.opencodePluginMarker + ", from an older Impulse\nexport const X = 1\n"
+      #expect(AgentHookInstaller.opencodePluginStatus(older) == .outdated)
+      #expect(try AgentHookInstaller.installingOpencodePlugin(over: older).get() == plugin)
+      #expect(try AgentHookInstaller.installingOpencodePlugin(over: nil).get() == plugin)
+      let theirs = "export const Mine = async () => ({})\n"
+      #expect(AgentHookInstaller.opencodePluginStatus(theirs) == .notInstalled)
+      #expect((try? AgentHookInstaller.installingOpencodePlugin(over: theirs).get()) == nil)
+    }
+
+    @Test func opencodePluginSendsTheEventsImpulseKnows() {
+      let plugin = AgentHookInstaller.opencodePlugin
+      // A no-op outside Impulse, calling the CLI by its path (no shell).
+      #expect(plugin.contains("process.env.IMPULSE_CLI"))
+      #expect(plugin.contains(#"if (!cli) return {};"#))
+      #expect(plugin.contains(#"spawn(cli, ["hook", "opencode", event]"#))
+      for event in [
+        "start", "session.start", "chat.message", "session.idle", "permission.asked", "permission.replied",
+        "question.asked", "question.replied", "question.rejected", "tool.execute.before", "tool.execute.after",
+      ] {
+        #expect(plugin.contains("\"\(event)\""), "\(event)")
+        let known =
+          AgentHookEvents.hook(agent: "opencode", event: event, tool: "bash", message: nil) != nil
+          || AgentHookEvents.reply(agent: "opencode", event: event, tool: "bash") != nil
+        #expect(known, "\(event)")
+      }
+      for tool in AgentHookEvents.opencodeEditTools { #expect(plugin.contains("\"\(tool)\""), "\(tool)") }
+      // Only one export: opencode calls every export as a plugin.
+      #expect(plugin.components(separatedBy: "export ").count == 2)
+    }
+
     @Test func diffShowsAddedAndRemovedLines() {
       let lines = AgentHookInstaller.diffLines(before: "a\nb\nc", after: "a\nB\nc\nd")
       #expect(lines == ["  a", "- b", "+ B", "  c", "+ d"])

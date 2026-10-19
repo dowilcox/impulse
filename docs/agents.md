@@ -20,13 +20,13 @@ Impulse never calls an AI model itself. The agents are the command-line programs
 | Qwen Code    | `qwen`             |
 | Crush        | `crush`            |
 
-Run the agent the way you normally do, in any Impulse terminal. Nothing needs to be configured for Impulse to notice it. [Hooks](#agent-hooks) make the status exact for Claude Code and Codex.
+Run the agent the way you normally do, in any Impulse terminal. Nothing needs to be configured for Impulse to notice it. [Hooks](#agent-hooks) make the status exact for Claude Code, Codex and opencode.
 
 ## How Impulse recognizes an agent
 
 When a command starts in a terminal, Impulse looks at the terminal's foreground process shortly after it starts, then every two seconds while it runs. A process counts as an agent when:
 
-- its executable or its first argument is one of the commands above (`claude`, `codex`, …), with or without a `.js`, `.mjs`, `.cjs` or `.py` extension;
+- its executable or its first argument is one of the commands above (`claude`, `codex`, …), with or without a `.js`, `.mjs`, `.cjs`, `.py` or `.exe` extension (opencode's npm package installs it as `opencode.exe`, even on macOS);
 - it's an interpreter (`node`, `bun`, `deno`, `python`, `ruby`, `uv`, `uvx`, `npx`, `pnpm`, `bunx`, or a shell such as `sh`, `bash`, `zsh`) running a script with one of those names, or a script from the agent's package (for example `node …/@anthropic-ai/claude-code/cli.js`);
 - or it's one level down from the foreground process, so wrappers such as `caffeinate claude` work.
 
@@ -60,16 +60,21 @@ Without hooks, Impulse infers the state from what a terminal can see:
 
 With [hooks](#agent-hooks) installed, the agent tells Impulse directly and the guesses above are switched off (Return and permission-style notifications still count):
 
-| Hook event                                            | State                                                                                                                                                                                                                                           |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SessionStart` (Claude Code)                          | **Idle**                                                                                                                                                                                                                                        |
-| `UserPromptSubmit` (Claude Code)                      | **Working**                                                                                                                                                                                                                                     |
-| `PostToolUse` (Claude Code, shell commands and edits) | **Working** when it's the tool a permission request was waiting on, so a prompt answered with a number key shows it working again. Tools that finish at other times (in parallel subagents, or background tasks after the turn) change nothing. |
-| `Notification` (Claude Code)                          | **Needs your input** when it asks for permission or input; otherwise **Finished** if it was working. Claude Code's reminder that it's waiting, a minute after a turn, changes nothing.                                                          |
-| `Stop` (Claude Code)                                  | **Finished**                                                                                                                                                                                                                                    |
-| Turn complete (Codex)                                 | **Finished**                                                                                                                                                                                                                                    |
+| Hook event                                                                 | State                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SessionStart` (Claude Code)                                               | **Idle**                                                                                                                                                                                                                                        |
+| `UserPromptSubmit` (Claude Code)                                           | **Working**                                                                                                                                                                                                                                     |
+| `PostToolUse` (Claude Code, shell commands and edits)                      | **Working** when it's the tool a permission request was waiting on, so a prompt answered with a number key shows it working again. Tools that finish at other times (in parallel subagents, or background tasks after the turn) change nothing. |
+| `Notification` (Claude Code)                                               | **Needs your input** when it asks for permission or input; otherwise **Finished** if it was working. Claude Code's reminder that it's waiting, a minute after a turn, changes nothing.                                                          |
+| `Stop` (Claude Code)                                                       | **Finished**                                                                                                                                                                                                                                    |
+| Turn complete (Codex)                                                      | **Finished**                                                                                                                                                                                                                                    |
+| `start` (opencode, when it loads the plugin)                               | **Idle**                                                                                                                                                                                                                                        |
+| `chat.message` (opencode, a prompt)                                        | **Working**                                                                                                                                                                                                                                     |
+| `permission.asked`, `question.asked` (opencode)                            | **Needs your input**                                                                                                                                                                                                                            |
+| `permission.replied`, `question.replied` or `question.rejected` (opencode) | **Working**: the request was answered (a rejected permission ends the turn, which `session.idle` then reports).                                                                                                                                 |
+| `session.idle` (opencode)                                                  | **Finished**. A subagent's session (opencode's task tool) going idle changes nothing.                                                                                                                                                           |
 
-A turn you interrupt (Esc in Claude Code) sends no `Stop`, and neither does a question you dismiss. So even with hooks, 5 minutes without output or a hook event while **Working**, or 30 minutes while it **Needs your input**, puts the agent back to **Idle**, without a notification. A state reported with [`impulse status`](cli.md#impulse-status) stays until the next report.
+A turn you interrupt (Esc in Claude Code) sends no `Stop`, and neither does a question you dismiss. (opencode reports an interrupted turn as ended, so it shows **Finished**.) So even with hooks, 5 minutes without output or a hook event while **Working**, or 30 minutes while it **Needs your input**, puts the agent back to **Idle**, without a notification. A state reported with [`impulse status`](cli.md#impulse-status) stays until the next report.
 
 ## Where the status shows
 
@@ -217,7 +222,7 @@ You can also record a checkpoint yourself with `impulse checkpoint` (see [Comman
 
 ## Agent hooks
 
-Without hooks, Impulse infers an agent's state from its output, which is usually right but can lag or misread a pause. Claude Code and Codex can call a program at key moments ("hooks"). Install Impulse's hooks and the agent tells Impulse exactly when it starts working, needs you and finishes. Hooks also let Impulse [resume](#resume-after-a-restart) the agent's session after a restart.
+Without hooks, Impulse infers an agent's state from its output, which is usually right but can lag or misread a pause. Claude Code and Codex can call a program at key moments ("hooks"), and opencode loads plugins that can. Install Impulse's hooks (for opencode, its plugin) and the agent tells Impulse exactly when it starts working, needs you and finishes. Hooks also let Impulse [resume](#resume-after-a-restart) the agent's session after a restart.
 
 The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environment variable, which only Impulse terminals set. In any other terminal, the hook does nothing and exits successfully, so it's safe to install them for all projects.
 
@@ -226,8 +231,8 @@ The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environ
 ![The Agent Integration sheet on Hooks, with Claude Code and "All projects" selected, "Not installed ~/.claude/settings.json", and a preview of the lines that will be added](images/agents-hooks-sheet.png)
 
 1. Run **Install Agent Hooks…** from the command palette, or click **Agent hooks give exact status…** at the bottom of the agent list. The Agent Integration sheet opens on **Hooks** (its other half sets up [Impulse's MCP server](#impulses-mcp-server)).
-2. Choose **Claude Code** or **Codex**.
-3. For Claude Code, choose **All projects** or **This project only** (only available when the window is in a git repository).
+2. Choose **Claude Code**, **Codex** or **opencode**.
+3. For Claude Code, choose **All projects** or **This project only** (only available when the window is in a git repository). Codex's and opencode's are for all projects.
 4. Check the status line ("Installed" or "Not installed", and the file that will change) and the preview of the change: added lines are marked `+`, removed lines `-`.
 5. Click **Install Hooks**. Impulse shows "Installed Claude Code hooks. Restart running agents to pick them up."
 6. Quit and restart any agents that were already running.
@@ -264,16 +269,16 @@ Impulse rewrites the file pretty-printed with its keys sorted. Hooks that are al
 
 ### What the hooks tell agents
 
-In a repository with [tasks](tasks.md), Impulse's Claude Code hooks also tell the agent about the other workspaces, which it otherwise can't see. Each can be turned off in Settings ▸ Terminal ▸ Agents.
+In a repository with [tasks](tasks.md), Impulse's hooks for Claude Code and opencode also tell the agent about the other workspaces, which it otherwise can't see. Each can be turned off in Settings ▸ Terminal ▸ Agents.
 
-| When                                                                                                                                                                       | The agent is told                                                                                                                                                                                                                                                     | Setting                   |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| A session starts                                                                                                                                                           | A short summary: which workspace it's in, the others with their agents, uncommitted files and the files they share with it, and to run `impulse tasks` before merging a branch or making sweeping edits.                                                              | `agent_hook_task_summary` |
-| It edits a file that another workspace also changes                                                                                                                        | "Impulse: src/lib/units.ts is also changed in the task fix-elevation, where Claude Code is working…" Once per file.                                                                                                                                                   | `agent_hook_shared_files` |
-| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code stops and asks you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-by-hand).                                                                                                                                     | `agent_hook_merge_guard`  |
-| Its `git pull`, merge or checkout brought in a changed lock file or `Dockerfile`                                                                                           | Which files changed, and the commands from the project's [`[on_change]` rules](project-config.md#when-files-change) to run before testing. Until you've trusted the project settings, only the well-known dependency files it changed, and to reinstall dependencies. | `agent_hook_dependencies` |
+| When                                                                                                                                                                       | The agent is told                                                                                                                                                                                                                                                                         | Setting                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| A session starts                                                                                                                                                           | A short summary: which workspace it's in, the others with their agents, uncommitted files and the files they share with it, and to run `impulse tasks` before merging a branch or making sweeping edits.                                                                                  | `agent_hook_task_summary` |
+| It edits a file that another workspace also changes                                                                                                                        | "Impulse: src/lib/units.ts is also changed in the task fix-elevation, where Claude Code is working…" Once per file.                                                                                                                                                                       | `agent_hook_shared_files` |
+| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code stops and asks you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-by-hand). opencode can't be made to ask you, so the command is stopped once, with that reason and a request to check with you; the same command again goes ahead. | `agent_hook_merge_guard`  |
+| Its `git pull`, merge or checkout brought in a changed lock file or `Dockerfile`                                                                                           | Which files changed, and the commands from the project's [`[on_change]` rules](project-config.md#when-files-change) to run before testing. Until you've trusted the project settings, only the well-known dependency files it changed, and to reinstall dependencies.                     | `agent_hook_dependencies` |
 
-Nothing is written into your repository or its instruction files (`CLAUDE.md`, `AGENTS.md`): it all goes through the hooks. Codex only tells Impulse when a turn ends, so it gets none of this; it can still run `impulse tasks`.
+Nothing is written into your repository or its instruction files (`CLAUDE.md`, `AGENTS.md`): it all goes through the hooks. opencode's plugin puts the summary beside opencode's own instructions (its system prompt) for the rest of the session, and a note after the output of the edit or shell command it's about, which the agent reads next. Its plugins can't ask you before a tool runs, which is why a risky merge is stopped once instead. Codex only tells Impulse when a turn ends, so it gets none of this; it can still run `impulse tasks`.
 
 **Codex:** `~/.codex/config.toml`. Impulse adds Codex's `notify` program at the top of the file:
 
@@ -284,23 +289,27 @@ notify = ["sh", "-c", "[ -n \"$IMPULSE_CLI\" ] && \"$IMPULSE_CLI\" hook codex \"
 
 Codex allows only one `notify` program. If your `config.toml` already sets one, the sheet says "config.toml already sets notify; add Impulse's command by hand" and changes nothing.
 
+**opencode:** `~/.config/opencode/plugins/impulse.js` (under `$XDG_CONFIG_HOME/opencode` if you set `XDG_CONFIG_HOME`), a plugin of Impulse's own that opencode loads when it starts. The preview shows the whole file. It runs `impulse hook opencode <event>` through `$IMPULSE_CLI`, by its path rather than through a shell, so no alias or function can stand in for it, and does nothing outside Impulse terminals. It reports opencode starting, your prompts, permission requests and questions and their answers, and the end of each turn; for the notes above, also its edits and shell commands. Because the file is Impulse's, it's written without a backup and replaced as a whole when a newer Impulse changes it ("Out of date"). A `plugins/impulse.js` that isn't Impulse's is left alone: the sheet says to rename or remove it first.
+
 ### Remove hooks
 
-Open the sheet again, choose the same agent (and, for Claude Code, the same scope), check the preview of the lines that will be removed, and click **Remove Hooks**. Impulse shows "Removed Impulse's Claude Code hooks." (or Codex), and keeps the previous version as `<file>.impulse-backup`, as when installing.
+Open the sheet again, choose the same agent (and, for Claude Code, the same scope), check the preview of the lines that will be removed, and click **Remove Hooks**. Impulse shows "Removed Impulse's Claude Code hooks." (or Codex, or opencode), and keeps the previous version as `<file>.impulse-backup`, as when installing.
 
 - **Claude Code:** Impulse removes only its own hook entries, and drops events (and the `hooks` object) that end up empty.
 - **Codex:** Impulse removes its `notify` line, the comment above it and the blank line it added after them. A `notify` program that isn't Impulse's is left alone. If Impulse's command was edited onto several lines, the sheet says to remove it from `config.toml` by hand.
+- **opencode:** Impulse deletes its plugin file.
 
 ## Resume after a restart
 
-With hooks installed, Claude Code and Codex report their session id to Impulse. When Impulse saves your session and later restores it, each terminal that was running one of them comes back with the command that resumes the conversation already typed into its input bar:
+With hooks installed, Claude Code, Codex and opencode report their session id to Impulse. When Impulse saves your session and later restores it, each terminal that was running one of them comes back with the command that resumes the conversation already typed into its input bar:
 
 ```
 claude --resume 4f1c2a9e-…
 codex resume 7d0b…
+opencode --session ses_4a9f…
 ```
 
-Press Return to resume, or clear it to start fresh. This only applies to Claude Code and Codex, and only once the agent has sent at least one hook event. See [Workspaces and tabs](workspaces-and-tabs.md) for session restore.
+Press Return to resume, or clear it to start fresh. This only applies to Claude Code, Codex and opencode, and only once the agent has sent at least one hook event with its session (for opencode, a prompt: its subagents' sessions don't count). See [Workspaces and tabs](workspaces-and-tabs.md) for session restore.
 
 ## The `impulse` command for agents
 
@@ -308,7 +317,7 @@ The `impulse` command-line tool, available in every Impulse terminal, has comman
 
 | Command                                                        | Use                                                                                                                                                                                                    |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `impulse hook <claude\|codex> [event]`                         | What the installed hooks run. Reads the hook's JSON from standard input (Claude Code) or its last argument (Codex).                                                                                    |
+| `impulse hook <claude\|codex\|opencode> [event]`               | What the installed hooks run. Reads the hook's JSON from standard input (Claude Code, opencode's plugin) or its last argument (Codex).                                                                 |
 | `impulse status <working\|waiting\|done\|idle> [message…]`     | Report a state (and a message shown with it) from a program running in this pane: a wrapper around an agent without hooks, or your own long-running script.                                            |
 | `impulse notify <title> [message…]`                            | Flag this pane and send a desktop notification.                                                                                                                                                        |
 | `impulse checkpoint [message…]`                                | Snapshot the repository under `refs/impulse/checkpoints/manual/`.                                                                                                                                      |
@@ -327,15 +336,16 @@ The server is the `impulse mcp` command, which the agent starts itself. Each too
 ### Install the server
 
 1. Run **Install Impulse's MCP Server…** from the command palette. The Agent Integration sheet opens on **MCP Server**.
-2. Choose **Claude Code**, **Codex** or **Other**.
+2. Choose **Claude Code**, **Codex**, **opencode** or **Other**.
 3. For Claude Code, choose **All projects** or **This project only**.
 4. Check the preview, then click **Install MCP Server**. Restart running agents to pick it up.
 
-| Agent       | What Impulse does                                                                                                                                                                                                                                                                    |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Claude Code | Runs `claude mcp add-json --scope user impulse …` (or `--scope local` for this project only), as the preview shows. Claude Code rewrites its own `~/.claude.json` while it runs, so Impulse never edits that file; it only reads it to show the status. Needs `claude` on your PATH. |
-| Codex       | Adds an `[mcp_servers.impulse]` table to the end of `~/.codex/config.toml`, keeping the previous file as `config.toml.impulse-backup`, as for its hook.                                                                                                                              |
-| Other       | Shows the entry to add to the agent's own MCP settings, and **Copy** puts it on the clipboard.                                                                                                                                                                                       |
+| Agent       | What Impulse does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | Runs `claude mcp add-json --scope user impulse …` (or `--scope local` for this project only), as the preview shows. Claude Code rewrites its own `~/.claude.json` while it runs, so Impulse never edits that file; it only reads it to show the status. Needs `claude` on your PATH.                                                                                                                                                                                                                                    |
+| Codex       | Adds an `[mcp_servers.impulse]` table to the end of `~/.codex/config.toml`, keeping the previous file as `config.toml.impulse-backup`, as for its hook.                                                                                                                                                                                                                                                                                                                                                                 |
+| opencode    | Adds an `impulse` entry under `mcp` in opencode's global config, `~/.config/opencode/opencode.json` (or the `opencode.jsonc` or `config.json` already there, the one opencode itself writes to), keeping the previous file as `<file>.impulse-backup`. Only that entry changes: your comments, trailing commas, key order and formatting stay as they were. A file Impulse can't follow (not a JSON object, an `mcp` that isn't an object, a syntax error) is left alone, and the sheet shows the entry to add by hand. |
+| Other       | Shows the entry to add to the agent's own MCP settings, and **Copy** puts it on the clipboard.                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 The entry runs the bundled `impulse` through `$IMPULSE_CLI`, and forwards `IMPULSE_SOCKET`, `IMPULSE_PANE_TOKEN` and `IMPULSE_CLI`, which tell it which window and pane it's called from:
 
@@ -354,7 +364,9 @@ The entry runs the bundled `impulse` through `$IMPULSE_CLI`, and forwards `IMPUL
 }
 ```
 
-The path after `:-` is the app that installed it. If you move Impulse, the sheet says the server is out of date: install it again. Remove it from the same sheet; for Claude Code that runs `claude mcp remove`.
+opencode's entry is `"type": "local"` with the same command (`"command": ["sh", "-c", "exec \"${IMPULSE_CLI:-…}\" mcp"]`) and no variables: opencode starts its servers with its own environment, which is the terminal's.
+
+The path after `:-` is the app that installed it. If you move Impulse, the sheet says the server is out of date: install it again. Remove it from the same sheet; for Claude Code that runs `claude mcp remove`, and for opencode Impulse takes its entry out (and an `mcp` object left empty). An `impulse` server that isn't Impulse's is never replaced or removed.
 
 ### The tools
 
@@ -399,11 +411,11 @@ Several agents in one checkout get in each other's way. Give each one its own ta
 
 ## Troubleshooting
 
-- **The agent isn't recognized.** Check that it's one of the [supported agents](#supported-agents) and that your shell is bash, zsh or fish with shell integration working. Agents launched through an unusual wrapper may not be recognized from the process; install [hooks](#agent-hooks) (Claude Code, Codex) or call `impulse status` from your wrapper.
-- **The state is wrong or late.** Without hooks, Impulse guesses from output. Install hooks for Claude Code or Codex, then restart the agent.
+- **The agent isn't recognized.** Check that it's one of the [supported agents](#supported-agents) and that your shell is bash, zsh or fish with shell integration working. Agents launched through an unusual wrapper may not be recognized from the process; install [hooks](#agent-hooks) (Claude Code, Codex, opencode) or call `impulse status` from your wrapper.
+- **The state is wrong or late.** Without hooks, Impulse guesses from output. Install hooks for Claude Code, Codex or opencode, then restart the agent.
 - **No desktop notifications.** They're only shown when Impulse is in the background, and macOS must allow notifications for Impulse (System Settings ▸ Notifications).
 - **Review Last Agent Turn finds nothing.** Turns are only recorded in a git repository, and after a restart they come back only for terminals restored with the session.
-- **The hooks sheet shows an error.** The settings file isn't the JSON object Impulse expects (for example, a syntax error), Codex already has a `notify` program, or Impulse's own `notify` line can't be found to remove. Fix the file, then open the sheet again.
+- **The hooks sheet shows an error.** The settings file isn't the JSON object Impulse expects (for example, a syntax error), Codex already has a `notify` program, Impulse's own `notify` line can't be found to remove, or opencode's `plugins/impulse.js` isn't Impulse's. Fix the file, then open the sheet again.
 
 ## Related
 

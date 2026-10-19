@@ -56,7 +56,7 @@ The app is native Swift (AppKit + SwiftUI); terminal emulation runs on a Rust co
 - Recognizes Claude Code, Codex, Gemini CLI, Aider, opencode, Amp, Copilot CLI, Cursor Agent, Goose, Qwen Code and Crush in its terminals, and shows when each is working or waiting for you (⇧⌘U jumps to the next one that needs you)
 - Checkpoints every agent turn so you can review it, restore files from before it, or send review comments back
 - A composer (⌘I), a toolbelt, and "send to agent" for code, files and command output
-- Task worktrees for parallel work; hooks and resume after a restart for Claude Code and Codex
+- Task worktrees for parallel work; hooks and resume after a restart for Claude Code, Codex and opencode
 
 **Git**
 

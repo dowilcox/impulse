@@ -10,6 +10,7 @@ final class AgentHooksModel {
   enum Agent: String, CaseIterable, Identifiable {
     case claude = "Claude Code"
     case codex = "Codex"
+    case opencode = "opencode"
     /// Agents Impulse doesn't configure: the MCP entry to copy.
     case other = "Other"
     var id: String { rawValue }
@@ -85,6 +86,13 @@ final class AgentHooksModel {
   /// What the sheet installs, in its messages.
   var what: String { part == .hooks ? "hooks" : "MCP server" }
 
+  /// opencode's hooks are a plugin file of Impulse's own: Remove deletes it.
+  private var removesFile: Bool { part == .hooks && agent == .opencode && installed }
+
+  private static var opencodeDirectory: String {
+    AgentMCPInstaller.opencodeConfigDirectory(environment: ProcessInfo.processInfo.environment, home: NSHomeDirectory())
+  }
+
   func reload() {
     // Other agents only have the MCP entry to copy.
     if part == .mcp || agent == .other { return reloadMCP() }
@@ -95,6 +103,8 @@ final class AgentHooksModel {
         scope == .project && projectRoot != nil
         ? (projectRoot! as NSString).appendingPathComponent(".claude/settings.local.json")
         : home + "/.claude/settings.json"
+    case .opencode:
+      path = Self.opencodeDirectory + "/plugins/" + AgentHookInstaller.opencodePluginName
     case .codex, .other:
       path = home + "/.codex/config.toml"
     }
@@ -114,6 +124,18 @@ final class AgentHooksModel {
       {
       case .success(let result): after = String(decoding: result, as: UTF8.self)
       case .failure(let failure): fail(failure)
+      }
+    case .opencode:
+      let status = AgentHookInstaller.opencodePluginStatus(data == nil ? nil : before)
+      installed = status == .installed
+      outdated = status == .outdated
+      if installed {
+        after = ""
+      } else {
+        switch AgentHookInstaller.installingOpencodePlugin(over: data == nil ? nil : before) {
+        case .success(let text): after = text
+        case .failure(let failure): fail(failure)
+        }
       }
     case .codex, .other:
       installed = AgentHookInstaller.codexNotifyInstalled(before)
@@ -174,6 +196,23 @@ final class AgentHooksModel {
         if after == nil { error = "The [mcp_servers.impulse] table isn't the one Impulse wrote; remove it from config.toml by hand." }
       } else {
         switch AgentMCPInstaller.installingCodexMCP(into: data == nil ? nil : before, fallbackCLI: fallbackCLI) {
+        case .success(let text): after = text
+        case .failure(let failure): fail(failure)
+        }
+      }
+    case .opencode:
+      path = AgentMCPInstaller.opencodeConfigFile(directory: Self.opencodeDirectory)
+      let data = FileManager.default.contents(atPath: path)
+      previewed = data
+      before = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+      let status = AgentMCPInstaller.opencodeStatus(data == nil ? nil : before, fallbackCLI: fallbackCLI)
+      installed = status == .installed
+      outdated = status == .outdated
+      if installed {
+        after = AgentMCPInstaller.removingOpencodeMCP(from: before)
+        if after == nil { error = "The \"impulse\" server isn't the one Impulse wrote; remove it from the file by hand." }
+      } else {
+        switch AgentMCPInstaller.installingOpencodeMCP(into: data == nil ? nil : before, fallbackCLI: fallbackCLI) {
         case .success(let text): after = text
         case .failure(let failure): fail(failure)
         }
@@ -242,12 +281,17 @@ final class AgentHooksModel {
       return .changed
     }
     do {
+      if removesFile {
+        try FileManager.default.removeItem(atPath: path)
+        return .written
+      }
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
       // The agent's own config: write through a symlink (dotfile managers
-      // link these) rather than replacing it, and keep the previous version.
+      // link these) rather than replacing it, and keep the previous version
+      // (not of Impulse's own plugin file).
       let target = TextFile.target(of: path)
-      if FileManager.default.fileExists(atPath: target) {
+      if FileManager.default.fileExists(atPath: target), !(part == .hooks && agent == .opencode) {
         let backup = target + ".impulse-backup"
         try? FileManager.default.removeItem(atPath: backup)
         try FileManager.default.copyItem(atPath: target, toPath: backup)
