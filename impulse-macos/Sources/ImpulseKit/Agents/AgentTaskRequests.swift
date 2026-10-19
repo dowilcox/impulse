@@ -100,17 +100,18 @@ public enum AgentTaskPolicy {
   /// command takes one. The brief is read from its file when the command
   /// runs, so a long or many-line brief is never typed into the shell (or
   /// kept in its history), after `--` so a brief that starts with a dash
-  /// (a Markdown list) isn't taken for an option. Nil when the agent's
-  /// command takes no prompt: the brief is typed into the agent once it's
-  /// up.
+  /// (a Markdown list) isn't taken for an option, with `command cat` so a
+  /// function or alias called cat (`cat=bat`) can't change or lose it. Nil
+  /// when the agent's command takes no prompt: the brief is typed into the
+  /// agent once it's up.
   public static func command(agent: AgentKind, briefPath: String?, shell: ShellType) -> String? {
     guard let name = agent.names.first else { return nil }
     guard let briefPath else { return name }
     guard takesPrompt.contains(agent.id) else { return nil }
     let file = ShellQuoting.quoted(briefPath, for: shell)
     switch shell {
-    case .fish: return "\(name) -- (cat \(file) | string collect)"
-    case .bash, .zsh: return "\(name) -- \"$(cat \(file))\""
+    case .fish: return "\(name) -- (command cat \(file) | string collect)"
+    case .bash, .zsh: return "\(name) -- \"$(command cat \(file))\""
     }
   }
 

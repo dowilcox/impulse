@@ -161,8 +161,8 @@
       let claude = KnownAgents.builtIn.first { $0.id == "claude" }!
       let aider = KnownAgents.builtIn.first { $0.id == "aider" }!
       let path = "/repo/.git/impulse/tasks/fix it/brief.md"
-      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .zsh) == #"claude -- "$(cat '/repo/.git/impulse/tasks/fix it/brief.md')""#)
-      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .fish) == "claude -- (cat '/repo/.git/impulse/tasks/fix it/brief.md' | string collect)")
+      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .zsh) == #"claude -- "$(command cat '/repo/.git/impulse/tasks/fix it/brief.md')""#)
+      #expect(AgentTaskPolicy.command(agent: claude, briefPath: path, shell: .fish) == "claude -- (command cat '/repo/.git/impulse/tasks/fix it/brief.md' | string collect)")
       #expect(AgentTaskPolicy.command(agent: claude, briefPath: nil, shell: .zsh) == "claude")
       #expect(AgentTaskPolicy.command(agent: aider, briefPath: path, shell: .zsh) == nil, "typed in once it's up")
     }
