@@ -775,6 +775,8 @@ def check_mcp(run) -> None:
     run.expect(created.get("isError") is False, "create_task answers once the task is created", created)
     run.expect(created.get("structuredContent", {}).get("workspace", {}).get("name") == "from-the-agent",
                "create_task answers with the new task", created)
+    run.expect(created.get("structuredContent", {}).get("workspace", {}).get("isCaller") is False,
+               "create_task's new task isn't the caller's workspace", created)
     notified = answers.get(6, {}).get("result", {})
     run.expect(notified.get("isError") is False and "structuredContent" not in notified,
                "a text-only answer (notify) is a plain result", notified)

@@ -132,12 +132,14 @@ extension MainWindowController {
     }
   }
 
-  /// The new task as `impulse tasks show` describes it.
+  /// The new task as `impulse tasks show` describes it, seen from the
+  /// caller's workspace.
   private func replyWithNewTask(
     _ created: (path: String, branch: String), cwd: String, reply: @escaping (ControlResponse) -> Void
   ) {
-    taskListing(cwd: created.path) { listing in
-      guard let workspace = listing?.workspaces.first(where: \.isCaller) else {
+    let path = TaskRegistry.canonical(created.path)
+    taskListing(cwd: cwd) { listing in
+      guard let workspace = listing?.workspaces.first(where: { $0.path == path }) else {
         return reply(ControlResponse(ok: true, message: "Started task \(created.branch) in \(created.path)."))
       }
       let trusted = Trust.shared.isTrusted(created.path)
