@@ -474,16 +474,17 @@
 @media (max-width: 760px) {
   .demo-stage { margin-top: 44px; }
   .win { --ed-fs: 12px; --ed-lh: 18px; --term-fs: 12px; --term-lh: 17px; height: 520px; height: clamp(460px, 76svh, 600px); border-radius: 12px; }
-  .win-sidebar, .lights, .tb-lead .tb-icon, .tb-crumb .tb-branch, .tb-agents .wl, .tb-diff .stat, .win .hide-sm { display: none; }
-  .tb-lead { width: auto; min-width: 0; padding: 0 2px 0 10px; }
-  .tb-crumb .ws-name { max-width: 76px; }
+  /* No sidebar here, so no workspace name either (⌃⌘O / w: in the palette still switch). */
+  .win-sidebar, .tb-lead, .tb-agents .wl, .tb-diff .stat, .win .hide-sm { display: none; }
+  .tb-tabs { padding-left: 6px; overflow-x: auto; scrollbar-width: none; }
+  .tb-tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; }
   .tb-agents { padding: 0 6px; }
   .tb-diff { padding: 0 7px; }
   .tb-trail { padding: 0 6px; }
   .tab { padding: 0 4px 0 7px; }
   .tab .tab-title { max-width: 96px; }
   .tab:not([aria-selected="true"]) .tab-title { display: none; }
-  .tab[aria-selected="true"] { flex: none; }
   .blk-status { font-size: 10px; }
   .blk-head .br { display: none; }
   .blk-tools { right: 8px; top: 24px; }
