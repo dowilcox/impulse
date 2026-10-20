@@ -52,13 +52,13 @@ Without hooks, Impulse infers the state from what a terminal can see:
 
 - Pressing Return in the agent (sending a prompt, answering a question) means **Working**.
 - Output that keeps coming for about a second and a half (a spinner, streaming text) means **Working**. Output right after you type is treated as the echo of your typing.
-- A braille spinner at the start of the terminal's title means **Working**.
+- A spinner at the start of the terminal's title (braille dots, or Claude Code's ◐ and ◑) means **Working**, and 5 seconds after it stops means **Finished**, however much output follows.
 - A progress report (OSC 9;4) means **Working** while it's shown, and **Finished** when it's cleared.
 - A desktop notification from the agent (OSC 9, 777 or 99) that mentions permission, approval, allowing, confirming, "needs your input" or a question means **Needs your input**; any other notification means **Finished**.
 - A bell while the agent is working means **Finished**.
 - No output for 5 seconds while working means **Finished** (2 minutes for agents that report progress, since they can pause for longer).
 
-With [hooks](#agent-hooks) installed, the agent tells Impulse directly and the guesses above are switched off (Return and permission-style notifications still count):
+With [hooks](#agent-hooks) installed, the agent tells Impulse directly and the guesses above are switched off (Return, permission-style notifications and a title spinner still count, as described below the table):
 
 | Hook event                                                                 | State                                                                                                                                                                                                                                           |
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -74,7 +74,7 @@ With [hooks](#agent-hooks) installed, the agent tells Impulse directly and the g
 | `permission.replied`, `question.replied` or `question.rejected` (opencode) | **Working**: the request was answered (a rejected permission ends the turn, which `session.idle` then reports).                                                                                                                                 |
 | `session.idle` (opencode)                                                  | **Finished**. A subagent's session (opencode's task tool) going idle changes nothing.                                                                                                                                                           |
 
-A turn you interrupt (Esc in Claude Code) sends no `Stop`, and neither does a question you dismiss. (opencode reports an interrupted turn as ended, so it shows **Finished**.) So even with hooks, 5 minutes without output or a hook event while **Working**, or 30 minutes while it **Needs your input**, puts the agent back to **Idle**, without a notification. A state reported with [`impulse status`](cli.md#impulse-status) stays until the next report.
+A turn you interrupt (Esc in Claude Code) sends no `Stop`, and neither does a question you dismiss. (opencode reports an interrupted turn as ended, so it shows **Finished**.) Claude Code puts a spinner (◐ ◑) at the start of the terminal's title while it works, and ✳ when it stops, whether the turn ended or it's asking you something. So when the spinner stops and no hook event follows within 8 seconds (Claude Code reports a permission prompt after 6), the turn was interrupted: the agent goes back to **Idle**, without a notification. When the spinner starts again after a question, because you answered it, the agent is **Working** again. An agent whose title has no spinner (or Claude Code with `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` set) goes back to **Idle** after 5 minutes without output or a hook event while **Working**, or 30 minutes while it **Needs your input**. A state reported with [`impulse status`](cli.md#impulse-status) stays until the next report.
 
 ## Where the status shows
 

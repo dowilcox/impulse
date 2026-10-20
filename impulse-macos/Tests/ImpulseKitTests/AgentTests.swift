@@ -161,6 +161,18 @@
       #expect(machine.state == .idle)
       machine.handle(.title("⠋ Refactoring parser"), at: at(2))
       #expect(machine.state == .working)
+
+      // Claude Code's own spinner; it stopping ends the turn even while the
+      // user types the next prompt.
+      var claude = AgentStateMachine(now: t0)
+      claude.handle(.title("◐ Refactoring parser"), at: at(1))
+      #expect(claude.state == .working)
+      claude.handle(.title("✳ Refactoring parser"), at: at(3))
+      claude.handle(.keystroke, at: at(4))
+      claude.handle(.output, at: at(4.05))
+      #expect(claude.nextDeadline == at(8))
+      claude.tick(at: at(8))
+      #expect(claude.state == .done)
     }
 
     @Test func hooksOverrideHeuristics() {
@@ -336,6 +348,78 @@
       let ended = quiet.tick(at: at(601))
       #expect(ended == false)
       #expect(quiet.nextDeadline == at(900))
+    }
+
+    @Test func aStoppedSpinnerEndsAnInterruptedHookTurn() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.title("◐ Fix the parser"), at: at(1.1))
+      machine.handle(.title("◑ Fix the parser"), at: at(2))
+      stream(&machine, from: 2, to: 10)
+      #expect(machine.nextDeadline.map { $0 > at(300) } == true, "spinning: only a long silence ends it")
+      // Esc: the spinner stops and no Stop comes, while the prompt redraws
+      // and the user types the next one.
+      machine.handle(.title("✳ Fix the parser"), at: at(10))
+      var t = 10.5
+      while t < 20 {
+        machine.handle(.keystroke, at: at(t))
+        machine.handle(.output, at: at(t + 0.05))
+        t += 0.5
+      }
+      #expect(machine.nextDeadline == at(18))
+      let early = machine.tick(at: at(17))
+      #expect(early == false)
+      let late = machine.tick(at: at(18))
+      #expect(late)
+      #expect(machine.state == .idle, "interrupted, not finished: nothing to flag")
+    }
+
+    @Test func aStoppedSpinnerWaitsForTheHooks() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.title("◐ Fix the parser"), at: at(1.1))
+      // A permission prompt stops the spinner; Claude Code reports it 6 s
+      // later.
+      machine.handle(.title("✳ Fix the parser"), at: at(10))
+      let asking = machine.tick(at: at(16))
+      #expect(asking == false)
+      machine.handle(.hook(.notification("Claude needs your permission to use WebFetch")), at: at(16.2))
+      #expect(machine.state == .needsInput)
+      #expect(machine.nextDeadline == at(16.2).addingTimeInterval(1800))
+      // Approved: the spinner starts again (WebFetch reports no PostToolUse).
+      machine.handle(.title("◑ Fix the parser"), at: at(20))
+      #expect(machine.state == .working)
+      // A turn that ends reports Stop around when the spinner stops.
+      machine.handle(.title("✳ Fix the parser"), at: at(30))
+      machine.handle(.hook(.stopped), at: at(30.2))
+      #expect(machine.state == .done)
+      #expect(machine.nextDeadline == nil)
+      // Background tasks spin it after Stop: still done.
+      let background = machine.handle(.title("◐ Fix the parser"), at: at(31))
+      #expect(background == false)
+      #expect(machine.state == .done)
+    }
+
+    @Test func aSpinnerAfterAGuessedEndResumesTheTurn() {
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.title("◐ Ask about the schema"), at: at(1.1))
+      // A question that reports nothing.
+      machine.handle(.title("✳ Ask about the schema"), at: at(5))
+      machine.tick(at: at(13))
+      #expect(machine.state == .idle)
+      // Answered: it goes on.
+      machine.handle(.title("◑ Ask about the schema"), at: at(40))
+      #expect(machine.state == .working)
+      machine.handle(.hook(.stopped), at: at(60))
+      machine.handle(.acknowledged, at: at(61))
+      // An idle the hooks reported isn't resumed by a spinner.
+      let spun = machine.handle(.title("◐ Ask about the schema"), at: at(62))
+      #expect(spun == false)
+      #expect(machine.state == .idle)
+
+      #expect(AgentStateMachine.isSpinner("◒".unicodeScalars.first))
+      #expect(!AgentStateMachine.isSpinner("✳".unicodeScalars.first))
     }
 
     @Test func exitIsFinal() {

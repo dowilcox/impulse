@@ -2,9 +2,11 @@
 // the user, finished — from the signals a terminal can see. Hooks (when the
 // agent is set up to call Impulse) are authoritative; without them the
 // machine combines progress reports (OSC 9;4), notifications, bells, and
-// how output flows relative to the user's typing. Even with hooks, a long
-// silence ends a turn or a question: one dismissed with Esc never reports
-// that it stopped. State reported with `impulse status` is left alone.
+// how output flows relative to the user's typing. Even with hooks, a turn
+// or question dismissed with Esc never reports that it stopped: an agent
+// that spins its title (Claude Code's ◐/◑) stopped working when the spinner
+// stopped and no report followed; otherwise a long silence ends it. State
+// reported with `impulse status` is left alone.
 
 import Foundation
 
@@ -77,6 +79,10 @@ public struct AgentStateMachine: Sendable {
   /// …and this long means a question was dismissed. Much longer: one left
   /// unanswered while you're away should still say it needs you.
   public var silenceWhileAsking: TimeInterval = 1800
+  /// With hooks, a title spinner that stopped this long ago without a
+  /// report means the turn was interrupted. Longer than Claude Code waits
+  /// (6 s) before it reports a permission prompt, which stops it too.
+  public var silenceAfterSpinner: TimeInterval = 8
 
   private var lastOutput: Date?
   private var lastHook: Date?
@@ -89,6 +95,15 @@ public struct AgentStateMachine: Sendable {
   private var reportedByStatus = false
   /// The tool the pending permission request names ("…to use Bash").
   private var requestedTool: String?
+  /// Whether the title starts with a spinner now…
+  private var titleSpins = false
+  /// …and when it last stopped, while it's stopped. Output (a redrawn
+  /// prompt, the user typing the next one) then says nothing about work.
+  private var spinnerStopped: Date?
+  /// A timeout ended the turn while the spinner was stopped: the spinner
+  /// starting again (a question that sent no report was answered) means
+  /// the agent went on.
+  private var endedBySpinner = false
 
   public init(now: Date = Date()) {
     since = now
@@ -157,7 +172,20 @@ public struct AgentStateMachine: Sendable {
       return state == .working ? transition(.done, at: now) : false
 
     case .title(let title):
-      guard !hooksActive, Self.isSpinner(title.unicodeScalars.first) else { return false }
+      let spinning = Self.isSpinner(title.unicodeScalars.first)
+      if spinning {
+        spinnerStopped = nil
+      } else if titleSpins {
+        spinnerStopped = now
+      }
+      titleSpins = spinning
+      guard spinning else { return false }
+      if hooksActive {
+        // Hooks report turns; the spinner tells what they don't: a question
+        // was answered (Claude Code's spinner stops while it asks).
+        guard !reportedByStatus, state == .needsInput || (state == .idle && endedBySpinner) else { return false }
+        return transition(.working, at: now)
+      }
       if let lastKeystroke, now.timeIntervalSince(lastKeystroke) < echoWindow { return false }
       return state == .working ? false : transition(.working, at: now)
 
@@ -182,33 +210,34 @@ public struct AgentStateMachine: Sendable {
   /// Evaluate timeouts. Returns true when `state` changed.
   @discardableResult
   public mutating func tick(at now: Date) -> Bool {
-    guard let silenceLimit, now.timeIntervalSince(quietSince) >= silenceLimit else { return false }
+    guard let nextDeadline, now >= nextDeadline else { return false }
     progressActive = false
     // With hooks, a turn that finished would have said so: this one (or its
     // question) was dismissed, by the user, so there's nothing to flag.
-    return transition(hooksActive ? .idle : .done, at: now)
+    let changed = transition(hooksActive ? .idle : .done, at: now)
+    endedBySpinner = hooksActive && spinnerStopped != nil
+    return changed
   }
 
   /// When `tick` next needs to run, if ever.
   public var nextDeadline: Date? {
-    silenceLimit.map { quietSince.addingTimeInterval($0) }
+    switch state {
+    case .working where reportedByStatus: return nil
+    case .working:
+      if let spinnerStopped {
+        let stoppedSince = max(spinnerStopped, lastHook ?? since, since)
+        return stoppedSince.addingTimeInterval(hooksActive ? silenceAfterSpinner : silenceToDone)
+      }
+      let limit = hooksActive ? silenceWithHooks : progressActive || sawProgress ? silenceWithProgress : silenceToDone
+      return quietSince.addingTimeInterval(limit)
+    case .needsInput where hooksActive && !reportedByStatus: return quietSince.addingTimeInterval(silenceWhileAsking)
+    default: return nil
+    }
   }
 
   /// Silence counts from the last output or hook report, or from when
   /// work started if that's later.
   private var quietSince: Date { max(lastOutput ?? since, lastHook ?? since, since) }
-
-  /// How long silence may last in this state before it ends; nil: as long
-  /// as it likes.
-  private var silenceLimit: TimeInterval? {
-    switch state {
-    case .working where reportedByStatus: return nil
-    case .working:
-      return hooksActive ? silenceWithHooks : progressActive || sawProgress ? silenceWithProgress : silenceToDone
-    case .needsInput where hooksActive && !reportedByStatus: return silenceWhileAsking
-    default: return nil
-    }
-  }
 
   private mutating func ask(_ text: String, at now: Date) -> Bool {
     requestedTool = Self.requestedTool(text)
@@ -219,6 +248,7 @@ public struct AgentStateMachine: Sendable {
     guard next != state else { return false }
     state = next
     since = now
+    endedBySpinner = false
     if next != .working { streakStart = nil }
     return true
   }
@@ -238,10 +268,10 @@ public struct AgentStateMachine: Sendable {
     return name.isEmpty ? nil : String(name)
   }
 
-  /// Braille spinner glyphs some agents put at the front of the title while
-  /// they work.
+  /// Spinner glyphs agents put at the front of the title while they work:
+  /// braille dots, or Claude Code's ◐ ◓ ◑ ◒ (✳ when it's not working).
   static func isSpinner(_ scalar: Unicode.Scalar?) -> Bool {
     guard let scalar else { return false }
-    return (0x2801...0x28FF).contains(scalar.value)
+    return (0x2801...0x28FF).contains(scalar.value) || (0x25D0...0x25D3).contains(scalar.value)
   }
 }
