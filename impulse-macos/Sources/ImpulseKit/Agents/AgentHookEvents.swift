@@ -15,6 +15,7 @@ public enum AgentHookEvents {
     case "UserPromptSubmit": return .promptSubmitted
     case "PostToolUse": return .usedTool(tool)
     case "Stop", "agent-turn-complete": return .stopped
+    case "StopFailure": return .failed(message ?? "")
     case "Notification": return .notification(message ?? "")
     default: break
     }

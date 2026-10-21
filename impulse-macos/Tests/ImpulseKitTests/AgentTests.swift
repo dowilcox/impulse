@@ -192,6 +192,17 @@
       #expect(machine.state == .done)
     }
 
+    @Test func anAPIErrorEndsTheTurn() {
+      #expect(
+        AgentHookEvents.hook(agent: "claude", event: "StopFailure", tool: nil, message: "API Error: Rate limit reached")
+          == .failed("API Error: Rate limit reached"))
+      var machine = AgentStateMachine(now: t0)
+      machine.handle(.hook(.promptSubmitted), at: at(1))
+      machine.handle(.hook(.failed("API Error: Rate limit reached")), at: at(5))
+      #expect(machine.state == .done, "flagged like a finished turn")
+      #expect(machine.nextDeadline == nil)
+    }
+
     @Test func opencodePluginEventsDriveTheState() {
       func hook(_ event: String, tool: String? = nil) -> AgentHook? {
         AgentHookEvents.hook(agent: "opencode", event: event, tool: tool, message: nil)

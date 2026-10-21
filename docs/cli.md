@@ -329,6 +329,7 @@ What the hooks installed by **Install Agent Hooks…** run; you don't normally c
 | `PostToolUse`                                       | **Working**, when it's the tool a permission request was waiting on; else no change                           |
 | `Notification`                                      | **Needs your input** if the message asks for permission or input; else **Finished**, if the agent was working |
 | `Stop`, `agent-turn-complete`                       | **Finished**                                                                                                  |
+| `StopFailure`                                       | **Finished**, with the API error in the notification                                                          |
 | Anything else (`PreToolUse`, subagents, compaction) | No change                                                                                                     |
 
 For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), and a question before a merge (`PreToolUse`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).

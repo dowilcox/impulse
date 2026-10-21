@@ -205,8 +205,14 @@ extension TerminalTab {
         // A bell or program notification that went to the desktop already
         // said so (one held back or not shown didn't).
         if !(eventWasNotified && (cause == .bell || Self.isNotification(cause))) {
-          let headline =
-            state == .needsInput ? "\(agent.displayName) needs your input" : "\(agent.displayName) finished"
+          let headline: String
+          if state == .needsInput {
+            headline = "\(agent.displayName) needs your input"
+          } else if case .hook(.failed(let error))? = cause {
+            headline = error.isEmpty ? "\(agent.displayName) stopped on an error" : "\(agent.displayName) stopped: \(error)"
+          } else {
+            headline = "\(agent.displayName) finished"
+          }
           NotificationCenter.default.post(
             name: .terminalWantsNotification, object: self,
             userInfo: ["title": headline, "body": tabTitle])

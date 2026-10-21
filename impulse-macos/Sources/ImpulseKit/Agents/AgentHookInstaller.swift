@@ -11,8 +11,9 @@ public enum AgentHookInstaller {
   /// event is limited to: before shell commands (a merge of a branch still
   /// being worked on asks first) and after edits and shell commands (notes
   /// about files other tasks change, and dependencies that changed).
+  /// StopFailure ends a turn an API error stopped, which sends no Stop.
   public static let claudeHooks: [(event: String, matcher: String?)] = [
-    ("SessionStart", nil), ("UserPromptSubmit", nil), ("Notification", nil), ("Stop", nil),
+    ("SessionStart", nil), ("UserPromptSubmit", nil), ("Notification", nil), ("Stop", nil), ("StopFailure", nil),
     ("PreToolUse", "Bash"), ("PostToolUse", "Edit|Write|MultiEdit|NotebookEdit|Bash"),
   ]
 

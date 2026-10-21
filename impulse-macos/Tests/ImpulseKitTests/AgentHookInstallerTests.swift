@@ -49,6 +49,13 @@
       #expect(AgentHookInstaller.claudeHookStatus(nil) == .notInstalled)
       let updated = try AgentHookInstaller.installingClaudeHooks(into: older).get()
       #expect(AgentHookInstaller.claudeHookStatus(updated) == .installed)
+      // Everything but StopFailure (Impulse 0.35 and before).
+      var settings = object(updated)
+      var hooks = settings["hooks"] as? [String: Any] ?? [:]
+      hooks["StopFailure"] = nil
+      settings["hooks"] = hooks
+      let beforeStopFailure = try JSONSerialization.data(withJSONObject: settings)
+      #expect(AgentHookInstaller.claudeHookStatus(beforeStopFailure) == .outdated)
     }
 
     @Test func uninstallRestoresTheRest() throws {

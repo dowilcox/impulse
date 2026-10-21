@@ -45,6 +45,13 @@
         stdin: #"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#)
       #expect(notification?.arguments["event"] == "Notification")
       #expect(notification?.arguments["message"] == "Claude needs your permission to use Bash")
+      let failure = parse(
+        ["hook", "claude"],
+        stdin: #"{"hook_event_name":"StopFailure","error":"rate_limit","last_assistant_message":"API Error: Rate limit reached"}"#)
+      #expect(failure?.arguments["event"] == "StopFailure")
+      #expect(failure?.arguments["message"] == "API Error: Rate limit reached")
+      let bare = parse(["hook", "claude"], stdin: #"{"hook_event_name":"StopFailure","error":"overloaded"}"#)
+      #expect(bare?.arguments["message"] == "overloaded")
     }
 
     @Test func toolHooksCarryTheToolAndWhatItActsOn() {

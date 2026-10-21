@@ -33,6 +33,9 @@ public enum AgentHook: Equatable, Sendable {
   /// approval, even one given without Return; otherwise no change.
   case usedTool(String?)
   case stopped
+  /// The turn ended on an error (Claude Code's StopFailure: a rate limit,
+  /// an overloaded API, …), described when the hook says.
+  case failed(String)
   case notification(String)
   /// What `impulse status` reported, kept until the next report.
   case status(AgentState)
@@ -124,7 +127,7 @@ public struct AgentStateMachine: Sendable {
       switch hook {
       case .sessionStarted: return transition(.idle, at: now)
       case .promptSubmitted: return transition(.working, at: now)
-      case .stopped: return transition(.done, at: now)
+      case .stopped, .failed: return transition(.done, at: now)
       case .usedTool(let tool):
         // Tools also run in parallel subagents and after Stop (background
         // tasks): only the one that was waiting for approval answers it.

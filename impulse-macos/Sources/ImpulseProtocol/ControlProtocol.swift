@@ -329,6 +329,11 @@ public enum ControlProtocol {
       {
         event = event ?? object["hook_event_name"] as? String ?? object["type"] as? String
         message = object["message"] as? String ?? object["last-assistant-message"] as? String
+        if event == "StopFailure" {
+          // The API error that ended a Claude Code turn ("API Error: Rate
+          // limit reached"), or at least its kind ("rate_limit").
+          message = object["last_assistant_message"] as? String ?? object["error"] as? String
+        }
         if let session = object["session_id"] as? String ?? object["thread-id"] as? String {
           request.arguments["session"] = session
         }
