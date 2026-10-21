@@ -277,18 +277,8 @@ require(["vs/editor/editor.main"], function () {
     sendToHost({ type: "SaveRequested" });
   });
 
-  // ⌥⌘↑/↓ move focus between the app's split panes; give them up here
-  // (Monaco binds them to "add cursor above/below").
   try {
     monaco.editor.addKeybindingRules([
-      {
-        keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.UpArrow,
-        command: "-editor.action.insertCursorAbove",
-      },
-      {
-        keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.DownArrow,
-        command: "-editor.action.insertCursorBelow",
-      },
       // ⇧⌘O is the app's Go to Symbol (palette @ mode, from the language server).
       {
         keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyO,

@@ -128,10 +128,21 @@
     }
 
     @Test func impulseShortcutsWinOverMonacos() {
-      #expect(EditorWebView.appCommandWins(key("d", [.command])))  // Split Right, not add next occurrence
       #expect(EditorWebView.appCommandWins(key("g", [.command])))  // Go to Line…, not find next
       #expect(EditorWebView.appCommandWins(key("G", [.command, .shift])))  // Review Changes
-      #expect(EditorWebView.appCommandWins(key("\r", [.command, .shift])))  // Zoom Pane
+      #expect(EditorWebView.appCommandWins(key("O", [.command, .shift])))  // Go to Symbol, not the outline
+      #expect(EditorWebView.appCommandWins(key("t", [.command])))
+    }
+
+    @Test func monacosEditingKeysStayInTheEditor() {
+      let arrow: NSEvent.ModifierFlags = [.command, .option, .numericPad, .function]
+      #expect(!EditorWebView.appCommandWins(key("d", [.command])))  // add next occurrence, not Split Right
+      #expect(!EditorWebView.appCommandWins(key(String(UnicodeScalar(NSUpArrowFunctionKey)!), arrow)))  // add cursor
+      #expect(!EditorWebView.appCommandWins(key(String(UnicodeScalar(NSDownArrowFunctionKey)!), arrow)))
+      #expect(!EditorWebView.appCommandWins(key("\r", [.command, .shift])))  // insert line above, not Zoom Pane
+      // Their neighbors are still Impulse's.
+      #expect(EditorWebView.appCommandWins(key("D", [.command, .shift])))  // Split Down
+      #expect(EditorWebView.appCommandWins(key(String(UnicodeScalar(NSLeftArrowFunctionKey)!), arrow)))
     }
 
     @Test func editorKeepsItsOwnKeysAndTerminalOnes() {

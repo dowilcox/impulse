@@ -205,7 +205,7 @@ The focused pane has an accent line along its top edge and the other panes are d
 | **Split Right** | ⌘D       | A new terminal to the right of the focused pane, in that pane's folder. |
 | **Split Down**  | ⇧⌘D      | A new terminal below the focused pane.                                  |
 
-These are in **View ▸ Panes** and in the palette. Other ways to make panes:
+These are in **View ▸ Panes** and in the palette. In an editor, ⌘D adds the next occurrence of the selection instead, as in VS Code. Other ways to make panes:
 
 - **Open to the Side** in a file's context menu in the Files panel, or ⌥-click the file, opens it in a pane to the right.
 - **Move into Current Tab, Right** or **Below** in a tab's context menu joins that tab into the selected one.
@@ -215,7 +215,7 @@ These are in **View ▸ Panes** and in the palette. Other ways to make panes:
 ### Moving between panes
 
 - Click anywhere in a pane to focus it.
-- ⌥⌘← ⌥⌘→ ⌥⌘↑ ⌥⌘↓ (**Focus Pane Left**, **Focus Pane Right**, **Focus Pane Above**, **Focus Pane Below**) move to the neighboring pane. Impulse beeps when there's no pane in that direction.
+- ⌥⌘← ⌥⌘→ ⌥⌘↑ ⌥⌘↓ (**Focus Pane Left**, **Focus Pane Right**, **Focus Pane Above**, **Focus Pane Below**) move to the neighboring pane. Impulse beeps when there's no pane in that direction. In an editor, ⌥⌘↑ and ⌥⌘↓ add a cursor instead, as in VS Code.
 - **Next Pane** and **Previous Pane** cycle through the panes in order. They have no shortcut until you give them one in [Keyboard Shortcuts](keyboard-shortcuts.md).
 
 ### Resizing panes
@@ -227,7 +227,7 @@ These are in **View ▸ Panes** and in the palette. Other ways to make panes:
 
 ### Zooming a pane
 
-⇧⌘↩ (**Zoom Pane**) fills the tab with the focused pane and hides the others; press it again to bring them back. While a pane is zoomed, the tab's pane count shows a maximize icon.
+⇧⌘↩ (**Zoom Pane**) fills the tab with the focused pane and hides the others; press it again to bring them back. In an editor, ⇧⌘↩ inserts a line above instead, so use **View ▸ Panes ▸ Zoom Pane** there. While a pane is zoomed, the tab's pane count shows a maximize icon.
 
 ### Moving a pane to its own tab
 

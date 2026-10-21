@@ -11,8 +11,10 @@ import WebKit
 /// here or that the editor carries out itself: copy and paste, Find (⌘F)
 /// and Save (⌘S), and the terminal's commands (blocks, hints, the agent
 /// composer), so ⇧⌘K still deletes a line and ⇧⌘Space shows parameter
-/// hints. A command the user unbinds or moves gives its old keys back to
-/// Monaco.
+/// hints. It also keeps the editing keys everyone knows from VS Code,
+/// whatever they're bound to: ⌘D adds the next occurrence, ⌥⌘↑/↓ add a
+/// cursor, ⇧⌘↩ inserts a line above. A command the user unbinds or moves
+/// gives its old keys back to Monaco.
 final class EditorWebView: WKWebView {
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     if hasKeyboardFocus, Self.appCommandWins(event), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
@@ -31,12 +33,21 @@ final class EditorWebView: WKWebView {
   /// Commands the editor does itself (or that only act on a terminal).
   private static let editorKeeps: Set<String> = ["copy", "paste", "find", "save"]
   private static let terminalCategories: Set<String> = ["Terminal", "Blocks"]
+  /// Monaco's editing keys that Impulse's commands also use (Split Right,
+  /// Focus Pane Above/Below, Zoom Pane by default).
+  private static let monacoKeys = ["Cmd+D", "Alt+Cmd+Up", "Alt+Cmd+Down", "Shift+Cmd+Return"].map(
+    Keybindings.parseShortcut)
 
   static func appCommandWins(_ event: NSEvent) -> Bool {
     let overrides = SettingsStore.shared.settings.keybindingOverrides
     guard let binding = Keybindings.matchingKeybinding(for: event, overrides: overrides),
       !binding.keyEquivalent.isEmpty
     else { return false }
+    if monacoKeys.contains(where: {
+      Keybindings.eventMatchesShortcut(event, keyEquivalent: $0.keyEquivalent, modifierFlags: $0.modifierFlags)
+    }) {
+      return false
+    }
     return !editorKeeps.contains(binding.id) && !terminalCategories.contains(binding.category)
   }
 
