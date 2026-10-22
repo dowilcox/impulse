@@ -49,7 +49,7 @@ You don't need to memorize this page. Every command in the command palette (⇧�
 | Unbound  | Project Setup…                                                       | File        | `project_setup`        |
 | ⌃⌘R      | Run Project Action… (the palette in `a:` mode)                       | View        | `project_actions`      |
 
-The palette commands **Switch Tab…** (`t:` mode), **Open Folder as Workspace…**, **Rename Workspace…**, **Close Workspace**, **Clear Recent Workspaces** and **Archive Task…** have no shortcut. To reorder workspaces, use **Move Up** and **Move Down** in a workspace row's context menu. See [Workspaces and tabs](workspaces-and-tabs.md) and [Tasks](tasks.md).
+The palette commands **Switch Tab…** (`t:` mode), **Open Folder as Workspace…**, **Rename Workspace…**, **Close Workspace**, **Clear Recent Workspaces** and **Archive Task…** have no shortcut. To reorder workspaces, drag their rows in the sidebar, or use **Move Up** and **Move Down** in a workspace row's context menu. See [Workspaces and tabs](workspaces-and-tabs.md) and [Tasks](tasks.md).
 
 ## Panes
 

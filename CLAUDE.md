@@ -20,7 +20,8 @@ impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
                           palette, completion + shell parser + shell
                           quoting, editor buffer edits, file tree,
                           search results, close risk, glob, update checker,
-                          pane LayoutTree, agents (known agents, state
+                          pane LayoutTree, sidebar order + drag
+                          reordering, agents (known agents, state
                           machine, hook events + installer, opencode
                           plugin, JSONC edits), command history DB,
                           worktree tasks + task registry, commit graph,

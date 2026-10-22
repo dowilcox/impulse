@@ -110,7 +110,11 @@ Closing a workspace's last tab also closes the workspace, as long as the window 
 
 ### Reordering workspaces
 
-New workspaces are added at the bottom of the list. To move one, choose **Move Up** or **Move Down** from its row's context menu (they're dimmed at the top and bottom of the list). A worktree in a repository group moves within its group; from the group's first or last row, the whole group moves past its neighbor. The order is saved with your session.
+New workspaces are added at the bottom of the list. To move one, drag its row up or down; the other rows move aside to make room, and the workspace lands where you let go. A workspace whose tabs are listed under it takes them along. Dragging a row doesn't switch to that workspace.
+
+In a repository group, a worktree's row moves only within its group. To move the whole group, drag its header (the repository's name).
+
+You can also choose **Move Up** or **Move Down** from a row's context menu (they're dimmed at the top and bottom of the list). From a group's first or last row, they move the whole group past its neighbor. The order is saved with your session.
 
 ### Resizing the workspaces section
 

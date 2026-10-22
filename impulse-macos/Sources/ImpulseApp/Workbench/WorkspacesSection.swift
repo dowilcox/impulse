@@ -13,8 +13,12 @@ import SwiftUI
 ///
 /// The section fits its rows (up to `autoMaxHeight`) until the hairline under
 /// it is dragged; double-clicking the hairline goes back to fitting.
+///
+/// Rows drag to reorder: a workspace takes its listed tabs along, a worktree
+/// stays in its repository's group, and a group's header moves the group.
 struct WorkspacesSection: View {
   @Environment(\.chrome) private var chrome
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var model: WindowModel
   /// The most a dragged height may take (leaves room for the files panel);
   /// nil while the dock's height is unknown.
@@ -23,39 +27,59 @@ struct WorkspacesSection: View {
   private static let rowHeight: CGFloat = 26
   private static let tabRowHeight: CGFloat = 24
   private static let autoMaxHeight: CGFloat = 280
+  private static let spacing: CGFloat = 1
+  private static let coordinateSpace = "workspaces"
+  private static var settle: Animation { .interactiveSpring(response: 0.25, dampingFraction: 0.85) }
 
   @State private var dragStartHeight: CGFloat = 0
+  /// The group or workspace being dragged to a new place, and how far.
+  @State private var dragged: DragUnit?
+  @State private var dragOffset: CGFloat = 0
+  /// Where each group and workspace (with its listed tabs) is laid out.
+  @State private var frames: [DragUnit: CGRect] = [:]
 
   var body: some View {
+    let drop = dragPlacement
     VStack(spacing: 0) {
       ScrollViewReader { proxy in
         ScrollView(.vertical) {
-          VStack(spacing: 1) {
+          VStack(spacing: Self.spacing) {
             ForEach(groups, id: \.id) { group in
-              if let name = group.name {
-                RepoGroupHeader(name: name)
-                  .contextMenu {
-                    if let first = group.workspaces.first, first.repositoryHasMergedTasks {
-                      Button("Archive Merged Tasks…") { model.onArchiveMergedTasks?(first.id) }
+              movable(as: .group(group.id), drop: drop) {
+                if let name = group.name {
+                  RepoGroupHeader(name: name)
+                    .contextMenu {
+                      if let first = group.workspaces.first, first.repositoryHasMergedTasks {
+                        Button("Archive Merged Tasks…") { model.onArchiveMergedTasks?(first.id) }
+                      }
                     }
-                  }
-              }
-              ForEach(group.workspaces) { workspace in
-                WorkspaceRow(
-                  model: model, workspace: workspace, indented: group.name != nil,
-                  isExpanded: isExpanded(workspace), tabsPinnedOpen: tabsPinnedOpen(workspace),
-                  canMoveUp: canMove(workspace, by: -1), canMoveDown: canMove(workspace, by: 1))
-                if isExpanded(workspace) {
-                  ForEach(workspace.tabs) { tab in
-                    WorkspaceTabRow(model: model, tab: tab).id(tab.id)
-                  }
-                  if tabsPinnedOpen(workspace) {
-                    NewTabRow(model: model)
+                    .simultaneousGesture(dragGesture(for: .group(group.id)))
+                }
+                ForEach(group.workspaces) { workspace in
+                  movable(as: .workspace(workspace.id), drop: drop) {
+                    WorkspaceRow(
+                      model: model, workspace: workspace, indented: group.name != nil,
+                      isExpanded: isExpanded(workspace), tabsPinnedOpen: tabsPinnedOpen(workspace),
+                      canMoveUp: canMove(workspace, by: -1), canMoveDown: canMove(workspace, by: 1)
+                    )
+                    // Alone in its group, the workspace is the group.
+                    .simultaneousGesture(
+                      dragGesture(for: group.name == nil ? .group(group.id) : .workspace(workspace.id)))
+                    if isExpanded(workspace) {
+                      ForEach(workspace.tabs) { tab in
+                        WorkspaceTabRow(model: model, tab: tab).id(tab.id)
+                      }
+                      if tabsPinnedOpen(workspace) {
+                        NewTabRow(model: model)
+                      }
+                    }
                   }
                 }
               }
             }
           }
+          .coordinateSpace(.named(Self.coordinateSpace))
+          .onPreferenceChange(DragFramesKey.self) { frames = $0 }
           .padding(.vertical, 6)
         }
         .scrollIndicators(.never)
@@ -111,6 +135,127 @@ struct WorkspacesSection: View {
     return GroupedOrder.moving(model.workspaces, at: index, by: step, key: Self.groupKey) != nil
   }
 
+  // MARK: Drag to reorder
+
+  /// A drag under way: what the dragged unit moves among, where it came
+  /// from and where it would land now.
+  private struct DragPlacement {
+    let siblings: [DragUnit]
+    let source: Int
+    let target: Int
+    /// How far the others move aside: the dragged unit's height and a gap.
+    let room: CGFloat
+  }
+
+  private var dragPlacement: DragPlacement? {
+    guard let dragged else { return nil }
+    let siblings = siblings(of: dragged)
+    let rects = siblings.compactMap { frames[$0] }
+    guard rects.count == siblings.count, let source = siblings.firstIndex(of: dragged) else { return nil }
+    let rect = rects[source]
+    let target = DragReorder.target(
+      middles: rects.map { Double($0.midY) }, source: source,
+      draggedSpan: Double(rect.minY + dragOffset)...Double(rect.maxY + dragOffset))
+    return DragPlacement(siblings: siblings, source: source, target: target, room: rects[source].height + Self.spacing)
+  }
+
+  /// A group or workspace, its rows stacked: it follows the pointer while
+  /// it's dragged, and moves aside while a sibling is dragged past it.
+  private func movable(
+    as unit: DragUnit, drop: DragPlacement?, @ViewBuilder rows: () -> some View
+  ) -> some View {
+    let isDragged = dragged == unit
+    let offset = displacement(of: unit, drop: drop)
+    return VStack(spacing: Self.spacing, content: rows)
+      .background {
+        if isDragged {
+          RoundedRectangle(cornerRadius: Metrics.radiusSmall + 1, style: .continuous)
+            .fill(chrome.raised)
+            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+            .padding(.horizontal, 6)
+        }
+      }
+      .offset(y: offset)
+      .animation(isDragged || reduceMotion ? nil : Self.settle, value: offset)
+      // Measured after the offset: where it's laid out, not where it's drawn.
+      .background {
+        GeometryReader { geo in
+          Color.clear.preference(
+            key: DragFramesKey.self, value: [unit: geo.frame(in: .named(Self.coordinateSpace))])
+        }
+      }
+      .zIndex(isDragged ? 1 : 0)
+  }
+
+  private func displacement(of unit: DragUnit, drop: DragPlacement?) -> CGFloat {
+    if unit == dragged { return dragOffset }
+    guard let drop, let index = drop.siblings.firstIndex(of: unit) else { return 0 }
+    return CGFloat(DragReorder.shift(of: index, source: drop.source, target: drop.target)) * drop.room
+  }
+
+  /// What a unit moves among: the groups, or the workspaces of its group.
+  private func siblings(of unit: DragUnit) -> [DragUnit] {
+    switch unit {
+    case .group:
+      return groups.map { .group($0.id) }
+    case .workspace(let id):
+      let group = groups.first { $0.workspaces.contains { $0.id == id } }
+      return group?.workspaces.map { .workspace($0.id) } ?? []
+    }
+  }
+
+  private func dragGesture(for unit: DragUnit) -> some Gesture {
+    DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.coordinateSpace))
+      .onChanged { value in
+        // Only one drag runs at a time: one that never ended gives way.
+        if dragged != unit {
+          guard siblings(of: unit).count > 1 else { return }
+          dragged = unit
+        }
+        dragOffset = clampedOffset(value.translation.height, for: unit)
+      }
+      .onEnded { _ in
+        guard dragged == unit else { return }
+        finishDrag()
+      }
+  }
+
+  /// `offset` kept within the rows the unit moves among, so it shows where
+  /// it can go: a worktree stays in its group.
+  private func clampedOffset(_ offset: CGFloat, for unit: DragUnit) -> CGFloat {
+    let rects = siblings(of: unit).compactMap { frames[$0] }
+    guard let rect = frames[unit], let top = rects.map(\.minY).min(), let bottom = rects.map(\.maxY).max()
+    else { return offset }
+    return min(max(offset, top - rect.minY), bottom - rect.maxY)
+  }
+
+  /// Drops the dragged unit where it was let go; it settles into its new
+  /// place as the others close up behind it.
+  private func finishDrag() {
+    let order = dragPlacement.flatMap(droppedOrder)
+    withAnimation(reduceMotion ? nil : Self.settle) {
+      if let order { model.onArrangeWorkspaces?(order) }
+      dragged = nil
+      dragOffset = 0
+    }
+  }
+
+  /// The workspaces' ids in their new order, or nil when the drop leaves
+  /// them as they are.
+  private func droppedOrder(_ drop: DragPlacement) -> [UUID]? {
+    guard drop.target != drop.source, let dragged else { return nil }
+    let workspaces = model.workspaces
+    switch dragged {
+    case .group(let key):
+      guard let index = workspaces.firstIndex(where: { Self.groupKey($0) == key }) else { return nil }
+      return GroupedOrder.movingGroup(workspaces, at: index, toPosition: drop.target, key: Self.groupKey)?
+        .map(\.id)
+    case .workspace(let id):
+      guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return nil }
+      return GroupedOrder.moving(workspaces, at: index, toPosition: drop.target, key: Self.groupKey)?.map(\.id)
+    }
+  }
+
   // MARK: Grouping
 
   private struct Group {
@@ -143,6 +288,21 @@ struct WorkspacesSection: View {
     let newTabRow = model.showsTabsInSidebar ? 1 : 0
     return CGFloat(groupHeaders) * 22 + CGFloat(rows) * (Self.rowHeight + 1)
       + CGFloat(tabRows + newTabRow) * (Self.tabRowHeight + 1) + 12
+  }
+}
+
+/// What a drag in the section moves.
+private enum DragUnit: Hashable {
+  /// A repository's group of worktrees, or a workspace alone in its group.
+  case group(String)
+  /// A worktree within its repository's group.
+  case workspace(UUID)
+}
+
+private struct DragFramesKey: PreferenceKey {
+  static var defaultValue: [DragUnit: CGRect] = [:]
+  static func reduce(value: inout [DragUnit: CGRect], nextValue: () -> [DragUnit: CGRect]) {
+    value.merge(nextValue()) { $1 }
   }
 }
 
@@ -207,6 +367,8 @@ private struct RepoGroupHeader: View {
     }
     .padding(.horizontal, 14)
     .frame(height: 22)
+    // The whole row drags the group.
+    .contentShape(Rectangle())
   }
 }
 

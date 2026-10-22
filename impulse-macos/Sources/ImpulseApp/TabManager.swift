@@ -1384,8 +1384,11 @@ final class TabManager: NSObject {
     syncToWindowModel()
   }
 
-  /// Put restored workspaces in their saved order: Scratch is there before
-  /// the restore (and reused), and the folders are appended after it.
+  /// Put the workspaces in the order of `ids`; those it doesn't list keep
+  /// their rows. A drag in the sidebar drops a workspace this way, and a
+  /// restore puts its workspaces in their saved order (Scratch is there
+  /// before the restore, and reused, and the folders are appended after
+  /// it). The order is saved with the session.
   func arrangeWorkspaces(inOrder ids: [UUID]) {
     let arranged = GroupedOrder.arranging(workspaces, inOrder: ids, id: \.id)
     guard arranged.map(\.id) != workspaces.map(\.id) else { return }

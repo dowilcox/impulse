@@ -258,6 +258,9 @@ extension MainWindowController {
     windowModel.onMoveWorkspace = { [weak self] id, step in
       self?.tabManager.moveWorkspace(id, by: step)
     }
+    windowModel.onArrangeWorkspaces = { [weak self] ids in
+      self?.tabManager.arrangeWorkspaces(inOrder: ids)
+    }
     windowModel.onOpenWorkspace = { [weak self] in
       self?.presentOpenWorkspacePanel()
     }

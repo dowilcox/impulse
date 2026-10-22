@@ -457,6 +457,8 @@ final class WindowModel {
   var onSetWorkspaceExpanded: ((UUID, Bool) -> Void)?
   /// Move a workspace one row up (-1) or down (+1) in the sidebar.
   var onMoveWorkspace: ((UUID, Int) -> Void)?
+  /// Put the workspaces in this order (a drag in the sidebar).
+  var onArrangeWorkspaces: (([UUID]) -> Void)?
   /// Pick a folder to open as a workspace.
   var onOpenWorkspace: (() -> Void)?
   var onShowWorkspaceSwitcher: (() -> Void)?

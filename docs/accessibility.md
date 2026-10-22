@@ -44,7 +44,7 @@ When **Reduce motion** is on in **System Settings › Accessibility › Display*
 
 - The quick terminal appears in place instead of sliding down from the top of the screen.
 - The terminal's find bar appears and disappears without sliding.
-- Tabs move without animation when you drag to reorder them, and the tab strip doesn't animate when it scrolls to the selected tab.
+- Tabs, and workspaces in the sidebar, move without animation when you drag to reorder them, and the tab strip doesn't animate when it scrolls to the selected tab.
 - Spinners stop spinning. A spinner still shows that something is in progress, and VoiceOver still reads "In progress".
 
 ## Increase Contrast

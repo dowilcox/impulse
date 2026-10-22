@@ -2,7 +2,8 @@ import Foundation
 
 /// A list shown with the items that share a key gathered together at the
 /// position of the first one (the sidebar groups worktrees of one
-/// repository this way), and single-row moves through that shown order.
+/// repository this way), and moves through that shown order: a row at a
+/// time, or a row or whole group dropped where it was dragged to.
 public enum GroupedOrder {
   /// Items grouped by key: groups in the order of their first item, items
   /// in their own order within a group.
@@ -39,10 +40,43 @@ public enum GroupedOrder {
     return shown.flatMap { $0 }.map { items[$0] }
   }
 
+  /// `items` in shown order, with the one at `index` dropped at `position`
+  /// among its group's rows (0 first). Nil when it's there already or its
+  /// group has no such position.
+  public static func moving<Item, Key: Hashable>(
+    _ items: [Item], at index: Int, toPosition position: Int, key: (Item) -> Key
+  ) -> [Item]? {
+    guard items.indices.contains(index) else { return nil }
+    var shown = Self.groups(Array(items.indices)) { key(items[$0]) }
+    guard let group = shown.firstIndex(where: { $0.contains(index) }),
+      let from = shown[group].firstIndex(of: index),
+      shown[group].indices.contains(position), position != from
+    else { return nil }
+    shown[group].insert(shown[group].remove(at: from), at: position)
+    return shown.flatMap { $0 }.map { items[$0] }
+  }
+
+  /// `items` in shown order, with the group of the one at `index` dropped at
+  /// `position` among the groups (an item that shares its key with no other
+  /// is a group of its own). Nil when it's there already or there's no such
+  /// position.
+  public static func movingGroup<Item, Key: Hashable>(
+    _ items: [Item], at index: Int, toPosition position: Int, key: (Item) -> Key
+  ) -> [Item]? {
+    guard items.indices.contains(index) else { return nil }
+    var shown = Self.groups(Array(items.indices)) { key(items[$0]) }
+    guard let from = shown.firstIndex(where: { $0.contains(index) }),
+      shown.indices.contains(position), position != from
+    else { return nil }
+    shown.insert(shown.remove(at: from), at: position)
+    return shown.flatMap { $0 }.map { items[$0] }
+  }
+
   /// `items` with those whose id is in `order` put in that order, in the
   /// positions they hold between them; the rest stay where they are. A
   /// restored session uses it: Scratch is there before the restore (and
-  /// reused), so it would otherwise keep the first row.
+  /// reused), so it would otherwise keep the first row. So does a drop in
+  /// the sidebar, so a workspace that opened during the drag keeps its row.
   public static func arranging<Item, ID: Hashable>(
     _ items: [Item], inOrder order: [ID], id: (Item) -> ID
   ) -> [Item] {

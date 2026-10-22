@@ -42,6 +42,26 @@
       #expect(GroupedOrder.moving(["a", "b"], at: 0, by: 2, key: key) == nil)
     }
 
+    @Test func droppedMembersStayInTheirGroup() {
+      // Shown as a1, a2, a3, b.
+      let items = ["a1", "b", "a2", "a3"]
+      #expect(GroupedOrder.moving(items, at: 0, toPosition: 2, key: key) == ["a2", "a3", "a1", "b"])
+      #expect(GroupedOrder.moving(items, at: 3, toPosition: 0, key: key) == ["a3", "a1", "a2", "b"])
+      #expect(GroupedOrder.moving(items, at: 2, toPosition: 1, key: key) == nil, "already there")
+      #expect(GroupedOrder.moving(items, at: 0, toPosition: 3, key: key) == nil, "past the group's end")
+      #expect(GroupedOrder.moving(items, at: 1, toPosition: 0, key: key) == nil, "alone in its group")
+    }
+
+    @Test func droppedGroupsMoveWhole() {
+      // Shown as a1, a2, b, c.
+      let items = ["a1", "b", "a2", "c"]
+      #expect(GroupedOrder.movingGroup(items, at: 2, toPosition: 2, key: key) == ["b", "c", "a1", "a2"])
+      #expect(GroupedOrder.movingGroup(items, at: 3, toPosition: 0, key: key) == ["c", "a1", "a2", "b"])
+      #expect(GroupedOrder.movingGroup(items, at: 1, toPosition: 1, key: key) == nil, "already there")
+      #expect(GroupedOrder.movingGroup(items, at: 1, toPosition: 3, key: key) == nil, "only three groups")
+      #expect(GroupedOrder.movingGroup(items, at: 9, toPosition: 0, key: key) == nil)
+    }
+
     @Test func arrangingPutsListedItemsInTheirOrder() {
       // A restore: Scratch is first, the folders were appended after it.
       #expect(
