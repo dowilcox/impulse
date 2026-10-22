@@ -2,6 +2,28 @@
 
 All notable changes to Impulse are documented in this file.
 
+## 0.36.0
+
+**opencode 2.** opencode 2 runs one background service for all your
+terminals and can't load the plugin Impulse installed for opencode 1.
+Impulse's plugin is now a folder with a half in each terminal and a half
+in the service, so every session still reports to its own tab, hears
+about the other tasks, and gets Impulse's tools, even with several
+terminals sharing one service. Open Agent Integration and install
+opencode's hooks again; opencode 1 is no longer supported.
+
+### Agents
+
+- opencode's plugin installs as `~/.config/opencode/plugins/impulse/`, replacing opencode 1's `plugins/impulse.js`. It gives opencode Impulse's tools itself (`tools.impulse.…`): an MCP server would run in opencode's shared service, where it can't tell which terminal is asking. Agent Integration's MCP side offers to remove the `impulse` entry older Impulses added to `opencode.json`, leaving your comments and formatting as they were.
+- opencode asks you before merging a branch a task is still working on, with Impulse's reason, as Claude Code does, instead of being stopped once. Shell commands opencode runs act for the pane their session is in.
+- A Claude Code turn that an API error ends (a rate limit, an overloaded server) shows Finished, and the notification names the error. Install Claude Code's hooks again to get the new `StopFailure` hook.
+- A Claude Code turn you interrupt with Esc goes back to Idle within seconds instead of staying Working, and approving a tool that reports nothing afterwards no longer leaves it on Needs Input.
+
+### Workbench
+
+- Drag a workspace up or down the sidebar to reorder it; a repository's header moves its whole group.
+- In the editor, ⌘D (add the next occurrence), ⌥⌘↑/↓ (add a cursor above or below) and ⇧⌘↩ (insert a line above) stay Monaco's while an editor has focus, instead of splitting, moving between or zooming panes; those are still in View ▸ Panes and the palette.
+
 ## 0.35.0
 
 **opencode joins Claude Code and Codex.** Agent Integration installs
