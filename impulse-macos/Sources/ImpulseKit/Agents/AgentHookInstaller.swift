@@ -1,8 +1,8 @@
 // Edits agent configuration so the agent tells Impulse what it's doing:
 // Claude Code hooks in settings.json, Codex's `notify` program in
-// config.toml, and a plugin file in opencode's plugins folder. Every hook
-// calls the bundled CLI through $IMPULSE_CLI, which only Impulse terminals
-// set — anywhere else the hook is a no-op.
+// config.toml, and a plugin folder in opencode's plugins folder. Every
+// hook calls the bundled CLI through $IMPULSE_CLI, which only Impulse
+// terminals set — anywhere else the hook is a no-op.
 
 import Foundation
 
@@ -164,46 +164,85 @@ public enum AgentHookInstaller {
 
   private static let codexComment = "# Tells Impulse when Codex finishes a turn (no-op outside Impulse)."
 
-  // MARK: opencode (a plugin file)
+  // MARK: opencode (a plugin folder)
 
-  /// Impulse's plugin in opencode's plugins folder, which opencode loads at
-  /// startup.
-  public static let opencodePluginName = "impulse.js"
+  /// Impulse's plugin: a folder in opencode's plugins folder. opencode
+  /// loads its server.js in its background service and its tui.js in each
+  /// terminal running opencode (rpc.js is how the two talk).
+  public static let opencodePluginFolder = "impulse"
 
-  /// The plugin: a file of Impulse's own, replaced or removed as a whole
-  /// (Resources/Agents/opencode-plugin.js).
-  public static let opencodePlugin: String = {
-    guard
-      let url = Bundle.kitResources.url(
-        forResource: "opencode-plugin", withExtension: "js", subdirectory: "Resources/Agents"),
-      let text = try? String(contentsOf: url, encoding: .utf8)
-    else {
-      NSLog("Missing the opencode plugin")
-      return ""
+  /// The single-file plugin Impulse installed for opencode 1, which
+  /// opencode 2 can't load: installing the folder removes it.
+  public static let opencodeLegacyPluginName = "impulse.js"
+
+  /// The plugin's files by name (Resources/Agents/opencode-plugin/), each
+  /// replaced or removed as a whole.
+  public static let opencodePluginFiles: [String: String] = {
+    var files: [String: String] = [:]
+    for name in ["rpc", "server", "tui"] {
+      guard
+        let url = Bundle.kitResources.url(
+          forResource: name, withExtension: "js", subdirectory: "Resources/Agents/opencode-plugin"),
+        let text = try? String(contentsOf: url, encoding: .utf8)
+      else {
+        NSLog("Missing the opencode plugin's \(name).js")
+        continue
+      }
+      files[name + ".js"] = text
     }
-    return text
+    return files
   }()
 
-  /// Its first line, which tells an older version of it from a file that
-  /// isn't Impulse's.
+  /// Each file's first line, which tells an older version of it from a
+  /// file that isn't Impulse's.
   static let opencodePluginMarker = "// Impulse's opencode plugin"
 
-  /// Whether `text` (the plugin file, nil when there's none) is this
-  /// version of the plugin, an older one, or not there (or not Impulse's).
-  public static func opencodePluginStatus(_ text: String?) -> Status {
-    guard let text else { return .notInstalled }
-    if text == opencodePlugin { return .installed }
-    return text.hasPrefix(opencodePluginMarker) ? .outdated : .notInstalled
+  /// What's in opencode's plugins folder: the files in Impulse's folder, by
+  /// name, and the older single-file plugin (nil when there's none).
+  public struct OpencodePlugin: Equatable, Sendable {
+    public var files: [String: String]
+    public var legacy: String?
+    public init(files: [String: String] = [:], legacy: String? = nil) {
+      self.files = files
+      self.legacy = legacy
+    }
+
+    /// Whether the single-file plugin is Impulse's.
+    public var legacyIsImpulses: Bool { legacy.map(AgentHookInstaller.isOpencodePluginFile) == true }
   }
 
-  /// The plugin file to write over `existing`; refuses a file that isn't
-  /// Impulse's.
-  public static func installingOpencodePlugin(over existing: String?) -> Result<String, InstallError> {
-    if let existing, !existing.isEmpty, !existing.hasPrefix(opencodePluginMarker) {
+  /// Whether a file in opencode's plugins folder is one of Impulse's (this
+  /// version's or an older one's).
+  public static func isOpencodePluginFile(_ text: String) -> Bool {
+    text.hasPrefix(opencodePluginMarker)
+  }
+
+  /// Whether `found` is this version of the plugin, an older one (an older
+  /// folder, or the single file opencode 1 loaded), or not there (or not
+  /// Impulse's).
+  public static func opencodePluginStatus(_ found: OpencodePlugin) -> Status {
+    if found.files == opencodePluginFiles, !found.legacyIsImpulses { return .installed }
+    let older = found.legacyIsImpulses || found.files.values.contains(where: isOpencodePluginFile)
+    return older ? .outdated : .notInstalled
+  }
+
+  /// The files to write into Impulse's folder; refuses a folder holding a
+  /// file that isn't Impulse's.
+  public static func installingOpencodePlugin(over found: OpencodePlugin) -> Result<[String: String], InstallError> {
+    if let theirs = found.files.keys.sorted().first(where: { !isOpencodePluginFile(found.files[$0]!) }) {
       return .failure(
-        .notifyInUse("\(opencodePluginName) in opencode's plugins folder isn't Impulse's; rename or remove it first"))
+        .notifyInUse(
+          "\(opencodePluginFolder)/\(theirs) in opencode's plugins folder isn't Impulse's; rename or remove the \(opencodePluginFolder) folder first"
+        ))
     }
-    return .success(opencodePlugin)
+    return .success(opencodePluginFiles)
+  }
+
+  /// The plugin's files as one text, each under its path, for the preview.
+  public static func opencodePluginText(_ found: OpencodePlugin) -> String {
+    var parts = found.files.keys.sorted().map { "// \(opencodePluginFolder)/\($0)\n" + found.files[$0]! }
+    if let legacy = found.legacy { parts.append("// \(opencodeLegacyPluginName)\n" + legacy) }
+    return parts.joined(separator: "\n")
   }
 
   // MARK: Preview

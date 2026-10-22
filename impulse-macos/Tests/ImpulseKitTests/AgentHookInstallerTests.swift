@@ -104,39 +104,71 @@
       #expect(AgentHookInstaller.removingCodexNotify(from: other) == other)
     }
 
-    @Test func opencodePluginIsReplacedWholeAndOnlyIfItsImpulses() throws {
-      let plugin = AgentHookInstaller.opencodePlugin
-      #expect(plugin.hasPrefix(AgentHookInstaller.opencodePluginMarker))
-      #expect(AgentHookInstaller.opencodePluginStatus(nil) == .notInstalled)
-      #expect(AgentHookInstaller.opencodePluginStatus(plugin) == .installed)
-      let older = AgentHookInstaller.opencodePluginMarker + ", from an older Impulse\nexport const X = 1\n"
-      #expect(AgentHookInstaller.opencodePluginStatus(older) == .outdated)
-      #expect(try AgentHookInstaller.installingOpencodePlugin(over: older).get() == plugin)
-      #expect(try AgentHookInstaller.installingOpencodePlugin(over: nil).get() == plugin)
+    @Test func opencodePluginIsAFolderReplacedWholeAndOnlyIfItsImpulses() throws {
+      typealias Found = AgentHookInstaller.OpencodePlugin
+      let files = AgentHookInstaller.opencodePluginFiles
+      #expect(files.keys.sorted() == ["rpc.js", "server.js", "tui.js"])
+      for (name, text) in files { #expect(AgentHookInstaller.isOpencodePluginFile(text), "\(name)") }
+      #expect(AgentHookInstaller.opencodePluginStatus(Found()) == .notInstalled)
+      #expect(AgentHookInstaller.opencodePluginStatus(Found(files: files)) == .installed)
+      // opencode 1's single file, from an older Impulse: replaced by the folder.
+      let single = AgentHookInstaller.opencodePluginMarker + ", from an older Impulse\nexport const X = 1\n"
+      #expect(AgentHookInstaller.opencodePluginStatus(Found(legacy: single)) == .outdated)
+      #expect(AgentHookInstaller.opencodePluginStatus(Found(files: files, legacy: single)) == .outdated)
       let theirs = "export const Mine = async () => ({})\n"
-      #expect(AgentHookInstaller.opencodePluginStatus(theirs) == .notInstalled)
-      #expect((try? AgentHookInstaller.installingOpencodePlugin(over: theirs).get()) == nil)
+      #expect(AgentHookInstaller.opencodePluginStatus(Found(files: files, legacy: theirs)) == .installed)
+      // An older folder: updated whole.
+      var older = files
+      older["server.js"] = AgentHookInstaller.opencodePluginMarker + ", older\n"
+      older["gone.js"] = AgentHookInstaller.opencodePluginMarker + ", a file this version doesn't have\n"
+      #expect(AgentHookInstaller.opencodePluginStatus(Found(files: older)) == .outdated)
+      #expect(try AgentHookInstaller.installingOpencodePlugin(over: Found(files: older)).get() == files)
+      #expect(try AgentHookInstaller.installingOpencodePlugin(over: Found()).get() == files)
+      // A folder holding someone else's file is left alone.
+      #expect(AgentHookInstaller.opencodePluginStatus(Found(files: ["index.js": theirs])) == .notInstalled)
+      #expect((try? AgentHookInstaller.installingOpencodePlugin(over: Found(files: ["index.js": theirs])).get()) == nil)
+      // The preview names each file.
+      let text = AgentHookInstaller.opencodePluginText(Found(files: files, legacy: single))
+      for name in ["impulse/rpc.js", "impulse/server.js", "impulse/tui.js", "impulse.js"] {
+        #expect(text.contains("// \(name)\n"), "\(name)")
+      }
     }
 
-    @Test func opencodePluginSendsTheEventsImpulseKnows() {
-      let plugin = AgentHookInstaller.opencodePlugin
-      // A no-op outside Impulse, calling the CLI by its path (no shell).
-      #expect(plugin.contains("process.env.IMPULSE_CLI"))
-      #expect(plugin.contains(#"if (!cli) return {};"#))
-      #expect(plugin.contains(#"spawn(cli, ["hook", "opencode", event]"#))
+    @Test func opencodePluginSendsTheEventsImpulseKnows() throws {
+      let tui = try #require(AgentHookInstaller.opencodePluginFiles["tui.js"])
+      let server = try #require(AgentHookInstaller.opencodePluginFiles["server.js"])
+      // The terminal's half is a no-op outside Impulse and calls the CLI by
+      // its path (no shell); the service's half never trusts its own
+      // environment, which is whichever terminal started the service.
+      #expect(tui.contains("process.env.IMPULSE_CLI"))
+      #expect(tui.contains("if (!cli) return;"))
+      #expect(tui.contains(#"spawn(cli, ["hook", "opencode", event]"#))
+      #expect(!server.contains("process.env.IMPULSE"))
+      #expect(!server.contains("spawn("), "only the terminal's half runs impulse")
       for event in [
-        "start", "session.start", "chat.message", "session.idle", "permission.asked", "permission.replied",
-        "question.asked", "question.replied", "question.rejected", "tool.execute.before", "tool.execute.after",
+        "start", "session.start", "session.execution.started", "session.execution.succeeded",
+        "session.execution.failed", "session.execution.interrupted", "permission.asked", "permission.replied",
+        "form.created", "form.replied", "form.cancelled", "tool.execute.before", "tool.execute.after",
       ] {
-        #expect(plugin.contains("\"\(event)\""), "\(event)")
+        #expect(tui.contains("\"\(event)\""), "\(event)")
         let known =
-          AgentHookEvents.hook(agent: "opencode", event: event, tool: "bash", message: nil) != nil
-          || AgentHookEvents.reply(agent: "opencode", event: event, tool: "bash") != nil
+          AgentHookEvents.hook(agent: "opencode", event: event, tool: "shell", message: nil) != nil
+          || AgentHookEvents.reply(agent: "opencode", event: event, tool: "shell") != nil
         #expect(known, "\(event)")
       }
-      for tool in AgentHookEvents.opencodeEditTools { #expect(plugin.contains("\"\(tool)\""), "\(tool)") }
-      // Only one export: opencode calls every export as a plugin.
-      #expect(plugin.components(separatedBy: "export ").count == 2)
+      for tool in AgentHookEvents.opencodeEditTools { #expect(server.contains("\"\(tool)\""), "\(tool)") }
+      // The variables a shell command gets from its terminal are the ones
+      // the terminal sends.
+      func variables(_ text: String) -> [String] {
+        guard let start = text.range(of: "const paneVariables = ["), let end = text[start.upperBound...].range(of: "];")
+        else { return [] }
+        return text[start.upperBound..<end.lowerBound].components(separatedBy: "\"").enumerated()
+          .filter { $0.offset % 2 == 1 }.map(\.element)
+      }
+      #expect(variables(server) == variables(tui))
+      #expect(variables(server).contains("IMPULSE_PANE_TOKEN"))
+      // opencode loads a plugin module's default export.
+      for text in [server, tui] { #expect(text.components(separatedBy: "export default").count == 2) }
     }
 
     @Test func diffShowsAddedAndRemovedLines() {

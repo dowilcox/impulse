@@ -154,14 +154,10 @@ public enum AgentHookReply {
     encode(["context": text])
   }
 
-  /// For the opencode plugin, whose hooks can't ask the user: stop the
-  /// command, telling the agent why and to ask. Impulse lets the same
-  /// command through when it comes again.
-  public static func opencodeStop(_ reason: String) -> String {
-    encode([
-      "block":
-        "Impulse stopped this command: \(reason)\n\nAsk the user whether to go ahead. If they say yes, run the same command again and Impulse will let it through."
-    ])
+  /// For the opencode plugin: have opencode ask the user before running
+  /// the command, with the reason shown in its permission prompt.
+  public static func opencodeAsk(_ reason: String) -> String {
+    encode(["ask": reason])
   }
 
   private static func encode(_ object: [String: Any]) -> String {

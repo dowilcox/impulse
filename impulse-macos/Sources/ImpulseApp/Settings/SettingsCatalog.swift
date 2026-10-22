@@ -283,7 +283,7 @@ enum SettingsCatalog {
     toggle(
       "agent_hook_merge_guard", "Ask before an agent merges a branch still being worked on", \.agentHookMergeGuard,
       .terminal, "Agents",
-      detail: "When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files. opencode can't ask you from a plugin: the command is stopped once, telling it to ask, and goes ahead when it runs again."),
+      detail: "When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files. Claude Code and opencode ask you, with the reason, before running it."),
     toggle(
       "agent_hook_dependencies", "Tell agents when dependency files changed", \.agentHookDependencies, .terminal,
       "Agents", detail: "After an agent's git pull, merge or checkout brings in a changed lock file or Dockerfile."),

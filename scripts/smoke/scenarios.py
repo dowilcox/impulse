@@ -698,12 +698,14 @@ def check_agent_integration(run) -> None:
 
 
 # ---------------------------------------------------------------------------
-# opencode: Agent Integration installs Impulse's plugin, and adds the MCP
-# server to an opencode.json with comments (which stay). A stand-in opencode
-# (opencode-agent.mjs) loads that plugin and calls its hooks as opencode
-# does, so the states, the other tasks' summary, a note about a shared
-# file, the stopped merge and the session to resume all come from the real
-# plugin talking to the real app.
+# opencode: Agent Integration replaces the plugin and MCP entry an older
+# Impulse installed for opencode 1 with the plugin folder opencode 2 loads,
+# taking the MCP entry out of an opencode.json with comments (which stay).
+# A stand-in opencode (opencode-agent.mjs) loads that plugin's two halves as
+# opencode's service and a terminal would, and plays turns through them, so
+# the states, the other tasks' summary, a note about a shared file, the
+# merge it asks about, the shell's pane, Impulse's tools and the session to
+# resume all come from the real plugin talking to the real app.
 
 OPENCODE_CONFIG = HOME / ".config" / "opencode"
 OPENCODE_OUT = HOME / "opencode"
@@ -715,10 +717,20 @@ OPENCODE_JSON = """{
   },
 }
 """
+# What an older Impulse added for opencode 1.
+OPENCODE_OLD_ENTRY = """    "impulse": {
+      "type": "local",
+      "command": ["sh", "-c", "exec \\"${IMPULSE_CLI:-/Applications/Impulse.app/Contents/Resources/bin/impulse}\\" mcp"]
+    },
+"""
+OPENCODE_OLD_PLUGIN = "// Impulse's opencode plugin, installed by Impulse's Agent Integration.\nexport const ImpulsePlugin = async () => ({})\n"
+OPENCODE_PLUGIN_SOURCE = (Path(__file__).resolve().parents[2] / "impulse-macos" / "Sources" / "ImpulseKit"
+                          / "Resources" / "Agents" / "opencode-plugin")
 
 
 def setup_opencode() -> None:
-    write(OPENCODE_CONFIG / "opencode.json", OPENCODE_JSON)
+    write(OPENCODE_CONFIG / "opencode.json", OPENCODE_JSON.replace("  },\n}", OPENCODE_OLD_ENTRY + "  },\n}"))
+    write(OPENCODE_CONFIG / "plugins" / "impulse.js", OPENCODE_OLD_PLUGIN)
     stand_in = HOME / "bin" / "opencode"
     write(stand_in, (Path(__file__).parent / "opencode-agent.mjs").read_text())
     stand_in.chmod(0o755)
@@ -727,34 +739,34 @@ def setup_opencode() -> None:
 OPENCODE_ACTIONS = [
     "agent-sheet=hooks:opencode", "sleep=1", "dump=oc-hooks-preview", "agent-sheet-apply", "sleep=1",
     "agent-sheet=mcp:opencode", "sleep=1", "dump=oc-mcp-preview", "agent-sheet-apply", "sleep=1",
-    "agent-sheet=mcp:opencode", "sleep=1", "dump=oc-mcp-installed", "agent-sheet-close", "sleep=1",
+    "agent-sheet=mcp:opencode", "sleep=1", "dump=oc-mcp-removed", "agent-sheet-close", "sleep=1",
     "until=prompt", "run=opencode waiting", "until=30:agent:needsInput", "dump=oc-waiting",
     "newtab", "until=prompt", "run=opencode turn", "until=40:agent:done", "sleep=1", "dump=oc-turn",
-    "newtab", "until=prompt", "run=opencode merge", f"until=40:file:{OPENCODE_OUT / 'merge.json'}",
-    "until=20:agent:done", "dump=oc-merge",
+    "newtab", "until=prompt", "run=opencode merge", "until=30:agent:needsInput", "dump=oc-merge-asked",
+    f"until=40:file:{OPENCODE_OUT / 'merge.json'}", "until=20:agent:done", "dump=oc-merge",
 ]
 
 
 def check_opencode(run) -> None:
     hooks = run.dump("oc-hooks-preview").get("agentSheet") or {}
-    run.expect(hooks.get("agent") == "opencode" and not hooks.get("installed")
-               and hooks.get("path", "").endswith("/.config/opencode/plugins/impulse.js"),
-               "the sheet offers opencode's plugin, not installed", hooks)
-    shipped = (Path(__file__).resolve().parents[2] / "impulse-macos" / "Sources" / "ImpulseKit" / "Resources"
-               / "Agents" / "opencode-plugin.js").read_text()
-    plugin = OPENCODE_CONFIG / "plugins" / "impulse.js"
-    run.expect(plugin.exists() and plugin.read_text() == shipped, "Install writes Impulse's plugin as shipped")
+    run.expect(hooks.get("agent") == "opencode" and hooks.get("outdated")
+               and hooks.get("path", "").endswith("/.config/opencode/plugins/impulse"),
+               "the sheet offers opencode's plugin folder, over opencode 1's file", hooks)
+    run.expect("older Impulse added" in (hooks.get("notice") or ""),
+               "it points out the MCP entry opencode 1 used", hooks.get("notice"))
+    folder = OPENCODE_CONFIG / "plugins" / "impulse"
+    for name in ("rpc.js", "server.js", "tui.js"):
+        run.expect((folder / name).exists() and (folder / name).read_text() == (OPENCODE_PLUGIN_SOURCE / name).read_text(),
+                   f"Install writes the plugin's {name} as shipped")
+    run.expect(not (OPENCODE_CONFIG / "plugins" / "impulse.js").exists(), "and removes opencode 1's single file")
     mcp = run.dump("oc-mcp-preview").get("agentSheet") or {}
-    run.expect(any(line.startswith("+ ") and '"impulse": {' in line for line in mcp.get("diff", [])),
-               "the MCP preview adds an impulse entry", mcp.get("diff"))
+    run.expect(mcp.get("installed") and any(line.startswith("- ") and '"impulse": {' in line for line in mcp.get("diff", [])),
+               "the MCP side offers to take out the old entry", mcp.get("diff"))
     config = (OPENCODE_CONFIG / "opencode.json").read_text()
-    run.expect(config.startswith(OPENCODE_JSON.split('    "docs"')[0])
-               and '"docs": { "type": "remote", "url": "https://docs.example.com/mcp" },' in config,
-               "the file's comments, servers and trailing commas stay", config)
-    run.expect('"command": ["sh", "-c", "exec \\"${IMPULSE_CLI:-' in config and "/Contents/Resources/bin/impulse" in config,
-               "the entry starts the pane's impulse mcp, falling back to the app's", config)
-    installed = run.dump("oc-mcp-installed").get("agentSheet") or {}
-    run.expect(installed.get("installed") is True, "reopened, the sheet says the server is installed", installed)
+    run.expect(config == OPENCODE_JSON, "only the old entry goes: comments, servers and trailing commas stay", config)
+    removed = run.dump("oc-mcp-removed").get("agentSheet") or {}
+    run.expect(removed.get("installed") is False and "install it under Hooks" in (removed.get("notice") or ""),
+               "reopened, the sheet says the tools come with the plugin", removed)
 
     def stand_in(dump: dict, mode: str) -> dict | None:
         return next((t for t in surfaces(dump, "terminal")
@@ -765,11 +777,11 @@ def check_opencode(run) -> None:
         return json.loads(file.read_text()) if file.exists() else {}
 
     for name, mode, state in (("oc-waiting", "waiting", "needsInput"), ("oc-turn", "turn", "done"),
-                              ("oc-merge", "merge", "done")):
+                              ("oc-merge-asked", "merge", "needsInput"), ("oc-merge", "merge", "done")):
         found = stand_in(run.dump(name), mode)
-        if run.expect(found is not None and found["agent"] == "opencode", f"it's recognized as opencode ({mode})",
+        if run.expect(found is not None and found["agent"] == "opencode", f"it's recognized as opencode ({name})",
                       found and found["agent"]):
-            run.expect(found["agentState"] == state, f"its plugin reports {state} ({mode})", found["agentState"])
+            run.expect(found["agentState"] == state, f"its plugin reports {state} ({name})", found["agentState"])
     turn = stand_in(run.dump("oc-turn"), "turn") or {}
     run.expect(turn.get("resume") == "opencode --session ses_smoketurn", "the session to resume comes from the plugin",
                turn.get("resume"))
@@ -779,9 +791,16 @@ def check_opencode(run) -> None:
     edit = output("turn").get("editOutput", "")
     run.expect("src/photos.ts is also changed in the task add-trail-photos" in edit,
                "an edit of a file a task also changes gets a note after the tool's output", edit)
-    attempts = output("merge").get("attempts", [])
-    run.expect(len(attempts) == 2 and attempts[0].startswith("Impulse stopped this command: add-trail-photos")
-               and attempts[1] == "ran", "a merge of a busy task's branch is stopped once, then goes ahead", attempts)
+    run.expect("list_tasks" in output("turn").get("tools", []), "Impulse's tools come with the plugin",
+               output("turn").get("tools"))
+    tasks = output("turn").get("listTasks") or ""
+    run.expect("add-trail-photos" in tasks, "a tool call runs in the session's own pane", tasks)
+    merge = output("merge")
+    asked = merge.get("asked", [])
+    run.expect(len(asked) == 1 and "add-trail-photos" in asked[0],
+               "a merge of a busy task's branch is asked about, with Impulse's reason", asked)
+    run.expect(merge.get("shellIsThisPane") is True,
+               "the command's shell gets its own pane's identity, not the service's", merge)
 
 
 # ---------------------------------------------------------------------------
@@ -937,8 +956,9 @@ SCENARIOS = [
     {"name": "agent-integration", "about": "Agent Integration installs the MCP server for Codex and Claude Code",
      "session": ONE, "actions": AGENT_INTEGRATION_ACTIONS,
      "check": check_agent_integration},
-    {"name": "opencode", "about": "Agent Integration installs opencode's plugin and MCP server; the plugin drives "
-                                  "states, the summary, notes, the merge stop and resume",
+    {"name": "opencode", "about": "Agent Integration replaces opencode 1's plugin and MCP entry with opencode 2's "
+                                  "plugin folder, which drives states, the summary, notes, the merge question, "
+                                  "shells' pane, Impulse's tools and resume",
      "session": ONE, "setup": setup_opencode, "actions": OPENCODE_ACTIONS, "check": check_opencode},
     {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet, "
                              "an agent finishing its own task",

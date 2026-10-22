@@ -283,36 +283,12 @@
       #expect(again.components(separatedBy: "[mcp_servers.impulse]").count == 2)
     }
 
-    private func opencodeEntry(_ text: String) -> [String: Any]? {
-      // What opencode reads: JSONC, so comments and trailing commas go first.
-      let bytes = Array(text.utf8)
-      return ((JSONCEdit.value(bytes, 0, bytes.count) as? [String: Any])?["mcp"] as? [String: Any])?["impulse"]
-        as? [String: Any]
+    /// What an older Impulse added under `mcp` (for opencode 1).
+    private func oldEntry(_ cli: String) -> String {
+      #"{ "type": "local", "command": ["sh", "-c", "exec \"${IMPULSE_CLI:-"# + cli + #"}\" mcp"] }"#
     }
 
-    @Test func opencodeConfigGetsAnEntryUnderMCP() throws {
-      let fresh = try AgentMCPInstaller.installingOpencodeMCP(into: nil, fallbackCLI: cli).get()
-      #expect(
-        fresh == """
-          {
-            "$schema": "https://opencode.ai/config.json",
-            "mcp": {
-              "impulse": {
-                "type": "local",
-                "command": ["sh", "-c", "exec \\"${IMPULSE_CLI:-\(cli)}\\" mcp"]
-              }
-            }
-          }
-
-          """)
-      #expect(AgentMCPInstaller.opencodeStatus(fresh, fallbackCLI: cli) == .installed)
-      #expect(AgentMCPInstaller.opencodeStatus(fresh, fallbackCLI: "/elsewhere") == .outdated)
-      #expect(AgentMCPInstaller.opencodeStatus(nil, fallbackCLI: cli) == .notInstalled)
-      #expect(opencodeEntry(fresh)?["command"] as? [String] == ["sh", "-c", AgentMCPInstaller.launcher(fallbackCLI: cli)])
-      #expect(AgentMCPInstaller.removingOpencodeMCP(from: fresh) == "{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n")
-    }
-
-    @Test func opencodeConfigKeepsCommentsAndEverythingElse() throws {
+    @Test func opencodeConfigLosesTheOldEntryAndNothingElse() throws {
       let original = """
         {
           // Shared with the desktop app.
@@ -328,82 +304,34 @@
         }
 
         """
-      let installed = try AgentMCPInstaller.installingOpencodeMCP(into: original, fallbackCLI: cli).get()
-      #expect(AgentMCPInstaller.opencodeStatus(installed, fallbackCLI: cli) == .installed)
-      #expect(opencodeEntry(installed)?["type"] as? String == "local")
-      // Lines added after the last server, indented like it, in the file's
-      // trailing-comma style; nothing else touched.
-      let added = """
-            "impulse": {
-              "type": "local",
-              "command": ["sh", "-c", "exec \\"${IMPULSE_CLI:-\(cli)}\\" mcp"]
-            },
-
-        """
-      #expect(installed == original.replacingOccurrences(of: "    },\n  },\n}", with: "    },\n" + added + "  },\n}"))
-      #expect(AgentMCPInstaller.removingOpencodeMCP(from: installed) == original)
+      #expect(!AgentMCPInstaller.opencodeHasOldEntry(original))
+      #expect(AgentMCPInstaller.removingOpencodeMCP(from: original) == nil)
+      let withEntry = original.replacingOccurrences(
+        of: "    },\n  },\n}", with: "    },\n    \"impulse\": " + oldEntry("/Old/impulse") + ",\n  },\n}")
+      #expect(AgentMCPInstaller.opencodeHasOldEntry(withEntry), "any fallback path")
+      #expect(AgentMCPInstaller.removingOpencodeMCP(from: withEntry) == original)
     }
 
-    @Test func opencodeConfigWithoutMCPRoundTrips() throws {
-      for original in [
-        "{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n",
-        "{\n\t\"theme\": \"opencode\",\n\t\"autoupdate\": false\n}",
-        "{}\n",
-        "{\n  // nothing yet\n}\n",
-      ] {
-        let installed = try AgentMCPInstaller.installingOpencodeMCP(into: original, fallbackCLI: cli).get()
-        #expect(AgentMCPInstaller.opencodeStatus(installed, fallbackCLI: cli) == .installed, "\(original)")
-        #expect(opencodeEntry(installed) != nil, "\(installed)")
-        if original.contains("\"") {
-          #expect(AgentMCPInstaller.removingOpencodeMCP(from: installed) == original, "\(installed)")
-        } else {
-          #expect(AgentMCPInstaller.opencodeStatus(AgentMCPInstaller.removingOpencodeMCP(from: installed), fallbackCLI: cli) == .notInstalled)
-        }
-      }
-      let tabs = try AgentMCPInstaller.installingOpencodeMCP(
-        into: "{\n\t\"theme\": \"opencode\"\n}", fallbackCLI: cli
-      ).get()
-      #expect(tabs.contains("\n\t\"mcp\": {\n\t\t\"impulse\": {\n\t\t\t\"type\": \"local\""), "the file's own indent")
+    @Test func opencodeConfigWithOnlyTheOldEntryKeepsTheRest() throws {
+      let fresh = "{\n  \"$schema\": \"https://opencode.ai/config.json\",\n  \"mcp\": {\n    \"impulse\": " + oldEntry(cli)
+        + "\n  }\n}\n"
+      #expect(AgentMCPInstaller.opencodeHasOldEntry(fresh))
+      #expect(AgentMCPInstaller.removingOpencodeMCP(from: fresh) == "{\n  \"$schema\": \"https://opencode.ai/config.json\"\n}\n")
+      let oneLine = #"{"theme": "opencode", "mcp": {"impulse": "# + oldEntry(cli) + "}}"
+      let removed = try #require(AgentMCPInstaller.removingOpencodeMCP(from: oneLine))
+      #expect((try? JSONSerialization.jsonObject(with: Data(removed.utf8))) != nil, "plain JSON still: \(removed)")
+      #expect(!AgentMCPInstaller.opencodeHasOldEntry(removed))
     }
 
-    @Test func opencodeConfigOnOneLineStaysValid() throws {
-      for original in ["{\"theme\": \"opencode\"}", "{\"mcp\": {\"docs\": {\"type\": \"remote\", \"url\": \"x\"}}}"] {
-        let installed = try AgentMCPInstaller.installingOpencodeMCP(into: original, fallbackCLI: cli).get()
-        #expect((try? JSONSerialization.jsonObject(with: Data(installed.utf8))) != nil, "plain JSON still: \(installed)")
-        #expect(AgentMCPInstaller.opencodeStatus(installed, fallbackCLI: cli) == .installed, "\(installed)")
-        let removed = try #require(AgentMCPInstaller.removingOpencodeMCP(from: installed))
-        #expect(AgentMCPInstaller.opencodeStatus(removed, fallbackCLI: cli) == .notInstalled, "\(removed)")
-      }
-    }
-
-    @Test func opencodeConfigEntryIsReplacedOnlyWhenItsImpulses() throws {
-      let older = try AgentMCPInstaller.installingOpencodeMCP(into: nil, fallbackCLI: "/Old/impulse").get()
-      #expect(AgentMCPInstaller.opencodeStatus(older, fallbackCLI: cli) == .outdated)
-      let updated = try AgentMCPInstaller.installingOpencodeMCP(into: older, fallbackCLI: cli).get()
-      #expect(AgentMCPInstaller.opencodeStatus(updated, fallbackCLI: cli) == .installed)
-      #expect(updated.components(separatedBy: "\"impulse\"").count == 2, "replaced, not added again")
-
+    @Test func opencodeConfigKeepsSomeoneElsesImpulseServer() {
       let theirs = "{\n  \"mcp\": {\n    \"impulse\": { \"type\": \"remote\", \"url\": \"https://impulse.example\" }\n  }\n}\n"
-      #expect(AgentMCPInstaller.opencodeStatus(theirs, fallbackCLI: cli) == .outdated)
-      #expect((try? AgentMCPInstaller.installingOpencodeMCP(into: theirs, fallbackCLI: cli).get()) == nil)
+      #expect(!AgentMCPInstaller.opencodeHasOldEntry(theirs))
       #expect(AgentMCPInstaller.removingOpencodeMCP(from: theirs) == nil)
-    }
-
-    @Test func opencodeConfigItCantFollowIsRefusedWithTheSnippet() {
-      for broken in [
-        "{ \"mcp\": { \"a\": 1 }", "[1, 2]", "{ \"mcp\": [] }", "{ /* unterminated }", "{ \"a\": 1 } trailing",
-        "{ \"a\": tru e }",
-      ] {
-        #expect(AgentMCPInstaller.opencodeStatus(broken, fallbackCLI: cli) == .notInstalled, "\(broken)")
-        guard case .failure(.unreadable(let message)) = AgentMCPInstaller.installingOpencodeMCP(into: broken, fallbackCLI: cli)
-        else {
-          Issue.record("\(broken) was edited")
-          continue
-        }
-        #expect(message.contains(AgentMCPInstaller.opencodeSnippet(fallbackCLI: cli)))
+      for broken in ["{ \"mcp\": { \"a\": 1 }", "[1, 2]", "{ \"mcp\": [] }", "{ /* unterminated }", "{ \"a\": tru e }"] {
+        #expect(!AgentMCPInstaller.opencodeHasOldEntry(broken), "\(broken)")
+        #expect(AgentMCPInstaller.removingOpencodeMCP(from: broken) == nil, "\(broken)")
       }
-      let snippet = AgentMCPInstaller.opencodeSnippet(fallbackCLI: cli)
-      #expect(opencodeEntry(snippet)?["type"] as? String == "local", "the snippet is valid JSON itself")
+      #expect(!AgentMCPInstaller.opencodeHasOldEntry(nil))
     }
 
     @Test func opencodeConfigLivesWhereOpencodeLooks() {

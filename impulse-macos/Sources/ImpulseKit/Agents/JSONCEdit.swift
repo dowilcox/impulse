@@ -1,8 +1,7 @@
-// Setting or removing one member of an object in a JSONC file (JSON with
-// comments and trailing commas, as opencode reads its config) without
-// rewriting the rest: the user's comments, key order and formatting stay
-// byte for byte. Text that isn't JSONC this can follow is refused rather
-// than guessed at.
+// Removing one member of an object in a JSONC file (JSON with comments
+// and trailing commas, as opencode reads its config) without rewriting the
+// rest: the user's comments, key order and formatting stay byte for byte.
+// Text that isn't JSONC this can follow is refused rather than guessed at.
 
 import Foundation
 
@@ -174,49 +173,6 @@ enum JSONCEdit {
 
   // MARK: Writing
 
-  /// One member as JSONC text: `"key": value`, the value's lines indented
-  /// from `indent` by `unit`. Values are strings, string arrays (on one
-  /// line) and objects with their keys in order.
-  static func format(_ key: String, _ value: Any, indent: String, unit: String) -> String {
-    "\(quoted(key)): \(format(value, indent: indent, unit: unit))"
-  }
-
-  static func format(_ value: Any, indent: String, unit: String) -> String {
-    switch value {
-    case let members as KeyValuePairs<String, Any>:
-      let inner = indent + unit
-      let lines = members.map { inner + format($0.key, $0.value, indent: inner, unit: unit) }
-      return "{\n" + lines.joined(separator: ",\n") + "\n" + indent + "}"
-    case let strings as [String]:
-      return "[" + strings.map(quoted).joined(separator: ", ") + "]"
-    case let string as String:
-      return quoted(string)
-    default:
-      return "null"
-    }
-  }
-
-  private static func quoted(_ string: String) -> String {
-    (try? JSONSerialization.data(withJSONObject: string, options: [.fragmentsAllowed, .withoutEscapingSlashes]))
-      .map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
-  }
-
-  /// The file's indent step: the first indented line's leading whitespace
-  /// (two spaces when nothing is indented yet).
-  static func indentUnit(_ bytes: [UInt8]) -> String {
-    var index = 0
-    while index < bytes.count {
-      var end = index
-      while end < bytes.count, bytes[end] == 0x20 || bytes[end] == 0x09 { end += 1 }
-      if end > index, end < bytes.count, bytes[end] == UInt8(ascii: "\"") {
-        return String(decoding: bytes[index..<end], as: UTF8.self)
-      }
-      while end < bytes.count, bytes[end] != 0x0A { end += 1 }
-      index = end + 1
-    }
-    return "  "
-  }
-
   /// The leading whitespace of the line holding `offset`, and whether only
   /// whitespace comes before `offset` on it.
   static func lineIndent(_ bytes: [UInt8], _ offset: Int) -> (indent: String, first: Bool) {
@@ -225,16 +181,6 @@ enum JSONCEdit {
     var end = start
     while end < offset, bytes[end] == 0x20 || bytes[end] == 0x09 { end += 1 }
     return (String(decoding: bytes[start..<end], as: UTF8.self), end == offset)
-  }
-
-  /// The indent for a member of `object`: its members', else one step in
-  /// from the line it opens on.
-  static func memberIndent(_ bytes: [UInt8], _ object: Object, unit: String) -> String {
-    if let last = object.members.last {
-      let line = lineIndent(bytes, last.keyStart)
-      if line.first { return line.indent }
-    }
-    return lineIndent(bytes, object.open).indent + unit
   }
 
   /// A change: replace `range` with `text`. Apply from the end backwards.
@@ -246,34 +192,6 @@ enum JSONCEdit {
       result.replaceSubrange(change.range, with: Array(change.text.utf8))
     }
     return result
-  }
-
-  /// Add `member` (formatted with `memberText(indent)`) as the last member
-  /// of `object`.
-  static func inserting(
-    into object: Object, _ bytes: [UInt8], unit: String, memberText: (String) -> String
-  ) -> [Change] {
-    let indent = memberIndent(bytes, object, unit: unit)
-    guard let last = object.members.last else {
-      let closeIndent = lineIndent(bytes, object.open).indent
-      let inside = object.open + 1..<object.close
-      if bytes[inside].allSatisfy({ [0x20, 0x09, 0x0A, 0x0D].contains($0) }) {
-        return [(inside, "\n" + indent + memberText(indent) + "\n" + closeIndent)]
-      }
-      // Only comments inside: they stay after the new member.
-      return [(inside.lowerBound..<inside.lowerBound, "\n" + indent + memberText(indent))]
-    }
-    // After the last thing before the closing brace (a comment, perhaps),
-    // keeping a trailing comma's style.
-    var end = object.close
-    while end > object.open + 1, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[end - 1]) { end -= 1 }
-    let member = "\n" + indent + memberText(indent)
-    guard last.comma == nil else { return [(end..<end, member + ",")] }
-    // The last member gets a separator: in the same change when nothing
-    // comes between it and the new one (an object on one line), since two
-    // changes at one offset could go in either order.
-    if end == last.valueEnd { return [(end..<end, "," + member)] }
-    return [(end..<end, member), (last.valueEnd..<last.valueEnd, ",")]
   }
 
   /// Take `member` out of `object`: its lines when it has them to itself,

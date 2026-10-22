@@ -659,6 +659,7 @@ extension MainWindowController {
         return [
           "part": model.part.rawValue, "agent": model.agent.rawValue, "installed": model.installed,
           "outdated": model.outdated, "path": model.path, "diff": model.diff, "error": model.error ?? NSNull(),
+          "notice": model.notice ?? NSNull(),
         ]
       } ?? NSNull(),
       "taskSheet": DebugSnapshot.taskSheet.map { sheet -> [String: Any] in

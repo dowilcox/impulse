@@ -21,15 +21,18 @@ public enum AgentHookEvents {
     }
     guard agent == "opencode" else { return nil }
     switch event {
-    // The plugin loaded: opencode started.
+    // The plugin loaded in the terminal: opencode started.
     case "start": return .sessionStarted
-    case "chat.message": return .promptSubmitted
+    case "session.execution.started": return .promptSubmitted
     case "permission.asked": return .notification("opencode needs your permission to use \(tool ?? "a tool")")
-    case "question.asked": return .notification("opencode has a question for you")
+    // opencode's question tool asks with a form.
+    case "form.created": return .notification("opencode has a question for you")
     case "tool.execute.after": return .usedTool(tool)
     // Answered (or dismissed): back to work, or to the turn's end.
-    case "permission.replied", "question.replied", "question.rejected": return .usedTool(nil)
-    case "session.idle": return .stopped
+    case "permission.replied", "form.replied", "form.cancelled": return .usedTool(nil)
+    // An interrupted turn ends like any other.
+    case "session.execution.succeeded", "session.execution.interrupted": return .stopped
+    case "session.execution.failed": return .failed(message ?? "")
     default: return nil
     }
   }
@@ -56,14 +59,14 @@ public enum AgentHookEvents {
     case ("claude", "PreToolUse", "Bash"?): return .beforeShell
     case ("opencode", "session.start", _): return .sessionSummary
     case ("opencode", "tool.execute.after", let tool?) where opencodeEditTools.contains(tool): return .editedFile
-    case ("opencode", "tool.execute.after", "bash"?): return .ranShell
-    case ("opencode", "tool.execute.before", "bash"?): return .beforeShell
+    case ("opencode", "tool.execute.after", "shell"?): return .ranShell
+    case ("opencode", "tool.execute.before", "shell"?): return .beforeShell
     default: return nil
     }
   }
 
   static let claudeEditTools: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
-  /// opencode's tools that edit files (the plugin reports each file an
-  /// apply_patch changes).
-  static let opencodeEditTools: Set<String> = ["edit", "write", "multiedit", "apply_patch"]
+  /// opencode's tools that edit files (the plugin reports each file a
+  /// patch changes).
+  static let opencodeEditTools: Set<String> = ["edit", "write", "patch"]
 }

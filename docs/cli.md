@@ -334,18 +334,19 @@ What the hooks installed by **Install Agent Hooks…** run; you don't normally c
 
 For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), and a question before a merge (`PreToolUse`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).
 
-Impulse's opencode plugin names opencode's own events, and reads Impulse's answer as JSON: `{"context": "…"}` to add to the agent's context, `{"block": "…"}` to stop the command with that reason.
+Impulse's opencode plugin runs it from the terminal opencode is in, names opencode's own events, and reads Impulse's answer as JSON: `{"context": "…"}` to add to the agent's context, `{"ask": "…"}` to have opencode ask you before the command, with that reason.
 
-| opencode event                                                | Effect on the pane's agent                                          | Impulse answers                                                                  |
-| ------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `start` (opencode loaded the plugin)                          | **Idle**                                                            |                                                                                  |
-| `session.start` (the first prompt of a session in this run)   | No change                                                           | The other tasks' summary, kept beside opencode's instructions for the session    |
-| `chat.message` (a prompt)                                     | **Working**                                                         |                                                                                  |
-| `permission.asked`, `question.asked`                          | **Needs your input**                                                |                                                                                  |
-| `permission.replied`, `question.replied`, `question.rejected` | **Working**                                                         |                                                                                  |
-| `tool.execute.before` (shell commands)                        | No change                                                           | A stop, once, before a merge of a branch a task is still on                      |
-| `tool.execute.after` (edits and shell commands)               | **Working**, when it's the tool a permission request was waiting on | Notes about shared files and changed dependencies, added after the tool's output |
-| `session.idle` (not a subagent's)                             | **Finished**                                                        |                                                                                  |
+| opencode event                                                                    | Effect on the pane's agent                                          | Impulse answers                                                                  |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `start` (a terminal loaded the plugin)                                            | **Idle**                                                            |                                                                                  |
+| `session.start` (a session's first request in this run)                           | No change                                                           | The other tasks' summary, kept beside opencode's instructions for the session    |
+| `session.execution.started` (a prompt)                                            | **Working**                                                         |                                                                                  |
+| `permission.asked`, `form.created` (a question)                                   | **Needs your input**                                                |                                                                                  |
+| `permission.replied`, `form.replied`, `form.cancelled`                            | **Working**                                                         |                                                                                  |
+| `tool.execute.before` (shell commands)                                            | No change                                                           | A question before a merge of a branch a task is still on                         |
+| `tool.execute.after` (edits and shell commands)                                   | **Working**, when it's the tool a permission request was waiting on | Notes about shared files and changed dependencies, added after the tool's output |
+| `session.execution.succeeded`, `session.execution.interrupted` (not a subagent's) | **Finished**                                                        |                                                                                  |
+| `session.execution.failed` (not a subagent's)                                     | **Finished**, with the error in the notification                    |                                                                                  |
 
 Outside an Impulse terminal, or when Impulse isn't running, `impulse hook` does nothing and exits with status 0, so the hooks never get in the agent's way. See [Agents](agents.md#agent-hooks).
 

@@ -7,8 +7,8 @@ import ImpulseProtocol
 // `impulse tasks` command and Impulse's hooks for Claude Code and opencode
 // tell it about the repository's other workspaces: a summary when it
 // starts, a note when it edits a file another workspace changes, a question
-// before it merges a branch a task is still working on (opencode can only
-// be stopped, once), and dependency files that changed under it.
+// before it merges a branch a task is still working on, and dependency
+// files that changed under it.
 
 extension MainWindowController {
   // MARK: The listing
@@ -237,14 +237,9 @@ extension MainWindowController {
       guard settings.agentHookMergeGuard, let command = args["toolCommand"] else { return completion(nil) }
       let refs = GitCommandInspector.mergedRefs(in: command)
       guard !refs.isEmpty else { return completion(nil) }
-      // opencode's plugin can't ask you, only stop the command: once, so
-      // the agent asks, then the same command again goes ahead.
-      if opencode, terminal.stoppedMerges.remove(command) != nil { return completion(nil) }
       mergeGuard(refs: refs, cwd: cwd) { reason in
         guard let reason else { return completion(nil) }
-        guard opencode else { return completion(AgentHookReply.ask(reason)) }
-        terminal.stoppedMerges.insert(command)
-        completion(AgentHookReply.opencodeStop(reason))
+        completion(opencode ? AgentHookReply.opencodeAsk(reason) : AgentHookReply.ask(reason))
       }
 
     default:

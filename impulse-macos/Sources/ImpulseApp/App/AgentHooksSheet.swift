@@ -62,6 +62,12 @@ final class AgentHooksModel {
   /// The file changed after the preview was made, which now shows the
   /// new content.
   private(set) var refreshed = false
+  /// Something to know about this change, shown above the preview.
+  private(set) var notice: String?
+  /// opencode's plugin: what's in its plugins folder, and the files to
+  /// write (nil when removing).
+  @ObservationIgnored private var opencodePlugin = AgentHookInstaller.OpencodePlugin()
+  @ObservationIgnored private var opencodeFiles: [String: String]?
 
   init(projectRoot: String?, mainCheckout: String? = nil, fallbackCLI: String = AgentMCPInstaller.defaultCLI) {
     self.projectRoot = projectRoot
@@ -86,14 +92,41 @@ final class AgentHooksModel {
   /// What the sheet installs, in its messages.
   var what: String { part == .hooks ? "hooks" : "MCP server" }
 
-  /// opencode's hooks are a plugin file of Impulse's own: Remove deletes it.
-  private var removesFile: Bool { part == .hooks && agent == .opencode && installed }
+  /// opencode's hooks are a plugin folder of Impulse's own, written and
+  /// removed file by file.
+  private var writesOpencodePlugin: Bool { part == .hooks && agent == .opencode }
 
   private static var opencodeDirectory: String {
     AgentMCPInstaller.opencodeConfigDirectory(environment: ProcessInfo.processInfo.environment, home: NSHomeDirectory())
   }
 
+  private static var opencodePlugins: String { opencodeDirectory + "/plugins" }
+
+  /// What's in opencode's plugins folder now: Impulse's folder and the
+  /// older single-file plugin.
+  private static func readOpencodePlugin() -> AgentHookInstaller.OpencodePlugin {
+    let folder = opencodePlugins + "/" + AgentHookInstaller.opencodePluginFolder
+    var files: [String: String] = [:]
+    for name in (try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [] {
+      var directory: ObjCBool = false
+      let path = folder + "/" + name
+      guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), !directory.boolValue,
+        let data = FileManager.default.contents(atPath: path)
+      else { continue }
+      files[name] = String(decoding: data, as: UTF8.self)
+    }
+    let legacy = FileManager.default.contents(atPath: opencodePlugins + "/" + AgentHookInstaller.opencodeLegacyPluginName)
+    return AgentHookInstaller.OpencodePlugin(files: files, legacy: legacy.map { String(decoding: $0, as: UTF8.self) })
+  }
+
+  /// The bytes the preview was made from, to tell whether they changed.
+  private func current() -> Data? {
+    guard writesOpencodePlugin else { return FileManager.default.contents(atPath: path) }
+    return Data(AgentHookInstaller.opencodePluginText(Self.readOpencodePlugin()).utf8)
+  }
+
   func reload() {
+    notice = nil
     // Other agents only have the MCP entry to copy.
     if part == .mcp || agent == .other { return reloadMCP() }
     let home = NSHomeDirectory()
@@ -104,7 +137,7 @@ final class AgentHooksModel {
         ? (projectRoot! as NSString).appendingPathComponent(".claude/settings.local.json")
         : home + "/.claude/settings.json"
     case .opencode:
-      path = Self.opencodeDirectory + "/plugins/" + AgentHookInstaller.opencodePluginName
+      return reloadOpencodePlugin()
     case .codex, .other:
       path = home + "/.codex/config.toml"
     }
@@ -126,17 +159,7 @@ final class AgentHooksModel {
       case .failure(let failure): fail(failure)
       }
     case .opencode:
-      let status = AgentHookInstaller.opencodePluginStatus(data == nil ? nil : before)
-      installed = status == .installed
-      outdated = status == .outdated
-      if installed {
-        after = ""
-      } else {
-        switch AgentHookInstaller.installingOpencodePlugin(over: data == nil ? nil : before) {
-        case .success(let text): after = text
-        case .failure(let failure): fail(failure)
-        }
-      }
+      break
     case .codex, .other:
       installed = AgentHookInstaller.codexNotifyInstalled(before)
       outdated = false
@@ -150,6 +173,38 @@ final class AgentHooksModel {
         case .failure(let failure): fail(failure)
         }
       }
+    }
+  }
+
+  /// opencode's hooks: Impulse's plugin folder (replacing the single file
+  /// older Impulses installed for opencode 1).
+  private func reloadOpencodePlugin() {
+    path = Self.opencodePlugins + "/" + AgentHookInstaller.opencodePluginFolder
+    let found = Self.readOpencodePlugin()
+    opencodePlugin = found
+    before = AgentHookInstaller.opencodePluginText(found)
+    previewed = Data(before.utf8)
+    error = nil
+    refreshed = false
+    let status = AgentHookInstaller.opencodePluginStatus(found)
+    installed = status == .installed
+    outdated = status == .outdated
+    if installed {
+      opencodeFiles = nil
+      after = ""
+    } else {
+      switch AgentHookInstaller.installingOpencodePlugin(over: found) {
+      case .success(let files):
+        opencodeFiles = files
+        after = AgentHookInstaller.opencodePluginText(.init(files: files))
+      case .failure(let failure):
+        opencodeFiles = nil
+        fail(failure)
+      }
+    }
+    let config = FileManager.default.contents(atPath: AgentMCPInstaller.opencodeConfigFile(directory: Self.opencodeDirectory))
+    if AgentMCPInstaller.opencodeHasOldEntry(config.map { String(decoding: $0, as: UTF8.self) }) {
+      notice = "opencode's config still has the MCP server an older Impulse added. Remove it under MCP Server: the plugin gives opencode Impulse's tools now."
     }
   }
 
@@ -201,21 +256,22 @@ final class AgentHooksModel {
         }
       }
     case .opencode:
+      // opencode gets Impulse's tools from the plugin: all there is to do
+      // here is take out the MCP entry older Impulses added, which
+      // opencode's shared service would run for whichever terminal
+      // started it.
       path = AgentMCPInstaller.opencodeConfigFile(directory: Self.opencodeDirectory)
       let data = FileManager.default.contents(atPath: path)
       previewed = data
       before = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
-      let status = AgentMCPInstaller.opencodeStatus(data == nil ? nil : before, fallbackCLI: fallbackCLI)
-      installed = status == .installed
-      outdated = status == .outdated
+      installed = AgentMCPInstaller.opencodeHasOldEntry(data == nil ? nil : before)
       if installed {
         after = AgentMCPInstaller.removingOpencodeMCP(from: before)
-        if after == nil { error = "The \"impulse\" server isn't the one Impulse wrote; remove it from the file by hand." }
+        notice =
+          "opencode runs MCP servers in its background service, which every terminal shares, so this entry can't tell which terminal is asking. Impulse's plugin (under Hooks) gives opencode the same tools."
       } else {
-        switch AgentMCPInstaller.installingOpencodeMCP(into: data == nil ? nil : before, fallbackCLI: fallbackCLI) {
-        case .success(let text): after = text
-        case .failure(let failure): fail(failure)
-        }
+        after = nil
+        notice = "opencode gets Impulse's tools from Impulse's plugin: install it under Hooks."
       }
     case .other:
       path = ""
@@ -275,23 +331,22 @@ final class AgentHooksModel {
   /// made again from what's there now, and nothing is written.
   func apply() -> Outcome {
     guard let after else { return .failed(error ?? "Nothing to change.") }
-    guard FileManager.default.contents(atPath: path) == previewed else {
+    guard current() == previewed else {
       reload()
       refreshed = true
       return .changed
     }
     do {
-      if removesFile {
-        try FileManager.default.removeItem(atPath: path)
+      if writesOpencodePlugin {
+        try writeOpencodePlugin()
         return .written
       }
       try FileManager.default.createDirectory(
         atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
       // The agent's own config: write through a symlink (dotfile managers
-      // link these) rather than replacing it, and keep the previous version
-      // (not of Impulse's own plugin file).
+      // link these) rather than replacing it, and keep the previous version.
       let target = TextFile.target(of: path)
-      if FileManager.default.fileExists(atPath: target), !(part == .hooks && agent == .opencode) {
+      if FileManager.default.fileExists(atPath: target) {
         let backup = target + ".impulse-backup"
         try? FileManager.default.removeItem(atPath: backup)
         try FileManager.default.copyItem(atPath: target, toPath: backup)
@@ -300,6 +355,28 @@ final class AgentHooksModel {
       return .written
     } catch {
       return .failed(error.localizedDescription)
+    }
+  }
+
+  /// Install: Impulse's files written into its folder (older ones it no
+  /// longer has removed), and the single-file plugin removed. Remove: its
+  /// files, and the folder once empty. Only Impulse's files are touched.
+  private func writeOpencodePlugin() throws {
+    let manager = FileManager.default
+    let folder = path
+    let ours = opencodePlugin.files.filter { AgentHookInstaller.isOpencodePluginFile($0.value) }.keys
+    if let files = opencodeFiles {
+      try manager.createDirectory(atPath: folder, withIntermediateDirectories: true)
+      for (name, text) in files {
+        try Data(text.utf8).write(to: URL(fileURLWithPath: folder + "/" + name), options: .atomic)
+      }
+      for name in ours where files[name] == nil { try manager.removeItem(atPath: folder + "/" + name) }
+    } else {
+      for name in ours { try manager.removeItem(atPath: folder + "/" + name) }
+      if (try? manager.contentsOfDirectory(atPath: folder))?.isEmpty == true { try manager.removeItem(atPath: folder) }
+    }
+    if opencodePlugin.legacyIsImpulses {
+      try manager.removeItem(atPath: Self.opencodePlugins + "/" + AgentHookInstaller.opencodeLegacyPluginName)
     }
   }
 }
@@ -358,15 +435,22 @@ struct AgentHooksSheetView: View {
       }
 
       HStack(spacing: 6) {
-        StatusDot(color: model.installed ? chrome.success : model.outdated ? chrome.warning : chrome.textTertiary, size: 7)
+        // opencode's MCP side only ever has an old entry to take out.
+        let oldEntry = model.part == .mcp && model.agent == .opencode
+        StatusDot(
+          color: oldEntry
+            ? (model.installed ? chrome.warning : chrome.textTertiary)
+            : model.installed ? chrome.success : model.outdated ? chrome.warning : chrome.textTertiary, size: 7)
         Text(
           model.agent == .other
             ? "Add this to the agent's own MCP settings (each agent keeps them in its own file)"
-            : model.installed
-              ? "Installed"
-              : model.outdated
-                ? (model.part == .hooks ? "Out of date: install again to add the newer hooks" : "Out of date: install again to update it")
-                : "Not installed")
+            : oldEntry
+              ? (model.installed ? "An older Impulse's MCP server entry" : "No MCP server entry")
+              : model.installed
+                ? "Installed"
+                : model.outdated
+                  ? (model.part == .hooks ? "Out of date: install again to add the newer hooks" : "Out of date: install again to update it")
+                  : "Not installed")
           .font(ChromeFont.ui(11.5, weight: .medium))
           .foregroundStyle(chrome.textSecondary)
         Text(TabManager.abbreviateHomePath(model.path))
@@ -374,6 +458,16 @@ struct AgentHooksSheetView: View {
           .foregroundStyle(chrome.textTertiary)
           .lineLimit(1)
           .truncationMode(.middle)
+      }
+
+      if let notice = model.notice {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Icon(.info, size: 11).foregroundStyle(chrome.textSecondary)
+          Text(notice)
+            .font(ChromeFont.ui(11.5))
+            .foregroundStyle(chrome.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
       }
 
       if model.refreshed {

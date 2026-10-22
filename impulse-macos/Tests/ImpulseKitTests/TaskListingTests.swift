@@ -44,14 +44,13 @@
       let context = try JSONSerialization.jsonObject(with: Data(AgentHookReply.context("a \"note\"").utf8)) as? [String: Any]
       let output = context?["hookSpecificOutput"] as? [String: String]
       #expect(output == ["hookEventName": "PostToolUse", "additionalContext": "a \"note\""])
-      let ask = try JSONSerialization.jsonObject(with: Data(AgentHookReply.ask("still moving").utf8)) as? [String: Any]
-      #expect((ask?["hookSpecificOutput"] as? [String: String])?["permissionDecision"] == "ask")
+      let claudeAsk = try JSONSerialization.jsonObject(with: Data(AgentHookReply.ask("still moving").utf8)) as? [String: Any]
+      #expect((claudeAsk?["hookSpecificOutput"] as? [String: String])?["permissionDecision"] == "ask")
       // Impulse's opencode plugin reads plain keys.
       let note = try JSONSerialization.jsonObject(with: Data(AgentHookReply.opencodeContext("a note").utf8)) as? [String: String]
       #expect(note == ["context": "a note"])
-      let stop = try JSONSerialization.jsonObject(with: Data(AgentHookReply.opencodeStop("still moving").utf8)) as? [String: String]
-      #expect(stop?["block"]?.hasPrefix("Impulse stopped this command: still moving") == true)
-      #expect(stop?["block"]?.contains("run the same command again") == true)
+      let ask = try JSONSerialization.jsonObject(with: Data(AgentHookReply.opencodeAsk("still moving").utf8)) as? [String: String]
+      #expect(ask == ["ask": "still moving"], "opencode asks you, with Impulse's reason")
     }
   }
 #endif
