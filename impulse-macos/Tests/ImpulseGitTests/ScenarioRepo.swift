@@ -4,6 +4,7 @@
 
 import Foundation
 import ImpulseGit
+import ImpulseKit
 
 struct ScenarioRepo {
   /// Canonicalized (symlink-resolved) absolute path of the repo root.
@@ -57,20 +58,13 @@ struct ScenarioRepo {
     environment["GIT_COMMITTER_DATE"] = scenario.author.date
 
     func git(_ arguments: [String]) throws {
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
-      process.arguments = ["-C", root] + arguments
-      process.environment = environment
-      let pipe = Pipe()
-      process.standardOutput = pipe
-      process.standardError = pipe
-      try process.run()
-      process.waitUntilExit()
-      guard process.terminationStatus == 0 else {
-        let output =
-          String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      // Its pipes drained while git runs, so output can't fill one and hang.
+      let result = try ChildProcess.run(
+        GitCLI.gitPath() ?? "/usr/bin/git", ["-C", root] + arguments, environment: environment)
+      guard result.status == 0 else {
+        let output = String(decoding: result.stderr + result.stdout, as: UTF8.self)
         throw NSError(
-          domain: "ScenarioRepo", code: Int(process.terminationStatus),
+          domain: "ScenarioRepo", code: Int(result.status),
           userInfo: [NSLocalizedDescriptionKey: "git \(arguments) failed: \(output)"])
       }
     }

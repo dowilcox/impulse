@@ -5,6 +5,7 @@
 
 import Foundation
 import ImpulseGit
+import ImpulseKit
 
 struct TempRepo {
   /// Canonicalized (symlink-resolved) absolute path of the repo root.
@@ -51,35 +52,22 @@ struct TempRepo {
     try git(arguments)
   }
 
+  /// ChildProcess drains both pipes and writes `stdin` while git runs, so
+  /// no amount of output (or input) can fill a pipe and hang the test.
   @discardableResult
   func git(_ arguments: [String], stdin: String? = nil) throws -> String {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
-    process.arguments = ["-C", root] + arguments
-    process.environment = Self.environment
-    let out = Pipe()
-    let err = Pipe()
-    process.standardOutput = out
-    process.standardError = err
-    let input = Pipe()
-    process.standardInput = stdin == nil ? FileHandle.nullDevice : input
-    try process.run()
-    if let stdin {
-      input.fileHandleForWriting.write(Data(stdin.utf8))
-      try? input.fileHandleForWriting.close()
-    }
-    let outData = out.fileHandleForReading.readDataToEndOfFile()
-    let errData = err.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
+    let result = try ChildProcess.run(
+      GitCLI.gitPath() ?? "/usr/bin/git", ["-C", root] + arguments, environment: Self.environment,
+      stdin: stdin.map { Data($0.utf8) })
+    guard result.status == 0 else {
       throw NSError(
-        domain: "TempRepo", code: Int(process.terminationStatus),
+        domain: "TempRepo", code: Int(result.status),
         userInfo: [
           NSLocalizedDescriptionKey:
-            "git \(arguments) failed: \(String(decoding: errData, as: UTF8.self))"
+            "git \(arguments) failed: \(String(decoding: result.stderr, as: UTF8.self))"
         ])
     }
-    return String(decoding: outData, as: UTF8.self)
+    return String(decoding: result.stdout, as: UTF8.self)
       .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 

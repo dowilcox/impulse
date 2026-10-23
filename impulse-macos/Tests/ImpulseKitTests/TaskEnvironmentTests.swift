@@ -130,16 +130,10 @@
       let values = TaskEnvironment.values(config: config, task: task, slot: 1)
       let file = (folder as NSString).appendingPathComponent(".env")
       try TaskEnvironment.applying(values, to: "", comment: "Impulse task x").write(toFile: file, atomically: true, encoding: .utf8)
-      let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/bin/sh")
-      process.arguments = ["-c", #"set -a; . ./.env; printf '%s\n' "$NAME" "$DB" "$URL" "$DSN" "$QUOTE""#]
-      process.currentDirectoryURL = URL(fileURLWithPath: folder)
-      let output = Pipe()
-      process.standardOutput = output
-      try process.run()
-      process.waitUntilExit()
-      let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-      #expect(process.terminationStatus == 0)
+      let result = try ChildProcess.run(
+        "/bin/sh", ["-c", #"set -a; . ./.env; printf '%s\n' "$NAME" "$DB" "$URL" "$DSN" "$QUOTE""#], in: folder)
+      let printed = String(decoding: result.stdout, as: UTF8.self)
+      #expect(result.status == 0)
       #expect(
         printed
           == """

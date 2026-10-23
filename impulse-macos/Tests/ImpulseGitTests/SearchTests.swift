@@ -4,6 +4,7 @@
 // character-based columns.
 #if canImport(Testing)
   import Foundation
+  import ImpulseKit
   import Testing
 
   @testable import ImpulseGit
@@ -18,18 +19,10 @@
       try fm.createDirectory(at: root, withIntermediateDirectories: true)
 
       func run(_ args: [String]) throws {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
-        p.arguments = args
-        p.currentDirectoryURL = root
         var env = ProcessInfo.processInfo.environment
         env["GIT_CONFIG_GLOBAL"] = "/dev/null"
         env["GIT_CONFIG_SYSTEM"] = "/dev/null"
-        p.environment = env
-        p.standardOutput = Pipe()
-        p.standardError = Pipe()
-        try p.run()
-        p.waitUntilExit()
+        _ = try ChildProcess.run(GitCLI.gitPath() ?? "/usr/bin/git", args, in: root.path, environment: env)
       }
       func write(_ rel: String, _ content: String) throws {
         let url = root.appendingPathComponent(rel)
