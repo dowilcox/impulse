@@ -19,8 +19,8 @@
 
       func run(_ args: [String]) throws {
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["git"] + args
+        p.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+        p.arguments = args
         p.currentDirectoryURL = root
         var env = ProcessInfo.processInfo.environment
         env["GIT_CONFIG_GLOBAL"] = "/dev/null"

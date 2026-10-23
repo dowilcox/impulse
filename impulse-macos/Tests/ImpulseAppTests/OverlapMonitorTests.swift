@@ -23,8 +23,8 @@
     @discardableResult
     private func git(_ arguments: String..., in root: String) throws -> String {
       let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = ["git", "-C", root] + arguments
+      process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+      process.arguments = ["-C", root] + arguments
       process.environment = ProcessInfo.processInfo.environment.merging(Self.environment) { $1 }
       let out = Pipe()
       process.standardOutput = out

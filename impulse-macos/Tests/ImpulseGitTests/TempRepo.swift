@@ -4,6 +4,7 @@
 // also serves as the oracle for expected results.
 
 import Foundation
+import ImpulseGit
 
 struct TempRepo {
   /// Canonicalized (symlink-resolved) absolute path of the repo root.
@@ -53,8 +54,8 @@ struct TempRepo {
   @discardableResult
   func git(_ arguments: [String], stdin: String? = nil) throws -> String {
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["git", "-C", root] + arguments
+    process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+    process.arguments = ["-C", root] + arguments
     process.environment = Self.environment
     let out = Pipe()
     let err = Pipe()

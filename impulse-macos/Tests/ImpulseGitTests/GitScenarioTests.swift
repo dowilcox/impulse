@@ -26,8 +26,8 @@
 
     private func oracle(_ repo: TempRepo, at root: String? = nil) throws -> Oracle {
       let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = ["git", "-C", root ?? repo.root, "status", "--porcelain=v1", "-z", "--untracked-files=all"]
+      process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+      process.arguments = ["-C", root ?? repo.root, "status", "--porcelain=v1", "-z", "--untracked-files=all"]
       process.environment = TempRepo.environment
       let out = Pipe()
       process.standardOutput = out
@@ -291,8 +291,8 @@
       // New commit inside the submodule's checkout.
       let submodule = app.root + "/vendor/lib"
       let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = ["git", "-C", submodule, "commit", "-q", "--allow-empty", "-m", "bump"]
+      process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+      process.arguments = ["-C", submodule, "commit", "-q", "--allow-empty", "-m", "bump"]
       process.environment = TempRepo.environment
       try process.run()
       process.waitUntilExit()

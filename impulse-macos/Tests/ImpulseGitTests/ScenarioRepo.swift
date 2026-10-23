@@ -3,6 +3,7 @@
 // so every run reproduces the exact commit hash recorded in the fixtures.
 
 import Foundation
+import ImpulseGit
 
 struct ScenarioRepo {
   /// Canonicalized (symlink-resolved) absolute path of the repo root.
@@ -57,8 +58,8 @@ struct ScenarioRepo {
 
     func git(_ arguments: [String]) throws {
       let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = ["git", "-C", root] + arguments
+      process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+      process.arguments = ["-C", root] + arguments
       process.environment = environment
       let pipe = Pipe()
       process.standardOutput = pipe

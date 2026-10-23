@@ -14,8 +14,8 @@
       let root = TaskRegistry.canonical(folder.appendingPathComponent(name).path)
       try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
       let process = Process()
-      process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      process.arguments = ["git", "-C", root, "init", "-q", "-b", "main"]
+      process.executableURL = URL(fileURLWithPath: GitCLI.gitPath() ?? "/usr/bin/git")
+      process.arguments = ["-C", root, "init", "-q", "-b", "main"]
       process.environment = ProcessInfo.processInfo.environment.merging([
         "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
       ]) { $1 }

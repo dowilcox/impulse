@@ -1,5 +1,6 @@
 #if canImport(Testing)
   import Foundation
+  import ImpulseKit
   import Testing
 
   @testable import ImpulseGit
@@ -41,6 +42,20 @@
       let output = try result.get()
       #expect(output.status == 0)
       #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "first")
+    }
+
+    /// `/usr/bin/git` (the xcrun shim) becomes the git it would start, so
+    /// each command is one program launch; any other git is kept as it is.
+    @Test(.enabled(if: !GitCLI.isMissingToolsShim("/usr/bin/git"), "needs the developer tools"))
+    func theToolsShimIsRunPast() throws {
+      #expect(GitCLI.pastToolsShim("/opt/homebrew/bin/git") == "/opt/homebrew/bin/git")
+      let git = GitCLI.pastToolsShim("/usr/bin/git")
+      #expect(git != "/usr/bin/git")
+      #expect(FileManager.default.isExecutableFile(atPath: git))
+      let shim = try ChildProcess.run("/usr/bin/git", ["--exec-path"])
+      let direct = try ChildProcess.run(git, ["--exec-path"])
+      #expect(direct.status == 0)
+      #expect(direct.stdout == shim.stdout)
     }
 
     @Test func switchingToUnknownBranchIsClassified() throws {

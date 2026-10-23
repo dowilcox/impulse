@@ -121,9 +121,25 @@ public enum GitCLI {
     lock.lock()
     defer { lock.unlock() }
     if let cachedGitPath { return cachedGitPath }
-    let resolved = LoginShell.which("git")
+    let resolved = LoginShell.which("git").map(pastToolsShim)
     cachedGitPath = .some(resolved)
     return resolved
+  }
+
+  /// The git that `path` runs. `/usr/bin/git` is an xcrun shim that looks
+  /// the developer tools' git up and starts it: two program launches for
+  /// every git command, which adds up where a security agent checks each
+  /// launch (15 ms apiece is common). So the tools' git runs directly, the
+  /// one the shim would pick (`DEVELOPER_DIR`, else `xcode-select`'s). The
+  /// shim adds only compiler variables (`SDKROOT`, `CPATH`) to git's
+  /// environment, and a hook that compiles gets them from the compiler's
+  /// own shim.
+  static func pastToolsShim(_ path: String) -> String {
+    guard path == "/usr/bin/git", !isMissingToolsShim(path),
+      let found = try? ChildProcess.run("/usr/bin/xcrun", ["--find", "git"], timeout: 10), found.status == 0
+    else { return path }
+    let tools = String(decoding: found.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    return tools.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: tools) ? tools : path
   }
 
   /// `/usr/bin/git` is an xcrun shim: without the Command Line Tools (or
