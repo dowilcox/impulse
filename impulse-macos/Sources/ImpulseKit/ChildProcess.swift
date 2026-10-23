@@ -105,7 +105,7 @@ public enum ChildProcess {
       // The program may exit without reading it; the write must fail, not
       // raise SIGPIPE in the app.
       _ = fcntl(fd, F_SETNOSIGPIPE, 1)
-      DispatchQueue.global(qos: .userInitiated).async {
+      DispatchQueue(label: "impulse.child-process.input").async {
         stdin.withUnsafeBytes { buffer in
           var offset = 0
           while offset < buffer.count {
@@ -125,7 +125,11 @@ public enum ChildProcess {
 
     let exited = DispatchSemaphore(value: 0)
     let waitStatus = WaitStatus()
-    DispatchQueue.global(qos: .userInitiated).async {
+    // The writer and this waiter block for as long as the program runs, and
+    // the caller (often itself on a global queue) waits for them, so each
+    // has a serial queue of its own: GCD always gives one a thread, while a
+    // global queue's work waits once the process has a thread busy per core.
+    DispatchQueue(label: "impulse.child-process.wait").async {
       var status: Int32 = 0
       while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
       waitStatus.value = status

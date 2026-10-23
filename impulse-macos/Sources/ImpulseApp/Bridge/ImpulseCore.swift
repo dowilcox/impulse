@@ -84,24 +84,17 @@ final class ImpulseCore {
     /// Call off the main thread — both FFI calls block until the ripgrep/walk
     /// completes.
     static func searchAll(root: String, query: String, caseSensitive: Bool) -> [SearchResult] {
-        // Kick off both searches in parallel using background queues.
-        let group = DispatchGroup()
-        let queue = DispatchQueue.global(qos: .userInitiated)
-
+        // Both searches at once. The calling thread runs one itself, so it
+        // never waits on a queued block that has no thread to run on.
         var fileResults: [SearchResult] = []
         var contentResults: [SearchResult] = []
-
-        group.enter()
-        queue.async {
-            fileResults = searchFiles(root: root, query: query)
-            group.leave()
+        DispatchQueue.concurrentPerform(iterations: 2) { index in
+            if index == 0 {
+                fileResults = searchFiles(root: root, query: query)
+            } else {
+                contentResults = searchContent(root: root, query: query, caseSensitive: caseSensitive)
+            }
         }
-        group.enter()
-        queue.async {
-            contentResults = searchContent(root: root, query: query, caseSensitive: caseSensitive)
-            group.leave()
-        }
-        group.wait()
 
         if contentResults.isEmpty { return fileResults }
         if fileResults.isEmpty { return contentResults }

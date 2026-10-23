@@ -11,7 +11,7 @@ import Foundation
 /// results back after a newer search (or a reset) has started.
 ///
 /// All methods here run on the main thread (called from SwiftUI / AppKit); the
-/// actual FFI search is dispatched off-thread and hops back via `MainActor`.
+/// actual FFI search is dispatched off-thread and hops back to the main queue.
 extension WindowModel {
   /// Enter search mode: reveal the sidebar, switch to the search panel, and
   /// request keyboard focus for the search field. Preserves any existing query
@@ -34,8 +34,6 @@ extension WindowModel {
   func resetSearch() {
     searchDebounceWork?.cancel()
     searchDebounceWork = nil
-    searchTask?.cancel()
-    searchTask = nil
     searchGeneration &+= 1
     searchQuery = ""
     searchResults = []
@@ -73,14 +71,16 @@ extension WindowModel {
 
     searchGeneration &+= 1
     let generation = searchGeneration
-    searchTask?.cancel()
     isSearching = true
 
-    searchTask = Task.detached {
+    // On a dispatch queue, not a Swift task: the search blocks for as long as
+    // the walk and ripgrep take, which would hold one of Swift concurrency's
+    // few threads.
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       let combined = ImpulseCore.searchAll(
         root: root, query: query, caseSensitive: caseSensitive)
 
-      await MainActor.run { [weak self] in
+      DispatchQueue.main.async {
         // Only apply if this is still the latest search.
         guard let self, generation == self.searchGeneration else { return }
         self.searchResults = combined

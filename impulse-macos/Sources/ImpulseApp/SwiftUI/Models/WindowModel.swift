@@ -265,8 +265,6 @@ final class WindowModel {
   @ObservationIgnored var searchGeneration: UInt = 0
   /// Pending debounced search work; coalesces rapid keystrokes.
   @ObservationIgnored var searchDebounceWork: DispatchWorkItem?
-  /// In-flight search task, cancelled when superseded.
-  @ObservationIgnored var searchTask: Task<Void, Never>?
 
   // MARK: Status bar — left group
 
