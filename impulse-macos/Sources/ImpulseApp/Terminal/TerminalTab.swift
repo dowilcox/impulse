@@ -643,6 +643,15 @@ class TerminalTab: NSView {
     cwdPollTimer?.invalidate()
     cwdPollTimer = nil
 
+    // A closed terminal wants nothing more: the Dock badge stops counting
+    // it and the Dock stops bouncing for it, and its notifications go
+    // (clicking one would find no terminal).
+    cancelAttentionRequest()
+    setNeedsAttention(false)
+    heldNotification?.cancel()
+    heldNotification = nil
+    DesktopNotifier.shared.clear(terminalID: id)
+
     // Detach the backend from the renderer BEFORE stopping the display
     // link.  CVDisplayLinkStop blocks until the current tick() callback
     // completes; if tick() is mid-FFI call we'd deadlock.  Nil-ing the
