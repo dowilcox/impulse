@@ -43,8 +43,7 @@ public final class MCPServer: @unchecked Sendable {
   private let version: String
   private let connect: @Sendable () -> ControlChannel
   private let emit: @Sendable (Data) -> Void
-  private let queue = DispatchQueue(label: "impulse.mcp.calls", attributes: .concurrent)
-  /// Work under way on `queue`, for `finish`.
+  /// Work under way in the background (`inBackground`), for `finish`.
   private let pending = DispatchGroup()
   private let lock = NSLock()
   /// Tool calls under way, by request id (as JSON), for cancellation.
@@ -146,9 +145,7 @@ public final class MCPServer: @unchecked Sendable {
     case "ping":
       send(result: [:], id: id, era: era)
     case "tools/list":
-      pending.enter()
-      queue.async { [self] in
-        defer { pending.leave() }
+      inBackground { [self] in
         var result: [String: JSONValue] = ["tools": .array(enabledTools().map(\.listing))]
         if era == .stateless {
           result["ttlMs"] = .int(Self.toolsTTL)
@@ -250,9 +247,7 @@ public final class MCPServer: @unchecked Sendable {
     inFlight[key] = channel
     lock.unlock()
     let progress = tool.waits ? params["_meta"]?["progressToken"] : nil
-    pending.enter()
-    queue.async { [self] in
-      defer { pending.leave() }
+    inBackground { [self] in
       let ticker = progress.map { startProgress(token: $0, key: key) }
       let outcome = channel.send(request)
       // No progress after the answer (or once cancelled).
@@ -273,6 +268,18 @@ public final class MCPServer: @unchecked Sendable {
       case .failure(.noAnswer):
         send(result: Self.toolResult(text: "Impulse didn't answer.", isError: true), id: id, era: era)
       }
+    }
+  }
+
+  /// Run work that waits on the app (a tool call can wait minutes) on a
+  /// thread of its own. Not on a concurrent dispatch queue: GCD hands those
+  /// a thread only while the process has fewer busy threads than cores, so
+  /// a busy process could leave an answer unsent indefinitely.
+  private func inBackground(_ work: @escaping @Sendable () -> Void) {
+    pending.enter()
+    Thread.detachNewThread { [pending] in
+      defer { pending.leave() }
+      work()
     }
   }
 

@@ -60,7 +60,9 @@
       arrived.signal()
     }
 
-    func wait(for count: Int) -> [JSONValue] {
+    /// At least `count` messages; fewer (after a wait) fails the test
+    /// instead of leaving it to index past the end.
+    func wait(for count: Int, sourceLocation: SourceLocation = #_sourceLocation) throws -> [JSONValue] {
       while true {
         lock.lock()
         let current = lines
@@ -68,7 +70,10 @@
         if current.count >= count { return current }
         // Generous: the whole suite runs at once, and this only bounds a
         // failure.
-        if arrived.wait(timeout: .now() + 20) == .timedOut { return current }
+        if arrived.wait(timeout: .now() + 20) == .timedOut {
+          try #require(
+            current.count >= count, "\(current.count) of \(count) messages arrived", sourceLocation: sourceLocation)
+        }
       }
     }
   }
@@ -100,11 +105,11 @@
       server.handle(line: Data(json.utf8))
     }
 
-    @Test func initializeNegotiatesTheVersion() {
+    @Test func initializeNegotiatesTheVersion() throws {
       let (server, output, _, _) = makeServer()
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)
       send(server, #"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#)
-      let lines = output.wait(for: 2)
+      let lines = try output.wait(for: 2)
       #expect(lines[0]["id"] == 1)
       #expect(lines[0]["result"]?["protocolVersion"] == "2025-06-18")
       #expect(lines[0]["result"]?["serverInfo"]?["version"] == "1.2.3")
@@ -117,10 +122,10 @@
     private let stateless =
       #""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}"#
 
-    @Test func discoverDescribesTheStatelessRevision() {
+    @Test func discoverDescribesTheStatelessRevision() throws {
       let (server, output, _, _) = makeServer()
       send(server, #"{"jsonrpc":"2.0","id":"d","method":"server/discover","params":{"# + stateless + "}}")
-      let result = output.wait(for: 1)[0]["result"]
+      let result = try output.wait(for: 1)[0]["result"]
       #expect(result?["supportedVersions"] == ["2026-07-28"])
       #expect(result?["resultType"] == "complete")
       #expect(result?["capabilities"]?["tools"] != nil)
@@ -133,7 +138,7 @@
       #expect(result?["serverInfo"] == nil)
     }
 
-    @Test func statelessRequestsGetTheirRevisionsShape() {
+    @Test func statelessRequestsGetTheirRevisionsShape() throws {
       let (server, output, _, _) = makeServer()
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"# + stateless + "}}")
       send(
@@ -150,7 +155,7 @@
       )
       // A session's requests keep the older shape.
       send(server, #"{"jsonrpc":"2.0","id":5,"method":"tools/list"}"#)
-      let lines = output.wait(for: 5)
+      let lines = try output.wait(for: 5)
       let byID = Dictionary(lines.map { ($0["id"]?.int ?? 0, $0) }, uniquingKeysWith: { a, _ in a })
       #expect(byID[1]?["result"]?["resultType"] == "complete")
       #expect(byID[1]?["result"]?["ttlMs"]?.int == MCPServer.toolsTTL)
@@ -176,14 +181,14 @@
       #expect(result["isError"] == false)
     }
 
-    @Test func notificationsGetNoAnswerAndUnknownMethodsAnError() {
+    @Test func notificationsGetNoAnswerAndUnknownMethodsAnError() throws {
       let (server, output, _, _) = makeServer()
       send(server, #"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
       send(server, #"{"jsonrpc":"2.0","id":7,"method":"resources/list"}"#)
       send(server, "not json")
       send(server, #"[{"jsonrpc":"2.0","id":8,"method":"ping"}]"#)
       send(server, #"{"jsonrpc":"2.0","id":9,"method":"ping"}"#)
-      let lines = output.wait(for: 4)
+      let lines = try output.wait(for: 4)
       #expect(lines.count == 4)
       #expect(lines[0]["error"]?["code"] == -32601)
       #expect(lines[1]["error"]?["code"] == -32700)
@@ -191,13 +196,13 @@
       #expect(lines[3]["result"] == [:])
     }
 
-    @Test func toolsListHonorsTheAppsSettings() {
+    @Test func toolsListHonorsTheAppsSettings() throws {
       let (server, output, _, _) = makeServer { request in
         guard request.command == "mcp-tools" else { return .success(ControlResponse(ok: true)) }
         return .success(ControlResponse(ok: true, data: Data(#"{"disabled":["create_task"]}"#.utf8)))
       }
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
-      guard case .array(let tools)? = output.wait(for: 1)[0]["result"]?["tools"] else {
+      guard case .array(let tools)? = try output.wait(for: 1)[0]["result"]?["tools"] else {
         Issue.record("no tools")
         return
       }
@@ -208,12 +213,12 @@
       #expect(tools.first?["annotations"]?["readOnlyHint"] == true)
     }
 
-    @Test func outsideImpulseThereAreNoTools() {
+    @Test func outsideImpulseThereAreNoTools() throws {
       let (server, output, log, _) = makeServer(environment: [:])
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
       send(server, #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tasks"}}"#)
       send(server, #"{"jsonrpc":"2.0","id":3,"method":"initialize","params":{}}"#)
-      let lines = output.wait(for: 3)
+      let lines = try output.wait(for: 3)
       let byID = Dictionary(lines.map { ($0["id"]?.int ?? 0, $0) }, uniquingKeysWith: { a, _ in a })
       #expect(byID[1]?["result"]?["tools"] == [])
       #expect(byID[2]?["result"]?["isError"] == true)
@@ -221,12 +226,12 @@
       #expect(log.all.isEmpty)
     }
 
-    @Test func aCallBecomesAControlRequest() {
+    @Test func aCallBecomesAControlRequest() throws {
       let (server, output, log, _) = makeServer { _ in
         .success(ControlResponse(ok: true, message: "trailhead: 2 workspaces", data: Data(#"{"repository":"trailhead"}"#.utf8)))
       }
       send(server, #"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_task","arguments":{"task":"fix-elevation"}}}"#)
-      let result = output.wait(for: 1)[0]["result"]
+      let result = try output.wait(for: 1)[0]["result"]
       #expect(result?["isError"] == false)
       #expect(result?["structuredContent"]?["repository"] == "trailhead")
       guard case .array(let content)? = result?["content"] else {
@@ -242,7 +247,7 @@
       #expect(request?.cwd == "/repo/sub")
     }
 
-    @Test func argumentsAreChecked() {
+    @Test func argumentsAreChecked() throws {
       let (server, output, log, _) = makeServer()
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_task","arguments":{}}}"#)
       send(server, #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"no_such_tool"}}"#)
@@ -251,7 +256,7 @@
         server,
         #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_task","arguments":{"title":"t","brief":""#
           + brief + #""}}}"#)
-      let lines = output.wait(for: 3)
+      let lines = try output.wait(for: 3)
       let byID = Dictionary(lines.map { ($0["id"]?.int ?? 0, $0) }, uniquingKeysWith: { a, _ in a })
       #expect(byID[1]?["result"]?["isError"] == true)
       #expect(byID[2]?["error"]?["code"] == -32602)
@@ -289,33 +294,35 @@
       #expect(Set(MCPTools.all.map(\.name)).count == MCPTools.all.count)
     }
 
-    @Test func failuresAreToolErrors() {
+    @Test func failuresAreToolErrors() throws {
       let (server, output, _, _) = makeServer { _ in .failure(.unreachable) }
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_tasks"}}"#)
-      let result = output.wait(for: 1)[0]["result"]
+      let result = try output.wait(for: 1)[0]["result"]
       #expect(result?["isError"] == true)
       let (refusing, refusals, _, _) = makeServer { _ in .success(ControlResponse(ok: false, message: "Not in a git repository.")) }
       send(refusing, #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tasks"}}"#)
-      #expect(refusals.wait(for: 1)[0]["result"]?["isError"] == true)
+      let refused = try refusals.wait(for: 1)[0]["result"]
+      #expect(refused?["isError"] == true)
     }
 
-    @Test func finishLetsAToolListGoOut() {
+    @Test func finishLetsAToolListGoOut() throws {
       let (server, output, _, _) = makeServer()
       send(server, #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
       server.finish()
-      #expect(output.wait(for: 1).first?["id"] == 1)
+      let lines = try output.wait(for: 1)
+      #expect(lines[0]["id"] == 1)
     }
 
-    @Test func aCancelledCallHangsUpAndGetsNoAnswer() {
+    @Test func aCancelledCallHangsUpAndGetsNoAnswer() throws {
       let (server, output, log, last) = makeServer(blocks: true)
       send(server, #"{"jsonrpc":"2.0","id":"w","method":"tools/call","params":{"name":"wait_for_task","arguments":{"task":"x"}}}"#)
       // Wait for the call to reach the app.
       for _ in 0..<100 where log.all.isEmpty { usleep(10_000) }
       send(server, #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"w"}}"#)
       send(server, #"{"jsonrpc":"2.0","id":"p","method":"ping"}"#)
-      _ = output.wait(for: 1)
+      _ = try output.wait(for: 1)
       usleep(100_000)
-      let lines = output.wait(for: 1)
+      let lines = try output.wait(for: 1)
       #expect(lines.count == 1)
       #expect(lines[0]["id"] == "p")
       #expect(last() != nil)
