@@ -1,7 +1,7 @@
 //! A terminal pane: `impulse-terminal` drives the PTY and grid, and this
 //! paints it the way `TerminalRenderer.swift` does: cell backgrounds in
 //! runs, text on a fixed cell grid, the selection and search matches, the
-//! cursor (hollow when the pane isn't focused), and command-block
+//! cursor in the shape the settings give it, and command-block
 //! decorations (a hairline above each block, a wash and left stripe for
 //! failed or running ones, exit status and duration at the right of the
 //! block's first row). Keys go through `impulse_kit::key_encoder`; typed
@@ -1838,9 +1838,10 @@ impl Frame {
         }
 
         // The cursor: a block behind its character (drawn above as the
-        // background color), a beam or underline, or a hollow box when the
-        // pane isn't focused. None while the input bar stands in for the
-        // prompt.
+        // background color), a beam or underline, as the settings say,
+        // focused or not (Swift's renderer has no hollow cursor); it blinks
+        // only where typing goes. None while the input bar stands in for
+        // the prompt.
         if let Some((row, col, _)) = grid
             .cursor
             .filter(|(r, c, _)| !self.hide_cursor && *r < rows && *c < grid.cols)
@@ -1849,13 +1850,7 @@ impl Frame {
             let at = cell_origin(row, col);
             let wide = grid.cell(row, col).flags.contains(CellFlags::WIDE_CHAR);
             let width = if wide { m.width * 2. } else { m.width };
-            if !self.focused {
-                window.paint_quad(gpui_kit::outline(
-                    Bounds::new(at, size(width, m.height)),
-                    cursor,
-                    gpui_kit::BorderStyle::Solid,
-                ));
-            } else if self.blink_on {
+            if self.blink_on || !self.focused {
                 match self.cursor_shape.as_str() {
                     "beam" => {
                         window.paint_quad(fill(Bounds::new(at, size(px(2.), m.height)), cursor))
