@@ -248,6 +248,8 @@ pub struct ReviewView {
     message: Option<String>,
     base_branch: Option<String>,
     generation: u64,
+    /// Inside History: the commit is chosen there, so no scope bar.
+    pub embedded: bool,
     _refresh: gpui_kit::Task<()>,
 }
 
@@ -304,6 +306,7 @@ impl ReviewView {
             message: None,
             base_branch,
             generation: 0,
+            embedded: false,
             _refresh: refresh,
         };
         view.refresh(cx);
@@ -554,7 +557,7 @@ impl ReviewView {
         }
     }
 
-    fn set_scope(&mut self, scope: DiffScope, cx: &mut Context<Self>) {
+    pub fn set_scope(&mut self, scope: DiffScope, cx: &mut Context<Self>) {
         self.scope = scope;
         self.files.clear();
         self.focused = None;
@@ -871,7 +874,7 @@ impl ReviewView {
                     .text_size(px(12.))
                     .child(scope_title(&self.scope)),
             )
-            .child(scope_bar)
+            .when(!self.embedded, |d| d.child(scope_bar))
             .when(count > 0, |d| {
                 d.child(
                     div()

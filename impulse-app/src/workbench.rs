@@ -216,6 +216,10 @@ impl Workbench {
                     let (theme, palette) = (self.theme.clone(), self.palette.clone());
                     review.update(cx, |r, cx| r.set_theme(&theme, &palette, cx))
                 }
+                Surface::History(history) => {
+                    let (theme, palette) = (self.theme.clone(), self.palette.clone());
+                    history.update(cx, |h, cx| h.set_theme(&theme, &palette, cx))
+                }
             }
         }
         cx.notify();
@@ -451,7 +455,7 @@ impl Workbench {
             Surface::Terminal(t) => self
                 .closed
                 .push(Closed::Terminal(PathBuf::from(&t.read(cx).cwd))),
-            Surface::Review(_) => {}
+            Surface::Review(_) | Surface::History(_) => {}
         }
     }
 
@@ -631,6 +635,8 @@ impl Workbench {
             }
             "fullscreen" => window.toggle_fullscreen(),
             "review_changes" => self.open_review(None, window, cx),
+            "git_history" => self.open_history(false, window, cx),
+            "file_history" => self.open_history(true, window, cx),
             "trust_folder" => {
                 let index = self.active;
                 self.workspaces[index].declined = false;
@@ -831,6 +837,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
         Surface::Terminal(t) => t.entity_id(),
         Surface::Editor(e) => e.entity_id(),
         Surface::Review(r) => r.entity_id(),
+        Surface::History(h) => h.entity_id(),
     }
 }
 

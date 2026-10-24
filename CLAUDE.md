@@ -108,7 +108,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           scopes, navigator, unified and split diffs with
                           word-level changes, stage/unstage/revert of files
                           and hunks, viewed marks, the j/k/n/p/s/u/x/v/o
-                          keys),
+                          keys), History (history_view.rs: the lane graph,
+                          ref chips, paging, the commit's details over its
+                          Review list),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

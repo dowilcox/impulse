@@ -10,6 +10,7 @@ mod control_commands;
 mod control_server;
 mod editor_keys;
 mod editor_tab;
+mod history_view;
 mod kit_theme;
 mod lsp_hub;
 mod review_view;
