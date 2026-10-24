@@ -11,6 +11,7 @@ mod control_server;
 mod editor_keys;
 mod editor_tab;
 mod history_view;
+mod image_view;
 mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;

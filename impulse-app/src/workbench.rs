@@ -226,6 +226,12 @@ impl Workbench {
                     let (theme, palette) = (self.theme.clone(), self.palette.clone());
                     history.update(cx, |h, cx| h.set_theme(&theme, &palette, cx))
                 }
+                Surface::Image(image) => {
+                    let background = crate::workbench_chrome::hsla(
+                        impulse_kit::chrome::Rgba::from_hex(&self.theme.bg),
+                    );
+                    image.update(cx, |i, cx| i.set_background(background, cx))
+                }
                 Surface::Settings(view) => view.update(cx, |view, cx| {
                     view.palette = self.palette.clone();
                     cx.notify();
@@ -369,6 +375,12 @@ impl Workbench {
             cx.notify();
             return;
         }
+        if crate::image_view::is_image_file(path) {
+            let surface = self.make_image(path, cx);
+            let index = self.active;
+            self.add_tab(index, surface, window, cx);
+            return;
+        }
         match impulse_kit::text_file::open(path)
             .map(|opened| cx.new(|cx| EditorTab::new(path, opened, window, cx)))
         {
@@ -389,6 +401,15 @@ impl Workbench {
                 self.set_notice(refusal.message(&name), cx);
             }
         }
+    }
+
+    /// An image tab's surface.
+    pub(crate) fn make_image(&mut self, path: &Path, cx: &mut Context<Self>) -> Surface {
+        let background =
+            crate::workbench_chrome::hsla(impulse_kit::chrome::Rgba::from_hex(&self.theme.bg));
+        Surface::Image(
+            cx.new(|cx| crate::image_view::ImageView::new(path.to_path_buf(), background, cx)),
+        )
     }
 
     /// The (workspace, tab, pane) showing `path` in an editor.
@@ -466,6 +487,7 @@ impl Workbench {
         self.editor_closed(surface);
         match surface {
             Surface::Editor(e) => self.closed.push(Closed::File(e.read(cx).path.clone())),
+            Surface::Image(i) => self.closed.push(Closed::File(i.read(cx).path.clone())),
             Surface::Terminal(t) => self
                 .closed
                 .push(Closed::Terminal(PathBuf::from(&t.read(cx).cwd))),
@@ -871,6 +893,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
         Surface::Editor(e) => e.entity_id(),
         Surface::Review(r) => r.entity_id(),
         Surface::History(h) => h.entity_id(),
+        Surface::Image(i) => i.entity_id(),
         Surface::Settings(s) => s.entity_id(),
         Surface::Keybindings(k) => k.entity_id(),
     }

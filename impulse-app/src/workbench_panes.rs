@@ -194,6 +194,7 @@ impl Workbench {
             Surface::Editor(e) => e.clone().into_any_element(),
             Surface::Review(r) => r.clone().into_any_element(),
             Surface::History(h) => h.clone().into_any_element(),
+            Surface::Image(i) => i.clone().into_any_element(),
             Surface::Settings(s) => s.clone().into_any_element(),
             Surface::Keybindings(k) => k.clone().into_any_element(),
         };

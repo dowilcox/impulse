@@ -13,6 +13,7 @@ use impulse_kit::layout_tree::{LayoutTree, SplitAxis};
 
 use crate::editor_tab::EditorTab;
 use crate::history_view::HistoryView;
+use crate::image_view::ImageView;
 use crate::keybindings_view::KeybindingsView;
 use crate::lsp_hub::LspHub;
 use crate::review_view::ReviewView;
@@ -28,6 +29,7 @@ pub enum Surface {
     Editor(Entity<EditorTab>),
     Review(Entity<ReviewView>),
     History(Entity<HistoryView>),
+    Image(Entity<ImageView>),
     /// The Settings and Keyboard Shortcuts tools (one of each per workspace).
     Settings(Entity<SettingsView>),
     Keybindings(Entity<KeybindingsView>),
@@ -48,6 +50,7 @@ impl Surface {
             Surface::Editor(e) => e.read(cx).title.clone(),
             Surface::Review(r) => r.read(cx).title(),
             Surface::History(h) => h.read(cx).title(),
+            Surface::Image(i) => i.read(cx).title(),
             Surface::Settings(_) => "Settings".into(),
             Surface::Keybindings(_) => "Keyboard Shortcuts".into(),
         }
@@ -59,6 +62,7 @@ impl Surface {
             Surface::Editor(_) => "file-code",
             Surface::Review(_) => "file-diff",
             Surface::History(_) => "history",
+            Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",
             Surface::Keybindings(_) => "keyboard",
         }
@@ -77,6 +81,7 @@ impl Surface {
             Surface::Editor(e) => e.read(cx).focus_handle(cx),
             Surface::Review(r) => r.read(cx).focus_handle().clone(),
             Surface::History(h) => h.read(cx).focus_handle().clone(),
+            Surface::Image(i) => i.read(cx).focus_handle().clone(),
             Surface::Settings(s) => s.read(cx).focus.clone(),
             Surface::Keybindings(k) => k.read(cx).focus.clone(),
         }
@@ -97,6 +102,10 @@ impl Surface {
                 let handle = h.read(cx).focus_handle().clone();
                 window.focus(&handle, cx);
             }
+            Surface::Image(i) => {
+                let handle = i.read(cx).focus_handle().clone();
+                window.focus(&handle, cx);
+            }
             Surface::Settings(s) => s.update(cx, |s, cx| s.focus(window, cx)),
             Surface::Keybindings(k) => k.update(cx, |k, cx| k.focus(window, cx)),
         }
@@ -113,6 +122,7 @@ impl Surface {
             Surface::Editor(e) => e.read(cx).path.parent().map(Path::to_path_buf),
             Surface::Review(r) => Some(PathBuf::from(&r.read(cx).root)),
             Surface::History(h) => Some(PathBuf::from(&h.read(cx).root)),
+            Surface::Image(i) => i.read(cx).path.parent().map(Path::to_path_buf),
             Surface::Settings(_) | Surface::Keybindings(_) => None,
         }
     }

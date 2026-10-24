@@ -159,6 +159,7 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
             kind: "tool".into(),
             ..Default::default()
         },
+        Surface::Image(i) => SessionSurface::file(&i.read(cx).path.to_string_lossy(), None, None),
         Surface::History(h) => SessionSurface {
             kind: "history".into(),
             path: Some(h.read(cx).root.clone()),
@@ -336,7 +337,13 @@ impl Workbench {
                     .as_deref()
                     .map(Path::new)
                     .filter(|p| p.is_file())
-                    .and_then(|path| self.make_editor(path, window, cx)),
+                    .and_then(|path| {
+                        if crate::image_view::is_image_file(path) {
+                            Some(self.make_image(path, cx))
+                        } else {
+                            self.make_editor(path, window, cx)
+                        }
+                    }),
                 _ => None,
             };
             if let Some(restored) = restored {
