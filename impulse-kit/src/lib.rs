@@ -49,6 +49,7 @@ pub mod save_command;
 pub mod search_result;
 pub mod session;
 pub mod settings;
+pub mod settings_schema;
 pub mod shell;
 pub mod shell_parser;
 pub mod sticky_scroll;

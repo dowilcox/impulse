@@ -575,6 +575,12 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   offers View in Terminal.
   Quitting while commands on save run waits for them, at most ten
   seconds, saying so ("Waiting for commands on save to finish…").
+  settings.json in an editor tab is checked against its schema, as the
+  Swift editor registers it with Monaco (`impulse_kit::settings_schema`,
+  `settings_json.rs`, no language server needed): syntax errors and wrong
+  types, ranges or choices underlined in Monaco's words, each setting's
+  description, choices and default on hover, and completions for the keys
+  not set yet and for a key's values.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

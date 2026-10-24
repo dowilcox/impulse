@@ -127,6 +127,8 @@ pub struct EditorTab {
     lsp_pending: std::collections::HashSet<String>,
     /// The file grew past the editor's limit and the pager was offered.
     too_large_told: bool,
+    /// It's settings.json, checked against its schema as it changes.
+    settings_file: bool,
     /// The Markdown preview's scroll, for its `#anchor` links.
     preview_scroll: gpui_kit::ScrollHandle,
 }
@@ -209,6 +211,9 @@ impl EditorTab {
                 link.sync(state.read(cx).text());
             }
             tab.git_text_changed(cx);
+            if tab.settings_file {
+                tab.recheck_settings_file(cx);
+            }
             // A reload from disk isn't an edit of the user's.
             if tab.reloading {
                 tab.reloading = false;
@@ -284,11 +289,33 @@ impl EditorTab {
             _lsp_start: Vec::new(),
             lsp_pending: Default::default(),
             too_large_told: false,
+            settings_file: false,
             preview_scroll: gpui_kit::ScrollHandle::new(),
         };
         tab.apply_settings(&settings, window, cx);
         tab.refresh_git(cx);
+        if crate::settings_json::is_settings_file(&tab.path) {
+            tab.check_settings_file(cx);
+        }
         tab
+    }
+
+    /// settings.json: the schema's completions and hover, and its problems
+    /// as diagnostics (`settings_json`).
+    fn check_settings_file(&mut self, cx: &mut Context<Self>) {
+        self.settings_file = true;
+        let provider = Rc::new(crate::settings_json::SchemaProvider);
+        self.state.update(cx, |state, _| {
+            let lsp = state.lsp_mut();
+            lsp.completion_provider = Some(provider.clone());
+            lsp.hover_provider = Some(provider);
+        });
+        self.recheck_settings_file(cx);
+    }
+
+    fn recheck_settings_file(&mut self, cx: &mut Context<Self>) {
+        let problems = crate::settings_json::diagnostics(self.state.read(cx).text());
+        self.set_diagnostics(crate::settings_json::SOURCE.into(), problems, cx);
     }
 
     /// Take changed settings (settings.json edited, or the Settings tab).

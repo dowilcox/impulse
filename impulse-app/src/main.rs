@@ -72,6 +72,7 @@ mod review_view;
 mod save_pipeline;
 mod search_panel;
 mod session;
+mod settings_json;
 mod settings_store;
 mod settings_view;
 mod shell_launch;

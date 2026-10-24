@@ -59,7 +59,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           glob, close risk, shell parser, themes, file URIs
                           and language ids revived from v0.29.0;
                           ChromePalette, TextFile, WorkspaceTrust, AppPaths,
-                          Settings + SettingsCatalog (settings.json),
+                          Settings + SettingsCatalog (settings.json, its
+                          schema checked by settings_schema),
                           keybindings (Mac and Linux defaults), KeyEncoder
                           (key_encoder), Monaco's line commands, LayoutTree,
                           palette + fuzzy matching, file tree patches,
@@ -125,6 +126,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           impulse_kit::kitty_keyboard), input methods,
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged;
+                          checked against its schema in an editor tab by
+                          settings_json.rs over impulse_kit::settings_schema;
                           Workbench::settings_banner while it doesn't
                           load), Increase Contrast (increase_contrast.rs:
                           macOS's display option or GNOME's high-contrast
