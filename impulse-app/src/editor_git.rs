@@ -331,16 +331,48 @@ impl EditorTab {
             ))
         });
         let ghost = cx.theme().muted_foreground.opacity(0.7);
+        let margin = {
+            let settings = crate::settings_store::SettingsStore::get(cx);
+            settings
+                .show_right_margin
+                .then_some(settings.right_margin_position.max(1) as usize)
+        };
+        let margin_color = cx.theme().border;
         let font = self.font_for_blame(cx);
         let tab = cx.entity().downgrade();
         let overlay = canvas(
             |_, _, _| {},
-            move |_, _, window, cx| {
+            move |bounds, _, window, cx| {
                 let Some(colors) = colors else {
                     return;
                 };
                 let state = state.read(cx);
                 let text = state.text().clone();
+                // The right margin, at a column measured on a visible line.
+                if let (Some(column), Some(rows)) = (margin, state.visible_row_range()) {
+                    let measured = rows.clone().find_map(|row| {
+                        if row >= text.lines_len() || text.line_len(row) == 0 {
+                            return None;
+                        }
+                        let start = text.line_start_offset(row);
+                        let first = text.slice(start..start + text.line_len(row)).to_string();
+                        let width = first.chars().next()?.len_utf8();
+                        let at = state.range_to_bounds(&(start..start + width))?;
+                        Some((at.origin.x, at.size.width))
+                    });
+                    if let Some((left, width)) = measured {
+                        let x = left + width * column as f32;
+                        if x > bounds.left() && x < bounds.right() {
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    point(x, bounds.top()),
+                                    size(px(1.), bounds.size.height),
+                                ),
+                                margin_color,
+                            ));
+                        }
+                    }
+                }
                 let line_offset = |line: usize| -> Option<usize> {
                     let row = line.checked_sub(1)?;
                     (row < text.lines_len()).then(|| text.line_start_offset(row))
@@ -677,6 +709,9 @@ impl crate::workbench::Workbench {
         cx: &mut Context<Self>,
     ) {
         use crate::tasks::{toast, ToastKind};
+        if action == "save" {
+            return self.save_editor(editor, window, cx);
+        }
         let path = editor.read(cx).path.clone();
         let Some(root) = editor.read(cx).git.root.clone() else {
             return;

@@ -90,6 +90,9 @@ pub struct Workbench {
     pub(crate) editor_watch: crate::editor_watch::EditorWatch,
     /// Closing the window was asked about and confirmed (`close_flow`).
     pub(crate) close_confirmed: bool,
+    /// The overlapping workspace pairs seen, by repository (so each new one
+    /// is told once).
+    pub(crate) known_overlaps: std::collections::HashMap<String, std::collections::HashSet<String>>,
     /// The folders the file tree has listed, watched (`tree_watch`).
     pub(crate) tree_watch: crate::tree_watch::TreeWatch,
     /// Folders whose files were said to have language servers off.
@@ -177,6 +180,7 @@ impl Workbench {
             close_confirmed: false,
             restricted_noted: Default::default(),
             tree_watch: crate::tree_watch::TreeWatch::new(),
+            known_overlaps: Default::default(),
         }
     }
 

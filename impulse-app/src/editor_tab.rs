@@ -146,6 +146,14 @@ impl EditorTab {
         let subscription = cx.subscribe(&state, |tab, state, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Blur) {
                 tab.hide_signature(cx);
+                // Save when focus leaves the editor (`auto_save`).
+                let auto_save = crate::settings_store::SettingsStore::get(cx).auto_save;
+                if auto_save && tab.dirty && tab.untitled.is_none() && !tab.read_only {
+                    cx.emit(crate::editor_git::EditorGitAction {
+                        action: "save".into(),
+                        line: 0,
+                    });
+                }
             }
             if !matches!(event, InputEvent::Change) {
                 return;
@@ -216,6 +224,7 @@ impl EditorTab {
             _observe_state: observe_state,
             _lsp_start: Vec::new(),
         };
+        tab.apply_settings(&settings, window, cx);
         tab.refresh_git(cx);
         tab
     }
@@ -241,6 +250,21 @@ impl EditorTab {
             state.set_soft_wrap(settings.word_wrap, window, cx);
             state.set_show_whitespaces(settings.render_whitespace == "all", window, cx);
             state.set_tab_size(tab, cx);
+            state.set_scroll_beyond_last_line(
+                if settings.scroll_beyond_last_line {
+                    None
+                } else {
+                    Some(0)
+                },
+                window,
+                cx,
+            );
+            state.set_cursor_surrounding_lines(
+                Some(settings.editor_cursor_surrounding_lines.max(0) as usize),
+                window,
+                cx,
+            );
+            state.set_auto_close(settings.editor_auto_closing_brackets != "never", window, cx);
         });
         crate::editor_vim::Attached::update(
             &mut self.vim,
@@ -1390,6 +1414,9 @@ impl Render for EditorTab {
             .font_family(family)
             .text_size(px(size))
             .bordered(false);
+        if !settings.font_ligatures {
+            editor = editor.font_features(gpui_kit::FontFeatures::disable_ligatures());
+        }
         if line_height > 0 {
             editor = editor.line_height(px(line_height as f32));
         }

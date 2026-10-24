@@ -1419,6 +1419,9 @@ struct Frame {
     hover_link: Option<HoverLink>,
     /// Hint targets: row, columns, label, and whether it fits what's typed.
     hints: Vec<(usize, usize, usize, String, bool)>,
+    /// The 16 ANSI colors, when bold text in one of the first 8 takes its
+    /// bright twin (`terminal_bold_is_bright`).
+    bright_bold: Option<[RgbColor; 16]>,
 }
 
 impl Frame {
@@ -1675,7 +1678,7 @@ impl Frame {
             while col < grid.cols {
                 let start = col;
                 let first = *grid.cell(row, col);
-                let style = text_style(&first);
+                let style = text_style(&first, self.bright_bold.as_ref());
                 let mut text = String::new();
                 while col < grid.cols {
                     let cell = grid.cell(row, col);
@@ -1683,7 +1686,7 @@ impl Frame {
                         col += 1;
                         continue;
                     }
-                    if text_style(cell) != style
+                    if text_style(cell, self.bright_bold.as_ref()) != style
                         || cell.flags.contains(CellFlags::WIDE_CHAR) && !text.is_empty()
                     {
                         break;
@@ -1949,13 +1952,19 @@ struct Style {
 }
 
 /// A cell's text style.
-fn text_style(cell: &Cell) -> Style {
+fn text_style(cell: &Cell, bright_bold: Option<&[RgbColor; 16]>) -> Style {
     let f = cell.flags;
-    let fg = if f.contains(CellFlags::INVERSE) {
+    let mut fg = if f.contains(CellFlags::INVERSE) {
         cell.bg
     } else {
         cell.fg
     };
+    // Bold in one of the 8 normal ANSI colors draws in its bright twin.
+    if let Some(palette) = bright_bold.filter(|_| f.contains(CellFlags::BOLD)) {
+        if let Some(i) = palette[..8].iter().position(|c| *c == fg) {
+            fg = palette[i + 8];
+        }
+    }
     let mut color = cell_hsla(fg);
     if f.contains(CellFlags::DIM) {
         color.a *= 0.6;
@@ -2362,6 +2371,9 @@ impl Render for TerminalView {
                                     cursor_shape: settings.terminal_cursor_shape.clone(),
                                     marked: view.marked.clone(),
                                     decorate: settings.terminal_blocks && !view.direct,
+                                    bright_bold: settings
+                                        .terminal_bold_is_bright
+                                        .then(|| colors(&view.theme).palette),
                                     draw_rows: view.draw_rows,
                                     y_offset: view.y_offset,
                                     emphasized,

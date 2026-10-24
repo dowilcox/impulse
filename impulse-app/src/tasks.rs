@@ -622,6 +622,7 @@ impl Workbench {
     }
 
     fn apply_task_states(&mut self, found: Vec<RepositoryTasks>, cx: &mut Context<Self>) {
+        self.note_new_overlaps(&found, cx);
         let mut changed = false;
         for workspace in &mut self.workspaces {
             let Some(repository) = found
@@ -652,6 +653,76 @@ impl Workbench {
         if changed {
             cx.notify();
         }
+    }
+
+    /// Pairs of workspaces that just started changing the same files: a
+    /// toast when this window is in front, a desktop notification when it
+    /// isn't (`task_overlap_notify`), once per pair.
+    fn note_new_overlaps(&mut self, found: &[RepositoryTasks], cx: &mut Context<Self>) {
+        let mut started = Vec::new();
+        for repository in found {
+            let now: std::collections::HashSet<String> =
+                repository.pairs.iter().map(|p| p.key()).collect();
+            let known = self
+                .known_overlaps
+                .insert(repository.common.clone(), now)
+                .unwrap_or_default();
+            started.extend(
+                repository
+                    .pairs
+                    .iter()
+                    .filter(|p| !known.contains(&p.key()))
+                    .cloned(),
+            );
+        }
+        if started.is_empty() || !crate::settings_store::SettingsStore::get(cx).task_overlap_notify
+        {
+            return;
+        }
+        let roots: Vec<String> = self
+            .workspaces
+            .iter()
+            .map(|w| task_registry::canonical(&w.root.to_string_lossy()))
+            .collect();
+        let Some((_, handle)) = crate::session::workbenches(cx)
+            .into_iter()
+            .find(|(w, _)| w.entity_id() == cx.entity_id())
+        else {
+            return;
+        };
+        let _ = handle.update(cx, move |_, window, cx| {
+            for pair in started
+                .iter()
+                .filter(|p| roots.contains(&p.a.path) || roots.contains(&p.b.path))
+            {
+                let count = pair.files.len();
+                let sentence = format!(
+                    "{} and {} now change the same {}",
+                    pair.a.name,
+                    pair.b.name,
+                    if count == 1 {
+                        "file".to_string()
+                    } else {
+                        format!("{count} files")
+                    }
+                );
+                if window.is_window_active() {
+                    let mut detail = pair
+                        .files
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if count > 3 {
+                        detail.push_str(", …");
+                    }
+                    toast(window, cx, ToastKind::Warning, sentence, Some(detail), None);
+                } else {
+                    let _ = crate::agent_notify::post("Tasks change the same files", "", &sentence);
+                }
+            }
+        });
     }
 
     /// The repository tasks are made from: the workspace at `index`'s, else

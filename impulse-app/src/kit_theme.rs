@@ -114,7 +114,7 @@ pub fn apply(
     c.cyan = hsla(Rgba::from_hex(&theme.cyan));
 
     k.tokens = ThemeTokens::from(&k.colors);
-    k.highlight_theme = highlight_theme(theme).into();
+    k.highlight_theme = highlight_theme(theme, settings.highlight_current_line).into();
     Theme::sync_base(cx);
     cx.refresh_windows();
     cx.set_global(crate::editor_git::GitColors {
@@ -126,7 +126,7 @@ pub fn apply(
 
 /// Impulse's theme as GPUI Kit's highlight theme (Zed's theme format), with
 /// the scopes `themeToMonaco` colors.
-fn highlight_theme(theme: &ResolvedTheme) -> HighlightTheme {
+fn highlight_theme(theme: &ResolvedTheme, current_line: bool) -> HighlightTheme {
     let style = |color: &str| json!({ "color": color });
     let italic = |color: &str| json!({ "color": color, "font_style": "italic" });
     let syntax: serde_json::Map<String, serde_json::Value> = [
@@ -168,7 +168,7 @@ fn highlight_theme(theme: &ResolvedTheme) -> HighlightTheme {
         "style": {
             "editor.background": theme.bg,
             "editor.foreground": theme.fg,
-            "editor.active_line.background": theme.bg_highlight,
+            "editor.active_line.background": if current_line { &theme.bg_highlight } else { &theme.bg },
             "editor.line_number": theme.fg_comment,
             "editor.active_line_number": theme.fg,
             "editor.invisible": theme.fg_comment,
