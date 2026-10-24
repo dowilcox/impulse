@@ -671,8 +671,22 @@ impl TerminalView {
         self.backend.transcript(max_rows, true)
     }
 
-    pub fn write(&self, bytes: &[u8]) {
-        self.backend.write(bytes);
+    /// The shell waits at its prompt in the foreground, so a command typed
+    /// into it reaches the shell and not a running program (Swift's
+    /// `isAtPrompt`). Without shell integration commands aren't marked;
+    /// then the terminal's foreground process group tells.
+    pub(crate) fn at_prompt(&self) -> bool {
+        if self.command_running
+            || self
+                .backend
+                .mode()
+                .contains(impulse_terminal::TerminalMode::ALT_SCREEN)
+        {
+            return false;
+        }
+        self.backend
+            .foreground_pid()
+            .is_none_or(|foreground| foreground == self.shell_pid())
     }
 
     /// The shell's process id.

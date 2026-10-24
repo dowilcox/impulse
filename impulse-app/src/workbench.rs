@@ -1389,8 +1389,12 @@ impl Workbench {
         }
     }
 
-    /// A custom shortcut: its command line in the focused terminal, or in a
-    /// new terminal tab when none is focused.
+    /// A Run in Terminal shortcut: its command line in the focused terminal
+    /// when its shell is at the prompt and the input bar is on, as the bar
+    /// runs a command; otherwise (no terminal focused, one running
+    /// something, or the bar off, when the shell's own line may hold typed
+    /// text the command would join) in a new terminal tab in the active
+    /// tab's folder, as Swift's `executeCustomCommand` does.
     fn run_custom(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(custom) = SettingsStore::get(cx)
             .custom_keybindings
@@ -1412,8 +1416,15 @@ impl Workbench {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        match self.active_terminal() {
-            Some(terminal) => terminal.read(cx).write(format!("{line}\r").as_bytes()),
+        if line.is_empty() {
+            return;
+        }
+        let bar = SettingsStore::get(cx).terminal_context_bar;
+        match self
+            .active_terminal()
+            .filter(|t| bar && t.read(cx).at_prompt())
+        {
+            Some(terminal) => terminal.update(cx, |t, _| t.run_command(&line)),
             None => {
                 let dir = self.current_directory(cx);
                 let terminal = self.new_terminal(dir, vec![line], window, cx);
