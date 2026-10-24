@@ -614,7 +614,8 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
 
 *`capture.py getting-started-window-tour` from the Rust app on Linux.*
 
-Known issues:
+Known issues (what's left to do, these included, is listed in
+[rust-remaining.md](rust-remaining.md)):
 
 - Under Xvfb, the first key typed into the editor's search field is lost
   (focus moves there at once in GPUI Kit's code, so this looks like key
