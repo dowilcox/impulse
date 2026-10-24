@@ -798,6 +798,25 @@ impl TerminalView {
         if let Some(branch) = self.branch.as_ref().filter(|b| !b.is_empty()) {
             chips.push((Some("git-branch"), branch.clone(), true, None));
         }
+        // The repository's changes (Swift's ReviewChip), opening Review.
+        let review = (!self.cwd.is_empty())
+            .then(|| {
+                crate::repository_state::RepositoryStore::summary(
+                    std::path::Path::new(&self.cwd),
+                    cx,
+                )
+            })
+            .flatten()
+            .filter(|r| r.changed > 0);
+        let review_at = review.as_ref().map(|r| {
+            chips.push((
+                Some("file"),
+                format!("{} \u{2022} +{} -{}", r.changed, r.added, r.removed),
+                false,
+                None,
+            ));
+            chips.len() - 1
+        });
         if let (false, Some(code)) = (self.command_running, self.last_exit) {
             let mut parts = Vec::new();
             if code != 0 {
@@ -842,50 +861,83 @@ impl TerminalView {
             .min_w_0()
             .overflow_hidden()
             .gap(px(6.))
-            .children(
-                chips
-                    .into_iter()
-                    .take(shown)
-                    .map(|(icon, text, chevron, status)| {
-                        let leading = match status {
-                            Some(failed) => Some(crate::workbench_chrome::icon(
-                                if failed { "circle-x" } else { "circle-check" },
-                                10.,
-                                c(if failed { &theme.red } else { &theme.green }),
-                            )),
-                            None => icon.map(|i| {
-                                crate::workbench_chrome::icon(i, 9.5, c(&theme.fg_comment))
-                            }),
+            .children(chips.into_iter().take(shown).enumerate().map(
+                |(index, (icon, text, chevron, status))| {
+                    if let (true, Some(r)) = (Some(index) == review_at, review.as_ref()) {
+                        let mono = SharedString::from(mono.clone());
+                        let part = |text: String, color: &str| {
+                            div().text_color(hsla(c(color))).child(text)
                         };
-                        div()
+                        return div()
+                            .id("review-chip")
                             .flex()
                             .flex_none()
                             .items_center()
-                            .gap(px(4.))
+                            .gap(px(6.))
                             .px(px(8.))
                             .py(px(3.))
-                            .max_w(px(280.))
                             .rounded(px(10.))
                             .bg(chip_bg)
-                            .when_some(leading, |d, icon| d.child(icon))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_family(SharedString::from(mono.clone()))
-                                    .text_size(px(11.))
-                                    .text_color(hsla(c(&theme.fg_muted)))
-                                    .child(text),
-                            )
-                            .when(chevron, |d| {
-                                d.child(crate::workbench_chrome::icon(
-                                    "chevrons-up-down",
-                                    7.,
-                                    c(&theme.fg_comment),
-                                ))
+                            .cursor_pointer()
+                            .font_family(mono)
+                            .text_size(px(11.))
+                            .font_weight(gpui_kit::FontWeight::MEDIUM)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::commands::RunCommand::new("review_changes")),
+                                    cx,
+                                )
                             })
-                    }),
-            );
+                            .child(crate::workbench_chrome::icon(
+                                "file",
+                                9.5,
+                                c(&theme.fg_comment),
+                            ))
+                            .child(part(r.changed.to_string(), &theme.fg_muted))
+                            .child(part("\u{2022}".into(), &theme.fg_comment))
+                            .child(part(format!("+{}", r.added), &theme.green))
+                            .child(part(format!("-{}", r.removed), &theme.red))
+                            .into_any_element();
+                    }
+                    let leading = match status {
+                        Some(failed) => Some(crate::workbench_chrome::icon(
+                            if failed { "circle-x" } else { "circle-check" },
+                            10.,
+                            c(if failed { &theme.red } else { &theme.green }),
+                        )),
+                        None => icon
+                            .map(|i| crate::workbench_chrome::icon(i, 9.5, c(&theme.fg_comment))),
+                    };
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(px(4.))
+                        .px(px(8.))
+                        .py(px(3.))
+                        .max_w(px(280.))
+                        .rounded(px(10.))
+                        .bg(chip_bg)
+                        .when_some(leading, |d, icon| d.child(icon))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(SharedString::from(mono.clone()))
+                                .text_size(px(11.))
+                                .text_color(hsla(c(&theme.fg_muted)))
+                                .child(text),
+                        )
+                        .when(chevron, |d| {
+                            d.child(crate::workbench_chrome::icon(
+                                "chevrons-up-down",
+                                7.,
+                                c(&theme.fg_comment),
+                            ))
+                        })
+                        .into_any_element()
+                },
+            ));
         div()
             .flex()
             .items_center()
