@@ -208,7 +208,7 @@ impl Workbench {
             .clone()
             .unwrap_or_else(|| settings.color_scheme.clone());
         let theme = impulse_kit::theme::get_theme(&theme_id);
-        let contrast = crate::increase_contrast::get(cx);
+        let contrast = crate::display_options::increase_contrast(cx);
         let palette = ChromePalette::new(&theme, contrast);
         crate::kit_theme::apply(&theme, &palette, &settings, cx);
         let settings_subscription = cx
@@ -219,7 +219,7 @@ impl Workbench {
             workbench.bounds = window.bounds()
         });
         let contrast_subscription = cx
-            .observe_global_in::<crate::increase_contrast::IncreaseContrast>(
+            .observe_global_in::<crate::display_options::IncreaseContrast>(
                 window,
                 |workbench, window, cx| workbench.apply_settings(window, cx),
             );
@@ -370,7 +370,7 @@ impl Workbench {
             .theme_override
             .clone()
             .unwrap_or_else(|| settings.color_scheme.clone());
-        let contrast = crate::increase_contrast::get(cx);
+        let contrast = crate::display_options::increase_contrast(cx);
         if theme_id != self.theme_id || contrast != self.contrast {
             if theme_id != self.theme_id && window.is_window_active() {
                 self.report_theme_problem(&theme_id, window, cx);

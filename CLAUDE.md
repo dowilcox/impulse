@@ -129,9 +129,14 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           checked against its schema in an editor tab by
                           settings_json.rs over impulse_kit::settings_schema;
                           Workbench::settings_banner while it doesn't
-                          load), Increase Contrast (increase_contrast.rs:
-                          macOS's display option or GNOME's high-contrast
-                          key, followed while running),
+                          load), Increase Contrast and Reduce Motion
+                          (display_options.rs: macOS's display options or
+                          GNOME's high-contrast and animations keys,
+                          followed while running), screen readers through
+                          GPUI's AccessKit tree (roles and labels on
+                          buttons, tabs, rows and tree items; the terminal's
+                          screen text while assistive technology is
+                          attached),
                           session restore (session.rs, with an agent's resume command
                           typed into its terminal's bar, each window's frame
                           in AppKit's coordinates (frame_string, saved_bounds)

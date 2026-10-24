@@ -512,7 +512,7 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   titlebar (Open Settings File, dismiss), gone once the file loads again;
   a user theme that doesn't parse says so in a toast with Open File. The
   chrome follows Increase Contrast: macOS's display option, or on Linux
-  GNOME's high-contrast setting, read with `gsettings`.
+  GNOME's high-contrast setting, read with `gsettings` (`display_options.rs`).
   The sidebar resizes by its edge as Swift's `DockDivider` does (180 to
   520, double-click for 260, the accent line while hovered or dragged),
   and a repository group's header offers Archive Merged Tasks… on a
@@ -581,6 +581,13 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   types, ranges or choices underlined in Monaco's words, each setting's
   description, choices and default on hover, and completions for the keys
   not set yet and for a key's values.
+  Screen readers get GPUI's AccessKit tree: buttons, panel and editor
+  tabs (selected, unsaved, waiting), workspace rows and file tree items
+  (level, expanded) are labelled with roles, and the terminal is a
+  Terminal whose value is its screen text while assistive technology is
+  attached. Reduce Motion (macOS, or GNOME's animations switch) stills the
+  agent spinner. Not yet: announcements of agent state, since GPUI has no
+  live regions.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

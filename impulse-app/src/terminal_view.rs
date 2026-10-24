@@ -2538,8 +2538,23 @@ impl Render for TerminalView {
             bounds_cell.clone(),
             bounds_cell.clone(),
         );
+        // For screen readers (Swift's renderer is an accessible read-only
+        // text area): the screen's lines, worked out only while assistive
+        // technology is attached.
+        let screen_text = window
+            .is_a11y_active()
+            .then(|| self.grid_now())
+            .flatten()
+            .map(|grid| {
+                let lines: Vec<String> =
+                    (0..grid.rows).map(|row| grid.row_text(row).text).collect();
+                impulse_kit::accessible_text::AccessibleText::new(&lines).string
+            });
         let grid = div()
             .id("terminal")
+            .role(gpui_kit::Role::Terminal)
+            .aria_label(format!("Terminal, {}", self.title))
+            .when_some(screen_text, |d, text| d.aria_value(text))
             .track_focus(&self.focus)
             .relative()
             .flex_1()

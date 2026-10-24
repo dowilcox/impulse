@@ -36,6 +36,7 @@ mod control_server;
 #[cfg(debug_assertions)]
 mod debug_snapshot;
 mod dependency_prompts;
+mod display_options;
 mod editor_brackets;
 mod editor_diff;
 mod editor_git;
@@ -52,7 +53,6 @@ mod git_actions;
 mod history_actions;
 mod history_view;
 mod image_view;
-mod increase_contrast;
 mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
@@ -247,7 +247,7 @@ fn main() {
             gpui_kit::init(cx);
             base_rules::register();
             settings_store::SettingsStore::init(cx);
-            increase_contrast::init(cx);
+            display_options::init(cx);
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);
             editor_vim::bind_keys(cx);

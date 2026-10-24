@@ -358,6 +358,8 @@ pub(crate) fn status_item(
         .whitespace_nowrap()
         .text_color(hsla(color))
         .hover(|s| s.bg(hsla(p.hover)))
+        .role(gpui_kit::Role::Button)
+        .aria_label(help.clone())
         .tooltip(move |window, cx| {
             gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
         })
@@ -656,8 +658,23 @@ impl Workbench {
                 )
                 .collect::<Vec<_>>()
                 .join("\n");
+            // Read out as the title, then whether it's unsaved, waiting or
+            // a preview (Swift's tab accessibility label).
+            let spoken = [
+                Some(title.clone()),
+                dirty.then(|| "unsaved".to_string()),
+                attention.then(|| "needs attention".to_string()),
+                tab.preview.then(|| "preview".to_string()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
             let mut t = div()
                 .id(("tab", tab.id))
+                .role(gpui_kit::Role::Tab)
+                .aria_label(spoken)
+                .aria_selected(active)
                 .group("tab")
                 .flex()
                 .items_center()
@@ -1007,6 +1024,12 @@ impl Workbench {
         let mut column = div().flex().flex_col();
         let row = div()
             .id(("workspace", id))
+            .role(gpui_kit::Role::ListItem)
+            .aria_label(match workspace.branch.as_str() {
+                "" => workspace.name(),
+                branch => format!("{}, {branch}", workspace.name()),
+            })
+            .aria_selected(selected)
             .group("workspace")
             .flex()
             .items_center()
@@ -1381,6 +1404,11 @@ impl Workbench {
                 let menu = self.tree_menu(row.path.clone(), row.is_dir, cx);
                 let row_element = div()
                     .id(("file", index))
+                    .role(gpui_kit::Role::TreeItem)
+                    .aria_label(row.name.clone())
+                    .aria_level(row.depth + 1)
+                    .aria_selected(selected)
+                    .when(row.is_dir, |d| d.aria_expanded(expanded))
                     .flex()
                     .flex_none()
                     .items_center()
@@ -1526,6 +1554,9 @@ impl Workbench {
                     FontWeight::MEDIUM
                 })
                 .when(selected, |d| d.bg(hsla(p.raised)))
+                .role(gpui_kit::Role::Tab)
+                .aria_label(label.clone())
+                .aria_selected(selected)
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.panel = panel;
                     cx.notify();
@@ -2031,6 +2062,7 @@ pub(crate) fn chrome_button(
     disabled: bool,
     p: &impulse_kit::chrome::ChromePalette,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let title: gpui_kit::SharedString = title.into();
     let (fg, bg, hover) = match kind {
         ButtonKind::Primary => (p.text_on_accent, Some(p.accent), p.accent.opacity(0.88)),
         ButtonKind::Secondary => (p.text, Some(p.raised), p.raised.opacity(0.9)),
@@ -2058,7 +2090,9 @@ pub(crate) fn chrome_button(
             d.cursor_pointer().hover(|s| s.bg(hsla(hover)))
         })
         .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
-        .child(div().whitespace_nowrap().child(title.into()))
+        .role(gpui_kit::Role::Button)
+        .aria_label(title.clone())
+        .child(div().whitespace_nowrap().child(title))
 }
 
 impl Workbench {
@@ -2322,6 +2356,8 @@ pub(crate) fn chrome_icon_button(
         .rounded(px(metrics::RADIUS_SMALL + 1.))
         .cursor_pointer()
         .hover(|s| s.bg(hsla(p.hover)))
+        .role(gpui_kit::Role::Button)
+        .aria_label(help.clone())
         .tooltip(move |window, cx| {
             gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
         })

@@ -74,7 +74,22 @@ fn ago(since: Instant) -> String {
 /// mark says it finished.
 pub fn agent_glyph(state: AgentState, size: f32, p: &ChromePalette) -> AnyElement {
     match state {
-        // Swift's ProgressRing with no progress, turning every 0.9 s.
+        // Swift's ProgressRing with no progress, turning every 0.9 s (still
+        // with Reduce Motion on).
+        AgentState::Working if crate::display_options::reduce_motion() => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(size))
+            .flex_none()
+            .child(crate::workbench_chrome::progress_ring(
+                None,
+                p.working,
+                size - 1.,
+                1.6,
+                0.,
+            ))
+            .into_any_element(),
         AgentState::Working => {
             let color = p.working;
             div()
