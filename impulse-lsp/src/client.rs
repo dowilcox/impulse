@@ -30,10 +30,33 @@ use crate::framing::{read_message, write_message};
 pub enum ServerEvent {
     /// From the server named first (its id in the config).
     Diagnostics(String, lsp_types::PublishDiagnosticsParams),
-    /// `window/logMessage` and `window/showMessage`.
-    Message(String),
-    /// The process ended.
-    Exited,
+    /// `window/showMessage` (or a `window/showMessageRequest`, which has no
+    /// buttons here): the server's id, the message type (1 error, 2
+    /// warning, 3 info, 4 log) and the text.
+    ShowMessage {
+        server: String,
+        kind: i64,
+        text: String,
+    },
+    /// `$/progress` work: `kind` is `begin`, `report` or `end`; the token
+    /// tells pieces of work apart.
+    Progress {
+        server: String,
+        token: String,
+        kind: String,
+        title: Option<String>,
+        message: Option<String>,
+        percentage: Option<u32>,
+    },
+    /// A server couldn't start (its command isn't installed): what to tell
+    /// the user.
+    Unavailable { server: String, message: String },
+    /// The process ended; `expected` after `shutdown`.
+    Exited {
+        server: String,
+        root: PathBuf,
+        expected: bool,
+    },
     /// `workspace/applyEdit`: an edit the server asks the client to make
     /// (after a code action's command, say), with the server's label for
     /// it, its project root and whether its positions count characters.
@@ -58,6 +81,40 @@ pub struct LspClient {
     /// UTF-32 (columns in characters) when the server agreed to it,
     /// otherwise LSP's default UTF-16.
     encoding: Mutex<PositionEncodingKind>,
+    /// `shutdown` was asked for: the exit that follows isn't a crash.
+    retired: Arc<std::sync::atomic::AtomicBool>,
+    /// Requests' deadlines, watched by the client's timer thread.
+    deadlines: Arc<Deadlines>,
+}
+
+/// When each waiting request is given up on: (deadline, request id).
+#[derive(Default)]
+struct Deadlines {
+    due: Mutex<Vec<(std::time::Instant, i64)>>,
+    changed: std::sync::Condvar,
+}
+
+/// How long a request may wait for its answer (the Swift client's): 5
+/// seconds for what the editor waits on as you type or point, 10 for
+/// formatting and code actions, 15 for the rest. The handshake and
+/// shutdown have their own limits.
+fn timeout_for(method: &str) -> Option<std::time::Duration> {
+    let seconds = match method {
+        "initialize" | "shutdown" => return None,
+        "textDocument/completion"
+        | "textDocument/hover"
+        | "textDocument/signatureHelp"
+        | "textDocument/definition"
+        | "textDocument/documentHighlight"
+        | "textDocument/inlayHint"
+        | "textDocument/prepareRename" => 5,
+        "textDocument/formatting"
+        | "textDocument/rangeFormatting"
+        | "textDocument/codeAction"
+        | "codeAction/resolve" => 10,
+        _ => 15,
+    };
+    Some(std::time::Duration::from_secs(seconds))
 }
 
 pub fn path_uri(path: &Path) -> Option<Uri> {
@@ -101,13 +158,17 @@ impl LspClient {
             pending: Arc::default(),
             capabilities: Mutex::default(),
             encoding: Mutex::new(PositionEncodingKind::UTF16),
+            retired: Arc::default(),
+            deadlines: Arc::default(),
         });
+        watch_deadlines(&client);
 
         // The reader thread answers pending requests and the server's own
         // requests, and forwards notifications.
         let weak = Arc::downgrade(&client);
         let pending = client.pending.clone();
         let server = name.to_string();
+        let (retired, exited_root) = (client.retired.clone(), root.to_path_buf());
         std::thread::Builder::new()
             .name(format!("lsp-{name}"))
             .spawn(move || {
@@ -121,7 +182,11 @@ impl LspClient {
                 for (_, sender) in pending.lock().unwrap().drain() {
                     let _ = sender.send(Err("server exited".into()));
                 }
-                let _ = events.send_blocking(ServerEvent::Exited);
+                let _ = events.send_blocking(ServerEvent::Exited {
+                    server,
+                    root: exited_root,
+                    expected: retired.load(Ordering::SeqCst),
+                });
             })
             .map_err(|e| e.to_string())?;
 
@@ -177,6 +242,14 @@ impl LspClient {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, sender);
+        if let Some(timeout) = timeout_for(R::METHOD) {
+            self.deadlines
+                .due
+                .lock()
+                .unwrap()
+                .push((std::time::Instant::now() + timeout, id));
+            self.deadlines.changed.notify_one();
+        }
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params });
         if let Err(error) = self.send(&message) {
             self.pending.lock().unwrap().remove(&id);
@@ -198,12 +271,61 @@ impl LspClient {
         write_message(&mut *stdin, &body).map_err(|e| e.to_string())
     }
 
+    /// Stop the process now (a shutdown that took too long).
+    pub fn kill(&self) {
+        self.retired.store(true, Ordering::SeqCst);
+        let _ = self.child.lock().unwrap().kill();
+    }
+
     /// Ask the server to exit, then make sure it has.
     pub async fn shutdown(&self) {
+        self.retired.store(true, Ordering::SeqCst);
         let _ = self.request::<lsp_types::request::Shutdown>(()).await;
         let _ = self.notify::<lsp_types::notification::Exit>(());
         let _ = self.child.lock().unwrap().kill();
     }
+}
+
+/// The client's timer thread: a request still unanswered at its deadline
+/// fails with "timed out", and the server is told to stop working on it
+/// (`$/cancelRequest`). Ends with the client.
+fn watch_deadlines(client: &Arc<LspClient>) {
+    let deadlines = client.deadlines.clone();
+    let pending = client.pending.clone();
+    let weak = Arc::downgrade(client);
+    let _ = std::thread::Builder::new()
+        .name(format!("lsp-{}-timeouts", client.name))
+        .spawn(move || loop {
+            let expired: Vec<i64> = {
+                let mut due = deadlines.due.lock().unwrap();
+                let now = std::time::Instant::now();
+                let next = due.iter().map(|(at, _)| *at).min();
+                let wait = next
+                    .map(|at| at.saturating_duration_since(now))
+                    .unwrap_or(std::time::Duration::from_secs(1))
+                    .min(std::time::Duration::from_secs(1));
+                if wait > std::time::Duration::ZERO {
+                    due = deadlines.changed.wait_timeout(due, wait).unwrap().0;
+                }
+                let now = std::time::Instant::now();
+                let (gone, kept): (Vec<_>, Vec<_>) =
+                    due.drain(..).partition(|(at, _)| *at <= now);
+                *due = kept;
+                gone.into_iter().map(|(_, id)| id).collect()
+            };
+            let Some(client) = weak.upgrade() else {
+                return;
+            };
+            for id in expired {
+                let Some(sender) = pending.lock().unwrap().remove(&id) else {
+                    continue;
+                };
+                let _ = sender.send(Err("timed out".into()));
+                let _ = client.send(
+                    &json!({ "jsonrpc": "2.0", "method": "$/cancelRequest", "params": { "id": id } }),
+                );
+            }
+        });
 }
 
 impl Drop for LspClient {
@@ -279,6 +401,20 @@ fn dispatch(
                         _ => json!({ "applied": false }),
                     }
                 }
+                "workspace/workspaceFolders" => match client.upgrade() {
+                    Some(client) => json!([{
+                        "uri": path_uri(&client.root).map(|u| u.to_string()),
+                        "name": client.root.file_name().map(|n| n.to_string_lossy().into_owned()),
+                    }]),
+                    None => Value::Null,
+                },
+                // No buttons: shown like a message, answered "dismissed".
+                "window/showMessageRequest" => {
+                    if let Some(event) = show_message(server, message.get("params")) {
+                        let _ = events.send_blocking(event);
+                    }
+                    Value::Null
+                }
                 _ => Value::Null,
             };
             if let Some(client) = client.upgrade() {
@@ -291,10 +427,14 @@ fn dispatch(
                 "textDocument/publishDiagnostics" => serde_json::from_value(params)
                     .ok()
                     .map(|params| ServerEvent::Diagnostics(server.to_string(), params)),
-                "window/logMessage" | "window/showMessage" => params
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .map(|m| ServerEvent::Message(m.to_string())),
+                "window/showMessage" => show_message(server, Some(&params)),
+                "$/progress" => progress(server, &params),
+                "window/logMessage" => {
+                    if let Some(text) = params.get("message").and_then(Value::as_str) {
+                        log::debug!("{server}: {text}");
+                    }
+                    None
+                }
                 _ => None,
             };
             if let Some(event) = event {
@@ -303,6 +443,37 @@ fn dispatch(
         }
         (None, None) => {}
     }
+}
+
+/// A `window/showMessage`'s event.
+fn show_message(server: &str, params: Option<&Value>) -> Option<ServerEvent> {
+    let params = params?;
+    Some(ServerEvent::ShowMessage {
+        server: server.to_string(),
+        kind: params.get("type").and_then(Value::as_i64).unwrap_or(3),
+        text: params.get("message")?.as_str()?.to_string(),
+    })
+}
+
+/// A `$/progress` notification's work-done event.
+fn progress(server: &str, params: &Value) -> Option<ServerEvent> {
+    let token = match params.get("token")? {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    let value = params.get("value")?;
+    let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_string);
+    Some(ServerEvent::Progress {
+        server: server.to_string(),
+        token,
+        kind: text("kind")?,
+        title: text("title"),
+        message: text("message"),
+        percentage: value
+            .get("percentage")
+            .and_then(Value::as_u64)
+            .map(|p| p.min(100) as u32),
+    })
 }
 
 fn client_capabilities() -> ClientCapabilities {
@@ -391,6 +562,11 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             document_highlight: Some(Default::default()),
+            ..Default::default()
+        }),
+        // Long-running work (indexing) shown in the status bar.
+        window: Some(lsp_types::WindowClientCapabilities {
+            work_done_progress: Some(true),
             ..Default::default()
         }),
         // Edits across files, with files created, moved and deleted

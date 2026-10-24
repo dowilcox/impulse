@@ -456,6 +456,15 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   path for a rename) and Reveal. Links in the terminal follow Swift's
   rules: web and mailto open, `file:` opens in the editor, other schemes
   ask first.
+- Language servers run as Swift's registry runs them: a missing one is
+  told once ("LSP server '…' requires '…'") and looked for again after
+  15 seconds; one that crashes is announced and restarted after 2, 10,
+  30 or 120 seconds for the editors it served; `window/showMessage`
+  shows as a toast and `$/progress` in the status bar; requests time out
+  (5, 10 or 15 seconds) with `$/cancelRequest`; quitting shuts them all
+  down, stopping any still running after two seconds. Still different:
+  servers belong to each workspace rather than being shared across
+  windows, and editing lsp.json doesn't restart running servers.
 - The New Task sheet uses the Swift sheet's controls: rounded-border
   fields, a pop-up button as wide as its title, `ChromeButton`s
   (`workbench_chrome::chrome_button`), 20 of padding and the UI line

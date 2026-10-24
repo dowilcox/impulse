@@ -1565,6 +1565,42 @@ impl Workbench {
         let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
         let mut left: Vec<AnyElement> = Vec::new();
         let mut right: Vec<AnyElement> = Vec::new();
+        // The newest piece of language-server work still going: after the
+        // cursor items, before the language or shell (Swift's order).
+        let mut progress = self.lsp_progress.last().map(|(_, status)| {
+            let help = std::iter::once(status.title.as_str())
+                .chain(status.message.as_deref())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            status_item(
+                "status-lsp-progress",
+                None,
+                &format!("{}: {help}", status.server),
+                None,
+                &p,
+            )
+            .child(progress_ring(
+                status.fraction,
+                p.text_secondary,
+                10.,
+                1.4,
+                0.,
+            ))
+            .child(
+                div()
+                    .whitespace_nowrap()
+                    .max_w(px(220.))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(status.title.clone()),
+            )
+            .children(
+                status
+                    .fraction
+                    .map(|f| format!("{}%", (f * 100.).round() as u32)),
+            )
+            .into_any_element()
+        });
         if self.is_restricted() {
             left.push(
                 status_item(
@@ -1686,6 +1722,7 @@ impl Workbench {
                         .child("UTF-8")
                         .into_any_element(),
                 );
+                right.extend(progress.take());
                 right.push(
                     status_item("status-language", Some("code"), "Language", None, &p)
                         .child(impulse_kit::uri::editor_language_for_path(&editor.path))
@@ -1724,6 +1761,7 @@ impl Workbench {
                             .into_any_element(),
                     );
                 }
+                right.extend(progress.take());
                 right.push(
                     status_item("status-shell", Some("terminal"), "Shell", None, &p)
                         .child(crate::workspace::shell_name())
@@ -1747,6 +1785,7 @@ impl Workbench {
             }
             None => {}
         }
+        right.extend(progress);
         if let Some(notice) = self.notice.clone() {
             left.push(
                 div()

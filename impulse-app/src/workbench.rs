@@ -90,6 +90,11 @@ pub struct Workbench {
     /// The last close recorded: its id and what to call it (for the Undo
     /// toast of a close the user made).
     last_closed: Option<(u64, String)>,
+    /// Language servers' work going on (indexing): `server:token`, newest
+    /// last.
+    pub(crate) lsp_progress: Vec<(String, crate::workbench_trust::LspProgress)>,
+    /// Language-server problems already told (each is said once).
+    pub(crate) told_lsp: std::collections::HashSet<String>,
     pub(crate) drag: Option<crate::workbench_panes::DividerDrag>,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
     /// `impulse edit` requests waiting for their editor to close.
@@ -187,6 +192,8 @@ impl Workbench {
             panel: SidebarPanel::Files,
             closed: Vec::new(),
             last_closed: None,
+            lsp_progress: Vec::new(),
+            told_lsp: Default::default(),
             drag: None,
             split_bounds: Default::default(),
             pending_edits: Vec::new(),

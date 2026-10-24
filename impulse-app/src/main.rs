@@ -262,9 +262,9 @@ fn main() {
             repository_state::start_auto_fetch(cx);
             update_check::start(cx);
             control_server::start(cx, control_commands::dispatch);
-            cx.on_app_quit(|_| {
+            cx.on_app_quit(|cx| {
                 control_server::stop();
-                async {}
+                workbench_trust::shutdown_servers(cx)
             })
             .detach();
             let saved = (!explicit).then(|| session::saved(cx)).flatten();

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::future::{FutureExt, Shared};
 use gpui_kit::component::input::{
@@ -38,8 +39,19 @@ pub struct LspHub {
     trust: Arc<WorkspaceTrust>,
     /// Started servers, by server id and the folder they work in.
     clients: RefCell<HashMap<(String, PathBuf), ClientTask>>,
+    /// Not started again before this: a missing command (looked for again
+    /// after 15 seconds) or a crash (the restart delay).
+    unavailable_until: RefCell<HashMap<(String, PathBuf), Instant>>,
+    /// Recent crashes per server: how many, and the last one.
+    crashes: RefCell<HashMap<(String, PathBuf), (usize, Instant)>>,
     events: async_channel::Sender<ServerEvent>,
 }
+
+/// How long a missing command is trusted to stay missing.
+const START_RETRY: Duration = Duration::from_secs(15);
+/// The delays before a crashed server comes back: longer each time it
+/// crashes again within five minutes (the Swift registry's).
+const RESTART_DELAYS: [u64; 4] = [2, 10, 30, 120];
 
 /// A server for a document: its id and its (starting) client.
 pub struct ServerFor {
@@ -59,6 +71,8 @@ impl LspHub {
             root,
             trust,
             clients: RefCell::default(),
+            unavailable_until: RefCell::default(),
+            crashes: RefCell::default(),
             events,
         });
         (hub, receiver)
@@ -103,7 +117,28 @@ impl LspHub {
                         client: task.clone(),
                     });
                 }
-                let command = resolve_command(&server.command)?;
+                if self
+                    .unavailable_until
+                    .borrow()
+                    .get(&key)
+                    .is_some_and(|until| Instant::now() < *until)
+                {
+                    return None;
+                }
+                let Some(command) = resolve_command(&server.command) else {
+                    self.unavailable_until
+                        .borrow_mut()
+                        .insert(key, Instant::now() + START_RETRY);
+                    let _ = self.events.try_send(ServerEvent::Unavailable {
+                        message: impulse_lsp::managed::missing_command_message(
+                            &id,
+                            &server.command,
+                        ),
+                        server: id,
+                    });
+                    return None;
+                };
+                self.unavailable_until.borrow_mut().remove(&key);
                 let options = server
                     .initialization_options
                     .clone()
@@ -119,6 +154,36 @@ impl LspHub {
                 self.clients.borrow_mut().insert(key, task.clone());
                 Some(ServerFor { id, client: task })
             })
+            .collect()
+    }
+}
+
+impl LspHub {
+    /// A server's process ended on its own: forget it, and say how long to
+    /// wait before starting it again (longer each time it keeps crashing).
+    pub fn server_exited(&self, server: &str, root: &Path) -> Duration {
+        let key = (server.to_string(), root.to_path_buf());
+        self.clients.borrow_mut().remove(&key);
+        let now = Instant::now();
+        let mut crashes = self.crashes.borrow_mut();
+        let crash = crashes.entry(key.clone()).or_insert((0, now));
+        if now.duration_since(crash.1) > Duration::from_secs(300) {
+            crash.0 = 0;
+        }
+        crash.0 += 1;
+        crash.1 = now;
+        let delay =
+            Duration::from_secs(RESTART_DELAYS[(crash.0 - 1).min(RESTART_DELAYS.len() - 1)]);
+        self.unavailable_until.borrow_mut().insert(key, now + delay);
+        delay
+    }
+
+    /// Every server that has started, to shut down at quit.
+    pub fn running(&self) -> Vec<Arc<LspClient>> {
+        self.clients
+            .borrow()
+            .values()
+            .filter_map(|task| task.clone().now_or_never()?.ok())
             .collect()
     }
 }

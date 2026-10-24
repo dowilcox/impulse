@@ -79,7 +79,7 @@ fn diagnostics_hover_and_completion() {
                     d.severity == Some(DiagnosticSeverity::ERROR) && d.range.start.line == 1
                 });
             }
-            Ok(ServerEvent::Exited) | Err(_) => {
+            Ok(ServerEvent::Exited { .. }) | Err(_) => {
                 eprintln!("server exited");
                 break;
             }

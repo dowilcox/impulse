@@ -98,6 +98,23 @@ pub fn managed_bin_dir() -> PathBuf {
     managed_root_dir().join("node_modules/.bin")
 }
 
+/// What to do about the managed servers that aren't installed.
+pub const INSTALL_HINT: &str = "Install them with \"Install Web LSP Servers\" in the command palette or Settings → Language Servers.";
+
+/// What the user is told about a server whose command isn't installed (the
+/// Swift `missingCommandMessage`, word for word).
+pub fn missing_command_message(server_id: &str, command: &str) -> String {
+    if MANAGED_COMMANDS.contains(&command) {
+        format!(
+            "LSP server '{server_id}' requires '{command}' but it is not installed. {INSTALL_HINT}"
+        )
+    } else {
+        format!(
+            "LSP server '{server_id}' requires '{command}' but it is not in PATH. Install it or override `servers.{server_id}` in lsp.json."
+        )
+    }
+}
+
 /// `command` on the login `PATH`, then in the managed bin folder.
 pub fn resolve(command: &str) -> Option<PathBuf> {
     which(command).map(PathBuf::from).or_else(|| {
@@ -201,6 +218,13 @@ mod tests {
     #[test]
     fn lists_every_server() {
         assert_eq!(managed_status().len(), MANAGED_COMMANDS.len());
+        assert_eq!(
+            missing_command_message("typescript", "typescript-language-server"),
+            "LSP server 'typescript' requires 'typescript-language-server' but it is not installed. \
+             Install them with \"Install Web LSP Servers\" in the command palette or Settings → Language Servers."
+        );
+        assert!(missing_command_message("gopls", "gopls")
+            .ends_with("override `servers.gopls` in lsp.json."));
         let system = system_status();
         assert_eq!(system.len(), SYSTEM_SERVERS.len());
         assert_eq!(system[0].command, "rust-analyzer");

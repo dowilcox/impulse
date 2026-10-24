@@ -354,7 +354,14 @@ impl EditorTab {
         }
         self.hooks = Some(hooks.clone());
         let servers = hub.servers_for(&self.path, &self.language, cx);
-        self.primary = servers.first().map(|server| server.id.clone());
+        if self.primary.is_none() || self.links.is_empty() {
+            self.primary = servers.first().map(|server| server.id.clone());
+        }
+        // Servers already attached stay (another one crashed and is back).
+        let servers: Vec<_> = servers
+            .into_iter()
+            .filter(|s| !self.serves(&s.id))
+            .collect();
         for server in servers {
             let hooks = hooks.clone();
             self._lsp_start.push(cx.spawn_in(
@@ -398,6 +405,36 @@ impl EditorTab {
             });
         }
         self.links.push((id, link));
+    }
+
+    /// Whether server `id` serves this file.
+    pub(crate) fn serves(&self, id: &str) -> bool {
+        self.links.iter().any(|(server, _)| server == id)
+    }
+
+    /// Drop server `id` (it crashed), so `start_lsp` attaches it again.
+    pub(crate) fn detach_server(&mut self, id: &str, cx: &mut Context<Self>) {
+        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.links)
+            .into_iter()
+            .partition(|(server, _)| server == id);
+        self.links = kept;
+        let primary = self.primary.as_deref() == Some(id);
+        self.state.update(cx, |state, _| {
+            let lsp = state.lsp_mut();
+            lsp.code_action_providers.retain(|provider| {
+                !gone
+                    .iter()
+                    .any(|(_, link)| std::ptr::addr_eq(Rc::as_ptr(provider), Rc::as_ptr(link)))
+            });
+            if primary {
+                lsp.completion_provider = None;
+                lsp.hover_provider = None;
+                lsp.definition_provider = Some(Rc::new(crate::editor_links::LinkDefinitions {
+                    server: None,
+                }));
+            }
+        });
+        self._lsp_start.clear();
     }
 
     fn primary_link(&self) -> Option<Rc<DocumentLink>> {

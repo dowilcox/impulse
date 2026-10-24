@@ -34,6 +34,7 @@ pub(crate) enum Kind {
     Info,
     Success,
     Warning,
+    Error,
 }
 
 impl Kind {
@@ -42,6 +43,7 @@ impl Kind {
             Kind::Info => "info",
             Kind::Success => "success",
             Kind::Warning => "warning",
+            Kind::Error => "error",
         }
     }
 }
@@ -204,6 +206,7 @@ fn view(shown: &Shown, p: &ChromePalette) -> AnyElement {
         Kind::Info => ("info", p.info),
         Kind::Success => ("circle-check", p.success),
         Kind::Warning => ("triangle-alert", p.warning),
+        Kind::Error => ("circle-x", p.danger),
     };
     let (message, detail) = toast.lines();
     let mut row = div()

@@ -367,6 +367,43 @@ impl Workbench {
         })
     }
 
+    /// A language-server problem, said once (the registry keeps retrying).
+    fn tell_lsp_once(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.told_lsp.insert(message.clone()) {
+            return;
+        }
+        crate::toasts::show(
+            window,
+            cx,
+            crate::toasts::Toast::warning(message)
+                .lifetime(Some(std::time::Duration::from_secs(12))),
+        );
+    }
+
+    /// A crashed server's restart delay is over: start it again for the
+    /// editors of workspace `workspace_id` it was serving.
+    fn restart_server(
+        &mut self,
+        workspace_id: u64,
+        server: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.workspaces.iter().position(|w| w.id == workspace_id) else {
+            return;
+        };
+        let editors: Vec<Entity<EditorTab>> = self.workspaces[index]
+            .all_surfaces()
+            .filter_map(Surface::editor)
+            .filter(|e| e.read(cx).serves(server))
+            .cloned()
+            .collect();
+        for editor in editors {
+            editor.update(cx, |editor, cx| editor.detach_server(server, cx));
+            self.start_lsp(index, &editor, window, cx);
+        }
+    }
+
     /// What a language server of workspace `workspace_id` sent on its own.
     fn server_event(
         &mut self,
@@ -414,8 +451,148 @@ impl Workbench {
                     });
                 }
             }
-            impulse_lsp::ServerEvent::Message(message) => log::info!("language server: {message}"),
-            impulse_lsp::ServerEvent::Exited => log::warn!("a language server exited"),
+            // 4 is a log message: not worth interrupting for.
+            impulse_lsp::ServerEvent::ShowMessage { server, kind, text } if kind <= 3 => {
+                let (toast_kind, seconds) = match kind {
+                    1 => (crate::toasts::Kind::Error, 12),
+                    2 => (crate::toasts::Kind::Warning, 6),
+                    _ => (crate::toasts::Kind::Info, 6),
+                };
+                crate::toasts::show(
+                    window,
+                    cx,
+                    crate::toasts::Toast::new(toast_kind, format!("{server}: {text}"))
+                        .lifetime(Some(std::time::Duration::from_secs(seconds))),
+                );
+            }
+            impulse_lsp::ServerEvent::ShowMessage { .. } => {}
+            impulse_lsp::ServerEvent::Unavailable { message, .. } => {
+                self.tell_lsp_once(message, window, cx)
+            }
+            impulse_lsp::ServerEvent::Exited {
+                server,
+                root,
+                expected,
+            } => {
+                if expected {
+                    return;
+                }
+                let Some(hub) = self
+                    .workspaces
+                    .iter()
+                    .find(|w| w.id == workspace_id)
+                    .and_then(|w| w.lsp.clone())
+                else {
+                    return;
+                };
+                let delay = hub.server_exited(&server, &root);
+                // Its work in progress went with it.
+                let prefix = format!("{server}:");
+                self.lsp_progress
+                    .retain(|(key, _)| !key.starts_with(&prefix));
+                cx.notify();
+                log::warn!("language server {server} exited; restarting in {delay:?}");
+                self.tell_lsp_once(
+                    format!(
+                        "The {server} language server stopped unexpectedly. Impulse restarts it."
+                    ),
+                    window,
+                    cx,
+                );
+                cx.spawn_in(window, async move |workbench, cx| {
+                    cx.background_executor()
+                        .timer(delay + std::time::Duration::from_millis(100))
+                        .await;
+                    let _ = workbench.update_in(cx, |workbench, window, cx| {
+                        workbench.restart_server(workspace_id, &server, window, cx)
+                    });
+                })
+                .detach();
+            }
+            impulse_lsp::ServerEvent::Progress {
+                server,
+                token,
+                kind,
+                title,
+                message,
+                percentage,
+            } => {
+                let key = format!("{server}:{token}");
+                if kind == "end" {
+                    self.lsp_progress.retain(|(k, _)| *k != key);
+                } else {
+                    let index = match self.lsp_progress.iter().position(|(k, _)| *k == key) {
+                        Some(index) => index,
+                        None => {
+                            self.lsp_progress.push((
+                                key,
+                                LspProgress {
+                                    title: server.clone(),
+                                    server,
+                                    message: None,
+                                    fraction: None,
+                                },
+                            ));
+                            self.lsp_progress.len() - 1
+                        }
+                    };
+                    let status = &mut self.lsp_progress[index].1;
+                    if let Some(title) = title {
+                        status.title = title;
+                    }
+                    if message.is_some() {
+                        status.message = message;
+                    }
+                    if let Some(percentage) = percentage {
+                        status.fraction = Some(percentage as f32 / 100.);
+                    }
+                }
+                cx.notify();
+            }
+        }
+    }
+}
+
+/// A language server's work in progress, for the status bar (Swift's
+/// `LspProgressStatus`).
+#[derive(Clone)]
+pub(crate) struct LspProgress {
+    pub server: String,
+    pub title: String,
+    pub message: Option<String>,
+    pub fraction: Option<f32>,
+}
+
+/// At quit: ask every language server to shut down at once, and stop any
+/// still running two seconds later.
+pub(crate) fn shutdown_servers(cx: &mut gpui_kit::App) -> impl std::future::Future<Output = ()> {
+    use futures::FutureExt as _;
+    let clients: Vec<_> = crate::session::workbenches(cx)
+        .iter()
+        .flat_map(|(workbench, _)| {
+            workbench
+                .read(cx)
+                .workspaces
+                .iter()
+                .filter_map(|w| w.lsp.clone())
+                .flat_map(|hub| hub.running())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let timer = cx
+        .background_executor()
+        .timer(std::time::Duration::from_secs(2));
+    async move {
+        if clients.is_empty() {
+            return;
+        }
+        let all = futures::future::join_all(clients.iter().map(|c| c.shutdown()));
+        futures::select! {
+            _ = all.fuse() => {}
+            _ = timer.fuse() => {}
+        }
+        for client in &clients {
+            client.kill();
         }
     }
 }

@@ -354,7 +354,12 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           editor_vim.rs over impulse_kit::vim, its keys
                           taken ahead of GPUI Kit's in the VimNormal
                           context, the mode in the status bar), workspace trust, language
-                          servers (code actions, formatting, rename in
+                          servers (lsp_hub.rs: missing servers told once and
+                          looked for again after 15 s, crashed ones restarted
+                          after 2, 10, 30 or 120 s, showMessage as toasts,
+                          $/progress in the status bar, shut down at quit;
+                          impulse-lsp's requests time out with
+                          $/cancelRequest) (code actions, formatting, rename in
                           Monaco's inline box (EditorTab's RenameBox) and
                           references with edits across files), the
                           headless snapshot mode of debug builds
