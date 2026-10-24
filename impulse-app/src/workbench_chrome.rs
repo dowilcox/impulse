@@ -114,6 +114,7 @@ impl Workbench {
             let active = index == workspace.active;
             let surface = tab.focused_surface();
             let dirty = tab.panes.values().any(|s| s.is_dirty(cx));
+            let attention = !active && Self::tab_needs_attention(tab, cx);
             let color = if active { p.text } else { p.text_secondary };
             let mut t = div()
                 .id(("tab", tab.id))
@@ -129,7 +130,8 @@ impl Workbench {
                 .text_color(hsla(color))
                 .hover(|s| s.bg(hsla(p.hover)))
                 .on_click(cx.listener(move |w, _, window, cx| w.activate_tab(index, window, cx)))
-                .child(icon(
+                .child(self.tab_icon(
+                    tab,
                     if tab.is_split() {
                         "columns-2"
                     } else {
@@ -137,6 +139,7 @@ impl Workbench {
                     },
                     metrics::ICON,
                     color,
+                    cx,
                 ))
                 .child(
                     div()
@@ -159,7 +162,9 @@ impl Workbench {
                             cx.stop_propagation();
                             w.close_tab_at(index, window, cx)
                         }))
-                        .child(if dirty {
+                        .child(if attention {
+                            crate::agent_views::status_dot(7., p.attention)
+                        } else if dirty {
                             div()
                                 .w(px(8.))
                                 .h(px(8.))
@@ -245,6 +250,7 @@ impl Workbench {
                     .child(icon("plus", metrics::ICON, p.text_secondary)),
             )
             .child(div().flex_1())
+            .children(self.agent_inbox_button(cx))
             .child(
                 div()
                     .id("search-field")
@@ -357,6 +363,7 @@ impl Workbench {
                         .child("follows tab"),
                 )
             })
+            .children(self.workspace_agent_counts(index, cx))
             .children(self.task_chips(index, cx))
             .tooltip({
                 let help = self.workspace_help(index);
@@ -394,8 +401,18 @@ impl Workbench {
                             w.active = index;
                             w.activate_tab(t, window, cx);
                         }))
-                        .child(icon(surface.icon(), metrics::ICON_SMALL, p.text_tertiary))
-                        .child(surface.title(cx)),
+                        .child(self.tab_icon(
+                            tab,
+                            surface.icon(),
+                            metrics::ICON_SMALL,
+                            p.text_tertiary,
+                            cx,
+                        ))
+                        .child(div().flex_1().min_w_0().child(surface.title(cx)))
+                        .children(
+                            (!active_tab && Self::tab_needs_attention(tab, cx))
+                                .then(|| crate::agent_views::status_dot(6., p.attention)),
+                        ),
                 );
             }
         }

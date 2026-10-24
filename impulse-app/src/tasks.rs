@@ -427,7 +427,7 @@ fn repository_tasks(main: &str, common: &str) -> Vec<TaskRecord> {
 /// What each workspace of the repository changes: the main checkout's
 /// uncommitted files and commits not pushed, and each task's uncommitted
 /// files and commits since it left its base.
-fn changes(main: &str, tasks: &[TaskRecord]) -> Vec<task_overlap::Changes> {
+pub(crate) fn changes(main: &str, tasks: &[TaskRecord]) -> Vec<task_overlap::Changes> {
     if tasks.is_empty() {
         return Vec::new();
     }

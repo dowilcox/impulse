@@ -170,7 +170,12 @@ pub fn scope_title(scope: &DiffScope) -> String {
         DiffScope::Commit { sha } => format!("Commit {}", sha.chars().take(7).collect::<String>()),
         DiffScope::Range { from, to } => format!("{from}…{to}"),
         DiffScope::Stash { index } => format!("stash@{{{index}}}"),
-        DiffScope::Snapshot { from, .. } => format!("Since {from}"),
+        // "Agent turn at 14:05", "Since your review at 09:30".
+        DiffScope::Snapshot { from, to } => impulse_kit::git::diff_scope::DiffScope::Snapshot {
+            from: from.clone(),
+            to: to.clone(),
+        }
+        .title(),
     }
 }
 

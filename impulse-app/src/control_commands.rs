@@ -101,6 +101,19 @@ impl Workbench {
                 request.command
             )));
         }
+        // Hooks, statuses, notifications, turns, blocks and Review
+        // (`agent_hooks`).
+        let agent_answer = std::rc::Rc::new(answer.clone());
+        if self.handle_agent_control(
+            &request,
+            terminal.as_ref(),
+            from_shell,
+            agent_answer,
+            window,
+            cx,
+        ) {
+            return;
+        }
         match request.command.as_str() {
             "open" => {
                 let Some(path) = args.get("path").cloned() else {
@@ -199,33 +212,6 @@ impl Workbench {
                 }
                 answer(ControlResponse::ok());
             }
-            "notify" => {
-                let Some(terminal) = terminal else {
-                    return answer(inside_terminal());
-                };
-                let title = args
-                    .get("title")
-                    .cloned()
-                    .unwrap_or_else(|| terminal.read(cx).title.clone());
-                let message = args.get("message").cloned().unwrap_or_default();
-                self.set_notice(
-                    if title.is_empty() {
-                        message
-                    } else {
-                        format!("{title}: {message}")
-                    },
-                    cx,
-                );
-                answer(ControlResponse::ok());
-            }
-            "status" => {
-                if terminal.is_none() {
-                    return answer(inside_terminal());
-                }
-                answer(ControlResponse::ok());
-            }
-            // Not ours: ignored quietly, as the Swift app does.
-            "hook" => answer(ControlResponse::ok()),
             "checkpoint" => {
                 let Some(cwd) = cwd else {
                     return answer(inside_terminal());
@@ -241,7 +227,10 @@ impl Workbench {
                     };
                     let prefix = format!("{}manual/", impulse_git::safety::CHECKPOINT_PREFIX);
                     match impulse_git::safety::create(&reason, &root, &prefix) {
-                        Ok(snapshot) => answer(ControlResponse::ok_message(snapshot.ref_name)),
+                        Ok(snapshot) => {
+                            answer(ControlResponse::ok_message(snapshot.ref_name));
+                            crate::agent_checkpoints::prune(&root);
+                        }
                         Err(error) => answer(ControlResponse::failure(error.message())),
                     }
                 })
@@ -265,17 +254,9 @@ impl Workbench {
                 let json = args.contains_key("json");
                 answer(ControlResponse::answer(&list, list.text(), json));
             }
-            "mcp-tools" => {
-                let mut response = ControlResponse::ok();
-                response.data = Some(br#"{"disabled":[]}"#.to_vec());
-                answer(response);
-            }
-            "review" | "tasks" | "turns" | "comments" | "problems" | "blocks" | "project" => {
-                answer(ControlResponse::failure(format!(
-                    "impulse {} isn't in the Rust app yet.",
-                    request.command
-                )))
-            }
+            "tasks" | "comments" | "problems" | "project" => answer(ControlResponse::failure(
+                format!("impulse {} isn't in the Rust app yet.", request.command),
+            )),
             other => answer(ControlResponse::failure(format!(
                 "impulse: unknown command '{other}'"
             ))),

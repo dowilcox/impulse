@@ -311,7 +311,8 @@ which inserts the type when picked.*
   settings.json watched and merged as `SettingsStore` does; session restore
   from the same `session-state.json` and scrollback files; the control
   socket for `impulse` (`open`, `edit` waiting for the tab, `split`, `tab`,
-  `notify`, `checkpoint`, `unsaved`).
+  `notify`, `status`, `hook`, `turns`, `blocks`, `review`, `checkpoint`,
+  `unsaved`).
 - Tasks: New Task (the sheet, the worktree beside the repository, copies,
   the task list and its slot, the task's own values and setup script once
   the project settings are trusted, the main checkout's changes moved in
@@ -322,6 +323,34 @@ which inserts the type when picked.*
   overlap chips. A task's terminals get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT`
   and `IMPULSE_REPO_ROOT`. Agents' parts (an agent's request, its brief,
   waiting for its turn) come with the agents.
+- Agents: Claude Code, Codex, opencode and the other known agents are found
+  in a terminal from its foreground process (`/proc` on Linux, libproc and
+  `KERN_PROCARGS2` on macOS) and from their hooks (`impulse hook`), and
+  `AgentStateMachine` follows each one: its glyph on titlebar tabs and
+  sidebar rows, attention dots, the agents inbox in the titlebar (most
+  urgent first, Review on a turn), Next Agent Needing You, and a desktop
+  notification when one needs input or finishes while the window isn't
+  active (`notify-send`, and `osascript` on the Mac in place of
+  UserNotifications for now). Each turn is checkpointed under
+  `refs/impulse/checkpoints/` for Review Last Agent Turn, `impulse review
+  last-turn` and `impulse turns`; `impulse blocks` reads the workspace's
+  command blocks; the hooks get Impulse's replies (the repository's tasks
+  when a session starts, shared-file and dependency notes, the question
+  before merging a task's branch still in progress). The Agent Integration
+  dialog installs and removes the hooks and the MCP server with
+  `impulse_kit::agents`' installers. Not yet: the toolbelt under an agent's
+  terminal and the composer (Send Selection to Agent), turns in the session
+  file, and a desktop notification's click going to its terminal.
+
+| Agents inbox | Agent Integration |
+|---|---|
+| ![Agents inbox](images/rust-agents-inbox.png) | ![Agent Integration](images/rust-agent-integration.png) |
+
+*Left: a stand-in Claude Code with Impulse's hooks finished a turn: the bot
+with a check on its tab and in the sidebar, "1 waiting" in the titlebar, and
+the inbox with Review for the turn's checkpoints. Right: Agent Integration
+on the MCP server for Claude Code, the `claude mcp add-json` command it
+runs.*
 - The terminal draws its own grid (cell runs, selection and search ranges,
   the cursor, block washes, stripes, separators and status chips), takes
   keys through the port of `KeyEncoder` and text through GPUI's input

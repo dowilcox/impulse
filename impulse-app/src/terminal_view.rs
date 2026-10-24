@@ -351,6 +351,8 @@ pub struct TerminalView {
     y_offset: Pixels,
     /// Rows drawn this frame.
     draw_rows: usize,
+    /// The agent running in it, and its attention mark (`agent_tracker`).
+    pub(crate) agent: crate::agent_tracker::AgentTracker,
     _wake: gpui_kit::Task<()>,
     _blink: gpui_kit::Task<()>,
 }
@@ -542,6 +544,7 @@ impl TerminalView {
             last_content_row: None,
             y_offset: px(0.),
             draw_rows: usize::MAX,
+            agent: Default::default(),
             _wake: wake,
             _blink: blink,
         };
@@ -655,6 +658,7 @@ impl TerminalView {
         let mut changed = false;
         for event in self.backend.poll_events() {
             changed = true;
+            self.agent_observe(&event, cx);
             match event {
                 TerminalEvent::CwdChanged(path) => {
                     if path != self.cwd {
@@ -748,6 +752,7 @@ impl TerminalView {
         }
         if !matches!(self.backend.take_damage(), Some(rows) if rows.is_empty()) {
             changed = true;
+            self.agent_output(cx);
         }
         if changed {
             cx.notify();
@@ -844,6 +849,7 @@ impl TerminalView {
             self.backend.clear_selection();
             self.backend.write(&bytes);
             self.typed();
+            self.agent_key(k.key == "enter", cx);
             cx.stop_propagation();
             cx.notify();
         }
@@ -1797,6 +1803,7 @@ impl EntityInputHandler for TerminalView {
         self.backend.clear_selection();
         self.backend.write(&key_encoder::paste_bytes(text, false));
         self.typed();
+        self.agent_key(false, cx);
         cx.notify();
     }
 
@@ -1995,6 +2002,7 @@ impl Render for TerminalView {
         if contains_focus {
             self.note_active();
         }
+        self.agent_note_watched(window, cx);
         // A program taking the grid (or giving it back) moves the keyboard
         // between the grid and the bar.
         let mode = self.backend.mode();
