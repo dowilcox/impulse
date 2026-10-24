@@ -3,9 +3,11 @@
 //! and shortcuts all send to the workbench. Shortcuts come from
 //! `impulse_kit::keybindings` with the user's `keybinding_overrides`.
 
-use gpui_kit::{Action, App, KeyBinding, NoAction};
-use impulse_kit::keybindings::{self, Platform};
+use gpui_kit::{Action, App, KeyBinding, KeyBindingMetaIndex, Keystroke, NoAction};
+use impulse_kit::keybindings::{self, Platform, Shortcut};
 use impulse_kit::settings::Settings;
+
+use crate::settings_store::SettingsStore;
 
 /// Run the command with this id (a `keybindings` id, a palette id, or
 /// `custom:…`).
@@ -683,20 +685,69 @@ pub fn catalog(settings: &Settings) -> Vec<AppCommand> {
     out
 }
 
-/// Bind every command's shortcut. In a terminal on Linux, plain
-/// Ctrl+letter chords go to the shell, and the commands bound to them are
-/// reached with Shift added where that's free.
+/// Marks the bindings `bind_keys` makes, so they can be swapped for new
+/// ones when the shortcuts change.
+const COMMAND_KEYS: KeyBindingMetaIndex = KeyBindingMetaIndex(0x4b45_5953);
+
+/// Bind every command's shortcut.
 pub fn bind_keys(settings: &Settings, cx: &mut App) {
+    cx.bind_keys(command_bindings(settings));
+}
+
+/// Bind the commands' shortcuts again whenever `keybinding_overrides` or
+/// `custom_keybindings` change (the Keyboard Shortcuts tab, settings.json),
+/// keeping every other binding, and the commands' place among them.
+pub fn rebind_on_change(cx: &mut App) {
+    let shortcuts = |s: &Settings| (s.keybinding_overrides.clone(), s.custom_keybindings.clone());
+    let mut bound = shortcuts(SettingsStore::get(cx));
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let settings = SettingsStore::get(cx).clone();
+        let now = shortcuts(&settings);
+        if now == bound {
+            return;
+        }
+        bound = now;
+        let keymap = cx.key_bindings();
+        {
+            let mut keymap = keymap.borrow_mut();
+            let mut all: Vec<KeyBinding> = keymap.bindings().cloned().collect();
+            let at = all
+                .iter()
+                .position(|b| b.meta() == Some(COMMAND_KEYS))
+                .unwrap_or(all.len());
+            all.retain(|b| b.meta() != Some(COMMAND_KEYS));
+            all.splice(at..at, command_bindings(&settings));
+            keymap.clear();
+            keymap.add_bindings(all);
+        }
+        cx.refresh_windows();
+    })
+    .detach();
+}
+
+/// A binding of `shortcut`, unless GPUI can't read it (a hand-edited
+/// settings.json).
+fn binding(shortcut: &Shortcut, action: impl Action, context: Option<&str>) -> Option<KeyBinding> {
+    let keys = shortcut.gpui();
+    Keystroke::parse(&keys)
+        .ok()
+        .map(|_| KeyBinding::new(&keys, action, context).with_meta(COMMAND_KEYS))
+}
+
+/// Every command's shortcut. In a terminal on Linux, plain Ctrl+letter
+/// chords go to the shell, and the commands bound to them are reached with
+/// Shift added where that's free.
+fn command_bindings(settings: &Settings) -> Vec<KeyBinding> {
     let platform = Platform::current();
     let bindings = keybindings::bindings(&settings.keybinding_overrides, platform);
     let mut keys: Vec<KeyBinding> = bindings
         .iter()
-        .map(|(id, shortcut)| KeyBinding::new(&shortcut.gpui(), RunCommand::new(*id), None))
+        .filter_map(|(id, shortcut)| binding(shortcut, RunCommand::new(*id), None))
         .collect();
     for custom in &settings.custom_keybindings {
         if let Some(shortcut) = keybindings::Shortcut::parse(&custom.key) {
-            keys.push(KeyBinding::new(
-                &shortcut.gpui(),
+            keys.extend(binding(
+                &shortcut,
                 RunCommand::new(format!("custom_{}", custom.name)),
                 None,
             ));
@@ -708,14 +759,10 @@ pub fn bind_keys(settings: &Settings, cx: &mut App) {
             .iter()
             .filter(|(_, s)| keybindings::is_shell_chord(s))
         {
-            keys.push(KeyBinding::new(&shortcut.gpui(), NoAction, terminal));
+            keys.extend(binding(shortcut, NoAction, terminal));
         }
         for (id, alias) in keybindings::terminal_aliases(&bindings) {
-            keys.push(KeyBinding::new(
-                &alias.gpui(),
-                RunCommand::new(id),
-                terminal,
-            ));
+            keys.extend(binding(&alias, RunCommand::new(id), terminal));
         }
     }
     // Copy and paste in a terminal are its own (⌘C with nothing selected
@@ -729,5 +776,5 @@ pub fn bind_keys(settings: &Settings, cx: &mut App) {
             Some("copy" | "paste")
         )
     });
-    cx.bind_keys(keys);
+    keys
 }

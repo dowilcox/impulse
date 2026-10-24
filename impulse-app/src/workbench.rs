@@ -191,6 +191,14 @@ impl Workbench {
                     let (theme, palette) = (self.theme.clone(), self.palette.clone());
                     terminal.update(cx, |t, cx| t.set_theme(theme, palette, window, cx))
                 }
+                Surface::Settings(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
+                Surface::Keybindings(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
             }
         }
         cx.notify();
@@ -410,6 +418,8 @@ impl Workbench {
         self.closed.push(match surface {
             Surface::Editor(e) => Closed::File(e.read(cx).path.clone()),
             Surface::Terminal(t) => Closed::Terminal(PathBuf::from(&t.read(cx).cwd)),
+            // Tools aren't reopened, as they aren't saved with the session.
+            Surface::Settings(_) | Surface::Keybindings(_) => return,
         });
     }
 
@@ -618,6 +628,8 @@ impl Workbench {
                 }
                 self.open_file(&path, window, cx);
             }
+            "open_settings" => self.open_settings(None, window, cx),
+            "open_keybindings" => self.open_keybindings(window, cx),
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "new_window" => {
@@ -786,6 +798,8 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
     match surface {
         Surface::Terminal(t) => t.entity_id(),
         Surface::Editor(e) => e.entity_id(),
+        Surface::Settings(s) => s.entity_id(),
+        Surface::Keybindings(k) => k.entity_id(),
     }
 }
 

@@ -8,6 +8,7 @@ pub mod completion;
 pub mod config;
 pub mod edits;
 pub mod framing;
+pub mod managed;
 pub mod registry;
 pub mod workspace_edit;
 

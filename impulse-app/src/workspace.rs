@@ -12,7 +12,9 @@ use gpui_kit::{App, Entity, FocusHandle, Window};
 use impulse_kit::layout_tree::{LayoutTree, SplitAxis};
 
 use crate::editor_tab::EditorTab;
+use crate::keybindings_view::KeybindingsView;
 use crate::lsp_hub::LspHub;
+use crate::settings_view::SettingsView;
 use crate::terminal_view::TerminalView;
 
 pub type PaneId = u64;
@@ -22,6 +24,9 @@ pub type PaneId = u64;
 pub enum Surface {
     Terminal(Entity<TerminalView>),
     Editor(Entity<EditorTab>),
+    /// The Settings and Keyboard Shortcuts tools (one of each per workspace).
+    Settings(Entity<SettingsView>),
+    Keybindings(Entity<KeybindingsView>),
 }
 
 impl Surface {
@@ -37,6 +42,8 @@ impl Surface {
                 }
             }
             Surface::Editor(e) => e.read(cx).title.clone(),
+            Surface::Settings(_) => "Settings".into(),
+            Surface::Keybindings(_) => "Keyboard Shortcuts".into(),
         }
     }
 
@@ -44,13 +51,15 @@ impl Surface {
         match self {
             Surface::Terminal(_) => "square-terminal",
             Surface::Editor(_) => "file-code",
+            Surface::Settings(_) => "settings",
+            Surface::Keybindings(_) => "keyboard",
         }
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
         match self {
-            Surface::Terminal(_) => false,
             Surface::Editor(e) => e.read(cx).dirty,
+            _ => false,
         }
     }
 
@@ -58,6 +67,8 @@ impl Surface {
         match self {
             Surface::Terminal(t) => t.read(cx).focus_handle().clone(),
             Surface::Editor(e) => e.read(cx).focus_handle(cx),
+            Surface::Settings(s) => s.read(cx).focus.clone(),
+            Surface::Keybindings(k) => k.read(cx).focus.clone(),
         }
     }
 
@@ -68,6 +79,8 @@ impl Surface {
                 window.focus(&handle, cx);
             }
             Surface::Editor(e) => e.update(cx, |e, cx| e.focus(window, cx)),
+            Surface::Settings(s) => s.update(cx, |s, cx| s.focus(window, cx)),
+            Surface::Keybindings(k) => k.update(cx, |k, cx| k.focus(window, cx)),
         }
     }
 
@@ -80,6 +93,7 @@ impl Surface {
         match self {
             Surface::Terminal(t) => Some(PathBuf::from(&t.read(cx).cwd)),
             Surface::Editor(e) => e.read(cx).path.parent().map(Path::to_path_buf),
+            Surface::Settings(_) | Surface::Keybindings(_) => None,
         }
     }
 

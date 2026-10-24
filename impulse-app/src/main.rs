@@ -8,9 +8,11 @@
 mod commands;
 mod editor_keys;
 mod editor_tab;
+mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
 mod settings_store;
+mod settings_view;
 mod shell_launch;
 mod terminal_view;
 mod workbench;
@@ -127,6 +129,7 @@ fn main() {
                 .expect("bundled fonts");
             let settings = settings_store::SettingsStore::get(cx).clone();
             commands::bind_keys(&settings, cx);
+            commands::rebind_on_change(cx);
             open_main_window(args, cx);
             cx.activate(true);
         });
