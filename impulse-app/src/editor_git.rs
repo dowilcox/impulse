@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{TextDecoration, TextDecorationCollection};
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
@@ -335,34 +335,29 @@ impl EditorTab {
         cx.notify();
     }
 
-    /// Keep one side of the conflict at the cursor, or both.
-    pub(crate) fn resolve_conflict(
+    /// Keep one side of the conflict starting at line `start`, or both.
+    fn resolve_conflict(
         &mut self,
+        start: usize,
         choice: Resolution,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let text = self.text(cx);
-        let Some(block) = self.conflict_at_cursor(cx) else {
+        let Some(block) = self
+            .git
+            .conflicts
+            .iter()
+            .find(|b| b.start == start)
+            .cloned()
+        else {
             return;
         };
         let (range, replacement) = editor_marks::resolve_edit(&text, &block, choice);
         self.replace_range(range, &replacement, window, cx);
     }
 
-    /// The conflict holding the cursor, else the next one (else the first).
-    fn conflict_at_cursor(&self, cx: &App) -> Option<ConflictBlock> {
-        let line = self.cursor(cx).0 as usize;
-        let blocks = &self.git.conflicts;
-        blocks
-            .iter()
-            .find(|b| (b.start..=b.end).contains(&line))
-            .or_else(|| blocks.iter().find(|b| b.start > line))
-            .or(blocks.first())
-            .cloned()
-    }
-
-    /// Go to the next (1) or previous (-1) conflict.
+    /// Go to the next (1) or previous (-1) conflict from the cursor.
     pub(crate) fn go_to_conflict(
         &mut self,
         step: isize,
@@ -370,6 +365,18 @@ impl EditorTab {
         cx: &mut Context<Self>,
     ) {
         let line = self.cursor(cx).0 as usize;
+        self.go_to_conflict_from(line, step, window, cx);
+    }
+
+    /// Go to the next (1) or previous (-1) conflict after or before `line`
+    /// (1-based), wrapping around.
+    fn go_to_conflict_from(
+        &mut self,
+        line: usize,
+        step: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let blocks = &self.git.conflicts;
         let target = if step > 0 {
             blocks.iter().find(|b| b.start > line).or(blocks.first())
@@ -708,11 +715,11 @@ impl EditorTab {
             ),
             (peek, _) => (None, peek),
         };
+        let conflicts = self.conflict_bars(cx);
         div()
             .size_full()
             .flex()
             .flex_col()
-            .children(self.conflict_bar(cx))
             .child(
                 div()
                     .relative()
@@ -721,6 +728,7 @@ impl EditorTab {
                     .child(underlay)
                     .child(editor)
                     .child(overlay)
+                    .children(conflicts)
                     .children(inline),
             )
             .children(below)
@@ -736,68 +744,114 @@ impl EditorTab {
         }
     }
 
-    /// "Conflict 1 of 2 · HEAD ⟷ feature" and its actions, over the editor.
-    fn conflict_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let block = self.conflict_at_cursor(cx)?;
-        let blocks = &self.git.conflicts;
-        let index = blocks
+    /// Each conflict's actions on its `<<<<<<<` line, after the marker:
+    /// Accept Current, Incoming or Both, "HEAD ⟷ feature", and with more
+    /// than one, "1 of 2" with ↑ and ↓. Monaco puts the same bar in a view
+    /// zone above the conflict; GPUI Kit has no view zones, so it floats
+    /// on the marker line, as the peek floats under its change.
+    fn conflict_bars(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(origin) = self.git.origin.get() else {
+            return Vec::new();
+        };
+        let state = self.state.read(cx);
+        let Some(rows) = state.visible_row_range() else {
+            return Vec::new();
+        };
+        let text = state.text();
+        let places: Vec<(ConflictBlock, Pixels, Pixels, Pixels)> = self
+            .git
+            .conflicts
             .iter()
-            .position(|b| b.start == block.start)
-            .unwrap_or(0);
-        let theme = cx.theme();
-        let button = |id: &'static str, label: &'static str| Button::new(id).label(label).xsmall();
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .px(px(10.))
-                .py(px(4.))
-                .bg(theme.warning.opacity(0.12))
-                .border_b_1()
-                .border_color(theme.border)
-                .text_size(px(12.))
-                .child(format!(
-                    "Conflict {} of {} · {} ⟷ {}",
-                    index + 1,
-                    blocks.len(),
-                    block.current_label,
-                    block.incoming_label
+            .filter_map(|block| {
+                let row = block.start.checked_sub(1)?;
+                if row >= text.lines_len() || !rows.contains(&row) {
+                    return None;
+                }
+                let end = text.line_end_offset(row);
+                let at = state.range_to_bounds(&(end..end))?;
+                Some((
+                    block.clone(),
+                    at.left() - origin.x + px(16.),
+                    at.top() - origin.y,
+                    at.size.height,
                 ))
-                .child(div().flex_1())
-                .child(
-                    button("conflict-current", "Accept Current").on_click(cx.listener(
-                        |tab, _, window, cx| tab.resolve_conflict(Resolution::Current, window, cx),
-                    )),
-                )
-                .child(
-                    button("conflict-incoming", "Accept Incoming").on_click(cx.listener(
-                        |tab, _, window, cx| tab.resolve_conflict(Resolution::Incoming, window, cx),
-                    )),
-                )
-                .child(button("conflict-both", "Accept Both").on_click(cx.listener(
-                    |tab, _, window, cx| tab.resolve_conflict(Resolution::Both, window, cx),
-                )))
-                .child(
-                    Button::new("conflict-previous")
-                        .label("↑")
-                        .xsmall()
-                        .ghost()
-                        .on_click(
-                            cx.listener(|tab, _, window, cx| tab.go_to_conflict(-1, window, cx)),
-                        ),
-                )
-                .child(
-                    Button::new("conflict-next")
-                        .label("↓")
-                        .xsmall()
-                        .ghost()
-                        .on_click(
-                            cx.listener(|tab, _, window, cx| tab.go_to_conflict(1, window, cx)),
-                        ),
-                )
-                .into_any_element(),
-        )
+            })
+            .collect();
+        let count = self.git.conflicts.len();
+        let index_of = |start: usize| {
+            self.git
+                .conflicts
+                .iter()
+                .position(|b| b.start == start)
+                .unwrap_or(0)
+        };
+        let theme = cx.theme();
+        let color = theme.foreground.opacity(0.9);
+        let muted = theme.foreground.opacity(0.72);
+        places
+            .into_iter()
+            .map(|(block, left, top, height)| {
+                let start = block.start;
+                let index = index_of(start);
+                // Swift's .git-peek-button: transparent with a faint border.
+                let button = |id: &'static str, label: &'static str| {
+                    Button::new((id, start)).label(label).xsmall().outline()
+                };
+                let resolve = |choice: Resolution| {
+                    cx.listener(
+                        move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
+                            tab.resolve_conflict(start, choice, window, cx)
+                        },
+                    )
+                };
+                let mut bar = div()
+                    .absolute()
+                    .top(top)
+                    .left(left)
+                    .h(height)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(11.5))
+                    .font_family(crate::workbench::UI_FONT)
+                    .text_color(color)
+                    .child(
+                        button("conflict-current", "Accept Current")
+                            .on_click(resolve(Resolution::Current)),
+                    )
+                    .child(
+                        button("conflict-incoming", "Accept Incoming")
+                            .on_click(resolve(Resolution::Incoming)),
+                    )
+                    .child(
+                        button("conflict-both", "Accept Both").on_click(resolve(Resolution::Both)),
+                    )
+                    .child(div().text_color(muted).child(format!(
+                        "{} ⟷ {}",
+                        block.current_label, block.incoming_label
+                    )));
+                if count > 1 {
+                    bar = bar
+                        .child(
+                            div()
+                                .ml(px(10.))
+                                .text_color(muted)
+                                .child(format!("{} of {count}", index + 1)),
+                        )
+                        .child(button("conflict-previous", "↑").on_click(cx.listener(
+                            move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
+                                tab.go_to_conflict_from(start, -1, window, cx)
+                            },
+                        )))
+                        .child(button("conflict-next", "↓").on_click(cx.listener(
+                            move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
+                                tab.go_to_conflict_from(start, 1, window, cx)
+                            },
+                        )));
+                }
+                bar.into_any_element()
+            })
+            .collect()
     }
 
     /// Where the peek goes: under the peeked change's last line, from the

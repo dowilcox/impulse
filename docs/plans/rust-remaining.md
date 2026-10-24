@@ -41,11 +41,16 @@ Work that doesn't depend on anyone else.
 - [ ] **Collapse unchanged regions in the Diff View** (`editor_diff.rs`,
   `impulse_kit::git::diff_view`), as Monaco's diff editor folds long runs
   of unchanged lines.
-- [ ] **Put conflict actions inline.** Accept Current, Accept Incoming and
-  Accept Both show in a bar today (`editor_git.rs`); Monaco puts them
-  above each conflict.
-- [ ] **Draw the cursor in the agent toolbelt's terminal.** The terminal
-  under the toolbelt (`agent_toolbelt.rs`) doesn't paint its cursor.
+- [x] **Put conflict actions inline.** Done: each conflict's Accept
+  Current, Accept Incoming and Accept Both, its labels and, with more
+  than one, "1 of 2" with ↑ and ↓ float on its `<<<<<<<` line after the
+  marker (`EditorTab::conflict_bars` in `editor_git.rs`) and act on that
+  conflict. Monaco puts the same bar in a 24 px view zone above the
+  conflict; without view zones in GPUI Kit, it can't push the lines down.
+- [x] **Draw the cursor in the agent toolbelt's terminal.** Done: the
+  cursor was there but blinking, and the shot caught it off. The
+  terminal now blinks only in the active window, as Swift's
+  `shouldBlink` does, so it stays solid elsewhere (and in snapshots).
 - [ ] **SQL highlighting.** Its tree-sitter grammar needs an older `cc`
   than the workspace uses; either pin a compatible grammar or build it
   another way.

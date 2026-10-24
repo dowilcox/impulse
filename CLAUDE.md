@@ -342,7 +342,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           index painted over the gutter, the peek with
                           Revert, Stage, Diff and Review, inline blame,
                           merge conflicts tinted with Accept Current,
-                          Incoming or Both, from
+                          Incoming or Both on each marker line
+                          (EditorTab::conflict_bars), from
                           impulse_kit::git::editor_marks; Monaco's keys,
                           bracket pair colors (impulse_kit::bracket_pairs),
                           with its guides and the matching-bracket box

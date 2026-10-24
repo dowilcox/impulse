@@ -532,9 +532,11 @@ impl TerminalView {
                 .await;
             let alive = this.update(cx, |view, cx| {
                 // Solid while typing, as macOS text cursors are, and not
-                // blinking at all without the focus or while the input bar
-                // has the caret.
+                // blinking at all without the focus, in a window that isn't
+                // the active one (Swift's `shouldBlink`), or while the input
+                // bar has the caret.
                 let blinks = view.shown_focused
+                    && cx.active_window() == Some(view.window_handle)
                     && !view.bar_shown(cx)
                     && SettingsStore::get(cx).terminal_cursor_blink
                     && view.last_input.elapsed() > Duration::from_millis(600);
