@@ -722,35 +722,46 @@ impl Workbench {
                         None,
                     );
                 }
-                // Offer to page through it in a terminal instead.
-                let (dir, file) = (
-                    path.parent().map(Path::to_path_buf).unwrap_or_default(),
-                    path.to_path_buf(),
-                );
-                let workbench = cx.entity().downgrade();
-                let view: crate::tasks::Run = Rc::new(move |window, cx| {
-                    let (dir, file) = (dir.clone(), file.clone());
-                    let _ = workbench.update(cx, |w, cx| {
-                        let shell = impulse_kit::shell::login::default_shell_type();
-                        let command = format!(
-                            "less -- {}",
-                            impulse_kit::shell::quoting::quoted(&file.to_string_lossy(), shell)
-                        );
-                        let terminal = w.new_terminal(dir, vec![command], window, cx);
-                        let active = w.active;
-                        w.add_tab(active, terminal, window, cx);
-                    });
-                });
-                crate::tasks::toast(
-                    window,
-                    cx,
-                    crate::tasks::ToastKind::Info,
-                    format!("{name} is too large for the editor (over 10 MB)."),
-                    None,
-                    Some(("View in Terminal", view)),
-                );
+                self.offer_pager(path, &name, window, cx);
             }
         }
+    }
+
+    /// A file too large for the editor: offer to page through it in a
+    /// terminal instead (Swift's `showTooLargeToEdit`).
+    pub(crate) fn offer_pager(
+        &mut self,
+        path: &Path,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (dir, file) = (
+            path.parent().map(Path::to_path_buf).unwrap_or_default(),
+            path.to_path_buf(),
+        );
+        let workbench = cx.entity().downgrade();
+        let view: crate::tasks::Run = Rc::new(move |window, cx| {
+            let (dir, file) = (dir.clone(), file.clone());
+            let _ = workbench.update(cx, |w, cx| {
+                let shell = impulse_kit::shell::login::default_shell_type();
+                let command = format!(
+                    "less -- {}",
+                    impulse_kit::shell::quoting::quoted(&file.to_string_lossy(), shell)
+                );
+                let terminal = w.new_terminal(dir, vec![command], window, cx);
+                let active = w.active;
+                w.add_tab(active, terminal, window, cx);
+            });
+        });
+        crate::tasks::toast(
+            window,
+            cx,
+            crate::tasks::ToastKind::Info,
+            format!("{name} is too large for the editor (over 10 MB)."),
+            None,
+            Some(("View in Terminal", view)),
+        );
     }
 
     /// Show `surface` in the active workspace's preview tab instead of what

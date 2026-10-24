@@ -569,6 +569,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   The hairline under the workspaces resizes the section (Swift's
   `SectionResizeHandle`: double-click to fit its rows again, the height
   kept in the session as `workspaces_height`).
+  An open file changed on disk while it has unsaved edits (or is large)
+  says so in Swift's toast with Reload; one that grows past 5 MB while
+  open reloads and turns read-only, and past 10 MB keeps its buffer and
+  offers View in Terminal.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

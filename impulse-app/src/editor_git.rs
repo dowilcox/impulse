@@ -975,6 +975,41 @@ impl crate::workbench::Workbench {
         if let Some(command) = action.strip_prefix("run:") {
             return self.run_from_preview(&editor, command, window, cx);
         }
+        // The file changed on disk while it can't simply reload.
+        if action == "disk-changed" {
+            let (name, dirty) = {
+                let e = editor.read(cx);
+                (e.title.clone(), e.dirty)
+            };
+            let reload: crate::tasks::Run = std::rc::Rc::new({
+                let editor = editor.clone();
+                move |window, cx| editor.update(cx, |e, cx| e.take_disk(window, cx))
+            });
+            let message = if dirty {
+                format!("{name} changed on disk while you have unsaved edits.")
+            } else {
+                format!("{name} changed on disk.")
+            };
+            let toast = if dirty {
+                crate::toasts::Toast::warning(message)
+            } else {
+                crate::toasts::Toast::info(message)
+            };
+            return crate::toasts::show(
+                window,
+                cx,
+                toast
+                    .action("Reload", reload)
+                    .lifetime(Some(std::time::Duration::from_secs(20))),
+            );
+        }
+        if action == "too-large" {
+            let (path, name) = {
+                let e = editor.read(cx);
+                (e.path.clone(), e.title.clone())
+            };
+            return self.offer_pager(&path, &name, window, cx);
+        }
         // A link to a file in a Markdown preview.
         if let Some(path) = action.strip_prefix("open:") {
             return self.open_file(std::path::Path::new(path), window, cx);

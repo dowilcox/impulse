@@ -125,6 +125,8 @@ pub struct EditorTab {
     _lsp_start: Vec<gpui_kit::Task<()>>,
     /// Servers being started for this file (`_lsp_start`), not attached yet.
     lsp_pending: std::collections::HashSet<String>,
+    /// The file grew past the editor's limit and the pager was offered.
+    too_large_told: bool,
     /// The Markdown preview's scroll, for its `#anchor` links.
     preview_scroll: gpui_kit::ScrollHandle,
 }
@@ -281,6 +283,7 @@ impl EditorTab {
             _observe_state: observe_state,
             _lsp_start: Vec::new(),
             lsp_pending: Default::default(),
+            too_large_told: false,
             preview_scroll: gpui_kit::ScrollHandle::new(),
         };
         tab.apply_settings(&settings, window, cx);
@@ -1054,9 +1057,28 @@ impl EditorTab {
         if self.dirty {
             return;
         }
+        // Grown past what the editor holds: the buffer stays, read-only,
+        // and the pager is offered (once, as Swift's `diskTooLarge`).
+        if text_file::stamp(&self.path).is_some_and(|s| s.size > text_file::MAX_EDITOR_FILE_SIZE) {
+            self.read_only = true;
+            if !self.too_large_told {
+                self.too_large_told = true;
+                cx.emit(crate::editor_git::EditorGitAction {
+                    action: "too-large".into(),
+                    line: 0,
+                });
+            }
+            cx.notify();
+            return;
+        }
         let Some(file) = text_file::read(&self.path) else {
             return;
         };
+        // Grown large while open: from now on it's treated like a file
+        // opened that large (read-only, changes announced, not reloaded).
+        if file.text.len() as u64 > text_file::LARGE_FILE_SIZE {
+            self.read_only = true;
+        }
         self.line_ending = LineEnding::detect(&file.text);
         let disk = LineEnding::normalize(&file.text);
         let state = self.state.clone();
@@ -1377,9 +1399,20 @@ impl EditorTab {
             return;
         }
         if self.dirty || self.read_only {
+            if self.read_only
+                && text_file::stamp(&self.path)
+                    .is_some_and(|s| s.size > text_file::MAX_EDITOR_FILE_SIZE)
+            {
+                return self.reload_from_disk(window, cx);
+            }
             let notice = format!("{} changed on disk.", self.title);
             if self.notice.as_deref() != Some(notice.as_str()) {
                 self.notice = Some(notice);
+                // The window says so with Reload (Swift's toast).
+                cx.emit(crate::editor_git::EditorGitAction {
+                    action: "disk-changed".into(),
+                    line: 0,
+                });
                 cx.emit(EditorTabChanged);
                 cx.notify();
             }
