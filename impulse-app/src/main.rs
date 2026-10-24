@@ -115,6 +115,7 @@ fn main() {
             settings_store::SettingsStore::init(cx);
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);
+            terminal_view::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");

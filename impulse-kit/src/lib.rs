@@ -9,6 +9,8 @@
 pub mod chrome;
 pub mod close_risk;
 pub mod glob;
+pub mod key_encoder;
+pub mod keybindings;
 pub mod line_edits;
 pub mod paths;
 pub mod settings;

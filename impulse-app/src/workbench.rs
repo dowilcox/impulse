@@ -14,7 +14,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
     actions, div, prelude::*, px, svg, AnyElement, App, Context, Entity, FocusHandle, FontWeight,
-    Hsla, KeyBinding, KeyDownEvent, SharedString, Window,
+    Hsla, KeyBinding, Window,
 };
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 use impulse_kit::trust::WorkspaceTrust;
@@ -65,7 +65,6 @@ pub struct Workbench {
     pub(crate) tabs: Vec<Tab>,
     active: usize,
     focus: FocusHandle,
-    input: String,
     root: PathBuf,
     workspace: String,
     branch: String,
@@ -170,14 +169,14 @@ impl Workbench {
 
         let root = PathBuf::from(&args.cwd);
         let focus = cx.focus_handle();
-        window.focus(&focus, cx);
+        let terminal_focus = terminal.read(cx).focus_handle().clone();
+        window.focus(&terminal_focus, cx);
         let mut workbench = Self {
             palette,
             tabs: vec![Tab::Terminal],
             terminal,
             active: 0,
             focus,
-            input: String::new(),
             workspace: root
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -223,6 +222,9 @@ impl Workbench {
             self.palette = ChromePalette::new(&theme, false);
         }
         crate::kit_theme::apply(&theme, &self.palette, &settings, cx);
+        let palette = self.palette.clone();
+        self.terminal
+            .update(cx, |terminal, cx| terminal.set_theme(theme.clone(), palette, window, cx));
         for tab in &self.tabs {
             if let Tab::Editor(editor) = tab {
                 editor.update(cx, |editor, cx| {
@@ -497,7 +499,10 @@ impl Workbench {
         self.active = index.min(self.tabs.len().saturating_sub(1));
         match &self.tabs[self.active] {
             Tab::Editor(editor) => editor.update(cx, |editor, cx| editor.focus(window, cx)),
-            Tab::Terminal => window.focus(&self.focus, cx),
+            Tab::Terminal => {
+                let focus = self.terminal.read(cx).focus_handle().clone();
+                window.focus(&focus, cx)
+            }
         }
         cx.notify();
     }
@@ -608,34 +613,6 @@ impl Workbench {
         let mut rows = Vec::new();
         walk(self, &self.root, 0, &mut rows);
         rows
-    }
-
-    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_editor().is_some() {
-            return;
-        }
-        let keystroke = &event.keystroke;
-        let terminal = self.terminal.read(cx);
-        match keystroke.key.as_str() {
-            "enter" => {
-                terminal.write(format!("{}\r", self.input).as_bytes());
-                self.input.clear();
-            }
-            "backspace" => {
-                self.input.pop();
-            }
-            "c" if keystroke.modifiers.control => terminal.write(b"\x03"),
-            _ => {
-                if let Some(text) = keystroke
-                    .key_char
-                    .as_ref()
-                    .filter(|_| !keystroke.modifiers.control)
-                {
-                    self.input.push_str(text);
-                }
-            }
-        }
-        cx.notify();
     }
 
     fn c(&self, color: KitRgba) -> Hsla {
@@ -950,11 +927,6 @@ impl Workbench {
         if let Some(ms) = terminal.last_duration_ms {
             chips = chips.child(self.chip("history", format!("{ms}ms"), p.success));
         }
-        let input: SharedString = if self.input.is_empty() {
-            "Run a command…".into()
-        } else {
-            self.input.clone().into()
-        };
         div()
             .flex()
             .flex_col()
@@ -976,26 +948,7 @@ impl Workbench {
                     .px(px(12.))
                     .py(px(10.))
                     .bg(self.c(p.content))
-                    .child(chips)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .h(px(36.))
-                            .px(px(12.))
-                            .rounded(px(metrics::RADIUS_LARGE))
-                            .border_1()
-                            .border_color(self.c(p.focus_ring))
-                            .font_family("JetBrains Mono")
-                            .text_color(self.c(if self.input.is_empty() {
-                                p.text_tertiary
-                            } else {
-                                p.text
-                            }))
-                            .child(self.icon("chevron-right", metrics::ICON, p.accent))
-                            .child(input),
-                    ),
+                    .child(chips),
             )
     }
 
@@ -1086,22 +1039,12 @@ impl Workbench {
 }
 
 impl Render for Workbench {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Everything but the terminal's own area, from the layout above.
-        let viewport = window.viewport_size();
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = SettingsStore::get(cx);
-        let sidebar = settings
-            .sidebar_visible
-            .then_some(settings.sidebar_width as f32 + 1.);
-        let width = viewport.width - px(sidebar.unwrap_or(0.));
-        let height =
-            viewport.height - px(metrics::TITLEBAR_HEIGHT + metrics::STATUS_BAR_HEIGHT + 2. + 98.);
-        self.terminal.update(cx, |t, _| t.fit(width, height));
-
+        let sidebar = settings.sidebar_visible;
         let p = &self.palette;
         div()
             .track_focus(&self.focus)
-            .on_key_down(cx.listener(Self::key_down))
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::close_tab))
             .on_action(cx.listener(Self::format_document))
@@ -1120,7 +1063,7 @@ impl Render for Workbench {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .when(sidebar.is_some(), |row| row.child(self.sidebar(cx)))
+                    .when(sidebar, |row| row.child(self.sidebar(cx)))
                     .child(match self.active_editor() {
                         Some(editor) => div()
                             .flex_1()
