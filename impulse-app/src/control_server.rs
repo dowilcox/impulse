@@ -56,8 +56,10 @@ fn cli_path() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// What a terminal with `token` gets in its environment.
-pub fn terminal_env(token: &str) -> Vec<(String, String)> {
+/// What a terminal with `token` gets in its environment. With
+/// `editor_integration` (Use Impulse as $EDITOR), `git commit`, `crontab -e`
+/// and the like open an Impulse tab and wait for it to close.
+pub fn terminal_env(token: &str, editor_integration: bool) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(socket) = SOCKET.get() {
         env.push((
@@ -73,6 +75,12 @@ pub fn terminal_env(token: &str) -> Vec<(String, String)> {
         if let Some(folder) = folder {
             let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".into());
             env.push(("PATH".into(), format!("{folder}:{path}")));
+        }
+        if editor_integration {
+            // Run by `sh -c` (git, crontab), so POSIX single quotes.
+            let editor = format!("'{}' edit", cli.to_string_lossy().replace('\'', "'\\''"));
+            env.push(("EDITOR".into(), editor.clone()));
+            env.push(("VISUAL".into(), editor));
         }
     }
     env

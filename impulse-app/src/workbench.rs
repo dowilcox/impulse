@@ -764,6 +764,21 @@ impl Workbench {
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "quick_terminal" => crate::quick_terminal::toggle(cx),
             "manage_branches" => self.show_branch_manager(window, cx),
+            "editor_integration" => {
+                SettingsStore::update(cx, |s| {
+                    s.terminal_editor_integration = !s.terminal_editor_integration
+                });
+                let message = if SettingsStore::get(cx).terminal_editor_integration {
+                    "New terminals use Impulse as $EDITOR (git commit opens a tab)."
+                } else {
+                    "New terminals keep your own $EDITOR."
+                };
+                self.toast(
+                    gpui_kit::component::notification::Notification::success(message),
+                    window,
+                    cx,
+                );
+            }
             "rename_workspace" => self.rename_workspace(self.active, window, cx),
             "clear_recent_workspaces" => self.clear_recent_workspaces(window, cx),
             "new_window" => {

@@ -559,11 +559,11 @@ pub fn display_for(
 /// that's free (Ctrl+W closes the tab elsewhere, Ctrl+Shift+W in a
 /// terminal). The (command, shortcut) pairs to bind in terminals.
 ///
-/// Commands in `TERMINAL_FIRST` act on the terminal itself, so their alias
-/// is bound even when another command has it outside terminals: Find is
-/// Ctrl+Shift+F in a terminal, as in other Linux terminals, and Project
-/// Search everywhere else.
-pub const TERMINAL_FIRST: &[&str] = &["find"];
+/// Commands in `TERMINAL_FIRST` get their alias even when another command
+/// has it outside terminals, where Linux terminals put them: Find is
+/// Ctrl+Shift+F and New Tab Ctrl+Shift+T in a terminal, and Project Search
+/// and Reopen Closed Tab everywhere else.
+pub const TERMINAL_FIRST: &[&str] = &["find", "new_tab"];
 
 pub fn terminal_aliases(bindings: &[(&'static str, Shortcut)]) -> Vec<(&'static str, Shortcut)> {
     let taken: std::collections::HashSet<&Shortcut> = bindings.iter().map(|(_, s)| s).collect();
@@ -606,11 +606,16 @@ mod tests {
             ("project_search", Shortcut::parse("ctrl+shift+f").unwrap()),
             ("close_tab", Shortcut::parse("ctrl+w").unwrap()),
             ("reopen", Shortcut::parse("ctrl+shift+w").unwrap()),
+            ("new_tab", Shortcut::parse("ctrl+t").unwrap()),
+            ("reopen_tab", Shortcut::parse("ctrl+shift+t").unwrap()),
         ];
         let aliases = terminal_aliases(&bindings);
         assert_eq!(
             aliases,
-            vec![("find", Shortcut::parse("ctrl+shift+f").unwrap())]
+            vec![
+                ("find", Shortcut::parse("ctrl+shift+f").unwrap()),
+                ("new_tab", Shortcut::parse("ctrl+shift+t").unwrap()),
+            ]
         );
     }
 
@@ -699,7 +704,9 @@ mod tests {
                 .map(|(_, s)| s.text())
         };
         assert_eq!(alias("close_tab").as_deref(), Some("Ctrl+Shift+W"));
-        assert_eq!(alias("new_tab"), None, "Ctrl+Shift+T reopens a tab");
+        // In a terminal, as in other Linux terminals; it reopens a closed
+        // tab elsewhere.
+        assert_eq!(alias("new_tab").as_deref(), Some("Ctrl+Shift+T"));
         assert_eq!(alias("command_palette"), None, "not a shell chord");
         for builtin in BUILTINS {
             if let Some(s) = effective(builtin.id, &none(), Platform::Linux) {

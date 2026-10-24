@@ -402,7 +402,10 @@ impl TerminalView {
         let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         let metrics = measure(&font, settings.terminal_font_size as f32, window);
         let token = crate::control_server::new_token();
-        let launch = crate::shell_launch::launch(&crate::control_server::terminal_env(&token));
+        let launch = crate::shell_launch::launch(&crate::control_server::terminal_env(
+            &token,
+            SettingsStore::get(cx).terminal_editor_integration,
+        ));
         let config = TerminalConfig {
             shell_path: launch.shell.clone(),
             shell_args: launch.args.clone(),

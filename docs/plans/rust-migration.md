@@ -127,8 +127,9 @@ toolkit with Zed's editor through a fork, not a different toolkit.
 - **Keyboard**: one keymap where `secondary` is ⌘ on macOS and Ctrl on Linux.
   In a terminal Ctrl belongs to the shell, so on Linux terminal focus uses
   Ctrl+Shift for Impulse's shortcuts, as Linux terminals do. Find is
-  Ctrl+Shift+F in a terminal (Project Search everywhere else), the way other
-  Linux terminals use it (`keybindings::TERMINAL_FIRST`).
+  Ctrl+Shift+F and New Tab Ctrl+Shift+T in a terminal (Project Search and
+  Reopen Closed Tab everywhere else), the way other Linux terminals use them
+  (`keybindings::TERMINAL_FIRST`).
 - **Quick Terminal**: a borderless pop-up window at the top of the screen
   with its system-wide shortcut from `global-hotkey` (Carbon on macOS, as
   today; XGrabKey on X11). Wayland lets no app take a system-wide key, so

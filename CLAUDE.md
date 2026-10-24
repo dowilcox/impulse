@@ -149,6 +149,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           the Quick Terminal (quick_terminal.rs: a pop-up
                           window over a TerminalView with no_bar, its
                           shortcut registered with global-hotkey),
+                          Use Impulse as $EDITOR (EDITOR/VISUAL set to
+                          `impulse edit` by control_server::terminal_env),
                           workbench_workspaces.rs (recent folders in
                           recent-workspaces.json via
                           impulse_kit::recent_workspaces, Rename Workspace,
