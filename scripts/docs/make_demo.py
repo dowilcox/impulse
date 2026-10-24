@@ -732,8 +732,17 @@ SETTINGS = """
 """
 
 
+def data_dir(name: str = "impulse-dev") -> Path:
+    """The app's data folder in the stand-in home: Application Support on
+    the Mac, $XDG_DATA_HOME (~/.local/share) elsewhere."""
+    if sys.platform == "darwin":
+        return HOME / "Library" / "Application Support" / name
+    return HOME / ".local" / "share" / name
+
+
 def build_home() -> None:
-    write(HOME / ".zshrc", ZSHRC)
+    # Linux has C.UTF-8 everywhere, en_US.UTF-8 only where it was generated.
+    write(HOME / ".zshrc", ZSHRC if sys.platform == "darwin" else ZSHRC.replace("en_US.UTF-8", "C.UTF-8"))
     write(HOME / ".zprofile", "")
     write(HOME / ".gitconfig", GITCONFIG)
     agent = (HERE / "agent.sh").read_text()
@@ -743,7 +752,7 @@ def build_home() -> None:
     for name, about in (("trail-ui", "The trailhead web app"), ("trailhead-infra", "Deploy config for trailhead")):
         write(HOME / "Code" / name / "README.md", f"# {name}\n\n{about}.\n")
     for data in ("impulse", "impulse-dev"):
-        write(HOME / "Library" / "Application Support" / data / "settings.json", SETTINGS)
+        write(data_dir(data) / "settings.json", SETTINGS)
 
 
 def build_repo() -> None:

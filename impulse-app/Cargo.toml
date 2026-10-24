@@ -38,3 +38,9 @@ trash = "5"
 # The Quick Terminal's system-wide shortcut (Carbon on macOS, as the Swift
 # app does; XGrabKey on X11).
 global-hotkey = "=0.7.0"
+# The headless snapshots' window images (`debug_snapshot`): the X11 window
+# id for `import`, and on macOS the window number for `screencapture`.
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"

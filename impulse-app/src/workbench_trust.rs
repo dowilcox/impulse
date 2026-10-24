@@ -89,13 +89,62 @@ impl Workbench {
         let workbench = cx.entity().downgrade();
         let shown_folder = abbreviate_home(&folder);
         let shown_parent = abbreviate_home(&parent);
+        let stay: crate::tasks::Run = {
+            let workbench = workbench.clone();
+            Rc::new(move |window, cx| {
+                window.close_dialog(cx);
+                let _ = workbench.update(cx, |workbench, cx| {
+                    if let Some(w) = workbench
+                        .workspaces
+                        .iter_mut()
+                        .find(|w| w.id == workspace_id)
+                    {
+                        w.declined = true;
+                    }
+                    cx.notify();
+                });
+            })
+        };
+        let trust_it: crate::tasks::Run = {
+            let trust_parent = trust_parent.clone();
+            Rc::new(move |window, cx| {
+                window.close_dialog(cx);
+                let _ = workbench.update(cx, |workbench, cx| {
+                    // The folder itself first: trusting the parent
+                    // doesn't lift a restriction on a folder inside it.
+                    workbench.trust.trust(&folder);
+                    if trust_parent.get() {
+                        workbench.trust.trust(&parent);
+                    }
+                    let index = workbench
+                        .workspaces
+                        .iter()
+                        .position(|w| w.id == workspace_id);
+                    if let Some(index) = index {
+                        workbench.workspaces[index].declined = false;
+                        workbench.enable_lsp(index, window, cx);
+                    }
+                });
+            })
+        };
+        let title = format!("Do you trust the files in “{name}”?");
+        const ABOUT: &str = "Impulse can run code from this folder on its own: language servers \
+                             (some run a project's build scripts and tools), formatters and \
+                             commands on save, and background git fetch. Until you trust it, \
+                             they stay off. The terminal and editing work as usual.";
+        #[cfg(debug_assertions)]
+        crate::debug_snapshot::note_sheet(
+            vec![title.clone(), ABOUT.into(), shown_folder.clone()],
+            vec![
+                ("Stay Restricted", stay.clone()),
+                ("Trust Folder", trust_it.clone()),
+            ],
+        );
         window.open_dialog(cx, move |dialog, _, _| {
-            let (trust_workbench, stay_workbench) = (workbench.clone(), workbench.clone());
-            let (folder, parent, trust_parent) =
-                (folder.clone(), parent.clone(), trust_parent.clone());
+            let (stay, trust_it) = (stay.clone(), trust_it.clone());
             let checkbox_value = trust_parent.clone();
             dialog
-                .title(format!("Do you trust the files in “{name}”?"))
+                .title(title.clone())
                 .w(px(480.))
                 .keyboard(false)
                 .overlay_closable(false)
@@ -105,12 +154,7 @@ impl Workbench {
                         .flex()
                         .flex_col()
                         .gap(px(10.))
-                        .child(
-                            "Impulse can run code from this folder on its own: language servers \
-                             (some run a project's build scripts and tools), formatters and \
-                             commands on save, and background git fetch. Until you trust it, \
-                             they stay off. The terminal and editing work as usual.",
-                        )
+                        .child(ABOUT)
                         .child(
                             div()
                                 .font_family("JetBrains Mono")
@@ -135,43 +179,13 @@ impl Workbench {
                         .child(
                             Button::new("stay-restricted")
                                 .label("Stay Restricted")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    let _ = stay_workbench.update(cx, |workbench, cx| {
-                                        if let Some(w) = workbench
-                                            .workspaces
-                                            .iter_mut()
-                                            .find(|w| w.id == workspace_id)
-                                        {
-                                            w.declined = true;
-                                        }
-                                        cx.notify();
-                                    });
-                                }),
+                                .on_click(move |_, window, cx| stay(window, cx)),
                         )
                         .child(
                             Button::new("trust-folder")
                                 .primary()
                                 .label("Trust Folder")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    let _ = trust_workbench.update(cx, |workbench, cx| {
-                                        // The folder itself first: trusting the parent
-                                        // doesn't lift a restriction on a folder inside it.
-                                        workbench.trust.trust(&folder);
-                                        if trust_parent.get() {
-                                            workbench.trust.trust(&parent);
-                                        }
-                                        let index = workbench
-                                            .workspaces
-                                            .iter()
-                                            .position(|w| w.id == workspace_id);
-                                        if let Some(index) = index {
-                                            workbench.workspaces[index].declined = false;
-                                            workbench.enable_lsp(index, window, cx);
-                                        }
-                                    });
-                                }),
+                                .on_click(move |_, window, cx| trust_it(window, cx)),
                         ),
                 )
         });
@@ -179,6 +193,10 @@ impl Workbench {
 
     /// Language servers for workspace `index`, and for its open files.
     pub(crate) fn enable_lsp(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(debug_assertions)]
+        if crate::debug_snapshot::config().is_some_and(|c| c.no_lsp) {
+            return;
+        }
         let workspace = &mut self.workspaces[index];
         if workspace.lsp.is_none() {
             let (hub, events) = LspHub::new(workspace.root.clone(), self.trust.clone());

@@ -945,6 +945,12 @@ impl EditorTab {
         cx.notify();
     }
 
+    /// The buffer's text (for the headless snapshots' dumps).
+    #[cfg(debug_assertions)]
+    pub fn text(&self, cx: &gpui_kit::App) -> String {
+        self.state.read(cx).value().to_string()
+    }
+
     pub fn save(&mut self, cx: &mut Context<Self>) {
         if self.read_only {
             return;

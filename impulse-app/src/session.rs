@@ -291,7 +291,7 @@ impl Workbench {
             .and_then(|i| usize::try_from(i).ok())
             .filter(|i| *i < self.workspaces.len())
             .unwrap_or(0);
-        self.activate_workspace(active, window, cx);
+        self.show_workspace(active, window, cx);
     }
 
     fn restore_tab(

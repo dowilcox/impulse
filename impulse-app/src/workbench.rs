@@ -398,6 +398,22 @@ impl Workbench {
         if index >= self.workspaces.len() {
             return;
         }
+        self.show_workspace(index, window, cx);
+        self.request_trust(index, window, cx);
+    }
+
+    /// `activate_workspace` without asking about trust: while the window
+    /// is being made (a restored session) a dialog can't open yet, and
+    /// `Workbench::new` asks once it can.
+    pub(crate) fn show_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.workspaces.len() {
+            return;
+        }
         self.active = index;
         self.workspaces[index].refresh_branch();
         if self.workspaces[index].tabs.is_empty() {
@@ -406,7 +422,6 @@ impl Workbench {
             self.add_tab(index, terminal, window, cx);
         }
         self.focus_active(window, cx);
-        self.request_trust(index, window, cx);
         cx.notify();
     }
 
@@ -601,6 +616,8 @@ impl Workbench {
 
     /// A message in the status bar.
     pub(crate) fn set_notice(&mut self, notice: String, cx: &mut Context<Self>) {
+        #[cfg(debug_assertions)]
+        crate::debug_snapshot::note_toast("notice", &notice, None, None);
         self.notice = Some(notice);
         cx.notify();
     }
