@@ -549,7 +549,12 @@ Known issues:
   (GPUI Kit's editor can't inject text into a line), `editor_cursor_style`
   and `editor_cursor_blinking` (its caret has no styles, and only the
   primary caret's place is public, so painting our own would lose the
-  other cursors) and `smooth_scrolling`. `terminal_bell` beeps through
+  other cursors) and `smooth_scrolling`. `render_whitespace` shows
+  markers for `all` and none otherwise (GPUI Kit draws them everywhere or
+  nowhere, so `boundary`, `selection` and `trailing` wait on it), and
+  `editor_auto_closing_brackets` closes as `languageDefined` unless it's
+  `never` (GPUI Kit's rule is Monaco's `languageDefined`; `always` and
+  `beforeWhitespace` would need a per-editor rule there). `terminal_bell` beeps through
   NSBeep on the Mac and, on Linux, `canberra-gtk-play` or `paplay` /
   `pw-play` with the freedesktop bell (`bell.rs`), silent without them.
 - The app hasn't been built or run on a Mac yet. It type-checks for
