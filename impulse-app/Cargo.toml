@@ -31,6 +31,8 @@ impulse-lsp = { path = "../impulse-lsp" }
 lsp-types = { version = "0.97", features = ["proposed"] }
 futures = "0.3"
 async-channel = "2"
+# Editors follow their files on disk (FSEvents on macOS, inotify on Linux).
+notify = "8"
 anyhow = "1"
 chrono = "0.4"
 # Deleting files a workspace edit removes: to the Trash, as the Swift app does.

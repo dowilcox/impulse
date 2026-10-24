@@ -226,7 +226,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           saying whether New Task asks) and `impulse
                           project`),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
-                          save, Monaco's keys, occurrence and selection
+                          save through save_pipeline.rs: a "changed on
+                          disk" question, the formatter and commands on
+                          save in trusted folders with
+                          impulse_kit::save_command; editor_watch.rs:
+                          the open files' folders watched with notify, a
+                          clean editor reloading what an agent or git
+                          wrote; Monaco's keys, occurrence and selection
                           highlights as range decorations from document
                           highlights or impulse_kit::occurrences, Monaco's
                           context menu, Go to Type Definition,

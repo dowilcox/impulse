@@ -84,6 +84,8 @@ pub struct Workbench {
     pub(crate) git: crate::changes_panel::GitPanel,
     /// Every language server's diagnostics (`problems_view`).
     pub(crate) problems: Entity<crate::problems_view::ProblemStore>,
+    /// The folders of open files, watched (`editor_watch`).
+    pub(crate) editor_watch: crate::editor_watch::EditorWatch,
 }
 
 impl Workbench {
@@ -108,6 +110,7 @@ impl Workbench {
             workbench.request_trust(workbench.active, window, cx)
         });
         workbench.start_task_monitor(window, cx);
+        workbench.start_editor_watch(window, cx);
         workbench
     }
 
@@ -156,6 +159,7 @@ impl Workbench {
             _settings: settings_subscription,
             git: crate::changes_panel::GitPanel::new(window, cx),
             problems: cx.new(|_| Default::default()),
+            editor_watch: crate::editor_watch::EditorWatch::new(),
         }
     }
 
@@ -889,11 +893,7 @@ impl Workbench {
             "move_pane_to_tab" => self.move_pane_to_tab(window, cx),
             "save" => {
                 if let Some(editor) = self.active_editor().cloned() {
-                    if editor.read(cx).untitled.is_some() {
-                        self.save_untitled(editor, window, cx);
-                    } else {
-                        editor.update(cx, |editor, cx| editor.save(cx));
-                    }
+                    self.save_editor(editor, window, cx);
                 }
             }
             "new_file" => self.new_untitled(window, cx),
@@ -1222,6 +1222,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_git(cx);
+        self.sync_editor_watch(cx);
         let sidebar = SettingsStore::get(cx).sidebar_visible;
         let root = self.menu_actions(div().id("workbench"), cx);
         let p = &self.palette;

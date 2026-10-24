@@ -14,6 +14,7 @@ use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::{
     prelude::*, px, App, Context, Entity, EntityInputHandler, EventEmitter, Subscription, Window,
 };
+use impulse_kit::save_command::RewriteOutcome;
 use impulse_kit::text_file::{self, Opened, Stamp};
 use impulse_kit::uri::language_for_path;
 
@@ -62,8 +63,8 @@ pub struct EditorTab {
     state: Entity<EditorState>,
     bom: bool,
     stamp: Option<Stamp>,
-    /// The next save overwrites a change made on disk.
-    overwrite_confirmed: bool,
+    /// Formatters and commands on save rewriting the file now.
+    rewriting: u32,
     /// The document's language servers that are running, by server id.
     links: Vec<(String, Rc<DocumentLink>)>,
     /// The server that answers completion, hover and definition (the first
@@ -186,7 +187,7 @@ impl EditorTab {
             state,
             bom: opened.contents.bom,
             stamp: opened.stamp,
-            overwrite_confirmed: false,
+            rewriting: 0,
             links: Vec::new(),
             primary: None,
             diagnostics: Default::default(),
@@ -1007,38 +1008,121 @@ impl EditorTab {
         tab
     }
 
-    pub fn save(&mut self, cx: &mut Context<Self>) {
+    /// The file changed on disk since it was loaded or saved here (by an
+    /// agent, git or another app).
+    pub fn changed_on_disk(&self) -> bool {
+        self.stamp.is_some() && text_file::stamp(&self.path) != self.stamp
+    }
+
+    /// Write the buffer to its file: the text written, or `None` when it
+    /// couldn't be (the notice says why).
+    pub fn write(&mut self, cx: &mut Context<Self>) -> Option<String> {
         if self.read_only || self.untitled.is_some() {
-            return;
+            return None;
         }
-        // Something else rewrote the file since it was loaded: say so, and
-        // let a second save overwrite it.
-        let on_disk = text_file::stamp(&self.path);
-        if self.stamp.is_some() && on_disk != self.stamp && !self.overwrite_confirmed {
-            self.overwrite_confirmed = true;
-            self.notice = Some(format!(
-                "{} changed on disk. Save again to replace it with your version.",
-                self.title
-            ));
-            cx.emit(EditorTabChanged);
-            cx.notify();
-            return;
-        }
-        let text = self.state.read(cx).value();
-        match text_file::write(&text, self.bom, &self.path) {
+        let text = self.state.read(cx).value().to_string();
+        let written = match text_file::write(&text, self.bom, &self.path) {
             Ok(()) => {
                 for (_, link) in &self.links {
                     link.saved();
                 }
                 self.dirty = false;
-                self.overwrite_confirmed = false;
                 self.notice = None;
                 self.stamp = text_file::stamp(&self.path);
+                Some(text)
             }
-            Err(error) => self.notice = Some(format!("Couldn't save {}: {error}", self.title)),
+            Err(error) => {
+                self.notice = Some(format!("Couldn't save {}: {error}", self.title));
+                None
+            }
+        };
+        cx.emit(EditorTabChanged);
+        cx.notify();
+        written
+    }
+
+    /// A formatter or command on save is about to rewrite the file: its
+    /// result is `adopt_rewrite`'s to take or leave, not a reload's.
+    pub fn begin_rewrite(&mut self) {
+        self.rewriting += 1;
+    }
+
+    /// A formatter or command on save finished: show what it left in the
+    /// file, unless it failed, emptied it, or typing has moved on since
+    /// `saved` was written (`save_command::rewrite_outcome`).
+    pub fn adopt_rewrite(
+        &mut self,
+        saved: &str,
+        succeeded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rewriting = self.rewriting.saturating_sub(1);
+        let Some(disk) = text_file::read(&self.path) else {
+            return;
+        };
+        let buffer = self.text(cx);
+        match impulse_kit::save_command::rewrite_outcome(saved, &disk.text, &buffer, succeeded) {
+            RewriteOutcome::Adopt => {
+                self.replace_buffer(&disk.text, window, cx);
+                self.dirty = false;
+                self.stamp = text_file::stamp(&self.path);
+            }
+            RewriteOutcome::Record { dirty } => {
+                self.stamp = text_file::stamp(&self.path);
+                self.dirty = dirty;
+            }
+            // The next save asks before replacing what's there.
+            RewriteOutcome::KeepSavedState => self.dirty = true,
         }
         cx.emit(EditorTabChanged);
         cx.notify();
+    }
+
+    /// The file changed on disk (the watcher saw it): a clean buffer shows
+    /// it; one with unsaved edits keeps them and says so.
+    pub fn disk_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.untitled.is_some() || self.rewriting > 0 || !self.changed_on_disk() {
+            return;
+        }
+        if self.dirty || self.read_only {
+            let notice = format!("{} changed on disk.", self.title);
+            if self.notice.as_deref() != Some(notice.as_str()) {
+                self.notice = Some(notice);
+                cx.emit(EditorTabChanged);
+                cx.notify();
+            }
+            return;
+        }
+        self.reload_from_disk(window, cx);
+    }
+
+    /// Take what's on disk, discarding unsaved edits (Reload from Disk).
+    pub fn take_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dirty = false;
+        self.notice = None;
+        self.reload_from_disk(window, cx);
+    }
+
+    /// Replace the buffer with `text` as one undoable edit that isn't the
+    /// user's.
+    fn replace_buffer(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.state.clone();
+        let old = state.read(cx).value().to_string();
+        let (range, replacement) = impulse_lsp::edits::changed_span(&old, text);
+        if range.is_empty() && replacement.is_empty() {
+            return;
+        }
+        self.reloading = true;
+        let utf16 = |byte: usize| old[..byte].encode_utf16().count();
+        state.update(cx, |state, cx| {
+            state.replace_text_in_range(
+                Some(utf16(range.start)..utf16(range.end)),
+                replacement,
+                window,
+                cx,
+            );
+        });
     }
 }
 

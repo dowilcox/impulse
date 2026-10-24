@@ -111,6 +111,7 @@ for:
 | Vim mode (monaco-vim) | no | port: a modal layer over the editor's actions |
 | Sticky scroll, minimap, bracket pair colors | no | sticky scroll and bracket colors first; minimap last |
 | Context menu with Impulse's items | menus yes | **done**: Monaco's items (navigation, rename, Change All Occurrences, format, code actions, clipboard, Command Palette) |
+| Save pipeline and files changed on disk | n/a (ours) | **done**: a "changed on disk" question (Save Anyway, Reload from Disk), formatter and commands on save in trusted folders, their results adopted as one edit; open files' folders watched, clean editors reloading what agents and git write |
 
 This is real work, but it is work on an editor built for embedding, and the
 rest of Impulse's editor behavior (save, format on save, reload in place,

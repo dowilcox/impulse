@@ -17,6 +17,24 @@ pub fn expand_arguments(args: &[String], path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `command` may run: an absolute path without `..`, or a plain
+/// program name (letters, digits, `-`, `_`, `.`; not `.`, `..` or starting
+/// with `-`) looked up on PATH.
+pub fn is_safe_command(command: &str) -> bool {
+    if command.is_empty() || command.contains('\0') {
+        return false;
+    }
+    if command.starts_with('/') {
+        return !command.contains("..");
+    }
+    if command == "." || command == ".." || command.starts_with('-') {
+        return false;
+    }
+    command
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 fn is_newline(c: char) -> bool {
     matches!(
         c,
@@ -99,6 +117,20 @@ pub fn rewrite_outcome(saved: &str, disk: &str, buffer: &str, succeeded: bool) -
 mod tests {
     use super::*;
     use RewriteOutcome::*;
+
+    #[test]
+    fn commands_are_names_or_absolute_paths() {
+        assert!(is_safe_command("prettier"));
+        assert!(is_safe_command("rustfmt-nightly_2.x"));
+        assert!(is_safe_command("/usr/local/bin/black"));
+        assert!(!is_safe_command(""));
+        assert!(!is_safe_command("/usr/../bin/sh"));
+        assert!(!is_safe_command(".."));
+        assert!(!is_safe_command("-rf"));
+        assert!(!is_safe_command("./fmt"));
+        assert!(!is_safe_command("fmt; rm"));
+        assert!(!is_safe_command("a\0b"));
+    }
 
     #[test]
     fn file_placeholder_is_replaced_everywhere() {
