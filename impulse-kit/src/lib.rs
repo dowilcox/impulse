@@ -33,6 +33,7 @@ pub mod line_edits;
 pub mod markdown_preview;
 pub mod markdown_theme;
 pub mod menus;
+pub mod minimap;
 pub mod monaco_theme;
 pub mod occurrences;
 pub mod paths;

@@ -94,6 +94,8 @@ pub struct EditorTab {
     pub(crate) vim: Option<crate::editor_vim::Attached>,
     /// Change marks, the peek, inline blame and conflicts (`editor_git`).
     pub(crate) git: crate::editor_git::GitLayer,
+    /// The pointer over the minimap (`editor_minimap`).
+    pub(crate) minimap: crate::editor_minimap::MinimapState,
     _marking: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
     _observe_state: Subscription,
@@ -222,6 +224,7 @@ impl EditorTab {
             marked_at: None,
             vim,
             git: Default::default(),
+            minimap: Default::default(),
             _marking: None,
             _subscription: subscription,
             _observe_state: observe_state,
@@ -1441,6 +1444,15 @@ impl Render for EditorTab {
         ));
         let editor = crate::editor_vim::wrap(self.vim.as_ref(), editor, cx);
         let editor = self.wrap_git(editor, cx);
+        let editor = match self.minimap(cx) {
+            Some(minimap) => gpui_kit::div()
+                .size_full()
+                .flex()
+                .child(gpui_kit::div().flex_1().min_w_0().h_full().child(editor))
+                .child(minimap)
+                .into_any_element(),
+            None => editor,
+        };
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()

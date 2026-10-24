@@ -109,7 +109,7 @@ for:
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
 | Diff editor (side by side and inline) | diff component exists | **done** side by side (Toggle Diff View: HEAD read-only beside the live buffer, changed lines tinted); not yet padded to line up, no inline mode |
 | Vim mode (monaco-vim) | no | **done**: `impulse_kit::vim`, a state machine on plain text (Normal, Insert, Visual, Visual Line and Replace; counts, motions, `d c y > < gu gU g~` with motions and text objects, registers with `+`/`*` as the clipboard, `.`, `/ ? n N * #`, `:w :q :wq :x :{line} :s :d :y :noh`), over the editor in `editor_vim.rs`; the mode in the status bar, an inverted character as the block cursor; not yet macros, marks, Visual Block or incremental search |
-| Sticky scroll, minimap, bracket pair colors | no | bracket pair colors **done** (`impulse_kit::bracket_pairs`: Monaco's three colors by depth, unmatched in red, strings and comments skipped by a small lexer per language family); sticky scroll **done** (`impulse_kit::sticky_scroll`: scopes by indentation, painted over the view's top in the editor's font without syntax colors, a click going to the line); minimap last |
+| Sticky scroll, minimap, bracket pair colors | no | bracket pair colors **done** (`impulse_kit::bracket_pairs`: Monaco's three colors by depth, unmatched in red, strings and comments skipped by a small lexer per language family); sticky scroll **done** (`impulse_kit::sticky_scroll`: scopes by indentation, painted over the view's top in the editor's font without syntax colors, a click going to the line); minimap **done** (`impulse_kit::minimap`, `editor_minimap.rs`: lines as runs of one-pixel characters in the text color, not syntax colors, scrolled in proportion, the slider under the pointer, a click or drag centering the line) |
 | Context menu with Impulse's items | menus yes | **done**: Monaco's items (navigation, rename, Change All Occurrences, format, code actions, clipboard, Command Palette) |
 | Git in the editor: change marks, peek, inline blame, conflicts | view zones, decorations | **done**: marks against the index painted over the gutter (GPUI Kit has no gutter decorations), the peek docked under the editor (Revert, Stage, Diff, Review), inline blame after the resting cursor's line, Show Commit for This Line, conflicts tinted with a bar for Accept Current, Incoming or Both and ↑↓ (Monaco puts these in view zones per block) |
 | Save pipeline and files changed on disk | n/a (ours) | **done**: a "changed on disk" question (Save Anyway, Reload from Disk), formatter and commands on save in trusted folders, their results adopted as one edit; open files' folders watched, clean editors reloading what agents and git write |
@@ -467,10 +467,11 @@ Known issues:
   the code ([screenshot](images/rust-editor-hover.png)).
 - Completions insert plain text: snippet support is off until GPUI Kit's
   snippet handling is checked.
-- Settings the Rust app doesn't act on yet: `minimap_enabled`,
-  `editor_inlay_hints`
-  (GPUI Kit's editor has none of these), `editor_cursor_style` and
-  `editor_cursor_blinking` (its caret has no styles), `smooth_scrolling`
+- Settings the Rust app doesn't act on yet: `editor_inlay_hints`
+  (GPUI Kit's editor can't inject text into a line), `editor_cursor_style`
+  and `editor_cursor_blinking` (its caret has no styles, and only the
+  primary caret's place is public, so painting our own would lose the
+  other cursors), `smooth_scrolling`
   and `terminal_bell` (no sound through GPUI; the attention dot still
   shows).
 - The app hasn't been built on a Mac yet.
