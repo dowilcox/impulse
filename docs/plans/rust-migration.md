@@ -456,6 +456,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   path for a rename) and Reveal. Links in the terminal follow Swift's
   rules: web and mailto open, `file:` opens in the editor, other schemes
   ask first.
+- Programs' progress (OSC 9;4) turns the tab's icon and the workspace
+  row's into a progress ring (red on error, the warning color when
+  paused), and a session status (OSC 21337) into a colored dot with the
+  status in the tab's tooltip; both clear when the command ends.
 - Language servers run as Swift's registry runs them: a missing one is
   told once ("LSP server '…' requires '…'") and looked for again after
   15 seconds; one that crashes is announced and restarted after 2, 10,

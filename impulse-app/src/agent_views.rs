@@ -253,6 +253,51 @@ impl Workbench {
             return agent_glyph(state, size, &self.palette);
         }
         let surface = tab.focused_surface();
+        if let Some(terminal) = surface.terminal() {
+            let t = terminal.read(cx);
+            // A program's progress (red for an error, the warning color
+            // when paused), else its status dot.
+            if let Some((state, percent)) = t.progress {
+                use impulse_terminal::osc_scanner::ProgressState;
+                let color = match state {
+                    ProgressState::Error => self.palette.danger,
+                    ProgressState::Paused => self.palette.warning,
+                    _ => self.palette.working,
+                };
+                let fraction = (state != ProgressState::Indeterminate)
+                    .then(|| percent.map(|p| p as f32 / 100.))
+                    .flatten();
+                return div()
+                    .size(px(size))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .child(crate::workbench_chrome::progress_ring(
+                        fraction,
+                        color,
+                        size - 1.,
+                        1.6,
+                        0.,
+                    ))
+                    .into_any_element();
+            }
+            if let Some(dot) = t.session_status.dot_color() {
+                return div()
+                    .size(px(size))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .size(px((size * 0.6).round()))
+                            .rounded_full()
+                            .bg(crate::workbench_chrome::hsla(KitRgba::from_hex(dot))),
+                    )
+                    .into_any_element();
+            }
+        }
         // A terminal a program drives directly gets the filled glyph.
         if let Some(terminal) = surface.terminal() {
             let name = if terminal.read(cx).direct {

@@ -550,11 +550,19 @@ impl Workbench {
             let compact = tab.pinned;
             let drop_color = hsla(p.selection);
             let title = surface.title(cx);
-            let help = if tab.preview {
-                format!("{title}\nPreview: double-click to keep")
-            } else {
-                title.clone()
-            };
+            // The title, the preview hint and a program's status.
+            let help = std::iter::once(title.clone())
+                .chain(
+                    tab.preview
+                        .then(|| "Preview: double-click to keep".to_string()),
+                )
+                .chain(
+                    surface
+                        .terminal()
+                        .and_then(|t| t.read(cx).session_status.summary()),
+                )
+                .collect::<Vec<_>>()
+                .join("\n");
             let mut t = div()
                 .id(("tab", tab.id))
                 .group("tab")
@@ -976,15 +984,40 @@ impl Workbench {
                         p.text_tertiary,
                     )),
             )
-            .child(icon(
-                match (workspace.kind, repo.is_some()) {
-                    (Kind::Scratch, _) => "square-terminal",
-                    (Kind::Folder, true) => "folder-git-2",
-                    (Kind::Folder, false) => "folder",
+            // A progress ring while a program in one of its terminals
+            // reports progress.
+            .child(
+                match workspace
+                    .all_surfaces()
+                    .filter_map(Surface::terminal)
+                    .find_map(|t| {
+                        let (state, percent) = t.read(cx).progress?;
+                        Some(
+                            (state != impulse_terminal::osc_scanner::ProgressState::Indeterminate)
+                                .then(|| percent.map(|p| p as f32 / 100.))
+                                .flatten(),
+                        )
+                    }) {
+                    Some(fraction) => div()
+                        .size(px(13.))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .child(progress_ring(fraction, p.working, 12., 1.6, 0.))
+                        .into_any_element(),
+                    None => icon(
+                        match (workspace.kind, repo.is_some()) {
+                            (Kind::Scratch, _) => "square-terminal",
+                            (Kind::Folder, true) => "folder-git-2",
+                            (Kind::Folder, false) => "folder",
+                        },
+                        13.,
+                        if selected { p.accent } else { p.text_tertiary },
+                    )
+                    .into_any_element(),
                 },
-                13.,
-                if selected { p.accent } else { p.text_tertiary },
-            ))
+            )
             .child(
                 div()
                     .flex_none()

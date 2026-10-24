@@ -342,6 +342,12 @@ pub struct TerminalView {
     pub(crate) direct: bool,
     /// No input bar at all (the Quick Terminal): type at the shell's prompt.
     pub(crate) no_bar: bool,
+    /// What the program reports (OSC 9;4): its state and percentage, while
+    /// shown. Cleared when its command ends.
+    pub(crate) progress: Option<(impulse_terminal::osc_scanner::ProgressState, Option<u8>)>,
+    /// The program's own status (iTerm2's OSC 21337). Cleared when its
+    /// command ends.
+    pub(crate) session_status: SessionStatus,
     /// The command sent from the bar began with a space (kept out of the
     /// history).
     pub(crate) hidden_pending: bool,
@@ -576,6 +582,8 @@ impl TerminalView {
             last_exit: None,
             direct: false,
             no_bar: false,
+            progress: None,
+            session_status: SessionStatus::default(),
             hidden_pending: false,
             current_hidden: false,
             restored_output,
@@ -768,6 +776,9 @@ impl TerminalView {
                         }
                     }
                     self.blocks.highlighted = None;
+                    // The program that reported them is gone.
+                    self.progress = None;
+                    self.session_status = SessionStatus::default();
                     // Tuck the prompt away once, when it appears after this
                     // command; the shell is back for the next command.
                     self.tuck = Tuck {
@@ -790,6 +801,11 @@ impl TerminalView {
                     }
                 }
                 TerminalEvent::Bell => cx.emit(TerminalViewEvent::Bell),
+                TerminalEvent::Progress { state, percent } => {
+                    self.progress = (state != impulse_terminal::osc_scanner::ProgressState::Hidden)
+                        .then_some((state, percent));
+                }
+                TerminalEvent::SessionStatus(fields) => self.session_status.apply(&fields),
                 TerminalEvent::ChildExited(code) => {
                     self.exited = Some(code);
                     cx.emit(TerminalViewEvent::Exited);
@@ -2574,5 +2590,93 @@ impl Drop for TerminalView {
 impl gpui_kit::Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.root_focus.clone()
+    }
+}
+
+/// A program's status (iTerm2's OSC 21337, the Swift
+/// `TerminalSessionStatus`): its text, the indicator's and the status's
+/// colors (`#RRGGBB`) and a detail.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub(crate) struct SessionStatus {
+    pub status: String,
+    pub indicator: Option<String>,
+    pub status_color: Option<String>,
+    pub detail: String,
+}
+
+impl SessionStatus {
+    /// An update: keys present replace (empty clears), others stay.
+    pub(crate) fn apply(&mut self, fields: &std::collections::BTreeMap<String, String>) {
+        if let Some(value) = fields.get("status") {
+            self.status = value.clone();
+        }
+        if let Some(value) = fields.get("detail") {
+            self.detail = value.clone();
+        }
+        if let Some(value) = fields.get("indicator") {
+            self.indicator = Self::hex(value);
+        }
+        if let Some(value) = fields.get("status-color") {
+            self.status_color = Self::hex(value);
+        }
+    }
+
+    /// The tab's dot: the indicator's color, else the status's.
+    pub(crate) fn dot_color(&self) -> Option<&str> {
+        self.indicator.as_deref().or(self.status_color.as_deref())
+    }
+
+    /// "status: detail" for a tooltip, when there's a status.
+    pub(crate) fn summary(&self) -> Option<String> {
+        (!self.status.is_empty()).then(|| {
+            if self.detail.is_empty() {
+                self.status.clone()
+            } else {
+                format!("{}: {}", self.status, self.detail)
+            }
+        })
+    }
+
+    /// `#RRGGBB` or xterm's `rgb:RR/GG/BB` as `#RRGGBB`; `None` when empty or
+    /// odd.
+    fn hex(value: &str) -> Option<String> {
+        if value.starts_with('#') && value.len() == 7 {
+            return Some(value.to_string());
+        }
+        let parts: Vec<&str> = value.strip_prefix("rgb:")?.split('/').collect();
+        let parts: Vec<&str> = parts.iter().map(|p| p.get(..2).unwrap_or(p)).collect();
+        (parts.len() == 3
+            && parts
+                .iter()
+                .all(|p| p.len() == 2 && u8::from_str_radix(p, 16).is_ok()))
+        .then(|| format!("#{}", parts.concat()))
+    }
+}
+
+#[cfg(test)]
+mod session_status_tests {
+    use super::SessionStatus;
+
+    #[test]
+    fn colors_and_updates() {
+        let mut status = SessionStatus::default();
+        let fields = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        status.apply(&fields(&[("status", "Building"), ("indicator", "#ffa500")]));
+        assert_eq!(status.dot_color(), Some("#ffa500"));
+        assert_eq!(status.summary().as_deref(), Some("Building"));
+        status.apply(&fields(&[
+            ("indicator", ""),
+            ("status-color", "rgb:ff/00/7f"),
+            ("detail", "step 2"),
+        ]));
+        assert_eq!(status.dot_color(), Some("#ff007f"));
+        assert_eq!(status.summary().as_deref(), Some("Building: step 2"));
+        status.apply(&fields(&[("status-color", "rgb:zz/00/00")]));
+        assert_eq!(status.dot_color(), None);
     }
 }

@@ -204,7 +204,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           mode, Import Shell History and Clear Command
                           History), find (terminal_find_bar.rs), and
                           block commands, the ⋯ and right-click menus
-                          (terminal_blocks::BlockMenu), hints and links (web and mailto
+                          (terminal_blocks::BlockMenu), programs' progress
+                          and status on tabs and workspace rows
+                          (TerminalView::progress, SessionStatus), hints
+                          and links (web and mailto
                           links open, file: ones in the editor, any other
                           scheme asks first: open_link)
                           (terminal_blocks.rs, reached through
