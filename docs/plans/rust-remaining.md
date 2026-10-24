@@ -49,6 +49,32 @@ Work that doesn't depend on anyone else.
 - [ ] **SQL highlighting.** Its tree-sitter grammar needs an older `cc`
   than the workspace uses; either pin a compatible grammar or build it
   another way.
+- [ ] **Remove the line on the editor's right side.** A vertical line shows
+  along the right of an editor tab, which the Swift app doesn't have. Not
+  found yet: it isn't the minimap (`minimap_enabled` is off by default),
+  and our code draws nothing there apart from the overview ruler's change
+  marks (`editor_git.rs`), which are short bars. So it's likely GPUI Kit's
+  scrollbar track or an editor border. Find what draws it and hide it.
+- [ ] **Show preview tabs in italics.** A file opened with a single click
+  in the file tree is a preview until it's double-clicked or edited, and
+  the Swift app shows its tab title in italics. The Rust app sets
+  `.italic()` on the title (`workbench_chrome.rs`, `tab.preview`), but
+  `vendor/fonts/inter/` has no italic face (only Regular, Medium,
+  SemiBold and Bold), and GPUI doesn't slant a face itself, so the title
+  draws upright. You can't tell a preview from a kept tab. Bundle Inter's
+  italic faces (and add them to `scripts/package-linux.sh`'s fonts) or
+  synthesize the slant.
+- [ ] **Even out the space around terminal blocks**
+  ([screenshot](images/rust-terminal-block-spacing.png)). The separator
+  sits right on top of a block's prompt row, but below a block's last
+  output is the blank line the shell prints before its next prompt, so
+  each block has about a line of space at the bottom and almost none at
+  the top, and the bottom looks too loose. The Swift renderer collapses
+  those blank prompt-padding rows (`TerminalRenderer.collapsedRows`, up to
+  3 rows between blocks) down to a 6 pt gap (`blockPadPixels`) and puts
+  the separator in the middle of it (`blockBorderY`, `blockBottomY`), so
+  every block has 3 pt above and below. `terminal_view.rs` draws the
+  separator at `block.start_row` and collapses nothing.
 
 ## 3. Waiting on GPUI Kit
 
