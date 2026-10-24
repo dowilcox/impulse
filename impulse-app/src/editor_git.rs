@@ -78,6 +78,8 @@ pub(crate) struct GitLayer {
     /// The pairs and their guides, for the matching-bracket box and the
     /// bracket pair guides (`editor_brackets`).
     bracket_pairs: crate::editor_brackets::Brackets,
+    /// The links' underlines (`editor_links`).
+    links: Option<TextDecorationCollection>,
     _base: Option<Task<()>>,
     _diff: Option<Task<()>>,
     _blame: Option<Task<()>>,
@@ -165,6 +167,7 @@ impl EditorTab {
             }
         }
         self.paint_brackets(&text, cx);
+        self.paint_links(&text, cx);
         let conflicts = editor_marks::find_conflicts(&text);
         let resolved = !self.git.conflicts.is_empty() && conflicts.is_empty();
         self.git.conflicts = conflicts;
@@ -176,6 +179,24 @@ impl EditorTab {
             });
         }
         cx.notify();
+    }
+
+    /// Underline the links, as Monaco does.
+    fn paint_links(&mut self, text: &str, cx: &mut Context<Self>) {
+        let underlines = if text.len() > 2 * 1024 * 1024 {
+            Vec::new()
+        } else {
+            crate::editor_links::underlines(text)
+        };
+        if underlines.is_empty() && self.git.links.is_none() {
+            return;
+        }
+        let marks = self.git.links.get_or_insert_with(|| {
+            self.state.update(cx, |state, cx| {
+                state.create_decorations_collection(Vec::new(), cx)
+            })
+        });
+        marks.set(underlines, cx);
     }
 
     /// Color bracket pairs by depth (`bracket_pair_colorization`, Monaco's

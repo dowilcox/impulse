@@ -65,6 +65,41 @@ fn sha_regex() -> &'static Regex {
     REGEX.get_or_init(|| Regex::new(r"[0-9a-f]{7,40}").expect("valid regex"))
 }
 
+/// The `http`, `https` and `file` URLs in `line`, left to right, without
+/// the sentence punctuation or unbalanced closing bracket after them (also
+/// the editor's underlined links).
+pub fn urls(line: &str) -> Vec<Range<usize>> {
+    url_regex()
+        .find_iter(line)
+        .map(|url| {
+            let mut end = url.end();
+            while end > url.start() {
+                let last = line.as_bytes()[end - 1];
+                if b".,;:!?'\"".contains(&last) {
+                    end -= 1;
+                } else if let Some(open) = match last {
+                    b')' => Some(b'('),
+                    b']' => Some(b'['),
+                    b'}' => Some(b'{'),
+                    _ => None,
+                } {
+                    let text = &line.as_bytes()[url.start()..end];
+                    let closing = text.iter().filter(|&&b| b == last).count();
+                    let opening = text.iter().filter(|&&b| b == open).count();
+                    if closing <= opening {
+                        break;
+                    }
+                    end -= 1;
+                } else {
+                    break;
+                }
+            }
+            url.start()..end
+        })
+        .filter(|range| !range.is_empty())
+        .collect()
+}
+
 /// Every hint target in `line`, left to right, without overlaps (URLs win
 /// over ports, ports over paths, paths over SHAs).
 pub fn matches(line: &str) -> Vec<TerminalHintMatch> {
@@ -75,35 +110,11 @@ pub fn matches(line: &str) -> Vec<TerminalHintMatch> {
         }
     };
 
-    for url in url_regex().find_iter(line) {
-        let mut end = url.end();
-        // Sentence punctuation and an unbalanced closing bracket aren't part
-        // of the URL.
-        while end > url.start() {
-            let last = line.as_bytes()[end - 1];
-            if b".,;:!?'\"".contains(&last) {
-                end -= 1;
-            } else if let Some(open) = match last {
-                b')' => Some(b'('),
-                b']' => Some(b'['),
-                b'}' => Some(b'{'),
-                _ => None,
-            } {
-                let text = &line.as_bytes()[url.start()..end];
-                let closing = text.iter().filter(|&&b| b == last).count();
-                let opening = text.iter().filter(|&&b| b == open).count();
-                if closing <= opening {
-                    break;
-                }
-                end -= 1;
-            } else {
-                break;
-            }
-        }
+    for range in urls(line) {
         add(TerminalHintMatch {
             kind: HintKind::Url,
-            range: url.start()..end,
-            text: line[url.start()..end].to_string(),
+            text: line[range.clone()].to_string(),
+            range,
             path: None,
         });
     }

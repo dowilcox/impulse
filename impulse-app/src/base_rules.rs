@@ -10,7 +10,9 @@
 //!
 //! Monaco's TypeScript and JavaScript tokenizers also call `this`, `super`,
 //! `true`, `false`, `null`, `undefined` and the primitive types keywords,
-//! where tree-sitter's queries have them as builtins. The editor uses its
+//! where tree-sitter's queries have them as builtins, and give every
+//! capitalized name the type color (`API`, `Number`, `Math`), where they
+//! are variables or calls. The editor uses its
 //! own registrations of those grammars (`editor_grammar`) with those
 //! captures as keywords; Review keeps the stock ones, which color them as
 //! highlight.js does.
@@ -127,6 +129,16 @@ const MONACO_KEYWORDS: [(&str, &str); 4] = [
     ),
 ];
 
+/// Capitalized names as types, Monaco's `type.identifier`; first, so they
+/// win over the stock query's variable, property and call captures.
+const MONACO_TYPES: &str = r#"((identifier) @type (#match? @type "^[A-Z]"))
+((property_identifier) @type (#match? @type "^[A-Z]"))
+(call_expression function: ((identifier) @type (#match? @type "^[A-Z]")))
+(call_expression
+  function: (member_expression
+    property: ((property_identifier) @type (#match? @type "^[A-Z]"))))
+"#;
+
 /// Register `name` as `base`'s grammar (on `language`'s parser, when given)
 /// with Monaco's keywords, if the result compiles.
 fn register_monaco(name: &str, base: &str, language: Option<&str>) {
@@ -140,7 +152,7 @@ fn register_monaco(name: &str, base: &str, language: Option<&str>) {
     let Some(grammar) = parser.language.clone() else {
         return;
     };
-    let mut highlights = stock.highlights.to_string();
+    let mut highlights = format!("{MONACO_TYPES}\n{}", stock.highlights);
     for (from, to) in MONACO_KEYWORDS {
         highlights = highlights.replace(from, to);
     }

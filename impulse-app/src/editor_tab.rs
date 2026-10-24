@@ -166,6 +166,11 @@ impl EditorTab {
             if opened.large {
                 state.set_readonly(true, cx);
             }
+            // Links open on Cmd+click (Ctrl+click) before a server answers.
+            state.lsp_mut().definition_provider =
+                Some(Rc::new(crate::editor_links::LinkDefinitions {
+                    server: None,
+                }));
             state
         });
         let subscription = cx.subscribe(&state, |tab, state, event: &InputEvent, cx| {
@@ -373,7 +378,9 @@ impl EditorTab {
                 let lsp = state.lsp_mut();
                 lsp.completion_provider = Some(link.clone());
                 lsp.hover_provider = Some(link.clone());
-                lsp.definition_provider = Some(link.clone());
+                lsp.definition_provider = Some(Rc::new(crate::editor_links::LinkDefinitions {
+                    server: Some(link.clone()),
+                }));
                 lsp.show_document = Some(hooks.show_document);
             });
         }
