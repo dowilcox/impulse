@@ -74,6 +74,8 @@ pub(crate) struct AgentTracker {
     /// The bell or program notification being handled went to the desktop.
     event_was_notified: bool,
     last_bell: Option<Instant>,
+    /// When the system was last asked to draw attention to the window.
+    last_bounce: Option<Instant>,
     /// When the last bell or program notification went to the desktop;
     /// `None` once the terminal has been looked at.
     last_coalesced: Option<Instant>,
@@ -109,6 +111,7 @@ impl Default for AgentTracker {
             window_active: false,
             event_was_notified: false,
             last_bell: None,
+            last_bounce: None,
             last_coalesced: None,
             held: None,
             probe: None,
@@ -313,11 +316,28 @@ impl TerminalView {
         self.agent_event(AgentEvent::Acknowledged, cx);
     }
 
-    /// Flag the tab, unless the user is looking at the terminal.
+    /// Flag the tab, unless the user is looking at the terminal; while the
+    /// window isn't in front, also ask the system to draw attention to it
+    /// (the Dock bounces, the taskbar entry is marked urgent), at most once
+    /// per bell interval, as Swift's `requestAttention` does.
     pub(crate) fn request_attention(&mut self, cx: &mut Context<Self>) {
         if !self.agent.watched {
             self.set_needs_attention(true, cx);
         }
+        let now = Instant::now();
+        if self.agent.window_active
+            || self
+                .agent
+                .last_bounce
+                .is_some_and(|last| now.duration_since(last) < BELL_INTERVAL)
+        {
+            return;
+        }
+        self.agent.last_bounce = Some(now);
+        let window = self.window_handle;
+        cx.defer(move |cx| {
+            let _ = window.update(cx, |_, window, _| window.request_attention());
+        });
     }
 
     fn set_needs_attention(&mut self, value: bool, cx: &mut Context<Self>) {

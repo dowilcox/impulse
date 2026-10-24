@@ -538,6 +538,12 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   The "Closed …" toast lasts Swift's ten seconds, and on macOS reads
   Undo ⌘Z: ⌘Z reopens what closed while nothing focused takes it for
   text (`UndoClose`, bound in the Workbench context).
+  In a full-screen program without mouse reporting the wheel sends Page
+  Up and Page Down (one per four lines), not arrows, which agents read as
+  history. A terminal asking for attention while its window is behind
+  bounces the Dock or marks the taskbar entry urgent (`request_attention`,
+  at most once per bell interval). Resting the pointer on a web link shows
+  where it goes ("⌘-click to open …", Ctrl-click on Linux).
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

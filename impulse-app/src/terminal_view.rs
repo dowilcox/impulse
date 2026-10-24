@@ -41,12 +41,17 @@ use impulse_terminal::{
 use crate::command_editor::{CommandEditor, EditorColors};
 use crate::command_history::CommandHistory;
 use crate::settings_store::SettingsStore;
-use crate::terminal_blocks::{Blocks, FileChecks, Hints, HoverLink, RowText, ToolbarButton};
+use crate::terminal_blocks::{
+    Blocks, FileChecks, Hints, HoverLink, LinkTarget, RowText, ToolbarButton,
+};
 use crate::terminal_find_bar::FindBar;
 use crate::terminal_input_bar::InputBar;
 
 /// Same inset as the Swift renderer's `padding`.
 const PADDING: f32 = 12.0;
+/// How long the pointer rests on a link before its target shows (a
+/// system tooltip's delay).
+const LINK_TIP_DELAY: std::time::Duration = std::time::Duration::from_millis(700);
 /// The rule under replayed output from a previous session.
 const RESTORED_RULE: &str = "restored from the previous session";
 
@@ -305,6 +310,16 @@ pub struct TerminalView {
     selecting: bool,
     /// Wheel movement not yet a whole line.
     scroll_remainder: f32,
+    /// Lines of wheel scroll toward the next page key in a full-screen
+    /// program without mouse reporting.
+    page_scroll: f32,
+    /// Where the pointer last moved over the grid.
+    pointer: Point<Pixels>,
+    /// The hovered web link's target, shown after `LINK_TIP_DELAY`.
+    link_tip: Option<(Point<Pixels>, String)>,
+    _link_tip_timer: Option<gpui_kit::Task<()>>,
+    /// Its window, to ask the system for attention (`request_attention`).
+    pub(crate) window_handle: gpui_kit::AnyWindowHandle,
     /// Text being composed by an input method, shown at the cursor.
     marked: Option<String>,
     blink_on: bool,
@@ -570,6 +585,11 @@ impl TerminalView {
             exited: None,
             selecting: false,
             scroll_remainder: 0.0,
+            page_scroll: 0.0,
+            pointer: Point::default(),
+            link_tip: None,
+            _link_tip_timer: None,
+            window_handle: window.window_handle(),
             marked: None,
             blink_on: true,
             shown_focused: false,
@@ -1162,6 +1182,7 @@ impl TerminalView {
     ) {
         let (col, row) = self.cell_at(event.position, bounds);
         if event.pressed_button.is_none() {
+            self.pointer = event.position;
             self.update_hover(col, row, cx);
         }
         if event.pressed_button.is_some() && self.reports_mouse(&event.modifiers) {
@@ -1246,9 +1267,58 @@ impl TerminalView {
             None
         };
         if link != self.hover_link {
+            // A web link's target shows after a tooltip's delay: an OSC 8
+            // link's text needn't say where it goes.
+            self.link_tip = None;
+            self._link_tip_timer = None;
+            if let Some(LinkTarget::Url(url)) = link.as_ref().map(|l| &l.target) {
+                let (url, at) = (url.clone(), self.pointer);
+                self._link_tip_timer = Some(cx.spawn(async move |view, cx| {
+                    cx.background_executor().timer(LINK_TIP_DELAY).await;
+                    let _ = view.update(cx, |view, cx| {
+                        view.link_tip = Some((at, url));
+                        cx.notify();
+                    });
+                }));
+            }
             self.hover_link = link;
             cx.notify();
         }
+    }
+
+    /// The hovered link's target, as Swift's tooltip says it.
+    fn link_tooltip(&self) -> Option<AnyElement> {
+        let (at, url) = self.link_tip.clone()?;
+        self.hover_link.as_ref()?;
+        let p = &self.palette;
+        let click = if cfg!(target_os = "macos") {
+            "⌘-click"
+        } else {
+            "Ctrl-click"
+        };
+        Some(
+            gpui_kit::deferred(
+                gpui_kit::anchored()
+                    .position(at + point(px(0.), px(18.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        div()
+                            .max_w(px(480.))
+                            .px(px(8.))
+                            .py(px(4.))
+                            .rounded(px(5.))
+                            .bg(crate::workbench_chrome::hsla(p.overlay))
+                            .border_1()
+                            .border_color(crate::workbench_chrome::hsla(p.hairline_strong))
+                            .text_size(px(11.))
+                            .font_family(crate::workbench::UI_FONT)
+                            .text_color(crate::workbench_chrome::hsla(p.text))
+                            .child(format!("{click} to open {url}")),
+                    ),
+            )
+            .with_priority(2)
+            .into_any_element(),
+        )
     }
 
     fn mouse_left(&mut self, cx: &mut Context<Self>) {
@@ -1281,15 +1351,19 @@ impl TerminalView {
                 self.report_mouse(button, col, row, true, false);
             }
         } else if mode.contains(TerminalMode::ALT_SCREEN) {
-            // Full-screen programs without mouse support scroll by arrows.
-            let arrow: &[u8] = match (whole > 0.0, mode.contains(TerminalMode::APP_CURSOR)) {
-                (true, true) => b"\x1bOA",
-                (true, false) => b"\x1b[A",
-                (false, true) => b"\x1bOB",
-                (false, false) => b"\x1b[B",
-            };
-            for _ in 0..whole.abs() as usize {
-                self.backend.write(arrow);
+            // Full-screen programs without mouse support page, one page key
+            // per four lines, as Swift's renderer does: arrow keys are input
+            // history to agents such as Claude Code, which would hide the
+            // transcript instead of scrolling it.
+            self.page_scroll += whole;
+            let pages = (self.page_scroll / 4.0).trunc();
+            if pages == 0.0 {
+                return;
+            }
+            self.page_scroll -= pages * 4.0;
+            let key: &[u8] = if pages > 0.0 { b"\x1b[5~" } else { b"\x1b[6~" };
+            for _ in 0..(pages.abs() as usize).min(10) {
+                self.backend.write(key);
             }
         } else {
             let mut delta = whole as i32;
@@ -2587,6 +2661,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::scroll_bottom))
             .children(self.find_bar(cx))
             .child(grid)
+            .children(self.link_tooltip())
             .children(self.agent_bar(window, cx))
             .children(bottom)
             .children(self.block_menu(cx))
