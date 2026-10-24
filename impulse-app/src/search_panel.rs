@@ -184,7 +184,9 @@ impl SearchPanel {
             project_replace::preview(line, &self.searched, replacement, self.case_sensitive);
         let mut text = String::new();
         let mut runs = Vec::new();
-        let font = gpui_kit::font("JetBrains Mono");
+        let mut font = gpui_kit::font("JetBrains Mono");
+        // SF Mono in the Swift panel has no ligatures (`===` stays three).
+        font.features = gpui_kit::FontFeatures::disable_ligatures();
         for segment in segments {
             let (part, color, strike) = match segment {
                 Segment::Same(part) => (part, secondary, false),

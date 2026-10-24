@@ -264,7 +264,8 @@ impl ProblemsView {
             .child(self.severity_toggle(Severity::Info, counts.others, "info", p.info, cx))
             .child(div().flex_1())
             .child(
-                // The icon inside the field, as Swift's ChromeTextField.
+                // Swift's plain field with its icon in a 26-high `raised`
+                // capsule, 160 for the text.
                 crate::workbench_chrome::chrome_text_field(
                     &self.filter,
                     "list-filter",
@@ -272,7 +273,11 @@ impl ProblemsView {
                     window,
                     cx,
                 )
-                .w(px(196.)),
+                .h(px(26.))
+                .w(px(194.))
+                .rounded(px(metrics::RADIUS))
+                .bg(hsla(p.raised))
+                .border_0(),
             )
             .child(
                 Button::new("fix-with-agent")
