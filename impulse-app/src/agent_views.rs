@@ -163,7 +163,11 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         match signal {
-            AgentSignal::Changed => cx.notify(),
+            AgentSignal::Changed => {
+                // After this update: it reads every window's workbench.
+                gpui_kit::App::defer(cx, crate::badge::update);
+                cx.notify()
+            }
             AgentSignal::SendToAgent(text) => {
                 self.send_to_best_agent(text, Some(terminal.entity_id()), window, cx)
             }

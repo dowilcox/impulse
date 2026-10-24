@@ -19,6 +19,7 @@ mod agent_toolbelt;
 mod agent_tracker;
 mod agent_views;
 mod alert;
+mod badge;
 mod base_rules;
 mod bell;
 mod branch_manager;

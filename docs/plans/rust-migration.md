@@ -523,6 +523,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   Swift's `isAtPrompt`); otherwise in a new terminal tab.
   Marking Review's last file viewed remembers "reviewed up to here" for
   the scope menu's Since your review, as Swift does.
+  The app icon's badge counts the terminals needing attention in every
+  window: the Dock tile's label on macOS, and on Linux the Unity
+  LauncherEntry signal (sent with `gdbus`) that KDE's task manager, Dash
+  to Dock and Plank show.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.
