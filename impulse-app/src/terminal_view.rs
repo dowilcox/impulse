@@ -5,7 +5,9 @@
 
 use std::time::Duration;
 
-use gpui::{div, prelude::*, px, Context, FontWeight, Hsla, Pixels, Rgba, SharedString, Window};
+use gpui_kit::{
+    div, prelude::*, px, Context, FontWeight, Hsla, Pixels, Rgba, SharedString, Window,
+};
 use impulse_kit::chrome::{ChromePalette, Rgba as KitRgba};
 use impulse_kit::theme::ResolvedTheme;
 use impulse_terminal::{
@@ -110,7 +112,7 @@ pub struct TerminalView {
     size: (u16, u16),
     pub cwd: String,
     pub last_duration_ms: Option<u64>,
-    _poll: gpui::Task<()>,
+    _poll: gpui_kit::Task<()>,
 }
 
 impl TerminalView {
@@ -126,7 +128,7 @@ impl TerminalView {
         let font_size = 14.0;
         let font_id = window
             .text_system()
-            .resolve_font(&gpui::font(font_family.clone()));
+            .resolve_font(&gpui_kit::font(font_family.clone()));
         let cell_width = window
             .text_system()
             .advance(font_id, px(font_size), 'm')

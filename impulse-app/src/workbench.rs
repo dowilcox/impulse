@@ -6,12 +6,13 @@
 
 use std::process::Command;
 
-use gpui::{
+use gpui_kit::{
     div, prelude::*, px, svg, AnyElement, Context, Entity, FocusHandle, FontWeight, Hsla,
     KeyDownEvent, SharedString, Window,
 };
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 
+use crate::editor_view::{self, EditorView};
 use crate::terminal_view::{rgba, TerminalView};
 use crate::Args;
 
@@ -20,6 +21,9 @@ const UI_FONT: &str = "Inter";
 pub struct Workbench {
     palette: ChromePalette,
     terminal: Entity<TerminalView>,
+    /// The file opened with `--open`, as an editor tab.
+    editor: Option<(String, Entity<EditorView>)>,
+    editor_active: bool,
     focus: FocusHandle,
     input: String,
     workspace: String,
@@ -41,6 +45,7 @@ impl Workbench {
         let theme = impulse_kit::theme::builtin_theme(&args.theme)
             .unwrap_or_else(|| impulse_kit::theme::builtin_theme("nord").unwrap());
         let palette = ChromePalette::new(&theme, false);
+        editor_view::apply_theme(&theme, cx);
         let terminal = cx.new(|cx| {
             TerminalView::new(
                 theme.clone(),
@@ -72,11 +77,24 @@ impl Workbench {
                 .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
         });
 
+        let editor = args.open.as_ref().map(|path| {
+            let path = std::path::Path::new(&args.cwd).join(path);
+            let title = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (title, cx.new(|cx| EditorView::open(&path, window, cx)))
+        });
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        if let Some((_, editor)) = &editor {
+            editor.update(cx, |editor, cx| editor.focus(window, cx));
+        }
         Self {
             palette,
             terminal,
+            editor_active: editor.is_some(),
+            editor,
             focus,
             input: String::new(),
             workspace: std::path::Path::new(&args.cwd)
@@ -89,6 +107,9 @@ impl Workbench {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor_active {
+            return;
+        }
         let keystroke = &event.keystroke;
         let terminal = self.terminal.read(cx);
         match keystroke.key.as_str() {
@@ -125,7 +146,7 @@ impl Workbench {
             .text_color(self.c(color))
     }
 
-    fn titlebar(&self) -> impl IntoElement {
+    fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         // macOS draws its traffic lights in this inset; on Linux the window
         // controls are Impulse's own (client-side decorations).
@@ -183,8 +204,26 @@ impl Workbench {
                     .child(self.branch.clone()),
             )
             .child(div().w(px(8.)))
-            .child(tab("terminal", "bash", true))
-            .child(tab("file-code", "main.rs", false))
+            .child(
+                tab("terminal", "bash", !self.editor_active)
+                    .id("tab-terminal")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.editor_active = false;
+                        window.focus(&this.focus, cx);
+                        cx.notify();
+                    })),
+            )
+            .children(self.editor.as_ref().map(|(title, _)| {
+                tab("file-code", title, self.editor_active)
+                    .id("tab-editor")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.editor_active = true;
+                        if let Some((_, editor)) = &this.editor {
+                            editor.update(cx, |editor, cx| editor.focus(window, cx));
+                        }
+                        cx.notify();
+                    }))
+            }))
             .child(self.icon("plus", metrics::ICON, p.text_secondary))
             .child(div().flex_1())
             .child(
@@ -447,14 +486,19 @@ impl Render for Workbench {
             .font_family(UI_FONT)
             .text_size(px(13.))
             .text_color(self.c(p.text))
-            .child(self.titlebar())
+            .child(self.titlebar(cx))
             .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.sidebar())
-                    .child(self.content(cx)),
+                div().flex().flex_1().min_h_0().child(self.sidebar()).child(
+                    match (&self.editor, self.editor_active) {
+                        (Some((_, editor)), true) => div()
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .child(editor.clone())
+                            .into_any_element(),
+                        _ => self.content(cx).into_any_element(),
+                    },
+                ),
             )
             .child(self.status_bar(cx))
     }
