@@ -198,6 +198,7 @@ impl Workbench {
             .bg(hsla(p.chrome))
             .border_b_1()
             .border_color(hsla(p.hairline))
+            .children(crate::menus::menu_button(cx))
             .child(
                 div()
                     .id("toggle-sidebar")

@@ -28,7 +28,7 @@ const SEARCH: &str = "search";
 
 /// Shortcuts that can't be changed: on the Mac the standard menu items
 /// (and the Window menu's Tab 1 to 9), elsewhere the editing keys every
-/// text field and the editor keep. A command given one is flagged.
+/// text field and the editor keep, Quit and Tab 1 to 9. A command given one is flagged.
 fn fixed_shortcuts() -> Vec<(String, String)> {
     let fixed: &[(&str, &str)] = if cfg!(target_os = "macos") {
         &[
@@ -51,15 +51,18 @@ fn fixed_shortcuts() -> Vec<(String, String)> {
             ("Redo", "Ctrl+Shift+Z"),
             ("Cut", "Ctrl+X"),
             ("Select All", "Ctrl+A"),
+            ("Quit Impulse", "Ctrl+Shift+Q"),
         ]
     };
     let mut out: Vec<(String, String)> = fixed
         .iter()
         .map(|(name, key)| (name.to_string(), key.to_string()))
         .collect();
-    if cfg!(target_os = "macos") {
-        out.extend((1..=9).map(|n| (format!("Tab {n}"), format!("Cmd+{n}"))));
-    }
+    let platform = impulse_kit::keybindings::Platform::current();
+    out.extend((1..=9).filter_map(|n| {
+        let key = impulse_kit::menus::fixed_shortcut(impulse_kit::menus::Fixed::Tab(n), platform)?;
+        Some((format!("Tab {n}"), key))
+    }));
     out
 }
 

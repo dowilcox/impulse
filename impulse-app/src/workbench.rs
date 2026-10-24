@@ -1012,10 +1012,9 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_git(cx);
         let sidebar = SettingsStore::get(cx).sidebar_visible;
+        let root = self.menu_actions(div().id("workbench"), cx);
         let p = &self.palette;
-        div()
-            .id("workbench")
-            .track_focus(&self.focus)
+        root.track_focus(&self.focus)
             .key_context("Workbench")
             .on_action(cx.listener(Self::run_command_action))
             .on_action(cx.listener(Self::format_document))

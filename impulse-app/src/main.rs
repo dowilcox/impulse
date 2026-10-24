@@ -30,6 +30,7 @@ mod image_view;
 mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
+mod menus;
 mod palette;
 mod problems_view;
 mod quick_terminal;
@@ -188,6 +189,7 @@ fn main() {
             let settings = settings_store::SettingsStore::get(cx).clone();
             commands::bind_keys(&settings, cx);
             commands::rebind_on_change(cx);
+            menus::init(cx);
             session::init(cx);
             quick_terminal::init(cx);
             control_server::start(cx, control_commands::dispatch);

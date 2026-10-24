@@ -134,8 +134,10 @@ toolkit with Zed's editor through a fork, not a different toolkit.
   with its system-wide shortcut from `global-hotkey` (Carbon on macOS, as
   today; XGrabKey on X11). Wayland lets no app take a system-wide key, so
   there it's Toggle Quick Terminal in the palette, or a desktop shortcut.
-- **Menus**: the macOS menu bar from `CommandRegistry`; on Linux the same menus
-  from a titlebar button. The palette has every command on both.
+- **Menus**: the macOS menu bar; on Linux the same menus from a titlebar
+  button (both from `impulse_kit::menus`, done). The palette has every
+  command on both. On Linux, Quit is Ctrl+Shift+Q and Tab 1 to 9 Alt+1 to 9,
+  keys a shell doesn't read.
 - **Markdown preview**: native, from cmark-gfm's AST or GPUI Kit's Markdown
   (raw HTML is already elided).
 - **Review and History syntax colors**: the editor's tree-sitter grammars

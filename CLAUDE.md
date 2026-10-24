@@ -167,6 +167,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           shortcut registered with global-hotkey),
                           Use Impulse as $EDITOR (EDITOR/VISUAL set to
                           `impulse edit` by control_server::terminal_env),
+                          menus (menus.rs from impulse_kit::menus: the
+                          macOS menu bar, the Linux titlebar menu button,
+                          the fixed items' actions and keys),
                           workbench_workspaces.rs (recent folders in
                           recent-workspaces.json via
                           impulse_kit::recent_workspaces, Rename Workspace,

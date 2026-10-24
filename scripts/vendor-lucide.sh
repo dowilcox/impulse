@@ -27,7 +27,7 @@ ICONS=(
   package panel-bottom panel-left panel-right pencil pin pin-off play plug plus
   refresh-cw rotate-ccw rows-2 search settings sliders-horizontal square-terminal tag
   terminal trash-2 triangle-alert undo-2 upload user x zap
-  space list-collapse wrap-text message-square-plus square-check square
+  space list-collapse wrap-text message-square-plus square-check square menu
   shield-alert shield-check
 )
 
