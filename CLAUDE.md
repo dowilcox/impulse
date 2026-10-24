@@ -186,6 +186,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           shortcut registered with global-hotkey),
                           Use Impulse as $EDITOR (EDITOR/VISUAL set to
                           `impulse edit` by control_server::terminal_env),
+                          the file tree following the disk (tree_watch.rs:
+                          every listed folder watched on its own, listed
+                          again when its entries change),
                           the file tree's context menu
                           (file_tree_actions.rs: new file and folder, open
                           to the side, mention in an agent, history,

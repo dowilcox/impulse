@@ -309,7 +309,7 @@ impl Workspace {
             task,
         };
         workspace.refresh_branch();
-        workspace.reload_tree();
+        workspace.reload_tree(false);
         workspace
     }
 
@@ -352,8 +352,7 @@ impl Workspace {
     }
 
     /// Read every listed folder again.
-    pub fn reload_tree(&mut self) {
-        let show_hidden = false;
+    pub fn reload_tree(&mut self, show_hidden: bool) {
         let mut dirs: Vec<PathBuf> = self.children.keys().cloned().collect();
         if !dirs.contains(&self.root) {
             dirs.push(self.root.clone());

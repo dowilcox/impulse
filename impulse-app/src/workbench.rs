@@ -90,6 +90,8 @@ pub struct Workbench {
     pub(crate) editor_watch: crate::editor_watch::EditorWatch,
     /// Closing the window was asked about and confirmed (`close_flow`).
     pub(crate) close_confirmed: bool,
+    /// The folders the file tree has listed, watched (`tree_watch`).
+    pub(crate) tree_watch: crate::tree_watch::TreeWatch,
     /// Folders whose files were said to have language servers off.
     pub(crate) restricted_noted: std::collections::HashSet<String>,
 }
@@ -117,6 +119,11 @@ impl Workbench {
         });
         workbench.start_task_monitor(window, cx);
         workbench.start_editor_watch(window, cx);
+        workbench.start_tree_watch(window, cx);
+        // Workspaces list their folders before settings are at hand.
+        if SettingsStore::get(cx).sidebar_show_hidden {
+            workbench.reload_tree(cx);
+        }
         workbench.guard_window_close(window, cx);
         workbench
     }
@@ -169,6 +176,7 @@ impl Workbench {
             editor_watch: crate::editor_watch::EditorWatch::new(),
             close_confirmed: false,
             restricted_noted: Default::default(),
+            tree_watch: crate::tree_watch::TreeWatch::new(),
         }
     }
 
@@ -869,8 +877,9 @@ impl Workbench {
 
     /// Read every listed folder again (files were created, moved or deleted).
     pub(crate) fn reload_tree(&mut self, cx: &mut Context<Self>) {
+        let show_hidden = SettingsStore::get(cx).sidebar_show_hidden;
         for workspace in &mut self.workspaces {
-            workspace.reload_tree();
+            workspace.reload_tree(show_hidden);
         }
         cx.notify();
     }
@@ -1280,6 +1289,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_git(cx);
         self.sync_editor_watch(cx);
+        self.sync_tree_watch();
         let sidebar = SettingsStore::get(cx).sidebar_visible;
         let root = self.menu_actions(div().id("workbench"), cx);
         let p = &self.palette;

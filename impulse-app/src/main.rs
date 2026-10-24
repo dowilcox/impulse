@@ -68,6 +68,7 @@ mod terminal_blocks;
 mod terminal_find_bar;
 mod terminal_input_bar;
 mod terminal_view;
+mod tree_watch;
 mod untitled;
 mod update_check;
 mod workbench;
