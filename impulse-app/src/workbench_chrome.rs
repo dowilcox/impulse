@@ -853,8 +853,8 @@ impl Workbench {
                         .flex()
                         .items_center()
                         .gap(px(6.))
-                        .h(px(metrics::ROW_HEIGHT))
-                        .pl(px(36.))
+                        .h(px(24.))
+                        .pl(px(40.))
                         .pr(px(8.))
                         .mx(px(6.))
                         .rounded(px(metrics::RADIUS))
@@ -975,11 +975,15 @@ impl Workbench {
                     .flex_none()
                     .items_center()
                     .gap(px(6.))
-                    .h(px(metrics::ROW_HEIGHT))
-                    .pl(px(10. + 14. * row.depth as f32))
-                    .pr(px(10.))
-                    .when(selected, |d| d.bg(hsla(p.selection)))
-                    .hover(|style| style.bg(hsla(p.hover)))
+                    // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
+                    .h(px(22.))
+                    .mx(px(4.))
+                    .pl(px(8. + 16. * row.depth as f32))
+                    .pr(px(8.))
+                    .rounded(px(5.))
+                    .text_size(px(13.))
+                    .when(selected, |d| d.bg(hsla(p.accent).opacity(0.2)))
+                    .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
                     .on_click(
                         cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
                             if is_dir {
@@ -993,20 +997,22 @@ impl Workbench {
                             }
                         }),
                     )
-                    .child(div().w(px(12.)).child(if row.is_dir {
-                        icon(
-                            if expanded {
-                                "chevron-down"
-                            } else {
-                                "chevron-right"
-                            },
-                            metrics::ICON_SMALL,
-                            p.text_tertiary,
-                        )
-                        .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }))
+                    .child(div().w(px(16.)).flex_none().flex().justify_center().child(
+                        if row.is_dir {
+                            icon(
+                                if expanded {
+                                    "chevron-down"
+                                } else {
+                                    "chevron-right"
+                                },
+                                metrics::ICON_SMALL,
+                                p.text_tertiary,
+                            )
+                            .into_any_element()
+                        } else {
+                            div().into_any_element()
+                        },
+                    ))
                     .child(
                         gpui_kit::img(crate::file_icons::icon_path(
                             &row.name, row.is_dir, expanded,
@@ -1070,10 +1076,21 @@ impl Workbench {
             self.search
                 .update(cx, |search, cx| search.set_root(root, cx));
         }
+        // With the Files panel's actions there's room for the selected
+        // label only; otherwise every segment shows its label (Swift's
+        // DockSegmentedTabs).
+        let all_labels = self.panel != SidebarPanel::Files;
+        let changed = crate::repository_state::RepositoryStore::summary(&workspace.root, cx)
+            .map_or(0, |r| r.changed);
+        let changes_label = if changed > 0 {
+            format!("Changes {changed}")
+        } else {
+            "Changes".to_string()
+        };
         let panel_button = |id: &'static str,
                             panel: SidebarPanel,
                             name: &'static str,
-                            label: &'static str,
+                            label: String,
                             cx: &mut Context<Self>| {
             let selected = self.panel == panel;
             div()
@@ -1081,29 +1098,64 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .px(px(8.))
+                .px(px(7.))
                 .h(px(24.))
                 .rounded(px(metrics::RADIUS))
                 .cursor_pointer()
-                .when(selected, |d| {
-                    d.bg(hsla(p.raised)).font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(11.5))
+                .font_weight(if selected {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::MEDIUM
                 })
+                .when(selected, |d| d.bg(hsla(p.raised)))
                 .on_click(cx.listener(move |w, _, _, cx| {
                     w.panel = panel;
                     cx.notify();
                 }))
                 .child(icon(
                     name,
-                    metrics::ICON,
+                    12.,
                     if selected { p.text } else { p.text_tertiary },
                 ))
-                .when(selected, |d| d.child(label))
+                .when(selected || all_labels, |d| {
+                    d.text_color(hsla(if selected { p.text } else { p.text_secondary }))
+                        .child(label)
+                })
         };
+        let show_hidden = settings.sidebar_show_hidden;
+        let tree_action =
+            |id: &'static str, name: &'static str, help: &'static str, active: bool| {
+                div()
+                    .id(id)
+                    .flex_none()
+                    .size(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(metrics::RADIUS_SMALL))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(hsla(p.hover)))
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(help).build(window, cx)
+                    })
+                    .child(icon(
+                        name,
+                        13.,
+                        if active { p.accent } else { p.text_secondary },
+                    ))
+            };
+        // Swift's WorkspacesSection: rows 1 pt apart, 6 pt above and below,
+        // scrolling past 280 pt.
         let mut workspaces = div()
+            .id("workspaces")
             .flex()
             .flex_col()
-            .py(px(8.))
-            .gap(px(2.))
+            .flex_none()
+            .max_h(px(280.))
+            .overflow_y_scroll()
+            .py(px(6.))
+            .gap(px(1.))
             .border_b_1()
             .border_color(hsla(p.hairline));
         // A repository's workspaces (its tasks) under its name.
@@ -1137,23 +1189,82 @@ impl Workbench {
                         "panel-files",
                         SidebarPanel::Files,
                         "folder-tree",
-                        "Files",
+                        "Files".into(),
                         cx,
                     ))
                     .child(panel_button(
                         "panel-changes",
                         SidebarPanel::Changes,
                         "git-branch",
-                        "Changes",
+                        changes_label,
                         cx,
                     ))
                     .child(panel_button(
                         "panel-search",
                         SidebarPanel::Search,
                         "search",
-                        "Search",
+                        "Search".into(),
                         cx,
-                    )),
+                    ))
+                    .when(self.panel == SidebarPanel::Files, |d| {
+                        let (new_file_root, new_folder_root) = (root.clone(), root.clone());
+                        d.child(div().flex_1().min_w(px(4.)))
+                            .child(
+                                tree_action("tree-new-file", "file-plus", "New File", false)
+                                    .on_click(cx.listener(move |w, _, window, cx| {
+                                        w.tree_new(&new_file_root, false, window, cx)
+                                    })),
+                            )
+                            .child(
+                                tree_action("tree-new-folder", "folder-plus", "New Folder", false)
+                                    .on_click(cx.listener(move |w, _, window, cx| {
+                                        w.tree_new(&new_folder_root, true, window, cx)
+                                    })),
+                            )
+                            .child(
+                                tree_action(
+                                    "tree-refresh",
+                                    "refresh-cw",
+                                    "Refresh File Tree",
+                                    false,
+                                )
+                                .on_click(cx.listener(|w, _, _, cx| w.reload_tree(cx))),
+                            )
+                            .child(
+                                tree_action(
+                                    "tree-collapse",
+                                    "chevrons-down-up",
+                                    "Collapse All Folders",
+                                    false,
+                                )
+                                .on_click(cx.listener(
+                                    |w, _, _, cx| {
+                                        w.workspace_mut().expanded_dirs.clear();
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                tree_action(
+                                    "tree-hidden",
+                                    if show_hidden { "eye" } else { "eye-off" },
+                                    if show_hidden {
+                                        "Hide Hidden Files"
+                                    } else {
+                                        "Show Hidden Files"
+                                    },
+                                    show_hidden,
+                                )
+                                .on_click(cx.listener(
+                                    |w, _, _, cx| {
+                                        SettingsStore::update(cx, |s| {
+                                            s.sidebar_show_hidden = !s.sidebar_show_hidden
+                                        });
+                                        w.reload_tree(cx);
+                                    },
+                                )),
+                            )
+                    }),
             )
             .child(match self.panel {
                 SidebarPanel::Changes => self.changes_panel(cx),

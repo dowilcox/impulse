@@ -233,7 +233,13 @@ impl Workbench {
 
     /// New File… or New Folder… in `dir`: asks for a name, creates it, and
     /// opens a new file.
-    fn tree_new(&mut self, dir: &Path, folder: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn tree_new(
+        &mut self,
+        dir: &Path,
+        folder: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let dir = dir.to_path_buf();
         let (title, message) = if folder {
             ("New Folder", "Enter a name for the new folder:")

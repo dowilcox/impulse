@@ -261,6 +261,7 @@ impl Render for SearchPanel {
                             div()
                                 .flex()
                                 .text_size(px(12.))
+                                .line_height(px(15.))
                                 .child(
                                     div()
                                         .font_weight(FontWeight::MEDIUM)
@@ -284,6 +285,7 @@ impl Render for SearchPanel {
                                     .whitespace_nowrap()
                                     .font_family("JetBrains Mono")
                                     .text_size(px(11.))
+                                    .line_height(px(13.))
                                     .text_color(hsla(p.text_secondary))
                                     .child(if replacing {
                                         self.preview(content, &replacement).into_any_element()
