@@ -1356,7 +1356,7 @@ impl Workbench {
         self.activate_workspace(index, window, cx);
     }
 
-    /// Close a folder workspace and its tabs (Scratch stays).
+    /// Close a folder workspace and its tabs (Scratch can't be closed).
     pub(crate) fn close_workspace(
         &mut self,
         index: usize,
@@ -1380,6 +1380,12 @@ impl Workbench {
         if dirty && self.notice.as_deref() != Some(warning.as_str()) {
             self.set_notice(warning, cx);
             return;
+        }
+        // Closing the last folder leaves Scratch to land in.
+        if self.workspaces.len() == 1 {
+            let id = self.next_id();
+            self.workspaces
+                .push(Workspace::new(id, Kind::Scratch, crate::workspace::home()));
         }
         let removed = self.workspaces.remove(index);
         for surface in removed.all_surfaces() {

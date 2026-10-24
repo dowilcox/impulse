@@ -194,7 +194,7 @@ impl TerminalView {
         }
     }
 
-    fn bar_text_changed(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn bar_text_changed(&mut self, cx: &mut Context<Self>) {
         let text = self.editor_text(cx);
         if self.bar.history_index.is_some() && Some(text.clone()) != self.current_history_entry(cx)
         {

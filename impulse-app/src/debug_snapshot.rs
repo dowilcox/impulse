@@ -683,7 +683,8 @@ fn perform_now(action: &str, cx: &mut App) {
                     let text = text.replace("\\n", "\n");
                     terminal.update(cx, |t, cx| {
                         t.editor.update(cx, |e, cx| e.set_text(&text, cx));
-                        cx.notify();
+                        // As typing it would: the ghost suggestion follows.
+                        t.bar_text_changed(cx);
                     });
                 }
             }

@@ -281,21 +281,33 @@ impl Workbench {
         if self.workspaces.is_empty() {
             return;
         }
-        // Scratch is always there, last.
-        if !self.workspaces.iter().any(|w| w.kind == Kind::Scratch) {
-            let id = self.next_id();
-            self.workspaces
-                .push(Workspace::new(id, Kind::Scratch, crate::workspace::home()));
-        }
-        if let Some(scratch) = self.workspaces.iter().position(|w| w.kind == Kind::Scratch) {
-            let scratch = self.workspaces.remove(scratch);
-            self.workspaces.push(scratch);
-        }
-        let active = state
+        let mut active = state
             .active_workspace_index
             .and_then(|i| usize::try_from(i).ok())
             .filter(|i| *i < self.workspaces.len())
             .unwrap_or(0);
+        // An empty Scratch beside folders goes, unless it's the one shown
+        // (Swift's `finishRestore`); closing the last folder brings it back.
+        if let Some(scratch) = self.workspaces.iter().position(|w| w.kind == Kind::Scratch) {
+            if self.workspaces.len() > 1
+                && self.workspaces[scratch].tabs.is_empty()
+                && scratch != active
+            {
+                self.workspaces.remove(scratch);
+                if active > scratch {
+                    active -= 1;
+                }
+            } else {
+                // Scratch stays last.
+                let workspace = self.workspaces.remove(scratch);
+                self.workspaces.push(workspace);
+                if active == scratch {
+                    active = self.workspaces.len() - 1;
+                } else if active > scratch {
+                    active -= 1;
+                }
+            }
+        }
         self.show_workspace(active, window, cx);
     }
 
