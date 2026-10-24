@@ -295,11 +295,20 @@ impl EditorTab {
             })
         };
         let border = cx.theme().border;
+        let background = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map(|b| b.background)
+            .unwrap_or(cx.theme().background);
         let body = match &diff.inline {
             Some(view) => div()
                 .flex_1()
                 .min_h_0()
-                .child(tinted(styled(&view.state), &view.state, &view.tints))
+                .child(tinted(
+                    styled(&view.state),
+                    &view.state,
+                    &view.tints,
+                    background,
+                ))
                 .into_any_element(),
             None => {
                 let sync = scroll_sync(
@@ -317,12 +326,14 @@ impl EditorTab {
                         styled(&diff.base),
                         &diff.base,
                         &diff.base_tints,
+                        background,
                     )))
                     .child(div().w(px(1.)).h_full().bg(border))
                     .child(div().flex_1().min_w_0().h_full().child(tinted(
                         editor,
                         &self.state,
                         &diff.own_tints,
+                        background,
                     )))
                     .child(sync)
                     .into_any_element()
@@ -430,11 +441,18 @@ fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla) -> Tints {
 /// `editor` with `tints` painted over its rows across its whole width, as
 /// Monaco's whole-line decorations are (a range decoration stops at the
 /// end of the text).
-fn tinted(editor: impl IntoElement, state: &Entity<EditorState>, tints: &Tints) -> AnyElement {
+fn tinted(
+    editor: impl IntoElement,
+    state: &Entity<EditorState>,
+    tints: &Tints,
+    background: Hsla,
+) -> AnyElement {
     let (state, tints) = (state.clone(), tints.clone());
     div()
         .relative()
         .size_full()
+        // The theme leaves code editors' background to us.
+        .bg(background)
         .child(editor)
         .child(
             canvas(

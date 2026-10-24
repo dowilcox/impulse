@@ -360,7 +360,18 @@ impl EditorTab {
                         .flex_1()
                         .min_h_0()
                         .flex()
-                        .child(div().flex_1().min_w_0().h_full().child(editor))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                // The theme leaves code editors' background to us.
+                                .when_some(
+                                    cx.try_global::<crate::kit_theme::EditorBackdrop>(),
+                                    |d, b| d.bg(b.background),
+                                )
+                                .child(editor),
+                        )
                         .child(div().w(px(1.)).h_full().bg(theme.border))
                         .child(
                             div()

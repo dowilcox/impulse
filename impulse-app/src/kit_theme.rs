@@ -125,21 +125,35 @@ pub fn apply(
     c.button_secondary_foreground = c.secondary_foreground;
 
     k.tokens = ThemeTokens::from(&k.colors);
-    k.highlight_theme = highlight_theme(theme, settings.highlight_current_line, false).into();
+    k.highlight_theme = highlight_theme(theme, false).into();
     // Review colors code as highlight.js does, function names included.
     cx.set_global(ReviewHighlight(std::sync::Arc::new(highlight_theme(
-        theme,
-        settings.highlight_current_line,
-        true,
+        theme, true,
     ))));
     Theme::sync_base(cx);
     cx.refresh_windows();
+    cx.set_global(EditorBackdrop {
+        background: hsla(Rgba::from_hex(&theme.bg)),
+        current_line: settings
+            .highlight_current_line
+            .then(|| hsla(Rgba::from_hex(&theme.bg_highlight))),
+    });
     cx.set_global(crate::editor_git::GitColors {
         added: hsla(p.git_added),
         modified: hsla(p.git_modified),
         deleted: hsla(p.git_deleted),
     });
 }
+
+/// What code editors are painted over: the theme's background, and the
+/// current line's while the editor has focus (`highlight_current_line`).
+#[derive(Clone, Copy)]
+pub(crate) struct EditorBackdrop {
+    pub background: gpui_kit::Hsla,
+    pub current_line: Option<gpui_kit::Hsla>,
+}
+
+impl gpui_kit::Global for EditorBackdrop {}
 
 /// Review's syntax colors (`highlight_theme` with function names colored).
 #[derive(Clone)]
@@ -151,7 +165,7 @@ impl gpui_kit::Global for ReviewHighlight {}
 /// the scopes `themeToMonaco` colors. Monaco's tokenizers leave function
 /// names plain and color operators as delimiters, so the editor does too;
 /// `functions` colors them, as highlight.js does in Review.
-fn highlight_theme(theme: &ResolvedTheme, current_line: bool, functions: bool) -> HighlightTheme {
+fn highlight_theme(theme: &ResolvedTheme, functions: bool) -> HighlightTheme {
     let style = |color: &str| json!({ "color": color });
     let italic = |color: &str| json!({ "color": color, "font_style": "italic" });
     let syntax: serde_json::Map<String, serde_json::Value> = [
@@ -205,9 +219,13 @@ fn highlight_theme(theme: &ResolvedTheme, current_line: bool, functions: bool) -
         "name": theme.name,
         "appearance": if theme.is_light { "light" } else { "dark" },
         "style": {
-            "editor.background": theme.bg,
+            // Code editors paint no background or current line of their
+            // own: the editor tab paints both under them, the current line
+            // only while it has focus (Monaco's
+            // renderLineHighlightOnlyWhenFocus). The gutter stays opaque.
+            "editor.background": "#00000000",
+            "editor.gutter.background": theme.bg,
             "editor.foreground": theme.fg,
-            "editor.active_line.background": if current_line { &theme.bg_highlight } else { &theme.bg },
             "editor.line_number": theme.fg_comment,
             "editor.active_line_number": theme.fg,
             "editor.invisible": theme.fg_comment,

@@ -572,6 +572,49 @@ impl EditorTab {
         .top_0()
         .left_0()
         .size_full();
+        // Under the editor: its background, and the current line while it
+        // has focus (the theme leaves both to us).
+        let backdrop = cx.try_global::<crate::kit_theme::EditorBackdrop>().copied();
+        let focus = gpui_kit::Focusable::focus_handle(self.state.read(cx), cx);
+        let under_state = self.state.clone();
+        let underlay = canvas(
+            |_, _, _| {},
+            move |bounds, _, window, cx| {
+                let Some(backdrop) = backdrop else {
+                    return;
+                };
+                window.paint_quad(fill(bounds, backdrop.background));
+                let Some(color) = backdrop.current_line else {
+                    return;
+                };
+                if !focus.contains_focused(window, cx) {
+                    return;
+                }
+                let state = under_state.read(cx);
+                if !state.selected_range().is_empty() {
+                    return;
+                }
+                let text = state.text();
+                let row = state.cursor_position().line as usize;
+                if row >= text.lines_len() {
+                    return;
+                }
+                let offset = text.line_start_offset(row);
+                if let Some(line) = state.range_to_bounds(&(offset..offset)) {
+                    window.paint_quad(fill(
+                        Bounds::from_corners(
+                            point(bounds.left(), line.top()),
+                            point(bounds.right(), line.bottom()),
+                        ),
+                        color,
+                    ));
+                }
+            },
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         // The peek under its change's last line when that's on screen, else
         // under the editor.
         let peek = self.git_peek(cx);
@@ -600,6 +643,7 @@ impl EditorTab {
                     .relative()
                     .flex_1()
                     .min_h_0()
+                    .child(underlay)
                     .child(editor)
                     .child(overlay)
                     .children(inline),
