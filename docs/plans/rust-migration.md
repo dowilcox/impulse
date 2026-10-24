@@ -105,7 +105,7 @@ for:
 | LSP: code actions, Format Document (⌥⇧F) | yes | **done**: every server's actions (⌘. or Ctrl+.), resolved when picked; formatting as one undo step |
 | Rename (F2), Find References (⇧F12), edits across files | no | **done**: rename through `prepareRename`; workspace edits applied across open tabs and files on disk, asking first as `LSPWorkspaceEdits` does; references in a list that opens each place (a peek view comes with the peek work) |
 | LSP: document highlight, type definition, implementation, declaration | no | **done**: occurrences as range decorations (with Monaco's word fallback), the three Go to commands (⌘F12/Ctrl+F12 for implementations) |
-| LSP: signature help, inlay hints | no | signature help **done** (on `(` and `,`, following the active parameter, Escape or `)` to close, `impulse_lsp::signature`); inlay hints next |
+| LSP: signature help, inlay hints | no | signature help **done** (on `(` and `,`, following the active parameter, Escape or `)` to close, `impulse_lsp::signature`); inlay hints need text injected into the editor's line layout, which GPUI Kit's editor doesn't have (only one ghost-text completion at the caret), so they wait on a change upstream or in a fork |
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
 | Diff editor (side by side and inline) | diff component exists | **done** side by side (Toggle Diff View: HEAD read-only beside the live buffer, changed lines tinted); not yet padded to line up, no inline mode |
 | Vim mode (monaco-vim) | no | port: a modal layer over the editor's actions |
