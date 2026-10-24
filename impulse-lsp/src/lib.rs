@@ -5,8 +5,11 @@
 
 pub mod client;
 pub mod completion;
+pub mod config;
+pub mod edits;
 pub mod framing;
 pub mod registry;
 
 pub use client::{path_uri, LspClient, ServerEvent};
-pub use registry::{primary_server, resolve_command, ServerSpec};
+pub use config::{LspConfig, ServerConfig};
+pub use registry::resolve_command;

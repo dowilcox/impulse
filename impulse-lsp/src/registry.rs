@@ -1,6 +1,5 @@
-//! Which server handles a language (the defaults of the Swift
-//! `LSPConfig.defaultConfig`), finding its command, and keeping open
-//! documents in step with a server.
+//! Finding a server's command, and keeping open documents in step with a
+//! server. Which servers run for a language is `config`.
 
 use std::path::{Path, PathBuf};
 
@@ -14,75 +13,6 @@ use lsp_types::{
 };
 
 use crate::client::LspClient;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ServerSpec {
-    pub name: &'static str,
-    pub command: &'static str,
-    pub args: &'static [&'static str],
-}
-
-const fn spec(
-    name: &'static str,
-    command: &'static str,
-    args: &'static [&'static str],
-) -> ServerSpec {
-    ServerSpec {
-        name,
-        command,
-        args,
-    }
-}
-
-const RUST_ANALYZER: ServerSpec = spec("rust-analyzer", "rust-analyzer", &[]);
-const PYRIGHT: ServerSpec = spec("pyright", "pyright-langserver", &["--stdio"]);
-const CLANGD: ServerSpec = spec("clangd", "clangd", &[]);
-const TYPESCRIPT: ServerSpec = spec(
-    "typescript-language-server",
-    "typescript-language-server",
-    &["--stdio"],
-);
-const INTELEPHENSE: ServerSpec = spec("intelephense", "intelephense", &["--stdio"]);
-const HTML: ServerSpec = spec(
-    "vscode-html-language-server",
-    "vscode-html-language-server",
-    &["--stdio"],
-);
-const CSS: ServerSpec = spec(
-    "vscode-css-language-server",
-    "vscode-css-language-server",
-    &["--stdio"],
-);
-const JSON: ServerSpec = spec(
-    "vscode-json-language-server",
-    "vscode-json-language-server",
-    &["--stdio"],
-);
-const YAML: ServerSpec = spec("yaml-language-server", "yaml-language-server", &["--stdio"]);
-const BASH: ServerSpec = spec("bash-language-server", "bash-language-server", &["start"]);
-const GOPLS: ServerSpec = spec("gopls", "gopls", &[]);
-const SOURCEKIT: ServerSpec = spec("sourcekit-lsp", "sourcekit-lsp", &[]);
-
-/// The primary server for a language id (`language_from_uri`). The Swift
-/// app can run several per language (eslint, tailwind, emmet beside
-/// typescript); those come with the full port of `LSPConfig`.
-pub fn primary_server(language: &str) -> Option<ServerSpec> {
-    Some(match language {
-        "rust" => RUST_ANALYZER,
-        "python" => PYRIGHT,
-        "c" | "cpp" => CLANGD,
-        "javascript" | "javascriptreact" | "typescript" | "typescriptreact" => TYPESCRIPT,
-        "php" => INTELEPHENSE,
-        "html" => HTML,
-        "css" | "scss" | "less" => CSS,
-        "json" | "jsonc" => JSON,
-        "yaml" => YAML,
-        "shellscript" => BASH,
-        "go" => GOPLS,
-        "swift" => SOURCEKIT,
-        _ => return None,
-    })
-}
 
 /// `command` on `PATH`, or as given when it's a path.
 pub fn resolve_command(command: &str) -> Option<PathBuf> {
@@ -143,17 +73,6 @@ impl LspClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn languages_map_to_their_servers() {
-        assert_eq!(primary_server("rust").unwrap().command, "rust-analyzer");
-        assert_eq!(
-            primary_server("typescriptreact").unwrap().command,
-            "typescript-language-server"
-        );
-        assert_eq!(primary_server("python").unwrap().args, &["--stdio"]);
-        assert_eq!(primary_server("markdown"), None);
-    }
 
     #[test]
     fn finds_commands_on_path() {

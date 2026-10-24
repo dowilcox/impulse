@@ -7,12 +7,17 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
     actions, div, prelude::*, px, svg, AnyElement, App, Context, Entity, FocusHandle, FontWeight,
     Hsla, KeyBinding, KeyDownEvent, SharedString, Window,
 };
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
+use impulse_kit::trust::WorkspaceTrust;
 
 use crate::editor_tab::{EditorTab, EditorTabChanged, ShowDocument};
 use crate::lsp_hub::LspHub;
@@ -21,7 +26,7 @@ use crate::Args;
 
 const UI_FONT: &str = "Inter";
 
-actions!(impulse, [Save, CloseTab]);
+actions!(impulse, [Save, CloseTab, FormatDocument]);
 
 /// Keys for the workbench's commands: `secondary` is Cmd on macOS and Ctrl
 /// on Linux.
@@ -29,6 +34,8 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("secondary-s", Save, None),
         KeyBinding::new("secondary-w", CloseTab, None),
+        // Monaco's Format Document.
+        KeyBinding::new("alt-shift-f", FormatDocument, None),
     ]);
 }
 
@@ -62,9 +69,35 @@ pub struct Workbench {
     expanded: HashSet<PathBuf>,
     /// A message for the status bar, such as why a file didn't open.
     notice: Option<String>,
+    /// The trusted folders (shared by every window).
+    trust: Arc<WorkspaceTrust>,
+    /// The user kept this folder restricted this session: don't ask again.
+    declined: bool,
     /// Language servers, when the folder is trusted.
     lsp: Option<std::rc::Rc<LspHub>>,
     _lsp_events: Option<gpui_kit::Task<()>>,
+}
+
+/// Not the home folder or the disk: trusting those trusts everything.
+fn offers_parent(parent: &str) -> bool {
+    let normalized = impulse_kit::trust::normalize(parent);
+    let home = dirs_home();
+    !["/", "/Users", "/Volumes", "/home", home.as_str()].contains(&normalized.as_str())
+}
+
+fn dirs_home() -> String {
+    impulse_kit::trust::normalize(&std::env::var("HOME").unwrap_or_default())
+}
+
+/// `~/…` for paths in the home folder.
+fn abbreviate_home(path: &str) -> String {
+    let home = dirs_home();
+    match path.strip_prefix(&home) {
+        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
+            format!("~{rest}")
+        }
+        _ => path.to_string(),
+    }
 }
 
 fn list_dir(dir: &Path) -> Vec<(String, bool)> {
@@ -135,26 +168,23 @@ impl Workbench {
             expanded: HashSet::new(),
             root: root.clone(),
             notice: None,
+            trust: args.trust_store.clone(),
+            declined: false,
             lsp: None,
             _lsp_events: None,
         };
         if args.trust {
-            let (hub, events) = LspHub::new(root);
-            workbench.lsp = Some(hub);
-            workbench._lsp_events = Some(cx.spawn(async move |workbench, cx| {
-                while let Ok(event) = events.recv().await {
-                    let alive =
-                        workbench.update(cx, |workbench, cx| workbench.server_event(event, cx));
-                    if alive.is_err() {
-                        break;
-                    }
-                }
-            }));
+            workbench.trust.trust(&root.to_string_lossy());
         }
         for path in &args.open {
             let path = workbench.root.join(path);
             workbench.open_file(&path, window, cx);
         }
+        // Once the window (and its dialog layer) exists: language servers if
+        // the folder is trusted, otherwise ask.
+        cx.defer_in(window, |workbench, window, cx| {
+            workbench.request_trust(window, cx)
+        });
         workbench
     }
 
@@ -168,15 +198,11 @@ impl Workbench {
             self.activate(index, window, cx);
             return;
         }
-        let lsp = self.lsp.clone();
-        let show_document = self.show_document_handler(cx);
-        match impulse_kit::text_file::open(path).map(|opened| {
-            cx.new(|cx| {
-                let lsp = lsp.as_deref().map(|hub| (hub, show_document));
-                EditorTab::new(path, opened, lsp, window, cx)
-            })
-        }) {
+        match impulse_kit::text_file::open(path)
+            .map(|opened| cx.new(|cx| EditorTab::new(path, opened, window, cx)))
+        {
             Ok(editor) => {
+                self.start_lsp(&editor, window, cx);
                 cx.subscribe(&editor, |_, _, _: &EditorTabChanged, cx| cx.notify())
                     .detach();
                 cx.observe(&editor, |_, _, cx| cx.notify()).detach();
@@ -193,6 +219,160 @@ impl Workbench {
                 cx.notify();
             }
         }
+    }
+
+    /// The folder is trusted: run language servers for it, else ask once
+    /// (the Swift app's `requestTrustIfNeeded`).
+    fn request_trust(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.root.to_string_lossy().into_owned();
+        if self.trust.is_trusted(&root) {
+            self.enable_lsp(window, cx);
+        } else if !self.declined {
+            self.present_trust_prompt(window, cx);
+        }
+    }
+
+    /// "Do you trust the files in …?", as the Swift app asks it.
+    fn present_trust_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = impulse_kit::trust::normalize(&self.root.to_string_lossy());
+        let name = Path::new(&folder)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| folder.clone());
+        let parent = Path::new(&folder)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let offer_parent = offers_parent(&parent);
+        let trust_parent = std::rc::Rc::new(std::cell::Cell::new(false));
+        let workbench = cx.entity().downgrade();
+        let shown_folder = abbreviate_home(&folder);
+        let shown_parent = abbreviate_home(&parent);
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (trust_workbench, stay_workbench) = (workbench.clone(), workbench.clone());
+            let (folder, parent, trust_parent) =
+                (folder.clone(), parent.clone(), trust_parent.clone());
+            let checkbox_value = trust_parent.clone();
+            dialog
+                .title(format!("Do you trust the files in “{name}”?"))
+                .w(px(480.))
+                .keyboard(false)
+                .overlay_closable(false)
+                .close_button(false)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .child(
+                            "Impulse can run code from this folder on its own: language servers \
+                             (some run a project's build scripts and tools), formatters and \
+                             commands on save, and background git fetch. Until you trust it, \
+                             they stay off. The terminal and editing work as usual.",
+                        )
+                        .child(
+                            div()
+                                .font_family("JetBrains Mono")
+                                .text_size(px(12.))
+                                .child(shown_folder.clone()),
+                        )
+                        .children(offer_parent.then(|| {
+                            Checkbox::new("trust-parent")
+                                .label(format!("Trust everything in “{shown_parent}”"))
+                                .checked(checkbox_value.get())
+                                .on_change(move |checked, window, _| {
+                                    checkbox_value.set(*checked);
+                                    window.refresh();
+                                })
+                        })),
+                )
+                .footer(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            Button::new("stay-restricted")
+                                .label("Stay Restricted")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = stay_workbench.update(cx, |workbench, cx| {
+                                        workbench.declined = true;
+                                        cx.notify();
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("trust-folder")
+                                .primary()
+                                .label("Trust Folder")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = trust_workbench.update(cx, |workbench, cx| {
+                                        // The folder itself first: trusting the parent
+                                        // doesn't lift a restriction on a folder inside it.
+                                        workbench.trust.trust(&folder);
+                                        if trust_parent.get() {
+                                            workbench.trust.trust(&parent);
+                                        }
+                                        workbench.declined = false;
+                                        workbench.enable_lsp(window, cx);
+                                    });
+                                }),
+                        ),
+                )
+        });
+    }
+
+    /// Language servers for this workspace, and for the files already open.
+    fn enable_lsp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lsp.is_none() {
+            let (hub, events) = LspHub::new(self.root.clone(), self.trust.clone());
+            self.lsp = Some(hub);
+            self._lsp_events = Some(cx.spawn(async move |workbench, cx| {
+                while let Ok(event) = events.recv().await {
+                    let alive =
+                        workbench.update(cx, |workbench, cx| workbench.server_event(event, cx));
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        let editors: Vec<_> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| match tab {
+                Tab::Editor(editor) => Some(editor.clone()),
+                Tab::Terminal => None,
+            })
+            .collect();
+        for editor in editors {
+            self.start_lsp(&editor, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Hand a tab its language server, if its file is in a trusted folder.
+    fn start_lsp(
+        &mut self,
+        editor: &Entity<EditorTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hub) = self.lsp.clone() else { return };
+        let path = editor.read(cx).path.to_string_lossy().into_owned();
+        if !self.trust.is_trusted(&path) {
+            return;
+        }
+        let show_document = self.show_document_handler(cx);
+        editor.update(cx, |editor, cx| {
+            editor.start_lsp(&hub, show_document, window, cx)
+        });
+    }
+
+    fn is_restricted(&self) -> bool {
+        !self.trust.is_trusted(&self.root.to_string_lossy())
     }
 
     /// Go-to-definition into another file: open it in a tab at the target.
@@ -229,7 +409,7 @@ impl Workbench {
     /// What a language server sent on its own.
     fn server_event(&mut self, event: impulse_lsp::ServerEvent, cx: &mut Context<Self>) {
         match event {
-            impulse_lsp::ServerEvent::Diagnostics(params) => {
+            impulse_lsp::ServerEvent::Diagnostics(server, params) => {
                 log::debug!(
                     "diagnostics for {}: {:?}",
                     params.uri.as_str(),
@@ -243,7 +423,11 @@ impl Workbench {
                     if let Tab::Editor(editor) = tab {
                         if editor.read(cx).is_document(&params.uri) {
                             editor.update(cx, |editor, cx| {
-                                editor.set_diagnostics(params.diagnostics.clone(), cx)
+                                editor.set_diagnostics(
+                                    server.clone(),
+                                    params.diagnostics.clone(),
+                                    cx,
+                                )
                             });
                         }
                     }
@@ -273,6 +457,12 @@ impl Workbench {
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.save(cx));
+        }
+    }
+
+    fn format_document(&mut self, _: &FormatDocument, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor().cloned() {
+            editor.update(cx, |editor, cx| editor.format_document(window, cx));
         }
     }
 
@@ -720,7 +910,7 @@ impl Workbench {
             )
     }
 
-    fn status_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let item = |icon: &str, text: String| {
             div()
@@ -742,6 +932,20 @@ impl Workbench {
             .text_size(px(12.))
             .text_color(self.c(p.text_secondary))
             .child(item("git-branch", self.branch.clone()))
+            .children(self.is_restricted().then(|| {
+                div()
+                    .id("restricted")
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .text_color(self.c(p.warning))
+                    .cursor_pointer()
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.present_trust_prompt(window, cx)),
+                    )
+                    .child(self.icon("shield-alert", metrics::ICON_SMALL, p.warning))
+                    .child("Restricted")
+            }))
             .children(
                 self.notice
                     .clone()
@@ -771,6 +975,14 @@ impl Workbench {
                         ),
                         Some(div().child("UTF-8").into_any_element()),
                         Some(div().child(editor.language.clone()).into_any_element()),
+                        Some(editor.server_names())
+                            .filter(|names| !names.is_empty())
+                            .map(|names| {
+                                div()
+                                    .text_color(self.c(p.text_tertiary))
+                                    .child(names.join(", "))
+                                    .into_any_element()
+                            }),
                     ]
                     .into_iter()
                     .flatten()
@@ -799,6 +1011,7 @@ impl Render for Workbench {
             .on_key_down(cx.listener(Self::key_down))
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::close_tab))
+            .on_action(cx.listener(Self::format_document))
             .flex()
             .flex_col()
             .size_full()

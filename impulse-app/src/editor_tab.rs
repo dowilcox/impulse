@@ -35,10 +35,15 @@ pub struct EditorTab {
     stamp: Option<Stamp>,
     /// The next save overwrites a change made on disk.
     overwrite_confirmed: bool,
-    /// The document's language server, once it's running.
-    link: Option<Rc<DocumentLink>>,
+    /// The document's language servers that are running, by server id.
+    links: Vec<(String, Rc<DocumentLink>)>,
+    /// The server that answers completion, hover and definition (the first
+    /// the config names).
+    primary: Option<String>,
+    /// Each server's last diagnostics for this file, shown together.
+    diagnostics: std::collections::BTreeMap<String, Vec<lsp_types::Diagnostic>>,
     _subscription: Subscription,
-    _lsp_start: Option<gpui_kit::Task<()>>,
+    _lsp_start: Vec<gpui_kit::Task<()>>,
 }
 
 impl EventEmitter<EditorTabChanged> for EditorTab {}
@@ -58,13 +63,7 @@ fn grammar_for(language: &str) -> &str {
 impl EditorTab {
     /// A tab for `path`, read with `text_file::open` (which refuses what the
     /// editor can't show).
-    pub fn new(
-        path: &Path,
-        opened: Opened,
-        lsp: Option<(&LspHub, ShowDocument)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(path: &Path, opened: Opened, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = language_for_path(path);
         let tab_size = 4;
         let text = opened.contents.text;
@@ -89,7 +88,7 @@ impl EditorTab {
             if !matches!(event, InputEvent::Change) {
                 return;
             }
-            if let Some(link) = &tab.link {
+            for (_, link) in &tab.links {
                 link.sync(state.read(cx).text());
             }
             if !tab.dirty {
@@ -97,19 +96,6 @@ impl EditorTab {
                 cx.emit(EditorTabChanged);
                 cx.notify();
             }
-        });
-        // Start (or reuse) the language's server, then hand the editor its
-        // providers.
-        let lsp_start = lsp.and_then(|(hub, show_document)| {
-            let client = hub.client_for(&language, cx)?;
-            Some(
-                cx.spawn_in(window, async move |tab, cx| match client.await {
-                    Ok(client) => {
-                        let _ = tab.update(cx, |tab, cx| tab.attach(client, show_document, cx));
-                    }
-                    Err(error) => log::warn!("language server: {error}"),
-                }),
-            )
         });
         Self {
             title: path
@@ -128,14 +114,47 @@ impl EditorTab {
             bom: opened.contents.bom,
             stamp: opened.stamp,
             overwrite_confirmed: false,
-            link: None,
+            links: Vec::new(),
+            primary: None,
+            diagnostics: Default::default(),
             _subscription: subscription,
-            _lsp_start: lsp_start,
+            _lsp_start: Vec::new(),
+        }
+    }
+
+    /// Start (or reuse) the language's servers, then hand the editor the
+    /// first one's providers. Only for files in a trusted folder.
+    pub fn start_lsp(
+        &mut self,
+        hub: &LspHub,
+        show_document: ShowDocument,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self._lsp_start.is_empty() {
+            return;
+        }
+        let servers = hub.servers_for(&self.path, &self.language, cx);
+        self.primary = servers.first().map(|server| server.id.clone());
+        for server in servers {
+            let show_document = show_document.clone();
+            self._lsp_start.push(cx.spawn_in(
+                window,
+                async move |tab, cx| match server.client.await {
+                    Ok(client) => {
+                        let _ = tab.update(cx, |tab, cx| {
+                            tab.attach(server.id, client, show_document, cx)
+                        });
+                    }
+                    Err(error) => log::warn!("{}: {error}", server.id),
+                },
+            ));
         }
     }
 
     fn attach(
         &mut self,
+        id: String,
         client: std::sync::Arc<impulse_lsp::LspClient>,
         show_document: ShowDocument,
         cx: &mut Context<Self>,
@@ -144,34 +163,90 @@ impl EditorTab {
         let Some(link) = DocumentLink::open(client, &self.path, &self.language, &text) else {
             return;
         };
+        let primary = self.primary.as_deref() == Some(id.as_str());
         self.state.update(cx, |state, _| {
-            let lsp = state.lsp_mut();
-            lsp.completion_provider = Some(link.clone());
-            lsp.hover_provider = Some(link.clone());
-            lsp.definition_provider = Some(link.clone());
-            lsp.show_document = Some(show_document);
+            // Every server's fixes (eslint's beside typescript's).
+            state.lsp_mut().code_action_providers.push(link.clone());
         });
-        self.link = Some(link);
+        if primary {
+            self.state.update(cx, |state, _| {
+                let lsp = state.lsp_mut();
+                lsp.completion_provider = Some(link.clone());
+                lsp.hover_provider = Some(link.clone());
+                lsp.definition_provider = Some(link.clone());
+                lsp.show_document = Some(show_document);
+            });
+        }
+        self.links.push((id, link));
+    }
+
+    /// Format Document: the primary server's formatting, as one edit.
+    pub fn format_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(link) = self
+            .links
+            .iter()
+            .find(|(id, _)| Some(id) == self.primary.as_ref())
+            .map(|(_, link)| link.clone())
+        else {
+            self.notice = Some("No language server formats this file.".into());
+            cx.notify();
+            return;
+        };
+        let text = self.state.read(cx).text().clone();
+        let task = link.format(&text, self.tab_size, cx);
+        let state = self.state.clone();
+        let utf32 = link.client.uses_utf32();
+        cx.spawn_in(window, async move |tab, cx| match task.await {
+            Ok(edits) => {
+                let _ = cx.update(|window, cx| {
+                    crate::lsp_hub::apply_edits(&state, &edits, utf32, window, cx)
+                });
+            }
+            Err(error) => {
+                let _ = tab.update(cx, |tab, cx| {
+                    tab.notice = Some(format!("Couldn't format: {error}"));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// The servers running for this file, for the status bar.
+    pub fn server_names(&self) -> Vec<String> {
+        self.links.iter().map(|(id, _)| id.clone()).collect()
     }
 
     /// Whether `uri` is this tab's document.
     pub fn is_document(&self, uri: &lsp_types::Uri) -> bool {
-        self.link.as_ref().is_some_and(|link| &link.uri == uri)
+        self.links.iter().any(|(_, link)| &link.uri == uri)
     }
 
-    /// The server's diagnostics for this file, replacing the last ones.
+    /// One server's diagnostics for this file, replacing its last ones; the
+    /// editor shows every server's together.
     pub fn set_diagnostics(
         &mut self,
+        server: String,
         diagnostics: Vec<lsp_types::Diagnostic>,
         cx: &mut Context<Self>,
     ) {
-        let utf32 = self
-            .link
-            .as_ref()
-            .is_some_and(|link| link.client.uses_utf32());
+        let utf32: std::collections::HashMap<String, bool> = self
+            .links
+            .iter()
+            .map(|(id, link)| (id.clone(), link.client.uses_utf32()))
+            .collect();
+        self.diagnostics.insert(server, diagnostics);
+        let all: Vec<(bool, lsp_types::Diagnostic)> = self
+            .diagnostics
+            .iter()
+            .flat_map(|(id, list)| {
+                let utf32 = utf32.get(id).copied().unwrap_or(false);
+                list.iter().cloned().map(move |d| (utf32, d))
+            })
+            .collect();
         self.state.update(cx, |state, cx| {
             let text = state.text().clone();
-            let to_chars = |p: lsp_types::Position| -> lsp_types::Position {
+            let to_chars = |utf32: bool, p: lsp_types::Position| -> lsp_types::Position {
                 if utf32 || p.line as usize >= text.lines_len() {
                     return p;
                 }
@@ -182,9 +257,9 @@ impl EditorTab {
             };
             if let Some(set) = state.diagnostics_mut() {
                 set.clear();
-                set.extend(diagnostics.into_iter().map(|mut d| {
-                    d.range.start = to_chars(d.range.start);
-                    d.range.end = to_chars(d.range.end);
+                set.extend(all.into_iter().map(|(utf32, mut d)| {
+                    d.range.start = to_chars(utf32, d.range.start);
+                    d.range.end = to_chars(utf32, d.range.end);
                     gpui_kit::component::highlighter::Diagnostic::from(d)
                 }));
             }
@@ -229,7 +304,7 @@ impl EditorTab {
         let text = self.state.read(cx).value();
         match text_file::write(&text, self.bom, &self.path) {
             Ok(()) => {
-                if let Some(link) = &self.link {
+                for (_, link) in &self.links {
                     link.saved();
                 }
                 self.dirty = false;
@@ -246,7 +321,7 @@ impl EditorTab {
 
 impl Drop for EditorTab {
     fn drop(&mut self) {
-        if let Some(link) = &self.link {
+        for (_, link) in &self.links {
             link.closed();
         }
     }

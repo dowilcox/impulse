@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use futures::executor::block_on;
-use impulse_lsp::{path_uri, primary_server, resolve_command, LspClient, ServerEvent};
+use impulse_lsp::{path_uri, resolve_command, LspClient, LspConfig, ServerEvent};
 use lsp_types::request::{Completion, HoverRequest};
 use lsp_types::{
     CompletionParams, CompletionResponse, DiagnosticSeverity, HoverParams, Position,
@@ -13,7 +13,8 @@ use lsp_types::{
 };
 
 fn rust_analyzer() -> Option<std::path::PathBuf> {
-    let path = resolve_command(primary_server("rust").unwrap().command)?;
+    let config = LspConfig::default();
+    let path = resolve_command(&config.servers_for("rust")[0].1.command)?;
     // A rustup proxy without the component installed exits with an error.
     let works = Command::new(&path)
         .arg("--version")
@@ -59,6 +60,7 @@ fn diagnostics_hover_and_completion() {
         "rust-analyzer",
         &command,
         &[],
+        None,
         dir.path(),
         events_tx,
     ))
@@ -72,7 +74,7 @@ fn diagnostics_hover_and_completion() {
     let mut mismatch = None;
     while mismatch.is_none() && Instant::now() < deadline {
         match events.recv_blocking() {
-            Ok(ServerEvent::Diagnostics(params)) if params.uri == uri => {
+            Ok(ServerEvent::Diagnostics(_, params)) if params.uri == uri => {
                 mismatch = params.diagnostics.into_iter().find(|d| {
                     d.severity == Some(DiagnosticSeverity::ERROR) && d.range.start.line == 1
                 });

@@ -64,9 +64,11 @@ pub struct Args {
     pub commands: Vec<String>,
     /// Files to open in editor tabs; the last one has the focus.
     pub open: Vec<String>,
-    /// Trust the folder: language servers may run in it. (Until the port of
-    /// `WorkspaceTrust`, which asks and remembers.)
+    /// Trust the folder without asking (for scripted runs).
     pub trust: bool,
+    /// The trusted folders: `trusted-folders.json` in the data directory
+    /// (`impulse-dev` for debug builds, as for the Swift dev build).
+    pub trust_store: std::sync::Arc<impulse_kit::trust::WorkspaceTrust>,
 }
 
 fn parse_args() -> Args {
@@ -78,6 +80,9 @@ fn parse_args() -> Args {
         commands: Vec::new(),
         open: Vec::new(),
         trust: false,
+        trust_store: std::sync::Arc::new(impulse_kit::trust::WorkspaceTrust::new(Some(
+            impulse_kit::paths::trusted_folders_file(cfg!(debug_assertions)),
+        ))),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {

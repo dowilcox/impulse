@@ -28,7 +28,8 @@ use crate::framing::{read_message, write_message};
 /// What a server sends without being asked.
 #[derive(Debug, Clone)]
 pub enum ServerEvent {
-    Diagnostics(lsp_types::PublishDiagnosticsParams),
+    /// From the server named first (its id in the config).
+    Diagnostics(String, lsp_types::PublishDiagnosticsParams),
     /// `window/logMessage` and `window/showMessage`.
     Message(String),
     /// The process ended.
@@ -61,6 +62,7 @@ impl LspClient {
         name: &str,
         command: &Path,
         args: &[String],
+        initialization_options: Option<Value>,
         root: &Path,
         events: async_channel::Sender<ServerEvent>,
     ) -> Result<Arc<LspClient>, String> {
@@ -96,6 +98,7 @@ impl LspClient {
         // requests, and forwards notifications.
         let weak = Arc::downgrade(&client);
         let pending = client.pending.clone();
+        let server = name.to_string();
         std::thread::Builder::new()
             .name(format!("lsp-{name}"))
             .spawn(move || {
@@ -104,7 +107,7 @@ impl LspClient {
                     let Ok(message) = serde_json::from_slice::<Value>(&body) else {
                         continue;
                     };
-                    dispatch(message, &pending, &weak, &events);
+                    dispatch(&server, message, &pending, &weak, &events);
                 }
                 for (_, sender) in pending.lock().unwrap().drain() {
                     let _ = sender.send(Err("server exited".into()));
@@ -126,6 +129,7 @@ impl LspClient {
                     .unwrap_or_default(),
             }]),
             capabilities: client_capabilities(),
+            initialization_options,
             ..Default::default()
         };
         let result: InitializeResult = client
@@ -138,6 +142,13 @@ impl LspClient {
             .unwrap_or(PositionEncodingKind::UTF16);
         *client.capabilities.lock().unwrap() = result.capabilities;
         client.notify::<lsp_types::notification::Initialized>(InitializedParams {})?;
+        // Many servers (typescript-language-server among them) take their
+        // main settings pushed rather than asked for.
+        client.notify::<lsp_types::notification::DidChangeConfiguration>(
+            lsp_types::DidChangeConfigurationParams {
+                settings: crate::config::default_workspace_settings(),
+            },
+        )?;
         Ok(client)
     }
 
@@ -196,6 +207,7 @@ impl Drop for LspClient {
 }
 
 fn dispatch(
+    server: &str,
     message: Value,
     pending: &Pending,
     client: &std::sync::Weak<LspClient>,
@@ -224,13 +236,20 @@ fn dispatch(
         // that wait on the answer (configuration, progress) carry on.
         (Some(id), Some(method)) => {
             let result = match method {
-                "workspace/configuration" => {
-                    let items = message
+                "workspace/configuration" => Value::Array(
+                    message
                         .pointer("/params/items")
                         .and_then(Value::as_array)
-                        .map_or(0, Vec::len);
-                    Value::Array(vec![Value::Null; items])
-                }
+                        .into_iter()
+                        .flatten()
+                        .map(|item| {
+                            let section = item.get("section").and_then(Value::as_str);
+                            crate::config::workspace_configuration_for_section(
+                                section.unwrap_or_default(),
+                            )
+                        })
+                        .collect(),
+                ),
                 _ => Value::Null,
             };
             if let Some(client) = client.upgrade() {
@@ -242,7 +261,7 @@ fn dispatch(
             let event = match method {
                 "textDocument/publishDiagnostics" => serde_json::from_value(params)
                     .ok()
-                    .map(ServerEvent::Diagnostics),
+                    .map(|params| ServerEvent::Diagnostics(server.to_string(), params)),
                 "window/logMessage" | "window/showMessage" => params
                     .get("message")
                     .and_then(Value::as_str)
@@ -288,6 +307,33 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             publish_diagnostics: Some(PublishDiagnosticsClientCapabilities::default()),
+            code_action: Some(lsp_types::CodeActionClientCapabilities {
+                // Actions as literals (rust-analyzer only sends assists then),
+                // with their edits filled in when one is picked.
+                code_action_literal_support: Some(lsp_types::CodeActionLiteralSupport {
+                    code_action_kind: lsp_types::CodeActionKindLiteralSupport {
+                        value_set: [
+                            "",
+                            "quickfix",
+                            "refactor",
+                            "refactor.extract",
+                            "refactor.inline",
+                            "refactor.rewrite",
+                            "source",
+                            "source.organizeImports",
+                        ]
+                        .iter()
+                        .map(|kind| kind.to_string())
+                        .collect(),
+                    },
+                }),
+                data_support: Some(true),
+                resolve_support: Some(lsp_types::CodeActionCapabilityResolveSupport {
+                    properties: vec!["edit".to_string()],
+                }),
+                ..Default::default()
+            }),
+            formatting: Some(lsp_types::DocumentFormattingClientCapabilities::default()),
             ..Default::default()
         }),
         ..Default::default()

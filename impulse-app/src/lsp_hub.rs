@@ -10,12 +10,20 @@ use std::sync::Arc;
 
 use futures::future::{FutureExt, Shared};
 use gpui_kit::component::input::{
-    CompletionProvider, DefinitionProvider, HoverProvider, Rope, RopeExt,
+    CodeActionProvider, CompletionProvider, DefinitionProvider, EditorState, HoverProvider, Rope,
+    RopeExt,
 };
-use gpui_kit::{App, Task, Window};
+use gpui_kit::{App, Entity, EntityInputHandler, SharedString, Task, Window};
+use impulse_kit::trust::WorkspaceTrust;
 use impulse_lsp::completion::{filter_completions, typed_prefix};
-use impulse_lsp::{path_uri, primary_server, resolve_command, LspClient, ServerEvent};
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest};
+use impulse_lsp::config::{
+    default_init_options, detect_project_root, global_config_path, project_config_folder,
+};
+use impulse_lsp::{path_uri, resolve_command, LspClient, LspConfig, ServerEvent};
+use lsp_types::request::{
+    CodeActionRequest, CodeActionResolveRequest, Completion, ExecuteCommand, Formatting,
+    GotoDefinition, HoverRequest,
+};
 use lsp_types::{
     CompletionContext, CompletionParams, CompletionResponse, GotoDefinitionParams,
     GotoDefinitionResponse, HoverParams, LocationLink, Position, TextDocumentIdentifier,
@@ -25,40 +33,80 @@ use lsp_types::{
 type ClientTask = Shared<Task<Result<Arc<LspClient>, String>>>;
 
 pub struct LspHub {
+    /// The workspace folder: the root when a file has no project root.
     root: PathBuf,
-    clients: RefCell<HashMap<&'static str, ClientTask>>,
+    trust: Arc<WorkspaceTrust>,
+    /// Started servers, by server id and the folder they work in.
+    clients: RefCell<HashMap<(String, PathBuf), ClientTask>>,
     events: async_channel::Sender<ServerEvent>,
 }
 
+/// A server for a document: its id and its (starting) client.
+pub struct ServerFor {
+    pub id: String,
+    pub client: ClientTask,
+}
+
 impl LspHub {
-    /// Servers run project code (build scripts, proc macros), so a hub only
-    /// exists for a folder the user trusts.
-    pub fn new(root: PathBuf) -> (Rc<Self>, async_channel::Receiver<ServerEvent>) {
+    /// Servers run project code (build scripts, proc macros), so they only
+    /// start for files in a trusted folder.
+    pub fn new(
+        root: PathBuf,
+        trust: Arc<WorkspaceTrust>,
+    ) -> (Rc<Self>, async_channel::Receiver<ServerEvent>) {
         let (events, receiver) = async_channel::unbounded();
         let hub = Rc::new(Self {
             root,
+            trust,
             clients: RefCell::default(),
             events,
         });
         (hub, receiver)
     }
 
-    /// The client for `language`'s server, started if it isn't running.
-    /// `None` when there's no server for it or it isn't installed.
-    pub fn client_for(&self, language: &str, cx: &App) -> Option<ClientTask> {
-        let spec = primary_server(language)?;
-        if let Some(task) = self.clients.borrow().get(spec.name) {
-            return Some(task.clone());
-        }
-        let command = resolve_command(spec.command)?;
-        let args: Vec<String> = spec.args.iter().map(|a| a.to_string()).collect();
-        let (root, events) = (self.root.clone(), self.events.clone());
-        let task = cx
-            .background_executor()
-            .spawn(async move { LspClient::start(spec.name, &command, &args, &root, events).await })
-            .shared();
-        self.clients.borrow_mut().insert(spec.name, task.clone());
-        Some(task)
+    /// The servers for `path` in `language`, started if they aren't
+    /// running: those its project's `lsp.json` (or the global one, or the
+    /// defaults) name and that are installed, each in the file's project
+    /// root, which is never above the trusted folder. Empty outside trusted
+    /// folders.
+    pub fn servers_for(&self, path: &Path, language: &str, cx: &App) -> Vec<ServerFor> {
+        let Some(ceiling) = self.trust.trusting_folder(&path.to_string_lossy()) else {
+            return Vec::new();
+        };
+        let config = LspConfig::load(
+            global_config_path().as_deref(),
+            path.parent().and_then(project_config_folder).as_deref(),
+        );
+        let root = detect_project_root(path, &config.root_markers, Some(&ceiling))
+            .unwrap_or_else(|| self.root.clone());
+        config
+            .servers_for(language)
+            .into_iter()
+            .filter_map(|(id, server)| {
+                let key = (id.clone(), root.clone());
+                if let Some(task) = self.clients.borrow().get(&key) {
+                    return Some(ServerFor {
+                        id,
+                        client: task.clone(),
+                    });
+                }
+                let command = resolve_command(&server.command)?;
+                let options = server
+                    .initialization_options
+                    .clone()
+                    .or_else(|| default_init_options(&id, None));
+                let (name, root, events) = (id.clone(), root.clone(), self.events.clone());
+                let task = cx
+                    .background_executor()
+                    .spawn(async move {
+                        LspClient::start(&name, &command, &server.args, options, &root, events)
+                            .await
+                    })
+                    .shared();
+                self.clients.borrow_mut().insert(key, task.clone());
+                Some(ServerFor { id, client: task })
+            })
+            .collect()
     }
 }
 
@@ -111,6 +159,36 @@ impl DocumentLink {
 
     pub fn closed(&self) {
         self.client.did_close(self.uri.clone());
+    }
+
+    /// The server's edits to the text, then formatting the document.
+    pub fn format(
+        &self,
+        text: &Rope,
+        tab_size: usize,
+        cx: &App,
+    ) -> Task<Result<Vec<lsp_types::TextEdit>, String>> {
+        self.sync(text);
+        let params = lsp_types::DocumentFormattingParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.uri.clone(),
+            },
+            options: lsp_types::FormattingOptions {
+                tab_size: tab_size as u32,
+                insert_spaces: true,
+                trim_trailing_whitespace: Some(true),
+                insert_final_newline: Some(true),
+                ..Default::default()
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            Ok(client
+                .request::<Formatting>(params)
+                .await?
+                .unwrap_or_default())
+        })
     }
 
     /// The LSP position of a byte offset, in the server's encoding.
@@ -231,6 +309,175 @@ impl DefinitionProvider for DocumentLink {
             )
         })
     }
+}
+
+impl CodeActionProvider for DocumentLink {
+    fn id(&self) -> SharedString {
+        self.client.name.clone().into()
+    }
+
+    fn code_actions(
+        &self,
+        state: Entity<EditorState>,
+        range: std::ops::Range<usize>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui_kit::Result<Vec<lsp_types::CodeAction>>> {
+        let text = state.read(cx).text().clone();
+        self.sync(&text);
+        let params = lsp_types::CodeActionParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.uri.clone(),
+            },
+            range: lsp_types::Range::new(
+                self.position(&text, range.start),
+                self.position(&text, range.end),
+            ),
+            context: lsp_types::CodeActionContext {
+                diagnostics: Vec::new(),
+                only: None,
+                trigger_kind: Some(lsp_types::CodeActionTriggerKind::INVOKED),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            let actions = client.request::<CodeActionRequest>(params).await;
+            log::debug!(
+                "code actions: {:?}",
+                actions.as_ref().map(|a| a.as_ref().map_or(0, Vec::len))
+            );
+            let actions = actions.map_err(failed)?;
+            Ok(actions
+                .unwrap_or_default()
+                .into_iter()
+                .map(|action| match action {
+                    lsp_types::CodeActionOrCommand::CodeAction(action) => action,
+                    lsp_types::CodeActionOrCommand::Command(command) => lsp_types::CodeAction {
+                        title: command.title.clone(),
+                        command: Some(command),
+                        ..Default::default()
+                    },
+                })
+                .collect())
+        })
+    }
+
+    fn perform_code_action(
+        &self,
+        state: Entity<EditorState>,
+        action: lsp_types::CodeAction,
+        _push_to_history: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<gpui_kit::Result<()>> {
+        let client = self.client.clone();
+        let uri = self.uri.clone();
+        let utf32 = client.uses_utf32();
+        window.spawn(cx, async move |cx| {
+            // Servers may leave the edit out until the action is picked.
+            let action = if action.edit.is_none() && action.data.is_some() {
+                client
+                    .request::<CodeActionResolveRequest>(action.clone())
+                    .await
+                    .unwrap_or(action)
+            } else {
+                action
+            };
+            if let Some(edit) = &action.edit {
+                let (here, elsewhere) = edits_for(edit, &uri);
+                if elsewhere > 0 {
+                    log::warn!(
+                        "{}: {elsewhere} edits to other files aren't applied yet",
+                        action.title
+                    );
+                }
+                cx.update(|window, cx| apply_edits(&state, &here, utf32, window, cx))?;
+            }
+            if let Some(command) = action.command {
+                let params = lsp_types::ExecuteCommandParams {
+                    command: command.command,
+                    arguments: command.arguments.unwrap_or_default(),
+                    work_done_progress_params: Default::default(),
+                };
+                client
+                    .request::<ExecuteCommand>(params)
+                    .await
+                    .map_err(failed)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// A workspace edit's text edits for `uri`, and how many it has for other
+/// files.
+fn edits_for(edit: &lsp_types::WorkspaceEdit, uri: &Uri) -> (Vec<lsp_types::TextEdit>, usize) {
+    let mut here = Vec::new();
+    let mut elsewhere = 0;
+    for (target, edits) in edit.changes.iter().flatten() {
+        if target == uri {
+            here.extend(edits.iter().cloned());
+        } else {
+            elsewhere += edits.len();
+        }
+    }
+    let document_edits: Vec<&lsp_types::TextDocumentEdit> = match &edit.document_changes {
+        Some(lsp_types::DocumentChanges::Edits(edits)) => edits.iter().collect(),
+        Some(lsp_types::DocumentChanges::Operations(operations)) => operations
+            .iter()
+            .filter_map(|op| match op {
+                lsp_types::DocumentChangeOperation::Edit(edit) => Some(edit),
+                lsp_types::DocumentChangeOperation::Op(_) => {
+                    elsewhere += 1;
+                    None
+                }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    for document in document_edits {
+        let edits = document.edits.iter().map(|edit| match edit {
+            lsp_types::OneOf::Left(edit) => edit.clone(),
+            lsp_types::OneOf::Right(annotated) => annotated.text_edit.clone(),
+        });
+        if document.text_document.uri == *uri {
+            here.extend(edits);
+        } else {
+            elsewhere += edits.count();
+        }
+    }
+    (here, elsewhere)
+}
+
+/// Apply a server's edits to an editor as one change (one undo step), only
+/// over the span that changed so the cursor stays put outside it.
+pub fn apply_edits(
+    state: &Entity<EditorState>,
+    edits: &[lsp_types::TextEdit],
+    utf32: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if edits.is_empty() {
+        return;
+    }
+    state.update(cx, |state, cx| {
+        let old = state.value().to_string();
+        let new = impulse_lsp::edits::apply_text_edits(&old, edits, utf32);
+        let (range, replacement) = impulse_lsp::edits::changed_span(&old, &new);
+        if range.is_empty() && replacement.is_empty() {
+            return;
+        }
+        let utf16 = |byte: usize| old[..byte].encode_utf16().count();
+        state.replace_text_in_range(
+            Some(utf16(range.start)..utf16(range.end)),
+            replacement,
+            window,
+            cx,
+        );
+    });
 }
 
 /// A `Location` as the `LocationLink` GPUI Kit navigates to.
