@@ -1104,7 +1104,7 @@ impl SettingsView {
                 };
                 let width = window
                     .text_system()
-                    .shape_line(title.into(), px(12.), &[run], None)
+                    .shape_line(title.into(), px(13.), &[run], None)
                     .width;
                 div()
                     .w(px(210.))
@@ -1132,6 +1132,8 @@ impl SettingsView {
                                             .path("icons/chevrons-up-down.svg"),
                                     )
                                     .w_full()
+                                    .h_full()
+                                    .text_size(px(13.))
                                     .menu_width(px(240.))
                                     .accessibility_label(item.title),
                             ),

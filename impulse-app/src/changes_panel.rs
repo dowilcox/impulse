@@ -1580,18 +1580,21 @@ impl Workbench {
                         },
                     ))
                     .relative()
-                    .p(px(6.))
+                    // The Textarea keeps insets of its own: with them, the
+                    // text and the box's height are the Swift TextEditor's.
+                    .pl(px(0.))
+                    .pr(px(6.))
+                    .pt(px(0.))
+                    .pb(px(3.))
                     .rounded(px(metrics::RADIUS))
                     .bg(hsla(p.content))
                     .border_1()
                     .border_color(hsla(p.hairline_strong))
                     .text_size(px(12.))
                     .child(
-                        // The Swift TextEditor's insets and minimum height.
+                        // The Swift TextEditor's minimum height.
                         Textarea::new(&self.git.message)
                             .appearance(false)
-                            .px(px(5.))
-                            .py(px(1.))
                             .min_h(px(40.)),
                     )
                     .when(subject > 0, |d| {

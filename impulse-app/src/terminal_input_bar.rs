@@ -791,12 +791,17 @@ impl TerminalView {
     fn chip_row(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = &self.theme;
         let mut chips: Vec<(Option<&'static str>, String, bool, Option<bool>)> = Vec::new();
-        chips.push((Some("terminal"), self.shell_name.clone(), false, None));
+        chips.push((
+            Some("square-terminal"),
+            self.shell_name.clone(),
+            false,
+            None,
+        ));
         if !self.cwd.is_empty() {
             chips.push((Some("folder"), abbreviate_home(&self.cwd), false, None));
         }
         if let Some(branch) = self.branch.as_ref().filter(|b| !b.is_empty()) {
-            chips.push((Some("git-branch"), branch.clone(), true, None));
+            chips.push((Some("split"), branch.clone(), true, None));
         }
         // The repository's changes (Swift's ReviewChip), opening Review.
         let review = (!self.cwd.is_empty())
@@ -1232,8 +1237,8 @@ fn candidate_icon(
     let icon = match candidate.kind.as_str() {
         "command" => "square-terminal",
         "subcommand" => "chevron-right",
-        "option" => "sliders-horizontal",
-        "branch" => "git-branch",
+        "option" => "flag",
+        "branch" => "split",
         "tag" => "tag",
         "remote" | "host" => "globe",
         "script" => "play",

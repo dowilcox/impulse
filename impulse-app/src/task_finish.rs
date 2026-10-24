@@ -606,7 +606,8 @@ impl Render for TaskFinishView {
                         .on_click(self.act(|w, view, window, cx| w.start_finish(view, window, cx))),
                 )
             });
-        let mut content = div().flex().flex_col().gap(px(18.)).max_w(px(720.));
+        // Swift's 720-point frame holds the 28-point margins too.
+        let mut content = div().flex().flex_col().gap(px(18.)).max_w(px(664.));
         if self.is_loading {
             content = content.child(
                 div()

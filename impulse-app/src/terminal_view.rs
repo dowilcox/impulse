@@ -1734,6 +1734,17 @@ impl Frame {
                 let start = col;
                 let first = *grid.cell(row, col);
                 let style = text_style(&first, self.bright_bold.as_ref());
+                // Lines and blocks are drawn, so neighbouring cells meet.
+                if crate::terminal_glyphs::is_geometric(first.ch) {
+                    crate::terminal_glyphs::paint(
+                        first.ch,
+                        Bounds::new(cell_origin(row, col), size(m.width, m.height)),
+                        style.color,
+                        window,
+                    );
+                    col += 1;
+                    continue;
+                }
                 let mut text = String::new();
                 while col < grid.cols {
                     let cell = grid.cell(row, col);
@@ -1743,6 +1754,7 @@ impl Frame {
                     }
                     if text_style(cell, self.bright_bold.as_ref()) != style
                         || cell.flags.contains(CellFlags::WIDE_CHAR) && !text.is_empty()
+                        || crate::terminal_glyphs::is_geometric(cell.ch)
                     {
                         break;
                     }

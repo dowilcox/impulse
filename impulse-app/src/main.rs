@@ -73,6 +73,7 @@ mod task_sidebar;
 mod tasks;
 mod terminal_blocks;
 mod terminal_find_bar;
+mod terminal_glyphs;
 mod terminal_input_bar;
 mod terminal_view;
 mod tree_watch;

@@ -114,7 +114,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           impulse_kit::listening_ports: /proc on Linux,
                           lsof on macOS), the terminal (the login shell
                           with integration, shell_launch.rs),
-                          its own painted grid, keys (the kitty keyboard
+                          its own painted grid (box-drawing and block
+                          characters drawn as shapes, terminal_glyphs.rs),
+                          keys (the kitty keyboard
                           protocol once a program pushes its flags,
                           impulse_kit::kitty_keyboard), input methods,
                           selection, mouse reporting,

@@ -285,6 +285,7 @@ impl Render for SearchPanel {
                                         .font_weight(FontWeight::MEDIUM)
                                         .overflow_hidden()
                                         .whitespace_nowrap()
+                                        .text_ellipsis()
                                         .child(result.name.clone()),
                                 )
                                 .when_some(line, |d, line| {
@@ -301,7 +302,9 @@ impl Render for SearchPanel {
                                 div()
                                     .overflow_hidden()
                                     .whitespace_nowrap()
+                                    .text_ellipsis()
                                     .font_family("JetBrains Mono")
+                                    .font_features(gpui_kit::FontFeatures::disable_ligatures())
                                     .text_size(px(11.))
                                     .line_height(px(13.))
                                     .text_color(hsla(p.text_secondary))
@@ -352,7 +355,7 @@ impl Render for SearchPanel {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .child(Input::new(&self.query).small().appearance(false)),
+                            .child(Input::new(&self.query).small().appearance(false).px_0()),
                     )
                     .child(
                         toggle("match-case", self.case_sensitive)
@@ -384,10 +387,12 @@ impl Render for SearchPanel {
                         .pb(px(6.))
                         .child(icon("repeat-2", 10., p.text_secondary))
                         .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(Input::new(&self.replacement).small().appearance(false)),
+                            div().flex_1().min_w_0().child(
+                                Input::new(&self.replacement)
+                                    .small()
+                                    .appearance(false)
+                                    .px_0(),
+                            ),
                         )
                         .child(
                             div()

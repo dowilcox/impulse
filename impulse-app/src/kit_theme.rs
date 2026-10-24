@@ -119,6 +119,12 @@ pub fn apply(
     c.button_primary_hover = c.primary_hover;
     c.button_primary_active = c.primary_active;
     c.button_primary_foreground = c.primary_foreground;
+    // Plain buttons are Swift's secondary ChromeButton: raised, with the
+    // input color as their border.
+    c.button = c.secondary;
+    c.button_hover = c.secondary_hover;
+    c.button_active = c.secondary_active;
+    c.button_foreground = c.secondary_foreground;
     c.button_secondary = c.secondary;
     c.button_secondary_hover = c.secondary_hover;
     c.button_secondary_active = c.secondary_active;
