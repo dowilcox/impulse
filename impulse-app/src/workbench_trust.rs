@@ -415,11 +415,13 @@ impl Workbench {
     /// lsp.json changed: servers whose settings changed stop, and every
     /// open editor gets the servers now configured for it.
     fn lsp_config_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The servers are the app's: the first window to notice restarts
+        // them, and the others' editors follow when they exit.
+        let stopped = LspHub::reconfigure(cx);
         for index in 0..self.workspaces.len() {
-            let Some(hub) = self.workspaces[index].lsp.clone() else {
+            if self.workspaces[index].lsp.is_none() {
                 continue;
-            };
-            let stopped = hub.reconfigure(cx);
+            }
             self.lsp_progress
                 .retain(|(key, _)| !stopped.iter().any(|id| key.starts_with(&format!("{id}:"))));
             let editors: Vec<Entity<EditorTab>> = self.workspaces[index]
@@ -439,6 +441,27 @@ impl Workbench {
             }
         }
         cx.notify();
+    }
+
+    /// Editors of workspace `workspace_id` still on a server that was told
+    /// to stop drop it and get the servers configured now.
+    fn reattach_retired(&mut self, workspace_id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.workspaces.iter().position(|w| w.id == workspace_id) else {
+            return;
+        };
+        if self.workspaces[index].lsp.is_none() {
+            return;
+        }
+        let editors: Vec<Entity<EditorTab>> = self.workspaces[index]
+            .all_surfaces()
+            .filter_map(Surface::editor)
+            .cloned()
+            .collect();
+        for editor in editors {
+            if editor.update(cx, |editor, cx| editor.detach_retired(cx)) {
+                self.start_lsp(index, &editor, window, cx);
+            }
+        }
     }
 
     /// A crashed server's restart delay is over: start it again for the
@@ -536,6 +559,11 @@ impl Workbench {
                 expected,
             } => {
                 if expected {
+                    // Stopped on purpose (lsp.json changed, maybe in another
+                    // window): editors still on it move to its successor.
+                    if !QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
+                        self.reattach_retired(workspace_id, window, cx);
+                    }
                     return;
                 }
                 let Some(hub) = self
@@ -624,22 +652,15 @@ pub(crate) struct LspProgress {
     pub fraction: Option<f32>,
 }
 
+/// Set at quit, when servers stopping mustn't start again.
+static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// At quit: ask every language server to shut down at once, and stop any
 /// still running two seconds later.
 pub(crate) fn shutdown_servers(cx: &mut gpui_kit::App) -> impl std::future::Future<Output = ()> {
     use futures::FutureExt as _;
-    let clients: Vec<_> = crate::session::workbenches(cx)
-        .iter()
-        .flat_map(|(workbench, _)| {
-            workbench
-                .read(cx)
-                .workspaces
-                .iter()
-                .filter_map(|w| w.lsp.clone())
-                .flat_map(|hub| hub.running())
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    QUITTING.store(true, std::sync::atomic::Ordering::SeqCst);
+    let clients = LspHub::running();
     let timer = cx
         .background_executor()
         .timer(std::time::Duration::from_secs(2));

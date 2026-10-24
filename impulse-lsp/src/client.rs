@@ -271,6 +271,11 @@ impl LspClient {
         write_message(&mut *stdin, &body).map_err(|e| e.to_string())
     }
 
+    /// Whether it was told to stop (`shutdown` or `kill`).
+    pub fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::SeqCst)
+    }
+
     /// Stop the process now (a shutdown that took too long).
     pub fn kill(&self) {
         self.retired.store(true, Ordering::SeqCst);

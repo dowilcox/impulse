@@ -1,6 +1,7 @@
-//! Language servers for one workspace: started on first use (one client per
-//! server), only in a trusted folder, and adapted to GPUI Kit's editor
-//! providers. The protocol itself is `impulse-lsp`.
+//! Language servers: started on first use (one client per server and
+//! folder, shared by every workspace that needs it), only in a trusted
+//! folder, and adapted to GPUI Kit's editor providers. The protocol itself
+//! is `impulse-lsp`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -33,21 +34,43 @@ use lsp_types::{
 
 type ClientTask = Shared<Task<Result<Arc<LspClient>, String>>>;
 
+/// A server by its id and the folder it works in.
+type Key = (String, PathBuf);
+
+/// One workspace's way to the language servers. The servers themselves are
+/// the app's, shared by every workspace in every window that needs the
+/// same server in the same folder (as the Swift `LSPRegistry.shared`); a
+/// server stops once no workspace uses it.
 pub struct LspHub {
     /// The workspace folder: the root when a file has no project root.
     root: PathBuf,
     trust: Arc<WorkspaceTrust>,
-    /// Started servers, by server id and the folder they work in.
-    clients: RefCell<HashMap<(String, PathBuf), ClientTask>>,
+    /// Where this workspace hears from the servers it uses.
+    events: async_channel::Sender<ServerEvent>,
+}
+
+/// The running servers and what's known about the others.
+#[derive(Default)]
+struct Registry {
+    clients: HashMap<Key, Running>,
     /// Not started again before this: a missing command (looked for again
     /// after 15 seconds) or a crash (the restart delay).
-    unavailable_until: RefCell<HashMap<(String, PathBuf), Instant>>,
+    unavailable_until: HashMap<Key, Instant>,
     /// Recent crashes per server: how many, and the last one.
-    crashes: RefCell<HashMap<(String, PathBuf), (usize, Instant)>>,
-    /// What each started server was started with (command, arguments,
-    /// options), to tell when lsp.json changes it.
-    started_with: RefCell<HashMap<(String, PathBuf), String>>,
-    events: async_channel::Sender<ServerEvent>,
+    crashes: HashMap<Key, (usize, Instant)>,
+}
+
+struct Running {
+    task: ClientTask,
+    /// What it was started with (command, arguments, options), to tell
+    /// when lsp.json changes it.
+    started_with: String,
+    /// The workspaces it serves: each gets its events.
+    subscribers: Rc<RefCell<Vec<async_channel::Sender<ServerEvent>>>>,
+}
+
+thread_local! {
+    static REGISTRY: RefCell<Registry> = RefCell::default();
 }
 
 /// How long a missing command is trusted to stay missing.
@@ -70,26 +93,20 @@ impl LspHub {
         trust: Arc<WorkspaceTrust>,
     ) -> (Rc<Self>, async_channel::Receiver<ServerEvent>) {
         let (events, receiver) = async_channel::unbounded();
-        let hub = Rc::new(Self {
-            root,
-            trust,
-            clients: RefCell::default(),
-            unavailable_until: RefCell::default(),
-            crashes: RefCell::default(),
-            started_with: RefCell::default(),
-            events,
-        });
-        (hub, receiver)
+        (
+            Rc::new(Self {
+                root,
+                trust,
+                events,
+            }),
+            receiver,
+        )
     }
 
     /// Whether any installed server would serve `path` in `language` if its
     /// folder were trusted (starts nothing).
     pub fn has_servers(path: &Path, language: &str) -> bool {
-        let config = LspConfig::load(
-            global_config_path().as_deref(),
-            path.parent().and_then(project_config_folder).as_deref(),
-        );
-        config
+        config_in(path.parent().unwrap_or(path))
             .servers_for(language)
             .into_iter()
             .any(|(_, server)| resolve_command(&server.command).is_some())
@@ -104,10 +121,7 @@ impl LspHub {
         let Some(ceiling) = self.trust.trusting_folder(&path.to_string_lossy()) else {
             return Vec::new();
         };
-        let config = LspConfig::load(
-            global_config_path().as_deref(),
-            path.parent().and_then(project_config_folder).as_deref(),
-        );
+        let config = config_in(path.parent().unwrap_or(path));
         let root = detect_project_root(path, &config.root_markers, Some(&ceiling))
             .unwrap_or_else(|| self.root.clone());
         config
@@ -115,53 +129,116 @@ impl LspHub {
             .into_iter()
             .filter_map(|(id, server)| {
                 let key = (id.clone(), root.clone());
-                if let Some(task) = self.clients.borrow().get(&key) {
-                    return Some(ServerFor {
-                        id,
-                        client: task.clone(),
-                    });
-                }
-                if self
-                    .unavailable_until
-                    .borrow()
-                    .get(&key)
-                    .is_some_and(|until| Instant::now() < *until)
-                {
-                    return None;
-                }
-                let Some(command) = resolve_command(&server.command) else {
-                    self.unavailable_until
-                        .borrow_mut()
-                        .insert(key, Instant::now() + START_RETRY);
-                    let _ = self.events.try_send(ServerEvent::Unavailable {
-                        message: impulse_lsp::managed::missing_command_message(
-                            &id,
-                            &server.command,
-                        ),
-                        server: id,
-                    });
-                    return None;
-                };
-                self.unavailable_until.borrow_mut().remove(&key);
-                let options = server
-                    .initialization_options
-                    .clone()
-                    .or_else(|| default_init_options(&id, None));
-                self.started_with
-                    .borrow_mut()
-                    .insert(key.clone(), signature(&server));
-                let (name, root, events) = (id.clone(), root.clone(), self.events.clone());
-                let task = cx
-                    .background_executor()
-                    .spawn(async move {
-                        LspClient::start(&name, &command, &server.args, options, &root, events)
-                            .await
+                REGISTRY.with_borrow_mut(|registry| {
+                    if let Some(running) = registry.clients.get(&key) {
+                        self.subscribe(&running.subscribers);
+                        return Some(ServerFor {
+                            id: id.clone(),
+                            client: running.task.clone(),
+                        });
+                    }
+                    if registry
+                        .unavailable_until
+                        .get(&key)
+                        .is_some_and(|until| Instant::now() < *until)
+                    {
+                        return None;
+                    }
+                    let Some(command) = resolve_command(&server.command) else {
+                        registry
+                            .unavailable_until
+                            .insert(key, Instant::now() + START_RETRY);
+                        let _ = self.events.try_send(ServerEvent::Unavailable {
+                            message: impulse_lsp::managed::missing_command_message(
+                                &id,
+                                &server.command,
+                            ),
+                            server: id.clone(),
+                        });
+                        return None;
+                    };
+                    registry.unavailable_until.remove(&key);
+                    let options = server
+                        .initialization_options
+                        .clone()
+                        .or_else(|| default_init_options(&id, None));
+                    // The server's events, passed on to every workspace it
+                    // serves.
+                    let subscribers = Rc::new(RefCell::new(vec![self.events.clone()]));
+                    let (events, received) = async_channel::unbounded::<ServerEvent>();
+                    let forward = subscribers.clone();
+                    cx.spawn(async move |_| {
+                        while let Ok(event) = received.recv().await {
+                            forward
+                                .borrow_mut()
+                                .retain(|s| s.try_send(event.clone()).is_ok());
+                        }
                     })
-                    .shared();
-                self.clients.borrow_mut().insert(key, task.clone());
-                Some(ServerFor { id, client: task })
+                    .detach();
+                    let started_with = signature(&server);
+                    let (name, root) = (id.clone(), root.clone());
+                    let task = cx
+                        .background_executor()
+                        .spawn(async move {
+                            LspClient::start(&name, &command, &server.args, options, &root, events)
+                                .await
+                        })
+                        .shared();
+                    registry.clients.insert(
+                        key,
+                        Running {
+                            task: task.clone(),
+                            started_with,
+                            subscribers,
+                        },
+                    );
+                    Some(ServerFor {
+                        id: id.clone(),
+                        client: task,
+                    })
+                })
             })
             .collect()
+    }
+
+    /// Hear from a server this workspace now uses too.
+    fn subscribe(&self, subscribers: &RefCell<Vec<async_channel::Sender<ServerEvent>>>) {
+        let mut subscribers = subscribers.borrow_mut();
+        if !subscribers.iter().any(|s| s.same_channel(&self.events)) {
+            subscribers.push(self.events.clone());
+        }
+    }
+}
+
+/// The workspace is done with its servers: those no other workspace uses
+/// stop.
+impl Drop for LspHub {
+    fn drop(&mut self) {
+        let unused: Vec<ClientTask> = REGISTRY.with_borrow_mut(|registry| {
+            let keys: Vec<Key> = registry
+                .clients
+                .iter_mut()
+                .filter_map(|(key, running)| {
+                    let mut subscribers = running.subscribers.borrow_mut();
+                    subscribers.retain(|s| !s.same_channel(&self.events) && !s.is_closed());
+                    subscribers.is_empty().then(|| key.clone())
+                })
+                .collect();
+            keys.iter()
+                .filter_map(|key| registry.clients.remove(key))
+                .map(|running| running.task)
+                .collect()
+        });
+        if unused.is_empty() {
+            return;
+        }
+        std::thread::spawn(move || {
+            for task in unused {
+                if let Some(Ok(client)) = task.now_or_never() {
+                    futures::executor::block_on(client.shutdown());
+                }
+            }
+        });
     }
 }
 
@@ -219,37 +296,41 @@ impl LspHub {
     /// lsp.json changed: stop the servers whose command, arguments or
     /// options changed, or that it no longer names, so they start again
     /// with the new ones when next needed (Swift's `restartServers`), and
-    /// forget which commands were missing. Returns the ids stopped.
-    pub fn reconfigure(&self, cx: &App) -> Vec<String> {
-        self.unavailable_until.borrow_mut().clear();
-        let changed: Vec<(String, PathBuf)> = self
-            .started_with
-            .borrow()
-            .iter()
-            .filter(|((id, root), started)| {
-                config_in(root).servers.get(id).map(signature).as_ref() != Some(*started)
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in &changed {
-            self.started_with.borrow_mut().remove(key);
-            self.crashes.borrow_mut().remove(key);
-            let task = self.clients.borrow_mut().remove(key);
-            log::info!(
-                "language server {} configuration changed; restarting it",
-                key.0
-            );
-            if let Some(task) = task {
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Ok(client) = task.await {
-                            client.shutdown().await;
-                        }
-                    })
-                    .detach();
-            }
+    /// forget which commands were missing. Returns the ids stopped (none
+    /// when another window already did it).
+    pub fn reconfigure(cx: &App) -> Vec<String> {
+        let stopped: Vec<(Key, ClientTask)> = REGISTRY.with_borrow_mut(|registry| {
+            registry.unavailable_until.clear();
+            let changed: Vec<Key> = registry
+                .clients
+                .iter()
+                .filter(|((id, root), running)| {
+                    config_in(root).servers.get(id).map(signature).as_ref()
+                        != Some(&running.started_with)
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            changed
+                .into_iter()
+                .filter_map(|key| {
+                    registry.crashes.remove(&key);
+                    let running = registry.clients.remove(&key)?;
+                    Some((key, running.task))
+                })
+                .collect()
+        });
+        let mut ids = Vec::new();
+        for ((id, _), task) in stopped {
+            log::info!("language server {id} configuration changed; restarting it");
+            cx.background_executor()
+                .spawn(async move {
+                    if let Ok(client) = task.await {
+                        client.shutdown().await;
+                    }
+                })
+                .detach();
+            ids.push(id);
         }
-        let mut ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
         ids.sort();
         ids.dedup();
         ids
@@ -257,30 +338,41 @@ impl LspHub {
 
     /// A server's process ended on its own: forget it, and say how long to
     /// wait before starting it again (longer each time it keeps crashing).
+    /// Every workspace it served hears of it; the crash counts once.
     pub fn server_exited(&self, server: &str, root: &Path) -> Duration {
         let key = (server.to_string(), root.to_path_buf());
-        self.clients.borrow_mut().remove(&key);
-        let now = Instant::now();
-        let mut crashes = self.crashes.borrow_mut();
-        let crash = crashes.entry(key.clone()).or_insert((0, now));
-        if now.duration_since(crash.1) > Duration::from_secs(300) {
-            crash.0 = 0;
-        }
-        crash.0 += 1;
-        crash.1 = now;
-        let delay =
-            Duration::from_secs(RESTART_DELAYS[(crash.0 - 1).min(RESTART_DELAYS.len() - 1)]);
-        self.unavailable_until.borrow_mut().insert(key, now + delay);
-        delay
+        REGISTRY.with_borrow_mut(|registry| {
+            let now = Instant::now();
+            if registry.clients.remove(&key).is_none() {
+                // Another workspace counted it already.
+                return registry
+                    .unavailable_until
+                    .get(&key)
+                    .map(|until| until.saturating_duration_since(now))
+                    .unwrap_or_default();
+            }
+            let crash = registry.crashes.entry(key.clone()).or_insert((0, now));
+            if now.duration_since(crash.1) > Duration::from_secs(300) {
+                crash.0 = 0;
+            }
+            crash.0 += 1;
+            crash.1 = now;
+            let delay =
+                Duration::from_secs(RESTART_DELAYS[(crash.0 - 1).min(RESTART_DELAYS.len() - 1)]);
+            registry.unavailable_until.insert(key, now + delay);
+            delay
+        })
     }
 
     /// Every server that has started, to shut down at quit.
-    pub fn running(&self) -> Vec<Arc<LspClient>> {
-        self.clients
-            .borrow()
-            .values()
-            .filter_map(|task| task.clone().now_or_never()?.ok())
-            .collect()
+    pub fn running() -> Vec<Arc<LspClient>> {
+        REGISTRY.with_borrow(|registry| {
+            registry
+                .clients
+                .values()
+                .filter_map(|running| running.task.clone().now_or_never()?.ok())
+                .collect()
+        })
     }
 }
 

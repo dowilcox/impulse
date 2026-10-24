@@ -368,7 +368,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           editor_vim.rs over impulse_kit::vim, its keys
                           taken ahead of GPUI Kit's in the VimNormal
                           context, the mode in the status bar), workspace trust, language
-                          servers (lsp_hub.rs: missing servers told once and
+                          servers (lsp_hub.rs: one per server and folder for
+                          the whole app, its events passed to each workspace
+                          using it; missing servers told once and
                           looked for again after 15 s, crashed ones restarted
                           after 2, 10, 30 or 120 s, showMessage as toasts,
                           $/progress in the status bar, shut down at quit,

@@ -470,8 +470,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   down, stopping any still running after two seconds. Editing lsp.json
   (the global file or a project's) restarts the servers whose command,
   arguments or options changed and gives open editors the servers now
-  configured for them. Still different: servers belong to each workspace
-  rather than being shared across windows.
+  configured for them. Servers are the app's, as Swift's
+  `LSPRegistry.shared`: one per server and folder, shared by every
+  workspace and window that needs it, its events passed to each, and
+  stopped once none uses it.
 - The New Task sheet uses the Swift sheet's controls: rounded-border
   fields, a pop-up button as wide as its title, `ChromeButton`s
   (`workbench_chrome::chrome_button`), 20 of padding and the UI line

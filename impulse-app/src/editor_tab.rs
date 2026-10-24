@@ -430,6 +430,20 @@ impl EditorTab {
         self.links.iter().any(|(server, _)| server == id)
     }
 
+    /// Drop the servers that were told to stop; whether there were any.
+    pub(crate) fn detach_retired(&mut self, cx: &mut Context<Self>) -> bool {
+        let retired: Vec<String> = self
+            .links
+            .iter()
+            .filter(|(_, link)| link.client.is_retired())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &retired {
+            self.detach_server(id, cx);
+        }
+        !retired.is_empty()
+    }
+
     /// Drop server `id` (it crashed), so `start_lsp` attaches it again.
     pub(crate) fn detach_server(&mut self, id: &str, cx: &mut Context<Self>) {
         let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.links)
