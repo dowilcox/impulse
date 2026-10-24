@@ -142,9 +142,14 @@ impl Workbench {
             // It rewrites the file like a formatter, so it gets the same
             // limit.
             let timeout = command.reload_file.then_some(FORMATTER_TIMEOUT);
+            COMMANDS_RUNNING.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let task = cx.background_spawn({
                 let (program, cwd) = (command.command.clone(), parent(path));
-                async move { run(&program, &args, &cwd, timeout) }
+                async move {
+                    let result = run(&program, &args, &cwd, timeout);
+                    COMMANDS_RUNNING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    result
+                }
             });
             let editor = editor.clone();
             cx.spawn_in(window, async move |_, cx| {
@@ -171,6 +176,12 @@ impl Workbench {
         }
     }
 }
+
+/// Commands on save still running: quitting waits for them (at most
+/// `close_flow::COMMANDS_ON_SAVE_QUIT_TIMEOUT`), since quitting would kill
+/// them mid-run.
+pub(crate) static COMMANDS_RUNNING: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 fn file_name(path: &Path) -> String {
     path.file_name()

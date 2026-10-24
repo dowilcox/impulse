@@ -394,6 +394,43 @@ fn review_for_quit(mut windows: Windows, cx: &mut App) {
     });
 }
 
+/// How long quitting waits for commands on save (Swift's
+/// `commandsOnSaveQuitTimeout`).
+const COMMANDS_ON_SAVE_QUIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Quit once the commands on save have finished (quitting would kill them
+/// mid-run), saying so in the front window while it waits, at most
+/// `COMMANDS_ON_SAVE_QUIT_TIMEOUT`.
+fn quit_after_commands_on_save(cx: &mut App) {
+    use std::sync::atomic::Ordering;
+    if crate::save_pipeline::COMMANDS_RUNNING.load(Ordering::SeqCst) == 0 {
+        return cx.quit();
+    }
+    let windows = crate::session::workbenches(cx);
+    if let Some(front) = front_window(&windows, cx) {
+        let _ = front.update(cx, |_, window, cx| {
+            crate::toasts::show(
+                window,
+                cx,
+                crate::toasts::Toast::info("Waiting for commands on save to finish…")
+                    .lifetime(None),
+            )
+        });
+    }
+    cx.spawn(async move |cx| {
+        let started = std::time::Instant::now();
+        while crate::save_pipeline::COMMANDS_RUNNING.load(Ordering::SeqCst) > 0
+            && started.elapsed() < COMMANDS_ON_SAVE_QUIT_TIMEOUT
+        {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(100))
+                .await;
+        }
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
 /// Ask once about the work still running in every window, then quit.
 fn confirm_quit(cx: &mut App) {
     let windows = crate::session::workbenches(cx);
@@ -415,12 +452,12 @@ fn confirm_quit(cx: &mut App) {
         cx,
     );
     let (Some((title, text, ok)), Some(front)) = (question, front_window(&windows, cx)) else {
-        return cx.quit();
+        return quit_after_commands_on_save(cx);
     };
     let _ = front.update(cx, move |_, window, cx| {
         crate::tasks::confirm(window, cx, title, text, ok, "Cancel", true, |yes, _, cx| {
             if yes {
-                cx.quit()
+                quit_after_commands_on_save(cx)
             }
         })
     });

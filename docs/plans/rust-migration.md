@@ -573,6 +573,8 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   says so in Swift's toast with Reload; one that grows past 5 MB while
   open reloads and turns read-only, and past 10 MB keeps its buffer and
   offers View in Terminal.
+  Quitting while commands on save run waits for them, at most ten
+  seconds, saying so ("Waiting for commands on save to finish…").
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.
