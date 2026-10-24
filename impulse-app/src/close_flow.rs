@@ -220,41 +220,13 @@ impl Workbench {
                 },
             );
         }
-        if !answered.running && SettingsStore::get(cx).confirm_close_warnings {
+        if !answered.running {
             let terminals: Vec<_> = surfaces.iter().filter_map(Surface::terminal).collect();
-            let input = CloseRiskInput {
-                action,
-                unsaved_editor_count: 0,
-                running_terminal_process_count: terminals
-                    .iter()
-                    .map(|t| t.read(cx).running_processes())
-                    .sum(),
-                running_commands: terminals
-                    .iter()
-                    .filter_map(|t| t.read(cx).running_command_risk())
-                    .collect(),
-                now_ms: now_ms(),
-                long_command_threshold_seconds: SettingsStore::get(cx)
-                    .terminal_long_command_seconds
-                    .max(1) as u64,
-            };
-            let summary = input.summarize();
-            if summary.has_risk {
-                let details = summary.detail_lines.join("\n");
-                let text = [summary.informative_text.clone(), details]
-                    .into_iter()
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let ok = match action {
-                    CloseRiskAction::Quit => "Quit",
-                    CloseRiskAction::CloseWindow => "Close Window",
-                    CloseRiskAction::CloseTab => "Close Tab",
-                };
+            if let Some((title, text, ok)) = running_question(&terminals, action, cx) {
                 return crate::tasks::confirm(
                     window,
                     cx,
-                    summary.title.clone(),
+                    title,
                     text,
                     ok,
                     "Cancel",
@@ -278,6 +250,50 @@ impl Workbench {
     }
 }
 
+/// The question to ask about the work still running in `terminals`
+/// (`impulse_kit::close_risk`): its title, text and the button that goes
+/// ahead; `None` when there's nothing to ask or the setting is off.
+fn running_question(
+    terminals: &[&gpui_kit::Entity<TerminalView>],
+    action: CloseRiskAction,
+    cx: &App,
+) -> Option<(String, String, &'static str)> {
+    let settings = SettingsStore::get(cx);
+    if !settings.confirm_close_warnings {
+        return None;
+    }
+    let input = CloseRiskInput {
+        action,
+        unsaved_editor_count: 0,
+        running_terminal_process_count: terminals
+            .iter()
+            .map(|t| t.read(cx).running_processes())
+            .sum(),
+        running_commands: terminals
+            .iter()
+            .filter_map(|t| t.read(cx).running_command_risk())
+            .collect(),
+        now_ms: now_ms(),
+        long_command_threshold_seconds: settings.terminal_long_command_seconds.max(1) as u64,
+    };
+    let summary = input.summarize();
+    if !summary.has_risk {
+        return None;
+    }
+    let details = summary.detail_lines.join("\n");
+    let text = [summary.informative_text.clone(), details]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let ok = match action {
+        CloseRiskAction::Quit => "Quit",
+        CloseRiskAction::CloseWindow => "Close Window",
+        CloseRiskAction::CloseTab => "Close Tab",
+    };
+    Some((summary.title, text, ok))
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -285,39 +301,128 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
 }
 
-/// Close every window, asking first in each, then quit.
+type Windows = Vec<(gpui_kit::Entity<Workbench>, gpui_kit::AnyWindowHandle)>;
+
+/// Quit, asking first as the Swift `applicationShouldTerminate` does: with
+/// unsaved documents in any window, whether to review them (each one's
+/// save question in turn), cancel or discard them; then, once, about the
+/// work still running in every window's terminals.
 pub(crate) fn quit(cx: &mut App) {
     // The action comes from inside a window's update: ask once it's done.
     cx.defer(|cx| {
         let windows = crate::session::workbenches(cx);
-        quit_from(windows, cx);
+        let dirty: usize = windows
+            .iter()
+            .map(|(w, _)| {
+                w.read(cx)
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| ws.all_surfaces())
+                    .filter(|s| s.is_dirty(cx))
+                    .count()
+            })
+            .sum();
+        if dirty == 0 {
+            return confirm_quit(cx);
+        }
+        let Some(front) = front_window(&windows, cx) else {
+            return cx.quit();
+        };
+        let title = if dirty == 1 {
+            "You have unsaved changes in 1 document. Do you want to review this change before quitting?".to_string()
+        } else {
+            format!("You have unsaved changes in {dirty} documents. Do you want to review these changes before quitting?")
+        };
+        let _ = front.update(cx, move |_, window, cx| {
+            ask(
+                title,
+                "If you don't review your documents, all your changes will be lost.".into(),
+                [
+                    ("Review Changes…", Choice::Save),
+                    ("Cancel", Choice::Cancel),
+                    ("Discard Changes", Choice::DontSave),
+                ],
+                window,
+                cx,
+                move |choice, _, cx| match choice {
+                    Choice::Save => App::defer(cx, move |cx| review_for_quit(windows, cx)),
+                    Choice::DontSave => App::defer(cx, confirm_quit),
+                    Choice::Cancel => {}
+                },
+            )
+        });
     });
 }
 
-fn quit_from(
-    mut windows: Vec<(gpui_kit::Entity<Workbench>, gpui_kit::AnyWindowHandle)>,
-    cx: &mut App,
-) {
+/// The window in front, else the last one.
+fn front_window(windows: &Windows, cx: &App) -> Option<gpui_kit::AnyWindowHandle> {
+    let active = cx.active_window();
+    windows
+        .iter()
+        .map(|(_, handle)| *handle)
+        .find(|handle| Some(*handle) == active)
+        .or_else(|| windows.last().map(|(_, handle)| *handle))
+}
+
+/// Each window's unsaved documents in turn, brought to the front; then the
+/// question about running work. Cancelling any stops the quit.
+fn review_for_quit(mut windows: Windows, cx: &mut App) {
     let Some((workbench, handle)) = windows.pop() else {
-        return cx.quit();
+        return confirm_quit(cx);
     };
     let _ = handle.update(cx, move |_, window, cx| {
+        window.activate_window();
         workbench.update(cx, |w, cx| {
             let rest = RefCell::new(Some(windows));
             w.confirm_close(
                 Target::Window,
                 CloseRiskAction::Quit,
-                Answered::default(),
+                // Running work is asked about once, for every window.
+                Answered {
+                    running: true,
+                    ..Default::default()
+                },
                 window,
                 cx,
-                Rc::new(move |_, window, cx| {
-                    let _ = window;
+                Rc::new(move |_, _, cx| {
                     if let Some(rest) = rest.borrow_mut().take() {
-                        App::defer(cx, move |cx| quit_from(rest, cx));
+                        App::defer(cx, move |cx| review_for_quit(rest, cx));
                     }
                 }),
             )
         });
+    });
+}
+
+/// Ask once about the work still running in every window, then quit.
+fn confirm_quit(cx: &mut App) {
+    let windows = crate::session::workbenches(cx);
+    let terminals: Vec<_> = windows
+        .iter()
+        .flat_map(|(w, _)| {
+            w.read(cx)
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.all_surfaces())
+                .filter_map(Surface::terminal)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let question = running_question(
+        &terminals.iter().collect::<Vec<_>>(),
+        CloseRiskAction::Quit,
+        cx,
+    );
+    let (Some((title, text, ok)), Some(front)) = (question, front_window(&windows, cx)) else {
+        return cx.quit();
+    };
+    let _ = front.update(cx, move |_, window, cx| {
+        crate::tasks::confirm(window, cx, title, text, ok, "Cancel", true, |yes, _, cx| {
+            if yes {
+                cx.quit()
+            }
+        })
     });
 }
 
@@ -362,6 +467,18 @@ fn choice_dialog(
             ],
         )
     };
+    ask(title, message, buttons, window, cx, answer)
+}
+
+/// A question with three answers, the first the default.
+fn ask(
+    title: String,
+    message: String,
+    buttons: [(&'static str, Choice); 3],
+    window: &mut Window,
+    cx: &mut App,
+    answer: impl FnOnce(Choice, &mut Window, &mut App) + 'static,
+) {
     let chosen: Chosen = Rc::new(RefCell::new(Some(Box::new(answer))));
     #[cfg(debug_assertions)]
     {

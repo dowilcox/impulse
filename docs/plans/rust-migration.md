@@ -527,6 +527,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   window: the Dock tile's label on macOS, and on Linux the Unity
   LauncherEntry signal (sent with `gdbus`) that KDE's task manager, Dash
   to Dock and Plank show.
+  Quitting asks as Swift's `applicationShouldTerminate` does: with
+  unsaved documents anywhere, one question (Review Changes…, Cancel,
+  Discard Changes), reviewing goes through each window's documents in
+  turn, and the work still running is asked about once for every window.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

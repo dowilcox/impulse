@@ -256,9 +256,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           close_flow.rs (asking before closing a pane,
                           tab, workspace or window, or quitting: a pinned
                           tab, Save, Don't Save or Cancel for each unsaved
-                          editor,
-                          then running terminal work from
-                          impulse_kit::close_risk),
+                          editor, then running terminal work from
+                          impulse_kit::close_risk; quitting asks once about
+                          every window's unsaved documents and running work),
                           update_check.rs (a newer release, once a day,
                           by impulse_kit::update_checker with curl, as
                           "Update x.y.z" in the status bar),
