@@ -471,10 +471,13 @@ Known issues:
   `sticky_scroll`, `bracket_pair_colorization`, `editor_inlay_hints`
   (GPUI Kit's editor has none of these), `editor_cursor_style` and
   `editor_cursor_blinking` (its caret has no styles), `smooth_scrolling`,
-  `editor_word_based_suggestions`, `terminal_bell` (no
+  `terminal_bell` (no
   sound through GPUI; the attention dot still shows) and
   `terminal_scroll_on_output` (the terminal always follows output unless
   scrolled back).
+- Word-based suggestions take words from the document being edited only,
+  for every setting but `off` (Monaco's `matchingDocuments` and
+  `allDocuments` look in other open files too).
 - The app hasn't been built on a Mac yet.
 
 ## Risks

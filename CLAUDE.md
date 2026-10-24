@@ -258,6 +258,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           merge conflicts tinted with Accept Current,
                           Incoming or Both, from
                           impulse_kit::git::editor_marks; Monaco's keys,
+                          word-based suggestions without a language
+                          server (impulse_kit::word_completions);
                           occurrence and selection
                           highlights as range decorations from document
                           highlights or impulse_kit::occurrences, Monaco's

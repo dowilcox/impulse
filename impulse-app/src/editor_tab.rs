@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::input::{
-    Editor, EditorState, InputEvent, Position, RangeDecoration, RangeDecorationCollection,
-    RangeDecorationStyle, RopeExt, TabSize,
+    CompletionProvider, Editor, EditorState, InputEvent, Position, RangeDecoration,
+    RangeDecorationCollection, RangeDecorationStyle, RopeExt, TabSize,
 };
 use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::{
@@ -266,6 +266,15 @@ impl EditorTab {
             );
             state.set_auto_close(settings.editor_auto_closing_brackets != "never", window, cx);
         });
+        // Without a language server, the document's own words.
+        if self.primary_link().is_none() {
+            let words = settings.editor_word_based_suggestions != "off";
+            self.state.update(cx, |state, _| {
+                state.lsp_mut().completion_provider = words.then(|| {
+                    std::rc::Rc::new(WordCompletions) as std::rc::Rc<dyn CompletionProvider>
+                });
+            });
+        }
         crate::editor_vim::Attached::update(
             &mut self.vim,
             settings.editor_vim_mode,
@@ -1992,5 +2001,43 @@ impl EditorTab {
                 .anchor(gpui_kit::Anchor::BottomLeft)
                 .child(gpui_kit::div().pb(px(4.)).child(popup)),
         ))
+    }
+}
+
+/// Word-based suggestions (Monaco's `wordBasedSuggestions`) for an editor
+/// no language server completes: the document's words that start like
+/// the one being typed (`impulse_kit::word_completions`).
+struct WordCompletions;
+
+impl CompletionProvider for WordCompletions {
+    fn completions(
+        &self,
+        text: &gpui_kit::component::input::Rope,
+        offset: usize,
+        _: lsp_types::CompletionContext,
+        _: &mut Window,
+        _: &mut gpui_kit::App,
+    ) -> gpui_kit::Task<gpui_kit::Result<lsp_types::CompletionResponse>> {
+        // Very large documents aren't scanned on every keystroke.
+        let items = if text.len() > 2 * 1024 * 1024 {
+            Vec::new()
+        } else {
+            impulse_kit::word_completions::suggestions(&text.to_string(), offset)
+                .into_iter()
+                .map(|word| lsp_types::CompletionItem {
+                    label: word,
+                    kind: Some(lsp_types::CompletionItemKind::TEXT),
+                    ..Default::default()
+                })
+                .collect()
+        };
+        gpui_kit::Task::ready(Ok(lsp_types::CompletionResponse::Array(items)))
+    }
+
+    fn is_completion_trigger(&self, _: usize, new_text: &str, _: &mut gpui_kit::App) -> bool {
+        !new_text.is_empty()
+            && new_text
+                .chars()
+                .all(impulse_kit::word_completions::is_word_char)
     }
 }

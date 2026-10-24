@@ -56,3 +56,4 @@ pub mod trust;
 pub mod update_checker;
 pub mod uri;
 pub mod vim;
+pub mod word_completions;
