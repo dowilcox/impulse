@@ -268,6 +268,40 @@ impl DocumentLink {
         })
     }
 
+    /// The other places the symbol at `offset` appears in this file, as
+    /// byte ranges, and whether each is written there (Monaco's document
+    /// highlights).
+    pub fn document_highlights(
+        &self,
+        text: &Rope,
+        offset: usize,
+        cx: &App,
+    ) -> Task<Result<Vec<(std::ops::Range<usize>, bool)>, String>> {
+        let params = lsp_types::DocumentHighlightParams {
+            text_document_position_params: self.at(text, offset),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let client = self.client.clone();
+        let source = text.to_string();
+        cx.background_executor().spawn(async move {
+            let highlights = client
+                .request::<lsp_types::request::DocumentHighlightRequest>(params)
+                .await?
+                .unwrap_or_default();
+            let utf32 = client.uses_utf32();
+            let offset = |p| impulse_lsp::edits::offset_of(&source, p, utf32);
+            Ok(highlights
+                .into_iter()
+                .map(|h| {
+                    let write = h.kind == Some(lsp_types::DocumentHighlightKind::WRITE);
+                    (offset(h.range.start)..offset(h.range.end), write)
+                })
+                .filter(|(range, _)| range.start < range.end)
+                .collect())
+        })
+    }
+
     /// The file's symbols in document order (the palette's @ mode).
     pub fn document_symbols(
         &self,

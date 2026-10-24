@@ -161,7 +161,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           impulse_kit::recent_workspaces, Rename Workspace,
                           Workbench::text_prompt for one-field dialogs),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
-                          save, Monaco's keys), workspace trust, language
+                          save, Monaco's keys, occurrence and selection
+                          highlights as range decorations from document
+                          highlights or impulse_kit::occurrences), workspace trust, language
                           servers (code actions, formatting, rename and
                           references with edits across files);
                           scripts/spike/linux-shot.sh screenshots it on Linux

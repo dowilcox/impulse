@@ -6,7 +6,10 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::component::input::{Editor, EditorState, InputEvent, Position, RopeExt, TabSize};
+use gpui_kit::component::input::{
+    Editor, EditorState, InputEvent, Position, RangeDecoration, RangeDecorationCollection,
+    RangeDecorationStyle, RopeExt, TabSize,
+};
 use gpui_kit::{
     prelude::*, px, App, Context, Entity, EntityInputHandler, EventEmitter, Subscription, Window,
 };
@@ -69,7 +72,14 @@ pub struct EditorTab {
     /// ⌘D: the selection it started from and where the last one it added
     /// ends (GPUI Kit keeps the first selection active).
     occurrences: Option<(std::ops::Range<usize>, usize)>,
+    /// Other places the symbol at the cursor appears, and other matches of
+    /// the selection (Monaco's occurrence and selection highlights).
+    marks: Option<RangeDecorationCollection>,
+    /// The selection the marks were worked out for.
+    marked_at: Option<std::ops::Range<usize>>,
+    _marking: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
+    _observe_state: Subscription,
     _lsp_start: Vec<gpui_kit::Task<()>>,
 }
 
@@ -138,6 +148,7 @@ impl EditorTab {
                 cx.notify();
             }
         });
+        let observe_state = cx.observe(&state, |tab, _, cx| tab.selection_moved(cx));
         Self {
             title: path
                 .file_name()
@@ -163,7 +174,11 @@ impl EditorTab {
             diagnostics: Default::default(),
             hooks: None,
             occurrences: None,
+            marks: None,
+            marked_at: None,
+            _marking: None,
             _subscription: subscription,
+            _observe_state: observe_state,
             _lsp_start: Vec::new(),
         }
     }
@@ -995,5 +1010,98 @@ impl Render for EditorTab {
                     )
                     .child(self.preview_element(cx)),
             })
+    }
+}
+
+/// How long the cursor rests before occurrences are marked.
+const MARK_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
+impl EditorTab {
+    /// The cursor or selection may have moved: mark the symbol's other
+    /// occurrences (from the primary language server, else the same word)
+    /// or the selection's other matches, once it rests.
+    fn selection_moved(&mut self, cx: &mut Context<Self>) {
+        let range = self.state.read(cx).selected_range();
+        if self.marked_at.as_ref() == Some(&range) {
+            return;
+        }
+        self.marked_at = Some(range.clone());
+        let settings = crate::settings_store::SettingsStore::get(cx);
+        let wanted = if range.is_empty() {
+            settings.editor_occurrences_highlight
+        } else {
+            settings.editor_selection_highlight
+        };
+        // Marks for where the cursor was go as soon as it moves off them.
+        let stale = self.marks.as_ref().is_some_and(|marks| {
+            !marks
+                .get_ranges(cx)
+                .iter()
+                .any(|r| r.start <= range.start && range.end <= r.end)
+        });
+        if stale || !wanted {
+            if let Some(marks) = &self.marks {
+                marks.clear(cx);
+            }
+        }
+        self._marking = None;
+        if !wanted {
+            return;
+        }
+        let link = range.is_empty().then(|| self.primary_link()).flatten();
+        let text = self.state.read(cx).text().clone();
+        self._marking = Some(cx.spawn(async move |tab, cx| {
+            cx.background_executor().timer(MARK_DELAY).await;
+            let from_server = match link {
+                Some(link) => {
+                    let task = cx.update(|cx| link.document_highlights(&text, range.start, cx));
+                    task.await.ok().filter(|found| !found.is_empty())
+                }
+                None => None,
+            };
+            let ranges: Vec<std::ops::Range<usize>> = match from_server {
+                Some(found) => found.into_iter().map(|(r, _)| r).collect(),
+                None => {
+                    let source = text.to_string();
+                    cx.background_executor()
+                        .spawn(async move {
+                            use impulse_kit::occurrences;
+                            if range.is_empty() {
+                                occurrences::word_at(&source, range.start)
+                                    .map(|word| {
+                                        occurrences::whole_word_matches(&source, &source[word])
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                occurrences::selection_matches(&source, range)
+                            }
+                        })
+                        .await
+                }
+            };
+            let _ = tab.update(cx, |tab, cx| tab.set_marks(ranges, cx));
+        }));
+    }
+
+    fn set_marks(&mut self, ranges: Vec<std::ops::Range<usize>>, cx: &mut Context<Self>) {
+        // A lone occurrence is the word itself: nothing to point at.
+        let ranges = if ranges.len() < 2 && self.marked_at.as_ref().is_some_and(|r| r.is_empty()) {
+            Vec::new()
+        } else {
+            ranges
+        };
+        let decorations: Vec<RangeDecoration> = ranges
+            .into_iter()
+            .map(|range| RangeDecoration::new(range).with_style(RangeDecorationStyle::Fill))
+            .collect();
+        match &self.marks {
+            Some(marks) => marks.set(decorations, cx),
+            None => {
+                let marks = self.state.update(cx, |state, cx| {
+                    state.create_range_decorations_collection(decorations, cx)
+                });
+                self.marks = Some(marks);
+            }
+        }
     }
 }
