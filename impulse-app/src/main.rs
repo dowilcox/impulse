@@ -276,10 +276,12 @@ fn main() {
                 true => debug_snapshot::session(cx),
                 false => saved,
             };
+            let mut front = None;
             match saved {
                 Some(state) => {
-                    for window in state.windows {
-                        open_main_window(
+                    let active = state.active_window_index.unwrap_or(0).max(0) as usize;
+                    for (index, window) in state.windows.into_iter().enumerate() {
+                        let opened = open_main_window(
                             Args {
                                 session: Some(window),
                                 theme: args.theme.clone(),
@@ -291,9 +293,14 @@ fn main() {
                             },
                             cx,
                         );
+                        if index == active {
+                            front = opened;
+                        }
                     }
                 }
-                None => open_main_window(args, cx),
+                None => {
+                    open_main_window(args, cx);
+                }
             }
             #[cfg(debug_assertions)]
             if debug_snapshot::is_active() {
@@ -301,15 +308,25 @@ fn main() {
                 return debug_snapshot::run(cx);
             }
             cx.activate(true);
+            // The window that was in front at quit comes to the front again.
+            if let Some(front) = front {
+                let _ = front.update(cx, |_, window, _| window.activate_window());
+            }
         });
 }
 
-/// A main window, sized from the settings.
-pub fn open_main_window(args: Args, cx: &mut App) {
+/// A main window, sized from the settings, or where a restored one was.
+pub fn open_main_window(args: Args, cx: &mut App) -> Option<gpui_kit::AnyWindowHandle> {
     let settings = settings_store::SettingsStore::get(cx);
     let (width, height) = (settings.window_width as f32, settings.window_height as f32);
+    let saved = args
+        .session
+        .as_ref()
+        .and_then(|s| s.frame.as_deref())
+        .and_then(|frame| session::saved_bounds(frame, cx));
     #[allow(unused_mut)]
-    let mut bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    let mut bounds =
+        saved.unwrap_or_else(|| Bounds::centered(None, size(px(width), px(height)), cx));
     // Snapshots are the same size run to run, at the screen's top left.
     #[cfg(debug_assertions)]
     if let Some(config) = debug_snapshot::config() {
@@ -338,7 +355,11 @@ pub fn open_main_window(args: Args, cx: &mut App) {
         cx,
         |window, cx| cx.new(|cx| workbench::Workbench::new(args, window, cx)),
     );
-    if let Err(error) = opened {
-        log::error!("couldn't open a window: {error}");
+    match opened {
+        Ok((handle, _)) => Some(handle),
+        Err(error) => {
+            log::error!("couldn't open a window: {error}");
+            None
+        }
     }
 }

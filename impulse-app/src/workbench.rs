@@ -120,6 +120,9 @@ pub struct Workbench {
     pub(crate) command_palette: Entity<crate::palette::Palette>,
     _settings: gpui_kit::Subscription,
     _contrast: gpui_kit::Subscription,
+    /// The window's bounds, for the session (`session::window_frame`).
+    pub(crate) bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    _bounds: gpui_kit::Subscription,
     /// Repositories and the Changes panel (`changes_panel`, `git_actions`).
     pub(crate) git: crate::changes_panel::GitPanel,
     /// Every language server's diagnostics (`problems_view`).
@@ -188,6 +191,9 @@ impl Workbench {
             .observe_global_in::<SettingsStore>(window, |workbench, window, cx| {
                 workbench.apply_settings(window, cx)
             });
+        let bounds_subscription = cx.observe_window_bounds(window, |workbench, window, _| {
+            workbench.bounds = window.bounds()
+        });
         let contrast_subscription = cx
             .observe_global_in::<crate::increase_contrast::IncreaseContrast>(
                 window,
@@ -231,6 +237,8 @@ impl Workbench {
             },
             _settings: settings_subscription,
             _contrast: contrast_subscription,
+            bounds: window.bounds(),
+            _bounds: bounds_subscription,
             git: crate::changes_panel::GitPanel::new(window, cx),
             problems: cx.new(|_| Default::default()),
             editor_watch: crate::editor_watch::EditorWatch::new(),

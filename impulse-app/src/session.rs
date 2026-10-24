@@ -96,12 +96,64 @@ pub fn workbenches(cx: &App) -> Vec<(gpui_kit::Entity<Workbench>, gpui_kit::AnyW
 }
 
 fn windows(cx: &App, with_scrollback: bool) -> Vec<SessionWindow> {
+    open_windows(cx, with_scrollback)
+        .into_iter()
+        .map(|(window, _)| window)
+        .collect()
+}
+
+/// The open windows' sessions, each with whether it's the active one.
+fn open_windows(cx: &App, with_scrollback: bool) -> Vec<(SessionWindow, bool)> {
+    let active = cx.active_window();
     cx.global::<Sessions>()
         .windows
         .iter()
-        .filter_map(|(w, _)| w.upgrade())
-        .map(|w| w.read(cx).session_window(with_scrollback, cx))
+        .filter_map(|(w, handle)| w.upgrade().map(|w| (w, *handle)))
+        .map(|(w, handle)| {
+            (
+                w.read(cx).session_window(with_scrollback, cx),
+                Some(handle) == active,
+            )
+        })
         .collect()
+}
+
+/// A window's frame for the session, in AppKit's coordinates (the origin
+/// at the primary screen's bottom left), as the Swift app writes it.
+fn frame_of(bounds: gpui_kit::Bounds<gpui_kit::Pixels>, cx: &App) -> String {
+    let screen = cx
+        .primary_display()
+        .map(|d| f32::from(d.bounds().size.height))
+        .unwrap_or(0.);
+    let (x, y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+    let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+    impulse_kit::session::frame_string(
+        x.round() as f64,
+        (screen - y - height).round() as f64,
+        width.round() as f64,
+        height.round() as f64,
+    )
+}
+
+/// The bounds a saved frame asks for, when it's a usable size and still
+/// on a screen (Swift's `restoreSessionWindow` checks the same).
+pub fn saved_bounds(frame: &str, cx: &App) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
+    let (x, y, width, height) = impulse_kit::session::parse_frame(frame)?;
+    if width <= 200. || height <= 200. {
+        return None;
+    }
+    let screen = f32::from(cx.primary_display()?.bounds().size.height);
+    let bounds = gpui_kit::Bounds::new(
+        gpui_kit::point(
+            gpui_kit::px(x as f32),
+            gpui_kit::px(screen - y as f32 - height as f32),
+        ),
+        gpui_kit::size(gpui_kit::px(width as f32), gpui_kit::px(height as f32)),
+    );
+    cx.displays()
+        .iter()
+        .any(|d| d.bounds().intersects(&bounds))
+        .then_some(bounds)
 }
 
 fn autosave(cx: &mut App) {
@@ -124,11 +176,13 @@ pub fn save(cx: &mut App) {
         return;
     }
     let with_scrollback = SettingsStore::get(cx).restore_scrollback;
-    let windows = windows(cx, with_scrollback);
+    let windows = open_windows(cx, with_scrollback);
     if windows.is_empty() {
         return;
     }
-    let state = SessionState::new(windows, Some(0));
+    let active = windows.iter().position(|(_, active)| *active).unwrap_or(0);
+    let windows = windows.into_iter().map(|(window, _)| window).collect();
+    let state = SessionState::new(windows, Some(active as i64));
     state.persist(
         &SessionState::path(cfg!(debug_assertions)),
         &impulse_kit::session::scrollback_dir(cfg!(debug_assertions)),
@@ -267,6 +321,7 @@ impl Workbench {
             active_workspace_index: Some(self.active as i64),
             sidebar_visible: Some(settings.sidebar_visible),
             sidebar_width: Some(settings.sidebar_width as f64),
+            frame: Some(frame_of(self.bounds, cx)),
             ..Default::default()
         }
     }

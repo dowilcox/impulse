@@ -417,6 +417,27 @@ pub fn load_scrollback(workspaces: &mut [SessionWorkspace], dir: &Path) {
     }
 }
 
+/// A window frame as `NSStringFromRect` writes it, "{{x, y}, {w, h}}",
+/// the origin at the bottom left of the primary screen (AppKit's
+/// coordinates), so the Swift and Rust apps read each other's sessions.
+pub fn frame_string(x: f64, y: f64, width: f64, height: f64) -> String {
+    format!("{{{{{x}, {y}}}, {{{width}, {height}}}}}")
+}
+
+/// `frame_string`'s rectangle back, as `NSRectFromString` reads it: the
+/// first four numbers, in order (`None` without four).
+pub fn parse_frame(text: &str) -> Option<(f64, f64, f64, f64)> {
+    let numbers: Vec<f64> = text
+        .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == '+'))
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    match numbers[..] {
+        [x, y, width, height, ..] => Some((x, y, width, height)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +539,22 @@ mod tests {
             SessionState::autosave_key(&a.windows),
             SessionState::autosave_key(&b.windows)
         );
+    }
+
+    #[test]
+    fn frames_read_back_as_appkit_writes_them() {
+        assert_eq!(
+            frame_string(10.0, 20.5, 1200.0, 800.0),
+            "{{10, 20.5}, {1200, 800}}"
+        );
+        assert_eq!(
+            parse_frame("{{10, 20.5}, {1200, 800}}"),
+            Some((10.0, 20.5, 1200.0, 800.0))
+        );
+        assert_eq!(
+            parse_frame("{{-1440, 0}, {900, 600}}"),
+            Some((-1440.0, 0.0, 900.0, 600.0))
+        );
+        assert_eq!(parse_frame("{{1, 2}, {3}}"), None);
     }
 }

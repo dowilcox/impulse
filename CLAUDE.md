@@ -129,7 +129,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           macOS's display option or GNOME's high-contrast
                           key, followed while running),
                           session restore (session.rs, with an agent's resume command
-                          typed into its terminal's bar: autosave every 15 s
+                          typed into its terminal's bar, each window's frame
+                          in AppKit's coordinates (frame_string, saved_bounds)
+                          and the front window: autosave every 15 s
                           when the structure changed, and at quit; a
                           restored terminal shows its old output down to
                           the "restored" rule before its first command),

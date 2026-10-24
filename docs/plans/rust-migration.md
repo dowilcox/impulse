@@ -513,6 +513,11 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   520, double-click for 260, the accent line while hovered or dragged),
   and a repository group's header offers Archive Merged Tasks… on a
   right-click.
+  Session restore brings each window back where it was and the front
+  window to the front: frames are written as `NSStringFromRect` writes
+  them, the origin at the primary screen's bottom left, so the two apps
+  read each other's sessions, and a frame off every screen or under 200
+  points is ignored as Swift ignores it.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.
