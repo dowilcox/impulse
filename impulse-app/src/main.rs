@@ -321,6 +321,9 @@ pub fn open_main_window(args: Args, cx: &mut App) {
             // window manager that won't allow it decorates the window.
             window_decorations: cfg!(target_os = "linux")
                 .then_some(gpui_kit::WindowDecorations::Client),
+            // The desktop entry's name (impulse.desktop): docks and window
+            // switchers show its icon (Wayland's app_id, X11's WM_CLASS).
+            app_id: Some("impulse".into()),
             ..Default::default()
         },
         cx,

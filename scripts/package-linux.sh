@@ -73,7 +73,7 @@ Exec=impulse-app
 Icon=impulse
 Terminal=false
 Categories=Development;IDE;TerminalEmulator;
-StartupWMClass=impulse-app
+StartupWMClass=impulse
 DESKTOP
 }
 
