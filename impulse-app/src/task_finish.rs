@@ -67,6 +67,9 @@ pub enum Status {
     Done(String),
     Skipped(String),
     Failed(String),
+    /// Stopped on purpose, for the user (an agent's Finish stops before
+    /// landing).
+    Waiting(String),
 }
 
 /// What a stopped step offers besides Continue.
@@ -119,6 +122,13 @@ pub struct TaskFinishView {
     pushed_for_review: bool,
     /// The check's terminal, watched until its command ends.
     check: Option<(Subscription, Instant)>,
+    /// An agent asked for this Finish (`impulse tasks finish`): it runs up
+    /// to the land step (for a task already merged, the update) and waits
+    /// there for the user. Who asked.
+    pub(crate) stops_before_landing: Option<String>,
+    /// The agent's terminal that asked, which the commit step doesn't wait
+    /// for: it's mid-turn while it asks.
+    pub(crate) requester_terminal: Option<gpui_kit::EntityId>,
 }
 
 impl TaskFinishView {
@@ -147,6 +157,44 @@ impl TaskFinishView {
 
     pub fn title(&self) -> String {
         format!("Finish {}", self.name())
+    }
+
+    /// Each step's title, status and plan, for an agent's Finish.
+    pub(crate) fn step_report(&self) -> Vec<(String, Status, String)> {
+        STEPS
+            .iter()
+            .map(|step| (self.step_title(*step), self.status(*step), self.plan(*step)))
+            .collect()
+    }
+
+    pub(crate) fn task_name(&self) -> String {
+        self.name()
+    }
+
+    pub(crate) fn is_already_merged(&self) -> bool {
+        self.already_merged
+    }
+
+    /// It stopped somewhere Continue picks up from.
+    pub(crate) fn resumes(&self) -> bool {
+        self.resume_at.is_some()
+    }
+
+    pub(crate) fn is_loading(&self) -> bool {
+        self.is_loading
+    }
+
+    pub(crate) fn unavailable(&self) -> Option<String> {
+        self.unavailable.clone()
+    }
+
+    /// The repository has its answer to how work lands.
+    pub(crate) fn has_landing(&self) -> bool {
+        self.landing.is_some()
+    }
+
+    pub(crate) fn main_name_text(&self) -> String {
+        self.main_name()
     }
 
     fn status(&self, step: Step) -> Status {
@@ -251,6 +299,7 @@ impl TaskFinishView {
             Status::Done(_) => ("circle-check", p.success),
             Status::Skipped(_) => ("minus", p.text_tertiary),
             Status::Failed(_) => ("circle-x", p.danger),
+            Status::Waiting(_) => ("circle-alert", p.accent),
         };
         div()
             .w(px(16.))
@@ -267,6 +316,7 @@ impl TaskFinishView {
             Status::Running(t) | Status::Done(t) => (t.clone(), p.text_secondary),
             Status::Skipped(t) => (t.clone(), p.text_tertiary),
             Status::Failed(t) => (t.clone(), p.danger),
+            Status::Waiting(t) => (t.clone(), p.text),
         };
         let failed = matches!(status, Status::Failed(_));
         let stopped = (failed && !self.is_running) || (step == Step::Check && self.is_running);
@@ -780,7 +830,7 @@ impl Workbench {
         .detach();
     }
 
-    fn start_finish(
+    pub(crate) fn start_finish(
         &mut self,
         view: Entity<TaskFinishView>,
         window: &mut Window,
@@ -894,6 +944,40 @@ impl Workbench {
             });
             return;
         };
+        // An agent's Finish: landing, and for a task that's already merged
+        // updating the main checkout and archiving, are the user's to start.
+        let requester = view.update(cx, |v, _| {
+            (step >= Step::Land)
+                .then(|| v.stops_before_landing.take())
+                .flatten()
+        });
+        if let Some(requester) = requester {
+            return view.update(cx, |v, cx| {
+                let text = if v.already_merged {
+                    format!(
+                        "{requester} asked to finish {}, which is already merged into {}. Click Clean Up to update {} and archive it.",
+                        v.name(),
+                        v.base_ref(),
+                        v.main_name()
+                    )
+                } else {
+                    format!(
+                        "{requester} asked to finish {}. Click Continue to {}.",
+                        v.name(),
+                        if v.effective_landing() == Landing::Review {
+                            "push it for review".to_string()
+                        } else {
+                            format!("land it in {}", v.base_ref())
+                        }
+                    )
+                };
+                v.statuses.insert(step, Status::Waiting(text));
+                v.resume_at = Some(step);
+                v.remedy = None;
+                v.is_running = false;
+                cx.notify();
+            });
+        }
         match step {
             Step::Commit => self.finish_commit(view, window, cx),
             Step::Sync => self.finish_sync(view, window, cx),
@@ -937,6 +1021,18 @@ impl Workbench {
             Status::Running(format!("Looking at {name}…")),
             cx,
         );
+        // The agent that asked for this run is mid-turn: only others count.
+        let requester = view.update(cx, |v, _| v.requester_terminal.take());
+        if let Some(agent) = self.working_agents_in(&root, requester, cx).first() {
+            return Self::stop(
+                &view,
+                Step::Commit,
+                format!("{agent} is working in this task. Let it finish its turn, then Continue."),
+                Step::Commit,
+                None,
+                cx,
+            );
+        }
         self.finish_off_main(view, window, cx, move || snapshot::snapshot(&root, false), |w, view, snapshot, window, cx| {
             let Some(snapshot) = snapshot else {
                 return Self::stop(&view, Step::Commit, "The task's folder couldn't be read.".into(), Step::Commit, None, cx);
@@ -1773,6 +1869,8 @@ impl NewFinishView for Context<'_, Workbench> {
             landed_commit: None,
             pushed_for_review: false,
             check: None,
+            stops_before_landing: None,
+            requester_terminal: None,
         })
     }
 }

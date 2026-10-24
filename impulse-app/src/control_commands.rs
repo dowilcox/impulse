@@ -91,7 +91,14 @@ impl Workbench {
             pane_cwd
         };
         let args = &request.arguments;
-        let needs_shell = matches!(request.command.as_str(), "split" | "tab" | "checkpoint");
+        // Starting, finishing or archiving a task starts processes and
+        // runs git, as `split` does.
+        let changes_tasks = request.command == "tasks"
+            && ["new", "finish", "archive"]
+                .iter()
+                .any(|k| args.contains_key(*k));
+        let needs_shell =
+            matches!(request.command.as_str(), "split" | "tab" | "checkpoint") || changes_tasks;
         if needs_shell && !from_shell {
             if terminal.is_none() {
                 return answer(inside_terminal());
@@ -257,10 +264,9 @@ impl Workbench {
             "review" | "comments" | "problems" => {
                 self.handle_review_control(&request, terminal, cwd, from_shell, reply, window, cx)
             }
-            "tasks" | "project" => answer(ControlResponse::failure(format!(
-                "impulse {} isn't in the Rust app yet.",
-                request.command
-            ))),
+            "tasks" | "project" => {
+                self.handle_tasks_control(&request, terminal, cwd, reply, window, cx)
+            }
             other => answer(ControlResponse::failure(format!(
                 "impulse: unknown command '{other}'"
             ))),

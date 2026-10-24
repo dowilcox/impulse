@@ -78,6 +78,9 @@ pub enum EditorKey {
     ControlR,
     /// Cmd+Up (Ctrl+Up on Linux): select the newest command block.
     SelectBlock,
+    /// Alt+Cmd+Return (Ctrl+Alt+Return on Linux) where Return adds a line
+    /// (the agent composer's "paste without sending").
+    AlternateSubmit,
 }
 
 pub enum CommandEditorEvent {
@@ -157,6 +160,9 @@ pub struct CommandEditor {
     pub masked: bool,
     /// Return submits and pasted newlines become spaces (find fields).
     single_line: bool,
+    /// Return submits (the input bar). Otherwise it adds a line and
+    /// Cmd+Return (Ctrl+Return on Linux) submits (the agent composer).
+    pub return_submits: bool,
     /// What the shell can run, with the folder relative commands start in.
     pub lookup: Option<(CommandLookup, Option<String>)>,
     pub colors: EditorColors,
@@ -202,6 +208,7 @@ impl CommandEditor {
             shell_syntax: !single_line,
             masked: false,
             single_line,
+            return_submits: true,
             lookup: None,
             colors: EditorColors::new(theme),
             font: gpui_kit::font("JetBrains Mono"),
@@ -539,7 +546,15 @@ impl CommandEditor {
                 cx.emit(CommandEditorEvent::Submit { shift: m.shift });
                 true
             }
-            "enter" if m.shift || m.alt => {
+            "enter" if !self.return_submits && secondary && m.alt => {
+                cx.emit(CommandEditorEvent::Key(EditorKey::AlternateSubmit));
+                true
+            }
+            "enter" if !self.return_submits && secondary => {
+                cx.emit(CommandEditorEvent::Submit { shift: false });
+                true
+            }
+            "enter" if m.shift || m.alt || !self.return_submits => {
                 self.insert("\n", cx);
                 true
             }

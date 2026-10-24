@@ -818,7 +818,7 @@ impl Workbench {
         &self,
         repo: &Entity<RepositoryState>,
         operation: impulse_git::RepoOperation,
-        _has_conflicts: bool,
+        has_conflicts: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = &self.palette;
@@ -878,6 +878,28 @@ impl Workbench {
                     .child(operation.title()),
             )
             .child(div().flex_1())
+            .when(has_conflicts, |d| {
+                let repo = repo.clone();
+                d.child(
+                    // Only the icon: the sidebar is narrow, and Abort stays
+                    // in view.
+                    Button::new("op-ask-agent")
+                        .ghost()
+                        .compact()
+                        .icon(Icon::empty().path("icons/bot.svg"))
+                        .tooltip("Ask Agent: ask an agent to resolve the conflicts")
+                        .dropdown_menu(move |menu: PopupMenu, window, cx| {
+                            crate::agent_send::conflict_menu_items(
+                                menu,
+                                "Send to",
+                                repo.clone(),
+                                Vec::new(),
+                                window,
+                                cx,
+                            )
+                        }),
+                )
+            })
             .child(continue_button)
             .children(skip_button)
             .child(abort_button)
@@ -1283,7 +1305,7 @@ impl Workbench {
                 }
                 cx.notify();
             }))
-            .context_menu(move |menu: PopupMenu, _, _| {
+            .context_menu(move |menu: PopupMenu, window, cx| {
                 let w = &workbench;
                 let (repo, change, path) =
                     (menu_repo.clone(), menu_change.clone(), menu_path.clone());
@@ -1326,11 +1348,22 @@ impl Workbench {
                         .item(menu_item("Take Incoming", w, move |wb, window, cx| {
                             wb.git_resolve(&r3, &c3, false, window, cx)
                         }))
-                        .item(menu_item(
-                            "Mark Resolved",
-                            w,
-                            move |wb, window, cx| wb.git_mark_resolved(&r4, &c4, window, cx),
-                        ))
+                        .item(menu_item("Mark Resolved", w, move |wb, window, cx| {
+                            wb.git_mark_resolved(&r4, &c4, window, cx)
+                        }))
+                        .submenu("Ask Agent to Resolve", window, cx, {
+                            let (repo, paths) = (repo.clone(), vec![change.path.clone()]);
+                            move |menu, window, cx| {
+                                crate::agent_send::conflict_menu_items(
+                                    menu,
+                                    "",
+                                    repo.clone(),
+                                    paths.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                     }
                 };
                 let relative = change.path.clone();

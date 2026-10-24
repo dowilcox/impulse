@@ -1946,6 +1946,7 @@ impl TerminalView {
         if block.command.as_ref().is_some_and(|c| !c.is_empty()) && !block.is_running {
             buttons.push((ToolbarButton::Rerun, "rotate-ccw", "Rerun command"));
         }
+        buttons.push((ToolbarButton::SendToAgent, "bot", "Send to agent"));
         buttons.push((ToolbarButton::Menu, "ellipsis", "More"));
         let top = px(PADDING / 2.) + self.y_offset + ch * row as f32 + ch * 0.55;
         Some(
@@ -1981,6 +1982,9 @@ impl TerminalView {
                                         view.copy_block(id, false, true, cx)
                                     }
                                     ToolbarButton::Rerun => view.rerun_block(id, cx),
+                                    ToolbarButton::SendToAgent => {
+                                        view.send_blocks_to_agent(&[id], cx)
+                                    }
                                     ToolbarButton::Menu => {
                                         view.blocks.menu = Some((id, e.position));
                                         cx.notify();
@@ -2180,6 +2184,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::scroll_bottom))
             .children(self.find_bar(cx))
             .child(grid)
+            .children(self.agent_bar(window, cx))
             .children(bottom)
             .children(self.block_menu(cx))
     }

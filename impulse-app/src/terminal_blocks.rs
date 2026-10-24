@@ -40,6 +40,7 @@ pub(crate) struct Blocks {
 pub(crate) enum ToolbarButton {
     CopyOutput,
     Rerun,
+    SendToAgent,
     Menu,
 }
 
@@ -391,6 +392,11 @@ impl TerminalView {
                 self.copy_selected_blocks(cx);
                 true
             }
+            "a" if secondary && m.shift => {
+                let ids = self.blocks.selection.clone();
+                self.send_blocks_to_agent(&ids, cx);
+                true
+            }
             _ => {
                 if !secondary {
                     self.end_block_selection(false, window, cx);
@@ -495,6 +501,7 @@ impl TerminalView {
             ("copy_output", "Copy Output", true),
             ("copy_both", "Copy Command & Output", true),
             ("rerun", "Rerun Command", has_command && !running),
+            ("send_to_agent", "Send to Agent", !running),
             (
                 "bookmark",
                 if bookmarked {
@@ -560,6 +567,7 @@ impl TerminalView {
                                     "copy_output" => view.copy_block(id, false, true, cx),
                                     "copy_both" => view.copy_block(id, true, true, cx),
                                     "rerun" => view.rerun_block(id, cx),
+                                    "send_to_agent" => view.send_blocks_to_agent(&[id], cx),
                                     "bookmark" => view.toggle_bookmarks(&[id], cx),
                                     other => view.perform_block_command(other, window, cx),
                                 }

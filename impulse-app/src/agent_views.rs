@@ -25,11 +25,13 @@ use crate::workbench_chrome::{hsla, icon};
 use crate::workspace::{Surface, Tab};
 
 /// The commands `Workbench::run_command` hands to `run_agent_command`.
-pub const AGENT_COMMANDS: [&str; 4] = [
+pub const AGENT_COMMANDS: [&str; 6] = [
     "agent_hooks",
     "agent_mcp_server",
     "review_agent_turn",
     "next_agent",
+    "agent_composer",
+    "send_selection_to_agent",
 ];
 
 /// One agent, as the inbox lists it.
@@ -150,6 +152,19 @@ impl Workbench {
     ) {
         match signal {
             AgentSignal::Changed => cx.notify(),
+            AgentSignal::SendToAgent(text) => {
+                self.send_to_best_agent(text, Some(terminal.entity_id()), window, cx)
+            }
+            AgentSignal::ReviewTurn(index) => {
+                self.review_agent_turn_at(terminal.clone(), *index, window, cx)
+            }
+            AgentSignal::RestoreTurn(index) => {
+                self.restore_agent_turn(terminal.clone(), *index, window, cx)
+            }
+            AgentSignal::Compose => {
+                self.reveal_surface(&Surface::Terminal(terminal.clone()), cx);
+                self.toggle_agent_composer(window, cx)
+            }
             AgentSignal::Notify { title, body } => {
                 // In front, the tab's dot is enough.
                 if window.is_window_active() {
@@ -171,7 +186,20 @@ impl Workbench {
                     .chain([terminal.read(cx).display_title()])
                     .collect::<Vec<_>>()
                     .join(" · ");
-                crate::agent_notify::post(title, &subtitle, body);
+                // Clicking it (where the desktop says) shows the terminal.
+                let Some(clicked) = crate::agent_notify::post(title, &subtitle, body) else {
+                    return;
+                };
+                let terminal = terminal.clone();
+                cx.spawn_in(window, async move |workbench, cx| {
+                    if clicked.recv().await.is_ok() {
+                        let _ = workbench.update_in(cx, |workbench, window, cx| {
+                            window.activate_window();
+                            workbench.reveal_terminal(&terminal, window, cx);
+                        });
+                    }
+                })
+                .detach();
             }
         }
     }
@@ -307,6 +335,8 @@ impl Workbench {
                 self.review_last_agent_turn(terminal, window, cx)
             }
             "next_agent" => self.reveal_next_waiting_agent(window, cx),
+            "agent_composer" => self.toggle_agent_composer(window, cx),
+            "send_selection_to_agent" => self.send_editor_selection_to_agent(window, cx),
             _ => {}
         }
     }
@@ -345,6 +375,176 @@ impl Workbench {
             self.reveal_surface(&Surface::Terminal(terminal), cx);
         }
         self.open_review(Some(turn.scope()), window, cx);
+    }
+
+    /// Review one of the terminal's turns, by its index (`None`: the last).
+    pub(crate) fn review_agent_turn_at(
+        &mut self,
+        terminal: Entity<TerminalView>,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = index else {
+            return self.review_last_agent_turn(Some(terminal), window, cx);
+        };
+        let turns = crate::agent_checkpoints::turns(&terminal.read(cx).agent.id);
+        let Some(turn) = turns.get(index) else {
+            return;
+        };
+        self.reveal_surface(&Surface::Terminal(terminal), cx);
+        self.open_review(Some(turn.scope()), window, cx);
+    }
+
+    /// Put the repository's files back to how they were when one of the
+    /// terminal's turns started, after asking (a snapshot first, so Undo
+    /// brings the newer state back).
+    pub(crate) fn restore_agent_turn(
+        &mut self,
+        terminal: Entity<TerminalView>,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let turns = crate::agent_checkpoints::turns(&terminal.read(cx).agent.id);
+        let Some(turn) = turns.get(index).cloned() else {
+            return;
+        };
+        let workbench = cx.entity().downgrade();
+        crate::tasks::confirm(
+            window,
+            cx,
+            format!("Restore files to before turn {}?", index + 1),
+            format!(
+                "Every file in the repository goes back to how it was when {} started that turn. \
+                 Commits are kept, and you can undo this right after.",
+                turn.agent_name
+            ),
+            "Restore",
+            "Cancel",
+            true,
+            move |yes, window, cx| {
+                if yes {
+                    let _ =
+                        workbench.update(cx, |w, cx| w.restore_turn_files(turn, index, window, cx));
+                }
+            },
+        );
+    }
+
+    fn restore_turn_files(
+        &mut self,
+        turn: crate::agent_checkpoints::Turn,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let state = crate::repository_state::RepositoryStore::state(&turn.repo_root, cx);
+        let start = turn.start.clone();
+        let restoring = state.update(cx, |state, cx| {
+            state.run(
+                Some("Restoring…".into()),
+                Some("restore agent checkpoint".into()),
+                true,
+                move |root, _| impulse_git::safety::restore(&start, &[] as &[&str], root),
+                cx,
+            )
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            let (result, snapshot) = restoring.await;
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                if let Err(error) = result {
+                    return workbench.present_git_error(&error, "Couldn't restore", window, cx);
+                }
+                let message = format!("Restored files to before turn {}", index + 1);
+                let Some(snapshot) = snapshot else {
+                    return crate::tasks::toast(
+                        window,
+                        cx,
+                        crate::tasks::ToastKind::Success,
+                        message,
+                        None,
+                        None,
+                    );
+                };
+                let (undo_state, undo_workbench) = (state.clone(), cx.entity().downgrade());
+                let undo: crate::tasks::Run = std::rc::Rc::new(move |window, cx| {
+                    let snapshot = snapshot.clone();
+                    let undoing = undo_state.update(cx, |state, cx| {
+                        state.run(
+                            None,
+                            None,
+                            false,
+                            move |root, _| {
+                                impulse_git::safety::restore(&snapshot, &[] as &[&str], root)
+                            },
+                            cx,
+                        )
+                    });
+                    let workbench = undo_workbench.clone();
+                    window
+                        .spawn(cx, async move |cx| {
+                            let (result, _) = undoing.await;
+                            if let Err(error) = result {
+                                let _ = cx.update(|window, cx| {
+                                    let _ = workbench.update(cx, |w, cx| {
+                                        w.present_git_error(
+                                            &error,
+                                            "Couldn't undo the restore",
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                });
+                            }
+                        })
+                        .detach();
+                });
+                crate::tasks::toast(
+                    window,
+                    cx,
+                    crate::tasks::ToastKind::Success,
+                    message,
+                    None,
+                    Some(("Undo", undo)),
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// The composer over the program in the focused terminal (an agent's
+    /// TUI); closes again when it's open. At a prompt the input bar is the
+    /// place to type, so it gets the keyboard instead.
+    pub(crate) fn toggle_agent_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(terminal) = self.active_terminal().cloned() else {
+            return crate::tasks::toast(
+                window,
+                cx,
+                crate::tasks::ToastKind::Info,
+                "The composer writes to the program in a terminal.".into(),
+                None,
+                None,
+            );
+        };
+        let (direct, open, cwd) = {
+            let t = terminal.read(cx);
+            (t.direct, t.agent.composer.is_some(), t.cwd.clone())
+        };
+        if !direct {
+            return terminal.update(cx, |t, cx| t.focus(window, cx));
+        }
+        if open {
+            return terminal.update(cx, |t, cx| t.close_composer(cx));
+        }
+        let workspace = self.workspace();
+        let root = if workspace.kind == crate::workspace::Kind::Folder {
+            workspace.root.to_string_lossy().into_owned()
+        } else {
+            cwd
+        };
+        let trusted = self.trust.is_trusted(&root);
+        terminal.update(cx, |t, cx| t.open_composer_at(root, trusted, cx));
     }
 
     /// Show the terminal and give it the keyboard.

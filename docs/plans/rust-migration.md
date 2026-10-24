@@ -312,7 +312,7 @@ which inserts the type when picked.*
   from the same `session-state.json` and scrollback files; the control
   socket for `impulse` (`open`, `edit` waiting for the tab, `split`, `tab`,
   `notify`, `status`, `hook`, `turns`, `blocks`, `review`, `checkpoint`,
-  `unsaved`, `comments` with `resolve`, `problems`).
+  `unsaved`, `comments` with `resolve`, `problems`, `tasks`, `project`).
 - Tasks: New Task (the sheet, the worktree beside the repository, copies,
   the task list and its slot, the task's own values and setup script once
   the project settings are trusted, the main checkout's changes moved in
@@ -321,8 +321,15 @@ which inserts the type when picked.*
   `impulse_git::landing`, update, clean up), Archive Task and Archive Merged
   Tasks with Undo, and the sidebar's repository groups with the merged and
   overlap chips. A task's terminals get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT`
-  and `IMPULSE_REPO_ROOT`. Agents' parts (an agent's request, its brief,
-  waiting for its turn) come with the agents.
+  and `IMPULSE_REPO_ROOT`. Agents ask for tasks too (`impulse tasks
+  new|finish|archive` and the MCP tools on them): New Task opens prefilled
+  with who asked and the brief (or, with `agent_task_creation =
+  trusted_projects`, the task is made without the sheet, with Undo), the
+  brief kept in `.git/impulse/tasks/<task>/brief.md` and given to the agent
+  as its first prompt; Finish runs up to landing and waits for the user,
+  and its commit step stops while another agent works in the task;
+  `impulse tasks show|wait` and `impulse project` answer as the Swift app
+  does.
 - Problems and review comments, as the Swift app has them: every language
   server's diagnostics kept per file (open or not) for the Problems tab
   (`show_problems`, Ctrl+Alt+M on Linux: by file, files with errors first,
@@ -333,7 +340,8 @@ which inserts the type when picked.*
   edited and deleted in place, and an agent's resolution (`impulse comments
   resolve`) shown with Accept and Reopen; saved in the same
   `review/<digest>.json` as the Swift app and read again when it changes.
-  Sending problems or comments to an agent's terminal is still to come.
+  Problems' Fix with Agent and Review's comments menu send to an agent's
+  terminal as well.
 
 | Problems | Review comments |
 |---|---|
@@ -358,9 +366,17 @@ the focused hunk sit under their lines.*
   when a session starts, shared-file and dependency notes, the question
   before merging a task's branch still in progress). The Agent Integration
   dialog installs and removes the hooks and the MCP server with
-  `impulse_kit::agents`' installers. Not yet: the toolbelt under an agent's
-  terminal and the composer (Send Selection to Agent), turns in the session
-  file, and a desktop notification's click going to its terminal.
+  `impulse_kit::agents`' installers. Under the agent's terminal, the
+  toolbelt (its state and time, Compose, Review Turn, and Turns, to review
+  one or restore the files to before it), and the composer over its TUI
+  (several lines, @ mentions of the workspace's files, ↑ for earlier
+  messages; Ctrl+Return sends on Linux, ⌘↩ on the Mac). Text for an agent
+  (Send Selection to Agent, a command block's Send to Agent, Problems,
+  review comments, conflicts) is typed into its prompt as a paste, and
+  waits while it's mid-turn. Turns are kept in the session file, and a
+  desktop notification's click shows its terminal where `notify-send`
+  takes `--action` (libnotify 0.7.10 and later; it waits in a thread of
+  its own until the notification closes).
 
 | Agents inbox | Agent Integration |
 |---|---|
@@ -371,6 +387,14 @@ with a check on its tab and in the sidebar, "1 waiting" in the titlebar, and
 the inbox with Review for the turn's checkpoints. Right: Agent Integration
 on the MCP server for Claude Code, the `claude mcp add-json` command it
 runs.*
+
+| Agent composer | An agent's New Task |
+|---|---|
+| ![Agent composer](images/rust-agent-composer.png) | ![An agent's New Task](images/rust-agent-task-request.png) |
+
+*Left: the composer over a stand-in Claude Code, an @ mention listing the
+workspace's files. Right: New Task as an agent asked for it (`impulse tasks
+new --agent claude --brief -`), prefilled with who asked and the brief.*
 - The terminal draws its own grid (cell runs, selection and search ranges,
   the cursor, block washes, stripes, separators and status chips), takes
   keys through the port of `KeyEncoder` and text through GPUI's input

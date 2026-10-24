@@ -433,6 +433,18 @@ impl ReviewView {
         cx.notify();
     }
 
+    /// The view's comments as a prompt for an agent; `None` (and a note
+    /// saying so) when there are none.
+    fn prompt_for_agent(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let prompt = review_comments::prompt(&self.scoped_comments());
+        if prompt.is_empty() {
+            self.message = Some("There are no review comments in this view yet.".into());
+            cx.notify();
+            return None;
+        }
+        Some(prompt)
+    }
+
     fn copy_prompt(&mut self, cx: &mut Context<Self>) {
         let scoped = self.scoped_comments();
         let prompt = review_comments::prompt(&scoped);
@@ -520,10 +532,26 @@ impl ReviewView {
         if count > 0 {
             button = button.label(count.to_string());
         }
-        // Sending to an agent's terminal joins this menu once the Rust app
-        // knows its agents.
-        button.dropdown_menu(move |menu: PopupMenu, _, _| {
-            let (copy, clear) = (view.clone(), view.clone());
+        button.dropdown_menu(move |menu: PopupMenu, window, cx| {
+            let (copy, clear, send, mark) =
+                (view.clone(), view.clone(), view.clone(), view.clone());
+            let menu = crate::agent_send::agent_menu_items(
+                menu,
+                "Send Comments to",
+                count > 0,
+                std::rc::Rc::new(move |_, cx| {
+                    send.update(cx, |view, cx| view.prompt_for_agent(cx))
+                        .ok()
+                        .flatten()
+                }),
+                Some(std::rc::Rc::new(move |cx| {
+                    if let Some(root) = mark.upgrade().map(|v| v.read(cx).root.clone()) {
+                        crate::agent_send::mark_reviewed(&root);
+                    }
+                })),
+                window,
+                cx,
+            );
             menu.item(
                 PopupMenuItem::new("Copy Comments as Prompt")
                     .disabled(count == 0)

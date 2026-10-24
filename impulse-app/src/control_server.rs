@@ -197,9 +197,47 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Incoming>) {
     {
         return;
     }
-    if let Ok(response) = reply_rx.recv_blocking() {
-        send(&mut writer, &response);
+    // Until the answer comes, or the caller hangs up (its `impulse` was
+    // stopped): then the receiver goes, and requests that wait (`tasks
+    // wait`, an agent's Finish) see their reply closed and stop.
+    loop {
+        match reply_rx.try_recv() {
+            Ok(response) => return send(&mut writer, &response),
+            Err(async_channel::TryRecvError::Closed) => return,
+            Err(async_channel::TryRecvError::Empty) => {}
+        }
+        if hung_up(&writer, Duration::from_millis(250)) {
+            return;
+        }
     }
+}
+
+/// Wait up to `wait` for the peer to close its end (it sends nothing after
+/// its request line). Stray bytes are read and dropped.
+fn hung_up(stream: &UnixStream, wait: Duration) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut poll = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ready = unsafe { libc::poll(&mut poll, 1, wait.as_millis() as i32) };
+    if ready <= 0 {
+        return false;
+    }
+    if poll.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+        return true;
+    }
+    let mut buffer = [0u8; 256];
+    let read = unsafe {
+        libc::recv(
+            stream.as_raw_fd(),
+            buffer.as_mut_ptr() as *mut libc::c_void,
+            buffer.len(),
+            libc::MSG_DONTWAIT,
+        )
+    };
+    read == 0
 }
 
 trait TakeLimit {
