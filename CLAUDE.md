@@ -112,7 +112,14 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged),
                           session restore (session.rs: autosave every 15 s
-                          when the structure changed, and at quit), the
+                          when the structure changed, and at quit; a
+                          restored terminal shows its old output down to
+                          the "restored" rule before its first command),
+                          Reopen Closed Tab and the close's Undo toast
+                          bringing back a tab, pane (into the tab it left)
+                          or workspace as it was, scrollback included
+                          (session::session_tab / session_workspace,
+                          Workbench::reopen), the
                           control socket for `impulse` (control_server.rs,
                           control_commands.rs; Linux keeps it in
                           $XDG_RUNTIME_DIR), Review (review_view.rs:

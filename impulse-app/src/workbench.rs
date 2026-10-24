@@ -40,12 +40,26 @@ pub fn bind_keys(cx: &mut App) {
     crate::changes_panel::bind_keys(cx);
 }
 
-/// A closed tab that Reopen Closed Tab brings back: files reopen, terminals
-/// get a new shell in the same folder.
+/// Something closed that Reopen Closed Tab (or the close's Undo) brings
+/// back as it was: a tab, its layout and its terminals' scrollback, back in
+/// its workspace; or a whole workspace, in its place.
 enum Closed {
-    File(PathBuf),
-    Terminal(PathBuf),
+    Tab {
+        workspace: u64,
+        tab: impulse_kit::session::SessionTab,
+        /// When a single pane closed: the tab it was in, so it can rejoin it.
+        from_tab: Option<u64>,
+    },
+    Workspace {
+        /// Its id when it closed (tabs closed from it before point there).
+        id: u64,
+        position: usize,
+        saved: impulse_kit::session::SessionWorkspace,
+    },
 }
+
+/// How many closed items are remembered.
+const MAX_CLOSED: usize = 20;
 
 /// What the sidebar shows below the workspaces.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,7 +82,11 @@ pub struct Workbench {
     /// The trusted folders (shared by every window).
     pub(crate) trust: Arc<WorkspaceTrust>,
     pub(crate) panel: SidebarPanel,
-    closed: Vec<Closed>,
+    /// Closed tabs and workspaces, newest last, each with its id.
+    closed: Vec<(u64, Closed)>,
+    /// The last close recorded: its id and what to call it (for the Undo
+    /// toast of a close the user made).
+    last_closed: Option<(u64, String)>,
     pub(crate) drag: Option<crate::workbench_panes::DividerDrag>,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
     /// `impulse edit` requests waiting for their editor to close.
@@ -164,6 +182,7 @@ impl Workbench {
             trust: args.trust_store.clone(),
             panel: SidebarPanel::Files,
             closed: Vec::new(),
+            last_closed: None,
             drag: None,
             split_bounds: Default::default(),
             pending_edits: Vec::new(),
@@ -759,6 +778,7 @@ impl Workbench {
                     .and_then(|t| t.panes.get(&pane).cloned());
                 if let Some(surface) = surface {
                     w.close_surface(&surface, window, cx);
+                    w.offer_undo_close(window, cx);
                 }
             }),
         );
@@ -782,7 +802,10 @@ impl Workbench {
             Default::default(),
             window,
             cx,
-            Rc::new(move |w, window, cx| w.remove_tab(id, window, cx)),
+            Rc::new(move |w, window, cx| {
+                w.remove_tab(id, window, cx);
+                w.offer_undo_close(window, cx);
+            }),
         );
     }
 
@@ -792,30 +815,139 @@ impl Workbench {
         let Some(index) = self.workspace().tabs.iter().position(|t| t.id == id) else {
             return;
         };
+        let workspace = self.workspace().id;
         let tab = self.workspace_mut().tabs.remove(index);
         for surface in tab.panes.values() {
-            self.remember_closed(surface, cx);
+            self.editor_closed(surface);
         }
+        let saved = crate::session::session_tab(&tab, true, cx);
+        let title = tab.focused_surface().title(cx);
+        self.remember(
+            Closed::Tab {
+                workspace,
+                tab: saved,
+                from_tab: None,
+            },
+            title,
+        );
         self.after_tab_removed(index, window, cx);
     }
 
-    fn remember_closed(&mut self, surface: &Surface, cx: &App) {
-        self.editor_closed(surface);
-        match surface {
-            Surface::Editor(e) => self.closed.push(Closed::File(e.read(cx).path.clone())),
-            Surface::Image(i) => self.closed.push(Closed::File(i.read(cx).path.clone())),
-            Surface::Terminal(t) => self
-                .closed
-                .push(Closed::Terminal(PathBuf::from(&t.read(cx).cwd))),
-            // Tools aren't reopened, as they aren't saved with the session.
-            Surface::Review(_)
-            | Surface::History(_)
-            | Surface::Settings(_)
-            | Surface::Keybindings(_)
-            | Surface::TaskFinish(_) => {}
-            Surface::Problems(_) => {}
-            Surface::ProjectSetup(_) => {}
+    /// Note something closed, unless nothing in it could come back (tools
+    /// aren't saved with the session).
+    fn remember(&mut self, item: Closed, title: String) {
+        if let Closed::Tab { tab, .. } = &item {
+            if tab.panes.iter().all(|p| p.kind == "tool") {
+                return;
+            }
         }
+        let id = self.next_id();
+        self.closed.push((id, item));
+        if self.closed.len() > MAX_CLOSED {
+            self.closed.remove(0);
+        }
+        self.last_closed = Some((id, title));
+    }
+
+    /// "Closed X" with Undo, for 10 seconds, after a close the user made.
+    pub(crate) fn offer_undo_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, title)) = self.last_closed.take() else {
+            return;
+        };
+        let workbench = cx.entity().downgrade();
+        let undo: crate::tasks::Run = std::rc::Rc::new(move |window, cx| {
+            let _ = workbench.update(cx, |w, cx| w.reopen(Some(id), window, cx));
+        });
+        crate::tasks::toast(
+            window,
+            cx,
+            crate::tasks::ToastKind::Info,
+            format!("Closed {title}"),
+            None,
+            Some(("Undo", undo)),
+        );
+    }
+
+    /// Bring back closed item `id`, or the newest.
+    pub(crate) fn reopen(&mut self, id: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
+        let index = match id {
+            Some(id) => self.closed.iter().position(|(i, _)| *i == id),
+            None => self.closed.len().checked_sub(1),
+        };
+        let Some(index) = index else {
+            return;
+        };
+        let (_, item) = self.closed.remove(index);
+        match item {
+            Closed::Tab {
+                workspace,
+                tab,
+                from_tab,
+            } => {
+                let w = self
+                    .workspaces
+                    .iter()
+                    .position(|ws| ws.id == workspace)
+                    .unwrap_or(self.active);
+                let Some(mut restored) = self.restore_tab_in(w, &tab, window, cx) else {
+                    return;
+                };
+                let pane = self.next_id();
+                let workspace = &mut self.workspaces[w];
+                // A single pane rejoins the tab it was in, when that's open.
+                let rejoin = from_tab
+                    .filter(|_| restored.panes.len() == 1)
+                    .and_then(|id| workspace.tabs.iter().position(|t| t.id == id));
+                if let Some(t) = rejoin {
+                    let surface = restored.panes.drain().next().map(|(_, s)| s);
+                    if let Some(surface) = surface {
+                        workspace.tabs[t].split(pane, surface, SplitAxis::Horizontal, false);
+                    }
+                    workspace.active = t;
+                } else {
+                    let at = (workspace.active + 1).min(workspace.tabs.len());
+                    workspace.tabs.insert(at, restored);
+                    workspace.active = at;
+                }
+                self.active = w;
+                self.focus_active(window, cx);
+                cx.notify();
+            }
+            Closed::Workspace {
+                id: old,
+                position,
+                saved,
+            } => {
+                let Some(workspace) = self.restore_workspace(&saved, window, cx) else {
+                    return;
+                };
+                // Tabs closed from it before go back to it.
+                for (_, item) in &mut self.closed {
+                    if let Closed::Tab { workspace: w, .. } = item {
+                        if *w == old {
+                            *w = workspace.id;
+                        }
+                    }
+                }
+                // Before Scratch, which stays last.
+                let at = position.min(self.workspaces.len().saturating_sub(1));
+                self.workspaces.insert(at, workspace);
+                self.activate_workspace(at, window, cx);
+            }
+        }
+    }
+
+    /// `restore_tab` for workspace `w`, its terminals defaulting to its
+    /// folder.
+    fn restore_tab_in(
+        &mut self,
+        w: usize,
+        tab: &impulse_kit::session::SessionTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Tab> {
+        let dir = self.workspaces[w].default_directory();
+        self.restore_tab(&dir, tab, window, cx)
     }
 
     /// Take a surface out of whichever tab holds it.
@@ -832,7 +964,17 @@ impl Workbench {
                 let Some(pane) = self.workspaces[w].tabs[t].pane_of(|s| surface_id(s) == id) else {
                     continue;
                 };
-                self.remember_closed(surface, cx);
+                self.editor_closed(surface);
+                let workspace = self.workspaces[w].id;
+                let from_tab = self.workspaces[w].tabs[t].id;
+                self.remember(
+                    Closed::Tab {
+                        workspace,
+                        tab: crate::session::session_surface_tab(surface, cx),
+                        from_tab: Some(from_tab),
+                    },
+                    surface.title(cx),
+                );
                 if !self.workspaces[w].tabs[t].remove(pane) {
                     self.workspaces[w].tabs.remove(t);
                     let previous = self.active;
@@ -917,15 +1059,7 @@ impl Workbench {
                 self.add_tab(active, terminal, window, cx);
             }
             "close_tab" => self.close_focused(window, cx),
-            "reopen_tab" => match self.closed.pop() {
-                Some(Closed::File(path)) => self.open_file(&path, window, cx),
-                Some(Closed::Terminal(dir)) => {
-                    let terminal = self.new_terminal(dir, Vec::new(), window, cx);
-                    let active = self.active;
-                    self.add_tab(active, terminal, window, cx);
-                }
-                None => {}
-            },
+            "reopen_tab" => self.reopen(None, window, cx),
             "next_tab" | "prev_tab" => {
                 let count = self.workspace().tabs.len();
                 if count > 0 {
@@ -1246,12 +1380,25 @@ impl Workbench {
             self.set_notice(warning, cx);
             return;
         }
-        self.workspaces.remove(index);
+        let removed = self.workspaces.remove(index);
+        for surface in removed.all_surfaces() {
+            self.editor_closed(surface);
+        }
+        let saved = crate::session::session_workspace(&removed, true, cx);
+        self.remember(
+            Closed::Workspace {
+                id: removed.id,
+                position: index,
+                saved,
+            },
+            format!("workspace {}", removed.name()),
+        );
         if self.active >= index && self.active > 0 {
             self.active -= 1;
         }
         let active = self.active.min(self.workspaces.len() - 1);
         self.activate_workspace(active, window, cx);
+        self.offer_undo_close(window, cx);
     }
 
     fn format_document(&mut self, _: &FormatDocument, window: &mut Window, cx: &mut Context<Self>) {

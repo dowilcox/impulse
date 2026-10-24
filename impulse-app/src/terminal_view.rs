@@ -47,6 +47,8 @@ use crate::terminal_input_bar::InputBar;
 
 /// Same inset as the Swift renderer's `padding`.
 const PADDING: f32 = 12.0;
+/// The rule under replayed output from a previous session.
+const RESTORED_RULE: &str = "restored from the previous session";
 
 actions!(
     terminal,
@@ -208,6 +210,20 @@ impl Grid {
         })
     }
 
+    /// The row holding the "restored from the previous session" rule,
+    /// looking a few rows up from `above` (the shell prints its prompt's
+    /// first lines before the prompt mark).
+    fn restored_rule_row(&self, above: i32) -> Option<i32> {
+        let mut row = above.min(self.rows as i32) - 1;
+        while row >= 0 && row >= above - 8 {
+            if self.row_text(row as usize).text.contains(RESTORED_RULE) {
+                return Some(row);
+            }
+            row -= 1;
+        }
+        None
+    }
+
     /// The last row at or above `up_to` with a glyph on it.
     fn last_non_blank_row(&self, up_to: i32) -> i32 {
         let mut row = up_to.min(self.rows as i32 - 1);
@@ -324,6 +340,9 @@ pub struct TerminalView {
     /// The command sent from the bar began with a space (kept out of the
     /// history).
     pub(crate) hidden_pending: bool,
+    /// Started with a previous session's output, shown above the first
+    /// prompt until a command runs.
+    restored_output: bool,
     current_hidden: bool,
     current_command: Option<String>,
     /// Blocks whose command was typed with a leading space.
@@ -414,6 +433,7 @@ impl TerminalView {
         // In a task: which one, its slot and the main checkout.
         env.extend(crate::tasks::identity(&cwd));
         let launch = crate::shell_launch::launch(&env);
+        let restored_output = transcript.as_deref().is_some_and(|t| !t.is_empty());
         let config = TerminalConfig {
             shell_path: launch.shell.clone(),
             shell_args: launch.args.clone(),
@@ -424,9 +444,9 @@ impl TerminalView {
             minimum_contrast: settings.terminal_minimum_contrast as f32,
             allow_clipboard_write: settings.terminal_allow_osc52_write,
             allow_clipboard_read: settings.terminal_allow_osc52_read,
-            restored_transcript: transcript.filter(|t| !t.is_empty()).map(|t| {
-                format!("{t}\u{1b}[0;2m── restored from the previous session ──\u{1b}[0m\r\n")
-            }),
+            restored_transcript: transcript
+                .filter(|t| !t.is_empty())
+                .map(|t| format!("{t}\u{1b}[0;2m── {RESTORED_RULE} ──\u{1b}[0m\r\n")),
             ..Default::default()
         };
         let size = (80, 24);
@@ -530,6 +550,7 @@ impl TerminalView {
             no_bar: false,
             hidden_pending: false,
             current_hidden: false,
+            restored_output,
             current_command: None,
             hidden_blocks: HashSet::new(),
             session_id,
@@ -2126,6 +2147,10 @@ impl TerminalView {
                     block.end_row
                 } else if overlay.has_blocks {
                     overlay.prompt_row.map_or(rows - 1, |p| p - 1)
+                } else if let (true, Some(prompt)) = (self.restored_output, overlay.prompt_row) {
+                    // Before the first command, a restored session's output
+                    // (ending at its "restored" rule) is the content.
+                    grid.restored_rule_row(prompt).unwrap_or(prompt - 1)
                 } else {
                     -1
                 };

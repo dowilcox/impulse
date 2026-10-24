@@ -192,6 +192,57 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
     }
 }
 
+/// A tab as the session file holds it.
+pub(crate) fn session_tab(tab: &Tab, with_scrollback: bool, cx: &App) -> SessionTab {
+    let order = tab.layout.leaves();
+    let index = |id: &PaneId| order.iter().position(|o| o == id).unwrap_or(0) as i64;
+    SessionTab {
+        pinned: tab.pinned,
+        panes: order
+            .iter()
+            .filter_map(|id| tab.panes.get(id))
+            .map(|s| surface_state(s, with_scrollback, cx))
+            .collect(),
+        layout: tab
+            .is_split()
+            .then(|| tab.layout.map_panes(&mut |id| index(id))),
+        focused_pane: tab.is_split().then(|| index(&tab.focused)),
+    }
+}
+
+/// One surface as a tab of its own (a pane closed out of a split).
+pub(crate) fn session_surface_tab(surface: &Surface, cx: &App) -> SessionTab {
+    SessionTab {
+        panes: vec![surface_state(surface, true, cx)],
+        ..Default::default()
+    }
+}
+
+/// A workspace as the session file holds it.
+pub(crate) fn session_workspace(
+    workspace: &Workspace,
+    with_scrollback: bool,
+    cx: &App,
+) -> SessionWorkspace {
+    SessionWorkspace {
+        kind: match workspace.kind {
+            Kind::Folder => "folder",
+            Kind::Scratch => "scratch",
+        }
+        .into(),
+        root: workspace.root.to_string_lossy().into_owned(),
+        name: workspace.custom_name.clone(),
+        expanded: Some(workspace.expanded),
+        tabs: workspace
+            .tabs
+            .iter()
+            .map(|tab| session_tab(tab, with_scrollback, cx))
+            .collect(),
+        active_tab_index: Some(workspace.active as i64),
+        file_tree_root: None,
+    }
+}
+
 impl Workbench {
     /// This window as the session file holds it.
     pub(crate) fn session_window(&self, with_scrollback: bool, cx: &App) -> SessionWindow {
@@ -199,42 +250,7 @@ impl Workbench {
         let workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| {
-                let tabs = workspace
-                    .tabs
-                    .iter()
-                    .map(|tab| {
-                        let order = tab.layout.leaves();
-                        let index =
-                            |id: &PaneId| order.iter().position(|o| o == id).unwrap_or(0) as i64;
-                        SessionTab {
-                            pinned: tab.pinned,
-                            panes: order
-                                .iter()
-                                .filter_map(|id| tab.panes.get(id))
-                                .map(|s| surface_state(s, with_scrollback, cx))
-                                .collect(),
-                            layout: tab
-                                .is_split()
-                                .then(|| tab.layout.map_panes(&mut |id| index(id))),
-                            focused_pane: tab.is_split().then(|| index(&tab.focused)),
-                        }
-                    })
-                    .collect();
-                SessionWorkspace {
-                    kind: match workspace.kind {
-                        Kind::Folder => "folder",
-                        Kind::Scratch => "scratch",
-                    }
-                    .into(),
-                    root: workspace.root.to_string_lossy().into_owned(),
-                    name: workspace.custom_name.clone(),
-                    expanded: Some(workspace.expanded),
-                    tabs,
-                    active_tab_index: Some(workspace.active as i64),
-                    file_tree_root: None,
-                }
-            })
+            .map(|workspace| session_workspace(workspace, with_scrollback, cx))
             .collect();
         SessionWindow {
             workspaces: Some(workspaces),
@@ -254,33 +270,12 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         for saved in state.workspaces.unwrap_or_default() {
-            let kind = if saved.kind == "folder" {
-                Kind::Folder
-            } else {
-                Kind::Scratch
+            if saved.kind != "folder" && self.workspaces.iter().any(|w| w.kind == Kind::Scratch) {
+                continue;
+            }
+            let Some(workspace) = self.restore_workspace(&saved, window, cx) else {
+                continue;
             };
-            let root = PathBuf::from(&saved.root);
-            if kind == Kind::Folder && !root.is_dir() {
-                continue;
-            }
-            if kind == Kind::Scratch && self.workspaces.iter().any(|w| w.kind == Kind::Scratch) {
-                continue;
-            }
-            let id = self.next_id();
-            let mut workspace = Workspace::new(id, kind, root);
-            workspace.custom_name = saved.name.clone();
-            workspace.expanded = saved.expanded.unwrap_or(false);
-            let mut restored_active = 0;
-            for (t, tab) in saved.tabs.iter().enumerate() {
-                let Some(tab) = self.restore_tab(&workspace, tab, window, cx) else {
-                    continue;
-                };
-                if saved.active_tab_index == Some(t as i64) {
-                    restored_active = workspace.tabs.len();
-                }
-                workspace.tabs.push(tab);
-            }
-            workspace.active = restored_active.min(workspace.tabs.len().saturating_sub(1));
             self.workspaces.push(workspace);
         }
         if self.workspaces.is_empty() {
@@ -304,9 +299,44 @@ impl Workbench {
         self.show_workspace(active, window, cx);
     }
 
-    fn restore_tab(
+    /// A saved workspace with its tabs; `None` for a folder that's gone.
+    pub(crate) fn restore_workspace(
         &mut self,
-        workspace: &Workspace,
+        saved: &SessionWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Workspace> {
+        let kind = if saved.kind == "folder" {
+            Kind::Folder
+        } else {
+            Kind::Scratch
+        };
+        let root = PathBuf::from(&saved.root);
+        if kind == Kind::Folder && !root.is_dir() {
+            return None;
+        }
+        let id = self.next_id();
+        let mut workspace = Workspace::new(id, kind, root);
+        workspace.custom_name = saved.name.clone();
+        workspace.expanded = saved.expanded.unwrap_or(false);
+        let mut restored_active = 0;
+        for (t, tab) in saved.tabs.iter().enumerate() {
+            let dir = workspace.default_directory();
+            let Some(tab) = self.restore_tab(&dir, tab, window, cx) else {
+                continue;
+            };
+            if saved.active_tab_index == Some(t as i64) {
+                restored_active = workspace.tabs.len();
+            }
+            workspace.tabs.push(tab);
+        }
+        workspace.active = restored_active.min(workspace.tabs.len().saturating_sub(1));
+        Some(workspace)
+    }
+
+    pub(crate) fn restore_tab(
+        &mut self,
+        default_dir: &Path,
         saved: &SessionTab,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -321,7 +351,7 @@ impl Workbench {
                         .as_deref()
                         .map(PathBuf::from)
                         .filter(|d| d.is_dir())
-                        .unwrap_or_else(|| workspace.default_directory());
+                        .unwrap_or_else(|| default_dir.to_path_buf());
                     let terminal = self.new_terminal_restoring(
                         cwd,
                         Vec::new(),
