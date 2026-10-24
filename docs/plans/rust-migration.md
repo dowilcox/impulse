@@ -475,6 +475,9 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   Branches, Agent Integration, Archive Merged Tasks, the overlap list,
   Keyboard Shortcuts' Search by keys, Install All) are drawn by
   `chrome_button`, and every dialog takes the UI font's line height.
+  Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
+  16-point box in the system blue when on), not GPUI Kit's, which takes
+  the theme's accent.
 - `scripts/spike/linux-shot.sh` screenshots the app under Xvfb with software
   Vulkan, so CI can check the UI without a GPU.
 - The headless snapshot mode (`debug_snapshot.rs`, debug builds only, as

@@ -11,8 +11,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::Disableable as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FocusHandle, FontWeight, Subscription,
     WeakEntity, Window,
@@ -28,7 +26,7 @@ use crate::task_cleanup::{ignored_files_warning, nested_repository_message, remo
 use crate::tasks::{self, confirm, toast, ToastKind};
 use crate::terminal_view::TerminalViewEvent;
 use crate::workbench::{surface_id, Workbench};
-use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind, ChromeCheckbox};
 use crate::workspace::{Kind, Surface};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -469,11 +467,12 @@ impl TaskFinishView {
         }
         column
             .child(
-                Checkbox::new("finish-remember")
+                ChromeCheckbox::new("finish-remember")
                     .label(format!(
                         "Remember for {} (on this computer; Project Setup can change it)",
                         self.main_name()
                     ))
+                    .label_style(11.5, self.palette.text_secondary)
                     .checked(self.remembers_landing)
                     .disabled(self.is_running)
                     .on_change(self.act_bool(|v, on| v.remembers_landing = on)),
@@ -500,7 +499,7 @@ impl TaskFinishView {
             .flex_col()
             .gap(px(4.))
             .child(
-                Checkbox::new("finish-delete-branch")
+                ChromeCheckbox::new("finish-delete-branch")
                     .label(format!("Delete {} once it's merged", self.branch))
                     .checked(self.deletes_branch)
                     .disabled(self.is_running)
@@ -509,7 +508,7 @@ impl TaskFinishView {
             .when(self.is_published && self.remote.is_some(), |d| {
                 d.child(
                     div().pl(px(18.)).child(
-                        Checkbox::new("finish-delete-remote")
+                        ChromeCheckbox::new("finish-delete-remote")
                             .label(format!(
                                 "…and on {}",
                                 self.remote.clone().unwrap_or_default()

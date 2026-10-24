@@ -1874,3 +1874,143 @@ pub(crate) fn chrome_button(
         .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
         .child(div().whitespace_nowrap().child(title.into()))
 }
+
+/// SwiftUI's `.checkbox` toggle (an `NSButton` checkbox): a 16-point box,
+/// rounded 4, in the system blue with a white check when on (the sheets
+/// don't tint it), its label (12, or as `label_style` says) 6.5 after.
+/// `small` is the 12-point control. The builder names are GPUI Kit's
+/// `Checkbox`'s.
+#[derive(IntoElement)]
+pub(crate) struct ChromeCheckbox {
+    id: gpui_kit::ElementId,
+    label: Option<gpui_kit::SharedString>,
+    checked: bool,
+    disabled: bool,
+    small: bool,
+    label_size: f32,
+    label_color: Option<KitRgba>,
+    mono: bool,
+    on_change: Option<CheckboxHandler>,
+}
+
+/// What a checkbox click asks for, told to its owner.
+type CheckboxHandler = Rc<dyn Fn(&bool, &mut Window, &mut gpui_kit::App)>;
+
+impl ChromeCheckbox {
+    pub(crate) fn new(id: impl Into<gpui_kit::ElementId>) -> Self {
+        ChromeCheckbox {
+            id: id.into(),
+            label: None,
+            checked: false,
+            disabled: false,
+            small: false,
+            label_size: 12.,
+            label_color: None,
+            mono: false,
+            on_change: None,
+        }
+    }
+
+    /// The label's size and color (it inherits the color otherwise).
+    pub(crate) fn label_style(mut self, size: f32, color: KitRgba) -> Self {
+        self.label_size = size;
+        self.label_color = Some(color);
+        self
+    }
+
+    /// The label in the monospaced font (a path).
+    pub(crate) fn mono(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+
+    pub(crate) fn label(mut self, label: impl Into<gpui_kit::SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub(crate) fn checked(mut self, checked: bool) -> Self {
+        self.checked = checked;
+        self
+    }
+
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub(crate) fn small(mut self) -> Self {
+        self.small = true;
+        self
+    }
+
+    /// Hears the value a click asks for.
+    pub(crate) fn on_change(
+        mut self,
+        handler: impl Fn(&bool, &mut Window, &mut gpui_kit::App) + 'static,
+    ) -> Self {
+        self.on_change = Some(Rc::new(handler));
+        self
+    }
+
+    pub(crate) fn on_click(
+        self,
+        handler: impl Fn(&bool, &mut Window, &mut gpui_kit::App) + 'static,
+    ) -> Self {
+        self.on_change(handler)
+    }
+}
+
+impl RenderOnce for ChromeCheckbox {
+    fn render(self, _: &mut Window, cx: &mut gpui_kit::App) -> impl IntoElement {
+        let light = crate::alert::is_light(cx);
+        let ink = if light {
+            KitRgba::BLACK
+        } else {
+            KitRgba::WHITE
+        };
+        let (size, radius, gap, mark) = if self.small {
+            (12., 3., 5., 9.)
+        } else {
+            (16., 4., 6.5, 12.)
+        };
+        let checked = self.checked;
+        let handler = self.on_change.filter(|_| !self.disabled);
+        div()
+            .id(self.id)
+            .flex()
+            .items_start()
+            .gap(px(gap))
+            .when(self.disabled, |d| d.opacity(0.5))
+            .when_some(handler, |d, handler| {
+                d.cursor_pointer()
+                    .on_click(move |_, window, cx| handler(&!checked, window, cx))
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(size))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(radius))
+                    .bg(if checked {
+                        hsla(KitRgba::from_hex(if light { "#007AFF" } else { "#0A84FF" }))
+                    } else {
+                        hsla(ink.opacity(0.1))
+                    })
+                    .when(!checked, |d| {
+                        d.border_1().border_color(hsla(ink.opacity(0.12)))
+                    })
+                    .when(checked, |d| d.child(icon("check", mark, KitRgba::WHITE))),
+            )
+            .children(self.label.map(|label| {
+                div()
+                    .min_w_0()
+                    .text_size(px(self.label_size))
+                    .when_some(self.label_color, |d, c| d.text_color(hsla(c)))
+                    .when(self.mono, |d| d.font_family("JetBrains Mono"))
+                    .child(label)
+            }))
+    }
+}

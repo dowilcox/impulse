@@ -12,9 +12,8 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::{Disableable as _, WindowExt as _};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
 };
@@ -30,7 +29,7 @@ use impulse_kit::project::{detector, folder_clone, task_environment};
 use crate::settings_view::{choice_select, Choice, ChoiceSelect};
 use crate::tasks::{self, toast, ToastKind};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, ButtonKind};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, ButtonKind, ChromeCheckbox};
 
 /// The agent that asked for a task (the Swift `AgentTaskRequest`): who,
 /// and from which folder.
@@ -827,7 +826,7 @@ impl Render for TaskSheet {
                         .flex_col()
                         .gap(px(4.))
                         .child(
-                            Checkbox::new("task-move")
+                            ChromeCheckbox::new("task-move")
                                 .label(move_label)
                                 .checked(moving)
                                 .disabled(unavailable.is_some())

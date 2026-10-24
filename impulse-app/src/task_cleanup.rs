@@ -12,8 +12,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::{Disableable as _, WindowExt as _};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, Context, FontWeight, Window};
 use impulse_git::safety::{self, SafetySnapshot};
 use impulse_git::{branches, ignored, landing, operations, snapshot};
@@ -23,7 +22,7 @@ use impulse_kit::trust::WorkspaceTrust;
 
 use crate::tasks::{self, confirm, toast, Run, Then, ToastAction, ToastKind};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, ButtonKind};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, ButtonKind, ChromeCheckbox};
 
 /// A task whose folder was removed, with what Undo needs.
 #[derive(Clone)]
@@ -1001,7 +1000,7 @@ impl Render for MergedTasksSheet {
                     .items_center()
                     .gap(px(8.))
                     .child(
-                        Checkbox::new(("merged-row", index))
+                        ChromeCheckbox::new(("merged-row", index))
                             .checked(row.is_on)
                             .disabled(!row.can_archive())
                             .on_change(cx.listener(move |sheet, checked: &bool, window, cx| {
@@ -1054,7 +1053,7 @@ impl Render for MergedTasksSheet {
             })
             .when(!self.rows.is_empty(), |d| {
                 d.child(
-                    Checkbox::new("merged-delete-branches")
+                    ChromeCheckbox::new("merged-delete-branches")
                         .label("Delete their branches too")
                         .checked(self.delete_branches)
                         .on_change(cx.listener(|sheet, checked: &bool, _, cx| {
@@ -1065,7 +1064,7 @@ impl Render for MergedTasksSheet {
                 .when(!remotes.is_empty(), |d| {
                     d.child(
                         div().pl(px(18.)).child(
-                            Checkbox::new("merged-delete-remote")
+                            ChromeCheckbox::new("merged-delete-remote")
                                 .label(format!(
                                     "…and on {} (Undo can't bring those back)",
                                     remotes.join(", ")

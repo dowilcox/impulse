@@ -15,7 +15,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::{
@@ -33,7 +32,7 @@ use crate::project_setup_model::{
 use crate::settings_view::{icon_button, mono_field, MONO_FONT};
 use crate::tasks::{self, toast, Then, ToastKind};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind, ChromeCheckbox};
 use crate::workspace::{Kind, Surface};
 
 /// The local file, as the notes name it.
@@ -760,7 +759,7 @@ impl ProjectSetupView {
                     .items_center()
                     .gap(px(8.))
                     .child(
-                        Checkbox::new((tag, id as usize))
+                        ChromeCheckbox::new((tag, id as usize))
                             .checked(row.is_on)
                             .on_change(toggle),
                     )
@@ -796,8 +795,9 @@ impl ProjectSetupView {
                     .min_w_0()
                     .child(
                         div().font_family(MONO_FONT).child(
-                            Checkbox::new((tag, id as usize))
+                            ChromeCheckbox::new((tag, id as usize))
                                 .label(row.path.clone())
+                                .mono()
                                 .checked(row.is_on)
                                 .on_change(toggle),
                         ),
@@ -1288,7 +1288,7 @@ impl ProjectSetupView {
                 .items_center()
                 .gap(px(10.))
                 .child(
-                    Checkbox::new("compose-override")
+                    ChromeCheckbox::new("compose-override")
                         .label("Move them in each task")
                         .checked(m.compose_override)
                         .on_change(self.act_bool(|m, on| m.compose_override = on)),
@@ -1507,7 +1507,7 @@ impl ProjectSetupView {
                             .items_center()
                             .gap(px(8.))
                             .child(
-                                Checkbox::new(("action-on", id as usize))
+                                ChromeCheckbox::new(("action-on", id as usize))
                                     .checked(row.is_on)
                                     .on_change(cx.listener(move |view, checked: &bool, _, cx| {
                                         if let Some(row) =

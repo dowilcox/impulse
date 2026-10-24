@@ -10,7 +10,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use gpui_kit::component::button::Button;
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, NumberInputEvent, StepAction};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_kit::component::tooltip::Tooltip;
@@ -30,7 +29,9 @@ use serde_json::{json, Value};
 use crate::commands::RunCommand;
 use crate::settings_store::SettingsStore;
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, icon, ButtonKind};
+use crate::workbench_chrome::{
+    abbreviate_home, chrome_button, hsla, icon, ButtonKind, ChromeCheckbox,
+};
 use crate::workspace::Surface;
 
 pub(crate) const MONO_FONT: &str = "JetBrains Mono";
@@ -734,10 +735,11 @@ impl SettingsView {
         column
             .child(div().flex_1())
             .child(
-                Checkbox::new("only-modified")
+                ChromeCheckbox::new("only-modified")
                     .checked(self.only_modified)
                     .label("Only changed settings")
                     .small()
+                    .label_style(11.5, self.palette.text_secondary)
                     .on_click(cx.listener(|view, checked: &bool, _, cx| {
                         view.only_modified = *checked;
                         cx.notify();
@@ -1307,10 +1309,10 @@ impl SettingsView {
                                     .build(window, cx)
                                 })
                                 .child(
-                                    Checkbox::new(("reload-check", index))
+                                    ChromeCheckbox::new(("reload-check", index))
                                         .checked(reload)
                                         .label("Reload")
-                                        .small()
+                                        .label_style(11.5, p.text_secondary)
                                         .on_click(move |checked, _, cx| {
                                             let checked = *checked;
                                             SettingsStore::update(cx, |s| {
