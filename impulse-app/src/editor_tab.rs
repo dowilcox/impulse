@@ -111,6 +111,8 @@ pub struct EditorTab {
     _signature_request: Option<gpui_kit::Task<()>>,
     /// The selection the marks were worked out for.
     marked_at: Option<std::ops::Range<usize>>,
+    /// The text has the keyboard: Monaco marks occurrences only then.
+    text_focused: bool,
     /// Vim mode, with `editor_vim_mode` on (`editor_vim`).
     pub(crate) vim: Option<crate::editor_vim::Attached>,
     /// Change marks, the peek, inline blame and conflicts (`editor_git`).
@@ -264,6 +266,7 @@ impl EditorTab {
             rename: None,
             _signature_request: None,
             marked_at: None,
+            text_focused: false,
             vim,
             peek: None,
             diff_inline: false,
@@ -1386,6 +1389,7 @@ pub(crate) fn gutter_inset(
 impl Render for EditorTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_inline_text(window, cx);
+        self.track_text_focus(window, cx);
         let signature = self.signature_popup(cx);
         let rename = self.rename_box(cx);
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
@@ -1523,11 +1527,12 @@ impl EditorTab {
         self.marked_at = Some(range.clone());
         self.git_cursor_moved(cx);
         let settings = crate::settings_store::SettingsStore::get(cx);
-        let wanted = if range.is_empty() {
-            settings.editor_occurrences_highlight
-        } else {
-            settings.editor_selection_highlight
-        };
+        let wanted = self.text_focused
+            && if range.is_empty() {
+                settings.editor_occurrences_highlight
+            } else {
+                settings.editor_selection_highlight
+            };
         // Marks for where the cursor was go as soon as it moves off them.
         let stale = self.marks.as_ref().is_some_and(|marks| {
             !marks
@@ -1577,6 +1582,19 @@ impl EditorTab {
             };
             let _ = tab.update(cx, |tab, cx| tab.set_marks(ranges, cx));
         }));
+    }
+
+    /// Monaco's word highlighter: marks go when the text loses the
+    /// keyboard and are worked out again when it comes back.
+    fn track_text_focus(&mut self, window: &Window, cx: &mut Context<Self>) {
+        use gpui_kit::Focusable as _;
+        let focused = self.state.focus_handle(cx).is_focused(window);
+        if focused == self.text_focused {
+            return;
+        }
+        self.text_focused = focused;
+        self.marked_at = None;
+        self.selection_moved(cx);
     }
 
     fn set_marks(&mut self, ranges: Vec<std::ops::Range<usize>>, cx: &mut Context<Self>) {
