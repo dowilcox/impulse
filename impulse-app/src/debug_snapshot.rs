@@ -514,6 +514,30 @@ fn perform_now(action: &str, cx: &mut App) {
             workbench.run_command(command, window, cx);
             return None;
         }
+        // Review's own actions, on every Review open.
+        if let Some(review_action) = action.strip_prefix("review-") {
+            let reviews: Vec<_> = workbench
+                .workspaces
+                .iter()
+                .flat_map(|w| &w.tabs)
+                .flat_map(|t| t.surfaces())
+                .filter_map(|(_, s)| match s {
+                    Surface::Review(r) => Some(r.clone()),
+                    _ => None,
+                })
+                .collect();
+            if reviews.is_empty() {
+                fail(format!("{action}: no Review is open"));
+            }
+            for review in reviews {
+                if let Err(error) =
+                    review.update(cx, |r, cx| r.debug_action(review_action, window, cx))
+                {
+                    fail(error);
+                }
+            }
+            return None;
+        }
         match (name, argument) {
             ("wait", None) => {}
             ("sidebar" | "no-sidebar", None) => {

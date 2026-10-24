@@ -10,6 +10,8 @@
 //! comments are in `comments`.
 
 mod comments;
+mod navigator;
+mod selection;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -25,6 +27,7 @@ use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 use impulse_kit::theme::ResolvedTheme;
 
 use crate::workbench_chrome::{hsla, icon};
+use gpui_kit::component::menu::ContextMenuExt as _;
 
 /// More context than any file shown has lines: the whole file.
 const WHOLE_FILE: i32 = 100_000;
@@ -61,6 +64,8 @@ struct ReviewFile {
     /// Its review comments, and which no longer match their lines.
     comments: Vec<impulse_kit::review_comments::ReviewComment>,
     outdated: HashSet<String>,
+    /// Lines picked in one of its hunks (`selection`).
+    selection: Option<selection::LineSelection>,
 }
 
 /// One row of the list.
@@ -249,6 +254,9 @@ pub fn default_scope(root: &str) -> DiffScope {
 
 pub struct ReviewView {
     pub root: String,
+    /// The navigator's filter field (`navigator`), made on first render.
+    nav_filter: Option<gpui_kit::Entity<gpui_kit::component::input::InputState>>,
+    _nav_filter_events: Option<gpui_kit::Subscription>,
     pub scope: DiffScope,
     options: DiffOptions,
     default_context: i32,
@@ -337,6 +345,8 @@ impl ReviewView {
             comments: impulse_kit::review_comments::CommentStore::load(PathBuf::new()),
             comments_stamp: None,
             composer: None,
+            nav_filter: None,
+            _nav_filter_events: None,
             editing: None,
             _refresh: refresh,
         };
@@ -522,6 +532,7 @@ impl ReviewView {
                     change,
                     comments: Vec::new(),
                     outdated: HashSet::new(),
+                    selection: None,
                 }
             })
             .collect();
@@ -684,9 +695,17 @@ impl ReviewView {
             Action::Unstage => unstage,
             Action::Revert => revert,
         };
+        // The hunk's selected lines only, when it holds the selection.
+        let lines = hunk.and_then(|h| self.selected_lines(index, h));
         let Some(file) = self.files.get_mut(index).filter(|f| allowed && !f.busy) else {
             return;
         };
+        if hunk.is_some() && file.diff.as_ref().is_some_and(|d| d.truncated) {
+            self.message = Some(impulse_git::operations::TRUNCATED_DIFF_MESSAGE.to_string());
+            cx.notify();
+            return;
+        }
+        file.selection = None;
         file.busy = true;
         let root = self.root.clone();
         let path = file.change.path.clone();
@@ -720,7 +739,10 @@ impl ReviewView {
                         Action::Unstage => ops::PatchTarget::Unstage,
                         Action::Revert => ops::PatchTarget::Discard,
                     };
-                    let selection = impulse_git::patch::PatchSelection::whole_hunks(&[h]);
+                    let selection = match &lines {
+                        Some(lines) => impulse_git::patch::PatchSelection::lines(lines, h),
+                        None => impulse_git::patch::PatchSelection::whole_hunks(&[h]),
+                    };
                     ops::apply(
                         target,
                         &selection,
@@ -755,12 +777,62 @@ impl ReviewView {
         let k = &event.keystroke;
         let m = &k.modifiers;
         // Keys typed into a comment are the comment's.
-        if m.control || m.alt || m.platform || !self.focus.is_focused(window) {
+        if !self.focus.is_focused(window) {
+            return;
+        }
+        // ⌘C copies the selected lines; ⌘Y stages, ⇧⌘Y unstages, ⌥⌘Z
+        // reverts the focused hunk (Ctrl on Linux).
+        let command = if cfg!(target_os = "macos") {
+            m.platform && !m.control
+        } else {
+            m.control && !m.platform
+        };
+        if command {
+            let handled = match (k.key.as_str(), m.shift, m.alt) {
+                ("c", false, false) => self.copy_selection(cx),
+                ("y", shift, false) => {
+                    if let Some((file, hunk)) = self.focused {
+                        let action = if shift {
+                            Action::Unstage
+                        } else {
+                            Action::Stage
+                        };
+                        self.act(action, file, Some(hunk), cx);
+                    }
+                    true
+                }
+                ("z", false, true) => {
+                    if let Some((file, hunk)) = self.focused {
+                        self.act(Action::Revert, file, Some(hunk), cx);
+                    }
+                    true
+                }
+                _ => false,
+            };
+            if handled {
+                cx.stop_propagation();
+            }
+            return;
+        }
+        if m.control || m.alt || m.platform {
+            return;
+        }
+        if k.key == "escape" {
+            if self.clear_selections(cx) {
+                cx.stop_propagation();
+            }
             return;
         }
         let key = k.key_char.clone().unwrap_or_else(|| k.key.clone());
+        if self.press(&key, window, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    /// One of Review's letter keys; false when `key` isn't one.
+    fn press(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let focused = self.focused;
-        match key.as_str() {
+        match key {
             "j" => self.move_hunk(1, cx),
             "k" => self.move_hunk(-1, cx),
             "n" => self.move_file(1, false, cx),
@@ -768,7 +840,7 @@ impl ReviewView {
             "N" => self.move_file(1, true, cx),
             "s" | "u" | "x" => {
                 if let Some((file, hunk)) = focused {
-                    let action = match key.as_str() {
+                    let action = match key {
                         "s" => Action::Stage,
                         "u" => Action::Unstage,
                         _ => Action::Revert,
@@ -792,14 +864,101 @@ impl ReviewView {
                     self.open_composer(file, hunk, None, window, cx);
                 }
             }
+            "t" | "T" | "/" => self.focus_filter(window, cx),
             "enter" | " " | "space" => {
                 if let Some((file, _)) = focused {
                     self.toggle_expanded(file, cx);
                 }
             }
-            _ => return,
+            _ => return false,
         }
-        cx.stop_propagation();
+        true
+    }
+
+    /// The snapshot's `review-…` actions (the Swift `debugAction`): `split`,
+    /// `keys=` letters, `select=path:hunk:from-to`, `comment=` text on the
+    /// focused hunk, `reveal=` a path, `edit` the first comment,
+    /// `composer`, `scope=uncommitted` or `scope=branch:<base>`.
+    pub fn debug_action(
+        &mut self,
+        action: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let index_of = |view: &Self, path: &str| {
+            view.files
+                .iter()
+                .position(|f| f.change.path == path)
+                .ok_or_else(|| format!("review: no file {path}"))
+        };
+        if action == "split" {
+            self.layout = Layout::Split;
+            self.rebuild_rows();
+        } else if let Some(keys) = action.strip_prefix("keys=") {
+            for key in keys.chars() {
+                self.press(&key.to_string(), window, cx);
+            }
+        } else if let Some(spec) = action.strip_prefix("select=") {
+            let parts: Vec<&str> = spec.split(':').collect();
+            let [path, hunk, range] = parts.as_slice() else {
+                return Err(format!("review: select={spec}"));
+            };
+            let f = index_of(self, path)?;
+            let hunk: usize = hunk.parse().map_err(|_| format!("review: select={spec}"))?;
+            let (from, to) = range.split_once('-').unwrap_or((range, range));
+            let (from, to): (usize, usize) = (
+                from.parse().map_err(|_| format!("review: select={spec}"))?,
+                to.parse().map_err(|_| format!("review: select={spec}"))?,
+            );
+            self.toggle_line(f, hunk, from, false, cx);
+            self.toggle_line(f, hunk, to, true, cx);
+        } else if let Some(text) = action.strip_prefix("comment=") {
+            let (f, h) = self
+                .focused
+                .ok_or("review: comment= needs a focused hunk")?;
+            self.open_composer(f, h, None, window, cx);
+            let input = self.composer.as_ref().map(|c| c.input.clone());
+            if let Some(input) = input {
+                input.update(cx, |input, cx| {
+                    input.set_value(text.to_string(), window, cx)
+                });
+            }
+            self.save_composer(window, cx);
+        } else if let Some(path) = action.strip_prefix("reveal=") {
+            let f = index_of(self, path)?;
+            self.reveal_file(f, cx);
+            let hunks = self.files[f].diff.as_ref().map_or(0, |d| d.hunks.len());
+            if hunks > 0 {
+                self.focused = Some((f, 0));
+            }
+        } else if action == "edit" {
+            let id = self
+                .files
+                .iter()
+                .flat_map(|f| &f.comments)
+                .next()
+                .map(|c| c.id.clone());
+            let id = id.ok_or("review: no comment to edit")?;
+            self.edit_comment(id, window, cx);
+        } else if action == "composer" {
+            let (f, h) = self
+                .focused
+                .ok_or("review: composer needs a focused hunk")?;
+            self.open_composer(f, h, None, window, cx);
+        } else if action == "scope=uncommitted" {
+            self.set_scope(DiffScope::Uncommitted, cx);
+        } else if let Some(base) = action.strip_prefix("scope=branch:") {
+            self.set_scope(
+                DiffScope::Branch {
+                    base: base.to_string(),
+                },
+                cx,
+            );
+        } else {
+            return Err(format!("review: unknown action {action}"));
+        }
+        cx.notify();
+        Ok(())
     }
 
     fn open(&mut self, index: usize, hunk: Option<usize>, cx: &mut Context<Self>) {
@@ -1092,59 +1251,6 @@ impl ReviewView {
             )
     }
 
-    fn navigator(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &self.palette;
-        let current = self.focused.map(|(f, _)| f);
-        let mut column = div()
-            .id("review-navigator")
-            .flex()
-            .flex_col()
-            .flex_none()
-            .w(px(NAVIGATOR_WIDTH))
-            .h_full()
-            .overflow_y_scroll()
-            .py(px(6.))
-            .bg(hsla(p.panel))
-            .border_r_1()
-            .border_color(hsla(p.hairline));
-        for (index, file) in self.files.iter().enumerate() {
-            let name = std::path::Path::new(&file.change.path)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let selected = current == Some(index);
-            column = column.child(
-                div()
-                    .id(("nav", index))
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(metrics::ROW_HEIGHT))
-                    .px(px(10.))
-                    .mx(px(6.))
-                    .rounded(px(metrics::RADIUS))
-                    .when(selected, |d| d.bg(hsla(p.selection)))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .on_click(cx.listener(move |view, _, _, cx| view.reveal_file(index, cx)))
-                    .child(status_letter(file.change.status, p))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_size(px(12.))
-                            .text_color(hsla(if file.viewed { p.text_tertiary } else { p.text }))
-                            .child(name),
-                    )
-                    .children(self.navigator_count(index))
-                    .when(file.viewed, |d| d.child(icon("check", 11., p.success))),
-            );
-        }
-        column
-    }
-
     fn render_row(
         &mut self,
         index: usize,
@@ -1195,11 +1301,31 @@ impl ReviewView {
                     .map(|h| h.header.clone())
                     .unwrap_or_default();
                 let focused = self.focused == Some((f, h));
-                let (stage, unstage, revert) = self.capabilities();
+                let truncated = self.files[f].diff.as_ref().is_some_and(|d| d.truncated);
+                let (can_stage, can_unstage, can_revert) = self.capabilities();
+                let (stage, unstage, revert) = if truncated {
+                    (false, false, false)
+                } else {
+                    (can_stage, can_unstage, can_revert)
+                };
                 let busy = self.files[f].busy;
-                let mut actions = div().flex().gap(px(4.));
+                let selected = self.selected_lines(f, h).map_or(0, |l| l.len());
+                let what = match selected {
+                    0 => "hunk".to_string(),
+                    1 => "1 line".to_string(),
+                    n => format!("{n} lines"),
+                };
+                let mut actions = div().flex().items_center().gap(px(4.));
                 let p = &self.palette;
-                let button = |id: &'static str, label: &'static str, primary: bool| {
+                if truncated && (can_stage || can_unstage || can_revert) {
+                    actions = actions.child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(hsla(p.text_tertiary))
+                            .child("Whole file only"),
+                    );
+                }
+                let button = |id: &'static str, label: String, primary: bool| {
                     div()
                         .id(id)
                         .px(px(8.))
@@ -1221,19 +1347,31 @@ impl ReviewView {
                 };
                 if !busy {
                     if stage {
-                        actions = actions.child(button("stage-hunk", "Stage", true).on_click(
-                            cx.listener(move |v, _, _, cx| v.act(Action::Stage, f, Some(h), cx)),
-                        ));
+                        actions = actions.child(
+                            button("stage-hunk", format!("Stage {what}"), true).on_click(
+                                cx.listener(move |v, _, _, cx| {
+                                    v.act(Action::Stage, f, Some(h), cx)
+                                }),
+                            ),
+                        );
                     }
                     if unstage {
-                        actions = actions.child(button("unstage-hunk", "Unstage", true).on_click(
-                            cx.listener(move |v, _, _, cx| v.act(Action::Unstage, f, Some(h), cx)),
-                        ));
+                        actions = actions.child(
+                            button("unstage-hunk", format!("Unstage {what}"), true).on_click(
+                                cx.listener(move |v, _, _, cx| {
+                                    v.act(Action::Unstage, f, Some(h), cx)
+                                }),
+                            ),
+                        );
                     }
                     if revert {
-                        actions = actions.child(button("revert-hunk", "Revert", false).on_click(
-                            cx.listener(move |v, _, _, cx| v.act(Action::Revert, f, Some(h), cx)),
-                        ));
+                        actions = actions.child(
+                            button("revert-hunk", format!("Revert {what}"), false).on_click(
+                                cx.listener(move |v, _, _, cx| {
+                                    v.act(Action::Revert, f, Some(h), cx)
+                                }),
+                            ),
+                        );
                     }
                 }
                 actions = actions.child(self.hunk_comment_button(f, h, cx));
@@ -1516,8 +1654,12 @@ impl ReviewView {
                 Side::Old => vec![line.old_lineno],
                 Side::New => vec![line.new_lineno],
             };
+            // The gutter: numbers and marker. A click there selects a
+            // changed line (Shift: extends); elsewhere it focuses the hunk.
+            let selectable = line.kind != DiffLineKind::Context && !busy;
+            let mut gutter = div().id(("gutter", i)).flex_none().flex().h_full();
             for number in numbers {
-                column = column.child(
+                gutter = gutter.child(
                     div()
                         .flex_none()
                         .w(px(gutter_width))
@@ -1530,31 +1672,67 @@ impl ReviewView {
                         .child(number.map(|n| n.to_string()).unwrap_or_default()),
                 );
             }
-            column = column
-                .child(
+            gutter = gutter.child(
+                div()
+                    .flex_none()
+                    .w(px(marker_width))
+                    .flex()
+                    .justify_center()
+                    .items_center()
+                    .text_color(hsla(marker_color))
+                    .child(marker),
+            );
+            if let (Some(l), true) = (*index, selectable) {
+                gutter = gutter
+                    .cursor_pointer()
+                    .hover(|d| d.bg(hsla(colors.hover)))
+                    .on_click(cx.listener(move |v, event: &gpui_kit::ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        v.toggle_line(f, h, l, event.modifiers().shift, cx);
+                    }));
+            }
+            if index.is_some_and(|l| self.is_selected(f, h, l)) {
+                column = column.relative().child(
                     div()
-                        .flex_none()
-                        .w(px(marker_width))
-                        .flex()
-                        .justify_center()
-                        .items_center()
-                        .text_color(hsla(marker_color))
-                        .child(marker),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .min_w_0()
-                        .whitespace_nowrap()
-                        .child(code_text(line, colors.text, word)),
+                        .absolute()
+                        .inset_0()
+                        .bg(hsla(colors.accent).opacity(0.22))
+                        .child(div().w(px(3.)).h_full().bg(hsla(colors.accent))),
                 );
+            }
+            column = column.child(gutter).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .min_w_0()
+                    .whitespace_nowrap()
+                    .child(code_text(line, colors.text, word)),
+            );
             if let (Some(l), false) = (index, busy) {
                 column = column
                     .relative()
                     .group(LINE_GROUP)
                     .child(self.gutter_comment_button(f, h, *l, i, cx));
             }
+            let column = match index {
+                Some(l) => {
+                    let (l, view) = (*l, cx.entity().downgrade());
+                    column
+                        .id(("line", i))
+                        .on_click(cx.listener(move |v, _, _, cx| {
+                            v.focused = Some((f, h));
+                            cx.notify();
+                        }))
+                        .context_menu(move |menu, _, cx| {
+                            let Some(entity) = view.upgrade() else {
+                                return menu;
+                            };
+                            entity.read(cx).line_menu(menu, f, h, l, view.clone())
+                        })
+                        .into_any_element()
+                }
+                None => column.into_any_element(),
+            };
             row = row.child(column);
         }
         if focused {
@@ -1699,7 +1877,7 @@ impl Render for ReviewView {
                     .flex_1()
                     .min_h_0()
                     .when(wide && !self.files.is_empty(), |d| {
-                        d.child(self.navigator(cx))
+                        d.child(self.navigator(window, cx))
                     })
                     .child(body),
             )

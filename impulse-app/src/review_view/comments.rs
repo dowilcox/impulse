@@ -41,7 +41,7 @@ pub(super) struct Composer {
     pub line: usize,
     pub end_line: usize,
     pub snippet: String,
-    input: Entity<TextareaState>,
+    pub(super) input: Entity<TextareaState>,
     _events: Subscription,
 }
 
@@ -57,6 +57,18 @@ pub(super) struct Editing {
 /// it reads as outdated once line `first + k` no longer reads like snippet
 /// line k.
 pub(super) fn anchor(lines: &[DiffLine], target: usize) -> (CommentSide, usize, usize, String) {
+    anchor_range(lines, &[target], target)
+}
+
+/// `anchor` for a comment on `indices` (selected lines, `target` among
+/// them): the range of their numbers on `target`'s side, and every line of
+/// that range as the snippet, context included, so the comment is outdated
+/// when line `first + k` no longer reads like snippet line k.
+pub(super) fn anchor_range(
+    lines: &[DiffLine],
+    indices: &[usize],
+    target: usize,
+) -> (CommentSide, usize, usize, String) {
     let line = &lines[target];
     let side = if line.kind == DiffLineKind::Removed {
         CommentSide::Old
@@ -64,16 +76,28 @@ pub(super) fn anchor(lines: &[DiffLine], target: usize) -> (CommentSide, usize, 
         CommentSide::New
     };
     let number = |l: &DiffLine| match side {
-        CommentSide::Old => l.old_lineno,
-        CommentSide::New => l.new_lineno,
+        CommentSide::Old => l.old_lineno.filter(|_| l.kind != DiffLineKind::Added),
+        CommentSide::New => l.new_lineno.filter(|_| l.kind != DiffLineKind::Removed),
     };
-    let first = number(line).unwrap_or(1) as usize;
+    let numbers: Vec<usize> = indices
+        .iter()
+        .filter_map(|&i| lines.get(i))
+        .filter_map(|l| number(l))
+        .map(|n| n as usize)
+        .filter(|&n| n > 0)
+        .collect();
+    let first = numbers
+        .iter()
+        .copied()
+        .min()
+        .unwrap_or_else(|| number(line).unwrap_or(1) as usize);
+    let last = numbers.iter().copied().max().unwrap_or(first);
     let spanned: Vec<&str> = lines
         .iter()
-        .filter(|l| number(l).map(|n| n as usize) == Some(first))
+        .filter(|l| number(l).is_some_and(|n| (first..=last).contains(&(n as usize))))
         .map(|l| l.content.as_str())
         .collect();
-    (side, first, first, spanned.join("\n"))
+    (side, first, last, spanned.join("\n"))
 }
 
 /// The keys of the comments that show after `line`: its new-side number
@@ -290,11 +314,21 @@ impl ReviewView {
         else {
             return;
         };
+        let selected = self.selected_lines(f, hunk).unwrap_or_default();
+        // For the hunk: the selection's last line, else its last changed line.
         let target = line
+            .or_else(|| selected.last().copied())
             .or_else(|| lines.iter().rposition(|l| l.kind != DiffLineKind::Context))
             .unwrap_or(lines.len() - 1)
             .min(lines.len() - 1);
-        let (side, first, last, snippet) = anchor(lines, target);
+        // A selection including the line widens the comment to the range.
+        let indices = if selected.contains(&target) {
+            selected
+        } else {
+            vec![target]
+        };
+        let (side, first, last, snippet) = anchor_range(lines, &indices, target);
+        let target = indices.last().copied().unwrap_or(target);
         let path = file.change.path.clone();
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -327,7 +361,7 @@ impl ReviewView {
         cx.notify();
     }
 
-    fn save_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn save_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(composer) = self.composer.take() else {
             return;
         };
@@ -356,7 +390,7 @@ impl ReviewView {
         cx.notify();
     }
 
-    fn edit_comment(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn edit_comment(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = self
             .comments
             .comments
@@ -939,6 +973,11 @@ mod tests {
             (CommentSide::Old, 5, 5, "    old();".to_string())
         );
         assert_eq!(anchor(&lines, 3), (CommentSide::New, 6, 6, "}".to_string()));
+        // A selection: its range on the target's side, context included.
+        assert_eq!(
+            anchor_range(&lines, &[2, 3], 2),
+            (CommentSide::New, 5, 6, "    new();\n}".to_string())
+        );
         assert_eq!(anchor_keys(&lines[1]), vec![(CommentSide::Old, 5)]);
         assert_eq!(anchor_keys(&lines[2]), vec![(CommentSide::New, 5)]);
         assert_eq!(anchor_keys(&lines[0]), vec![(CommentSide::New, 4)]);

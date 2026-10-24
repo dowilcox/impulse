@@ -123,10 +123,16 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           control socket for `impulse` (control_server.rs,
                           control_commands.rs; Linux keeps it in
                           $XDG_RUNTIME_DIR), Review (review_view.rs:
-                          scopes, navigator, unified and split diffs with
-                          word-level changes, stage/unstage/revert of files
-                          and hunks, viewed marks, the j/k/n/p/s/u/x/v/c/o
-                          keys; review comments in review_view/comments.rs:
+                          scopes, unified and split diffs with word-level
+                          changes, stage/unstage/revert of files, hunks and
+                          selected lines (review_view/selection.rs: gutter
+                          click, Shift extends, ⌘C, Esc, the line menu),
+                          viewed marks, the j/k/n/p/s/u/x/v/c/o/t keys and
+                          ⌘Y ⇧⌘Y ⌥⌘Z; the navigator in
+                          review_view/navigator.rs: filter, viewed bar,
+                          files by folder; the snapshot's review-… actions
+                          through ReviewView::debug_action; review comments
+                          in review_view/comments.rs, spanning a selection:
                           the composer from a line's +, a hunk's Comment or
                           c, comments under their lines and outdated ones
                           on top, edit, delete, an agent's resolution with
