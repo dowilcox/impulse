@@ -503,8 +503,10 @@ impl TerminalView {
                 .await;
             let alive = this.update(cx, |view, cx| {
                 // Solid while typing, as macOS text cursors are, and not
-                // blinking at all without the focus.
+                // blinking at all without the focus or while the input bar
+                // has the caret.
                 let blinks = view.shown_focused
+                    && !view.bar_shown(cx)
                     && SettingsStore::get(cx).terminal_cursor_blink
                     && view.last_input.elapsed() > Duration::from_millis(600);
                 let on = !blinks || !view.blink_on;
@@ -819,7 +821,7 @@ impl TerminalView {
         let cols = ((f32::from(bounds.size.width) - PADDING * 2.0) / f32::from(m.width))
             .floor()
             .max(2.0) as u16;
-        let rows = ((f32::from(bounds.size.height) - PADDING) / f32::from(m.height))
+        let rows = ((f32::from(bounds.size.height) - PADDING * 2.0) / f32::from(m.height))
             .floor()
             .max(1.0) as u16;
         if (cols, rows) != self.size {
@@ -982,7 +984,7 @@ impl TerminalView {
     /// The cell under `position` (window coordinates), clamped to the grid.
     fn cell_at(&self, position: Point<Pixels>, bounds: Bounds<Pixels>) -> (usize, usize) {
         let x = f32::from(position.x - bounds.origin.x) - PADDING;
-        let y = f32::from(position.y - bounds.origin.y - self.y_offset) - PADDING / 2.0;
+        let y = f32::from(position.y - bounds.origin.y - self.y_offset) - PADDING;
         let col = (x / f32::from(self.metrics.width)).floor().max(0.0) as usize;
         let row = (y / f32::from(self.metrics.height)).floor().max(0.0) as usize;
         (
@@ -1468,6 +1470,7 @@ struct Frame {
     accent: KitRgba,
     selection: KitRgba,
     focused: bool,
+    hide_cursor: bool,
     blink_on: bool,
     cursor_shape: String,
     marked: Option<String>,
@@ -1582,7 +1585,7 @@ impl Frame {
         let Some(grid) = &self.grid else { return };
         let rows = self.draw_rows.min(grid.rows);
         let m = self.metrics;
-        let origin = bounds.origin + point(px(PADDING), px(PADDING / 2.0) + self.y_offset);
+        let origin = bounds.origin + point(px(PADDING), px(PADDING) + self.y_offset);
         let cell_origin =
             |row: usize, col: usize| origin + point(m.width * col as f32, m.height * row as f32);
         let row_bounds = |row: usize| {
@@ -1836,8 +1839,12 @@ impl Frame {
 
         // The cursor: a block behind its character (drawn above as the
         // background color), a beam or underline, or a hollow box when the
-        // pane isn't focused.
-        if let Some((row, col, _)) = grid.cursor.filter(|(r, c, _)| *r < rows && *c < grid.cols) {
+        // pane isn't focused. None while the input bar stands in for the
+        // prompt.
+        if let Some((row, col, _)) = grid
+            .cursor
+            .filter(|(r, c, _)| !self.hide_cursor && *r < rows && *c < grid.cols)
+        {
             let cursor = cell_hsla(rgb_color(&self.theme.cursor));
             let at = cell_origin(row, col);
             let wide = grid.cell(row, col).flags.contains(CellFlags::WIDE_CHAR);
@@ -2162,7 +2169,7 @@ impl EntityInputHandler for TerminalView {
             element_bounds.origin
                 + point(
                     px(PADDING) + m.width * col as f32,
-                    px(PADDING / 2.0) + m.height * row as f32,
+                    px(PADDING) + m.height * row as f32,
                 ),
             size(m.width, m.height),
         ))
@@ -2272,7 +2279,7 @@ impl TerminalView {
         }
         buttons.push((ToolbarButton::SendToAgent, "bot", "Send to agent"));
         buttons.push((ToolbarButton::Menu, "ellipsis", "More"));
-        let top = px(PADDING / 2.) + self.y_offset + ch * row as f32 + ch * 0.55;
+        let top = px(PADDING) + self.y_offset + ch * row as f32 + ch * 0.55;
         Some(
             div()
                 .absolute()
@@ -2448,6 +2455,9 @@ impl Render for TerminalView {
                                     accent: view.palette.accent,
                                     selection: view.palette.selection_strong,
                                     focused,
+                                    // The input bar owns the caret while
+                                    // it stands in for the prompt.
+                                    hide_cursor: view.bar_shown(cx),
                                     blink_on: view.blink_on,
                                     cursor_shape: settings.terminal_cursor_shape.clone(),
                                     marked: view.marked.clone(),

@@ -74,6 +74,52 @@ pub(crate) fn progress_ring(
     .flex_none()
 }
 
+/// The macOS spinner (a small `ProgressView` at 0.8): eight rounded spokes
+/// turning clockwise a spoke per `step`, the newest brightest. `color` is
+/// the label color it's drawn in at low strength.
+pub(crate) fn spinner(color: KitRgba, size: f32, step: usize) -> impl IntoElement {
+    use std::f32::consts::PI;
+    const SPOKES: usize = 8;
+    gpui_kit::canvas(
+        |_, _, _| {},
+        move |bounds: gpui_kit::Bounds<gpui_kit::Pixels>, _, window, _| {
+            let center = bounds.center();
+            let scale = bounds.size.width / 13.5;
+            let (inner, outer, half) = (scale * 2.5, scale * 6.25, scale * 0.95);
+            let head = step % SPOKES;
+            for spoke in 0..SPOKES {
+                let angle = -PI / 2. + spoke as f32 * 2. * PI / SPOKES as f32;
+                let (dx, dy) = (angle.cos(), angle.sin());
+                // A capsule from `inner` to `outer` along the spoke.
+                let mut path = gpui_kit::PathBuilder::fill();
+                let ends = [(outer - half, angle), (inner + half, angle + PI)];
+                for (index, (distance, facing)) in ends.into_iter().enumerate() {
+                    let middle =
+                        gpui_kit::point(center.x + distance * dx, center.y + distance * dy);
+                    for i in 0..=6 {
+                        let a = facing - PI / 2. + PI * i as f32 / 6.;
+                        let at =
+                            gpui_kit::point(middle.x + half * a.cos(), middle.y + half * a.sin());
+                        if index == 0 && i == 0 {
+                            path.move_to(at);
+                        } else {
+                            path.line_to(at);
+                        }
+                    }
+                }
+                path.close();
+                let age = (head + SPOKES - spoke) % SPOKES;
+                let strength = 0.35 * (1. - age as f32 / SPOKES as f32 * 0.75);
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, hsla(color.opacity(strength)));
+                }
+            }
+        },
+    )
+    .size(px(size))
+    .flex_none()
+}
+
 /// Text set with Swift's `.tracking(0.6)` (its uppercase section headers):
 /// GPUI has no letter spacing, so each character is laid out on its own,
 /// 0.6 apart.

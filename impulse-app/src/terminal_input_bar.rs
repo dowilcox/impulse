@@ -21,9 +21,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    anchored, canvas, deferred, div, percentage, point, prelude::*, px, svg, Anchor, Animation,
-    AnimationExt as _, AnyElement, Context, Entity, FontWeight, Hsla, MouseButton, Pixels,
-    SharedString, Transformation, Window,
+    anchored, canvas, deferred, div, point, prelude::*, px, Anchor, AnyElement, Context, Entity,
+    FontWeight, Hsla, MouseButton, Pixels, SharedString, Window,
 };
 use impulse_kit::chrome::Rgba as KitRgba;
 use impulse_kit::completion::engine::{self, CompletionContext};
@@ -79,6 +78,11 @@ pub(crate) struct InputBar {
     shell_cache: ShellCache,
     /// The bar's width in the last frame (which chips fit).
     width: Rc<Cell<Pixels>>,
+    /// The running command's spinner: its step, whether its timer runs, and
+    /// when it was last drawn (the timer stops once it isn't).
+    spinner_step: usize,
+    spinner_ticking: bool,
+    spinner_drawn: Option<Instant>,
 }
 
 fn c(hex: &str) -> KitRgba {
@@ -644,6 +648,9 @@ impl TerminalView {
         // Keep the editor in step with the terminal.
         let running = self.command_running;
         let password = self.password;
+        if running && !password {
+            self.tick_spinner(cx);
+        }
         let settings = SettingsStore::get(cx).clone();
         let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         let font_size = px((settings.terminal_font_size - 1).max(6) as f32);
@@ -732,11 +739,8 @@ impl TerminalView {
                                 .id("stop")
                                 .flex_none()
                                 .cursor_pointer()
-                                .child(crate::workbench_chrome::icon(
-                                    "circle-stop",
-                                    12.,
-                                    c(&theme.red),
-                                ))
+                                // SF Symbols' stop.fill at 11 points.
+                                .child(div().size(px(9.)).rounded(px(1.5)).bg(hsla(c(&theme.red))))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|view, _, _, cx| {
@@ -759,20 +763,45 @@ impl TerminalView {
             .into_any_element()
     }
 
+    /// Step the spinner eight times a second, as the macOS one turns, while
+    /// the command runs and the bar is drawn: a notify only per step rather
+    /// than an animation's every frame, since a dev server can run for hours.
+    fn tick_spinner(&mut self, cx: &mut Context<Self>) {
+        self.bar.spinner_drawn = Some(Instant::now());
+        if self.bar.spinner_ticking {
+            return;
+        }
+        self.bar.spinner_ticking = true;
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(125))
+                .await;
+            let go_on = this.update(cx, |view, cx| {
+                let drawn = view
+                    .bar
+                    .spinner_drawn
+                    .is_some_and(|at| at.elapsed() < Duration::from_millis(500));
+                if !view.command_running || view.password || !drawn {
+                    view.bar.spinner_ticking = false;
+                    return false;
+                }
+                view.bar.spinner_step = view.bar.spinner_step.wrapping_add(1);
+                cx.notify();
+                true
+            });
+            if !matches!(go_on, Ok(true)) {
+                break;
+            }
+        })
+        .detach();
+    }
+
     fn leading_glyph(&self) -> AnyElement {
         let theme = &self.theme;
         let glyph = if self.password {
             crate::workbench_chrome::icon("eye-off", 12., c(&theme.yellow)).into_any_element()
         } else if self.command_running {
-            svg()
-                .path("icons/loader-circle.svg")
-                .size(px(12.))
-                .text_color(hsla(c(&theme.fg_muted)))
-                .with_animation(
-                    "running",
-                    Animation::new(Duration::from_millis(900)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                )
+            crate::workbench_chrome::spinner(c(&theme.fg), 13., self.bar.spinner_step)
                 .into_any_element()
         } else {
             crate::workbench_chrome::icon("chevron-right", 12., c(&theme.accent)).into_any_element()
@@ -845,7 +874,7 @@ impl TerminalView {
         for (icon, text, chevron, status) in &chips {
             let width =
                 (16. + if icon.is_some() || status.is_some() {
-                    14.
+                    15.
                 } else {
                     0.
                 } + text.chars().count() as f32 * char_width
@@ -880,7 +909,7 @@ impl TerminalView {
                             .items_center()
                             .gap(px(6.))
                             .px(px(8.))
-                            .py(px(3.))
+                            .h(px(20.))
                             .rounded(px(10.))
                             .bg(chip_bg)
                             .cursor_pointer()
@@ -895,7 +924,7 @@ impl TerminalView {
                             })
                             .child(crate::workbench_chrome::icon(
                                 "file",
-                                9.5,
+                                11.,
                                 c(&theme.fg_comment),
                             ))
                             .child(part(r.changed.to_string(), &theme.fg_muted))
@@ -924,7 +953,7 @@ impl TerminalView {
                                 .into_any_element(),
                         ),
                         None => icon.map(|i| {
-                            crate::workbench_chrome::icon(i, 9.5, c(&theme.fg_comment))
+                            crate::workbench_chrome::icon(i, 11., c(&theme.fg_comment))
                                 .into_any_element()
                         }),
                     };
@@ -934,7 +963,7 @@ impl TerminalView {
                         .items_center()
                         .gap(px(4.))
                         .px(px(8.))
-                        .py(px(3.))
+                        .h(px(20.))
                         .max_w(px(280.))
                         .rounded(px(10.))
                         .bg(chip_bg)
