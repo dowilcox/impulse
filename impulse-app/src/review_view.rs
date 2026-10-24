@@ -1692,26 +1692,35 @@ impl ReviewView {
                     },
                 )))
             })
-            .child(plain("open-file", "Open").on_click(cx.listener(move |v, _, _, cx| {
-                cx.stop_propagation();
-                v.open(f, Some(0), cx)
-            })))
+            .child(
+                plain("open-file", "Open").on_click(cx.listener(move |v, _, _, cx| {
+                    cx.stop_propagation();
+                    v.open(f, Some(0), cx)
+                })),
+            )
             .context_menu(move |menu, _, _| {
-                let item = |label: &'static str, act: Box<dyn Fn(&mut ReviewView, &mut Context<ReviewView>)>| {
+                let item = |label: &'static str, act: ViewAct| {
                     let view = view.clone();
-                    gpui_kit::component::menu::PopupMenuItem::new(label).on_click(move |_, _, cx| {
-                        let _ = view.update(cx, |v, cx| act(v, cx));
-                    })
+                    gpui_kit::component::menu::PopupMenuItem::new(label).on_click(
+                        move |_, _, cx| {
+                            let _ = view.update(cx, |v, cx| act(v, cx));
+                        },
+                    )
                 };
                 let copied = full_path.clone();
                 let mut menu = menu
                     .item(item(
                         "Copy Path",
                         Box::new(move |_, cx| {
-                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copied.clone()))
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                copied.clone(),
+                            ))
                         }),
                     ))
-                    .item(item("Open File", Box::new(move |v, cx| v.open(f, Some(0), cx))));
+                    .item(item(
+                        "Open File",
+                        Box::new(move |v, cx| v.open(f, Some(0), cx)),
+                    ));
                 if can_edit_diff {
                     menu = menu.item(item(
                         "Open in Diff Editor",
@@ -2065,3 +2074,6 @@ impl gpui_kit::Focusable for ReviewView {
         self.focus.clone()
     }
 }
+
+/// A menu item's action on the view.
+type ViewAct = Box<dyn Fn(&mut ReviewView, &mut Context<ReviewView>)>;

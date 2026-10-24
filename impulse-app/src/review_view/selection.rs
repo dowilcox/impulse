@@ -38,8 +38,13 @@ pub(super) fn toggled(
     });
     if extend {
         let (from, to) = (selection.anchor.min(line), selection.anchor.max(line));
-        for index in from..=to.min(lines.len().saturating_sub(1)) {
-            if lines[index].kind != DiffLineKind::Context {
+        for (index, diff_line) in lines
+            .iter()
+            .enumerate()
+            .take(to.min(lines.len().saturating_sub(1)) + 1)
+            .skip(from)
+        {
+            if diff_line.kind != DiffLineKind::Context {
                 selection.lines.insert(index);
             }
         }
@@ -159,14 +164,12 @@ impl ReviewView {
         } else {
             self.capabilities()
         };
-        let item =
-            |label: &'static str,
-             act: Box<dyn Fn(&mut ReviewView, &mut Window, &mut Context<ReviewView>)>| {
-                let view = view.clone();
-                PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                    let _ = view.update(cx, |v, cx| act(v, window, cx));
-                })
-            };
+        let item = |label: &'static str, act: WindowAct| {
+            let view = view.clone();
+            PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                let _ = view.update(cx, |v, cx| act(v, window, cx));
+            })
+        };
         let mut menu = menu.item(item(
             "Comment on This Line",
             Box::new(move |v, window, cx| v.open_composer(f, h, Some(line), window, cx)),
@@ -201,6 +204,9 @@ impl ReviewView {
             ))
     }
 }
+
+/// A menu item's action on the view.
+type WindowAct = Box<dyn Fn(&mut ReviewView, &mut Window, &mut Context<ReviewView>)>;
 
 #[cfg(test)]
 mod tests {

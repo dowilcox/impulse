@@ -185,8 +185,7 @@ impl BranchManager {
             })
         };
         let menu_items = {
-            let mut items: Vec<(String, bool, Box<dyn Fn(&mut Window, &mut gpui_kit::App)>)> =
-                Vec::new();
+            let mut items: Vec<(String, bool, MenuAction)> = Vec::new();
             if !is_current {
                 let (r, n) = (repo.clone(), name.clone());
                 items.push((
@@ -740,3 +739,6 @@ impl Workbench {
         );
     }
 }
+
+/// A menu item's action.
+type MenuAction = Box<dyn Fn(&mut Window, &mut gpui_kit::App)>;

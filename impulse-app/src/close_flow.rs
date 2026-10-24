@@ -106,7 +106,7 @@ impl Workbench {
         answered: Answered,
         window: &mut Window,
         cx: &mut Context<Self>,
-        done: Rc<dyn Fn(&mut Workbench, &mut Window, &mut Context<Workbench>)>,
+        done: Then,
     ) {
         let Some((surfaces, pinned)) = self.target_surfaces(target) else {
             return;
@@ -442,3 +442,6 @@ impl Workbench {
         });
     }
 }
+
+/// What runs once closing goes ahead.
+type Then = Rc<dyn Fn(&mut Workbench, &mut Window, &mut Context<Workbench>)>;

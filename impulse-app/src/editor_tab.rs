@@ -946,7 +946,6 @@ impl EditorTab {
     }
 
     #[cfg(debug_assertions)]
-
     pub fn focus_handle(&self, cx: &gpui_kit::App) -> gpui_kit::FocusHandle {
         use gpui_kit::Focusable as _;
         self.state.read(cx).focus_handle(cx)

@@ -108,7 +108,7 @@ impl Workbench {
         let input = cx.new(|cx| InputState::new(window, cx).default_value(initial.to_string()));
         let submit: Submit = Rc::new(submit);
         let workbench = cx.entity().downgrade();
-        let done: Rc<dyn Fn(&mut Window, &mut gpui_kit::App)> = {
+        let done: Rc<WindowFn> = {
             let (input, submit) = (input.clone(), submit.clone());
             Rc::new(move |window, cx| {
                 let text = input.read(cx).value().to_string();
@@ -172,3 +172,6 @@ impl Workbench {
         });
     }
 }
+
+/// What runs after the prompt.
+type WindowFn = dyn Fn(&mut Window, &mut gpui_kit::App);

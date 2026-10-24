@@ -83,7 +83,7 @@ pub(super) fn anchor_range(
     let numbers: Vec<usize> = indices
         .iter()
         .filter_map(|&i| lines.get(i))
-        .filter_map(|l| number(l))
+        .filter_map(number)
         .map(|n| n as usize)
         .filter(|&n| n > 0)
         .collect();

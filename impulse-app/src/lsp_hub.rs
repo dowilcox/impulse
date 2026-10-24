@@ -356,7 +356,7 @@ impl DocumentLink {
         text: &Rope,
         offset: usize,
         cx: &App,
-    ) -> Task<Result<Vec<(std::ops::Range<usize>, bool)>, String>> {
+    ) -> Task<Result<Vec<Highlight>, String>> {
         let params = lsp_types::DocumentHighlightParams {
             text_document_position_params: self.at(text, offset),
             work_done_progress_params: Default::default(),
@@ -740,3 +740,6 @@ fn link(location: lsp_types::Location) -> LocationLink {
         target_selection_range: location.range,
     }
 }
+
+/// A document highlight: its range, and whether it's a write.
+type Highlight = (std::ops::Range<usize>, bool);
