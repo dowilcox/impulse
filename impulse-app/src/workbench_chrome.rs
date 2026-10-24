@@ -979,7 +979,7 @@ impl Workbench {
                     // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
                     .h(px(22.))
                     .mx(px(4.))
-                    .pl(px(8. + 16. * row.depth as f32))
+                    .pl(px(4. + 16. * row.depth as f32))
                     .pr(px(8.))
                     .rounded(px(5.))
                     .text_size(px(13.))
@@ -1019,7 +1019,9 @@ impl Workbench {
                             &row.name, row.is_dir, expanded,
                         ))
                         .size(px(16.))
-                        .flex_none(),
+                        .flex_none()
+                        // Right after the chevron, as Swift's row has it.
+                        .ml(px(-6.)),
                     )
                     .child(
                         div()
@@ -1447,7 +1449,22 @@ impl Workbench {
                         .into_any_element(),
                 );
             }
-            _ => {}
+            // Review, History and tools have no shell or cursor, but the
+            // folder still follows the tab (Swift's `currentCwd`).
+            Some(surface) => {
+                let folder = surface.directory(cx).or_else(|| {
+                    (self.workspace().kind == Kind::Folder).then(|| self.workspace().root.clone())
+                });
+                if let Some(folder) = folder {
+                    let cwd = folder.to_string_lossy().into_owned();
+                    left.push(
+                        status_item("status-cwd", Some("folder"), &cwd, None, &p)
+                            .child(abbreviate_home(&cwd))
+                            .into_any_element(),
+                    );
+                }
+            }
+            None => {}
         }
         if let Some(notice) = self.notice.clone() {
             left.push(
