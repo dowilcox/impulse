@@ -28,7 +28,8 @@ use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 use impulse_kit::theme::ResolvedTheme;
 
 use crate::workbench_chrome::{hsla, icon};
-use gpui_kit::component::menu::ContextMenuExt as _;
+use gpui_kit::component::button::ButtonVariants as _;
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _};
 
 /// More context than any file shown has lines: the whole file.
 const WHOLE_FILE: i32 = 100_000;
@@ -201,6 +202,16 @@ pub fn scope_title(scope: &DiffScope) -> String {
     }
 }
 
+/// "3 Lines of Context", "Whole File" (the Swift header's menu).
+fn context_title(lines: i32) -> String {
+    match lines {
+        WHOLE_FILE.. => "Whole File".into(),
+        0 => "Changed Lines Only".into(),
+        1 => "1 Line of Context".into(),
+        n => format!("{n} Lines of Context"),
+    }
+}
+
 fn empty_message(scope: &DiffScope) -> String {
     match scope {
         DiffScope::Unstaged => "No unstaged changes.".into(),
@@ -293,6 +304,10 @@ pub struct ReviewView {
 /// What the review asks the window to do.
 pub enum ReviewEvent {
     OpenFile(PathBuf, Option<u32>),
+    /// Edit Diff: the file in Diff View, beside its staged version.
+    OpenDiff(PathBuf),
+    /// The Changes panel, to commit.
+    ShowChanges,
 }
 
 impl gpui_kit::EventEmitter<ReviewEvent> for ReviewView {}
@@ -1074,15 +1089,74 @@ impl ReviewView {
         });
         let viewed = self.files.iter().filter(|f| f.viewed).count();
         let count = self.files.len();
-        let mut scopes = vec![
-            ("Unstaged", DiffScope::Unstaged),
-            ("Staged", DiffScope::Staged),
-            ("All", DiffScope::Uncommitted),
-        ];
-        if let Some(base) = &self.base_branch {
-            scopes.push(("vs base", DiffScope::Branch { base: base.clone() }));
-        }
-        scopes.push(("Last commit", DiffScope::Commit { sha: "HEAD".into() }));
+        let view = cx.entity().downgrade();
+        let scope_menu =
+            {
+                let view = view.clone();
+                let (root, base) = (self.root.clone(), self.base_branch.clone());
+                move |menu: gpui_kit::component::menu::PopupMenu,
+                  _: &mut Window,
+                  _: &mut gpui_kit::Context<gpui_kit::component::menu::PopupMenu>| {
+                let item = |label: String, scope: DiffScope| {
+                    let view = view.clone();
+                    gpui_kit::component::menu::PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        let _ = view.update(cx, |v, cx| v.set_scope(scope.clone(), cx));
+                    })
+                };
+                let mut menu = menu
+                    .item(item("Unstaged changes".into(), DiffScope::Unstaged))
+                    .item(item("Staged changes".into(), DiffScope::Staged))
+                    .item(item("All uncommitted changes".into(), DiffScope::Uncommitted));
+                if let Some(base) = &base {
+                    menu = menu.separator().item(item(
+                        format!("Compare with {base}"),
+                        DiffScope::Branch { base: base.clone() },
+                    ));
+                }
+                menu = menu
+                    .separator()
+                    .item(item("Last commit".into(), DiffScope::Commit { sha: "HEAD".into() }));
+                if let Some(turn) = crate::agent_checkpoints::last_turn_in_repo(&root) {
+                    menu = menu.item(item(
+                        format!("Last agent turn ({})", turn.agent_name),
+                        turn.scope(),
+                    ));
+                }
+                let reviewed = impulse_git::safety::list(&root, impulse_git::safety::REVIEW_PREFIX);
+                if let Some(review) = reviewed.first() {
+                    let scope = DiffScope::Snapshot {
+                        from: review.ref_name.clone(),
+                        to: None,
+                    };
+                    menu = menu.item(item(scope_title(&scope), scope));
+                }
+                menu
+            }
+            };
+        let context_menu = {
+            let view = view.clone();
+            let (current, default) = (self.options.context_lines, self.default_context);
+            move |menu: gpui_kit::component::menu::PopupMenu,
+                  _: &mut Window,
+                  _: &mut gpui_kit::Context<gpui_kit::component::menu::PopupMenu>| {
+                let mut steps = vec![default, 3, 10, 25, WHOLE_FILE];
+                steps.sort();
+                steps.dedup();
+                steps.into_iter().fold(menu, |menu, lines| {
+                    let view = view.clone();
+                    menu.item(
+                        gpui_kit::component::menu::PopupMenuItem::new(context_title(lines))
+                            .disabled(lines == current)
+                            .on_click(move |_, _, cx| {
+                                let _ = view.update(cx, |v, cx| {
+                                    v.options.context_lines = lines;
+                                    v.refresh(cx);
+                                });
+                            }),
+                    )
+                })
+            }
+        };
         let segment = |id: &'static str, label: String, selected: bool| {
             div()
                 .id(id)
@@ -1100,23 +1174,28 @@ impl ReviewView {
                 })
                 .child(label)
         };
-        let mut scope_bar = div().flex().items_center().gap(px(2.));
-        for (i, (label, scope)) in scopes.into_iter().enumerate() {
-            let selected = scope == self.scope;
-            let title = if label == "vs base" {
-                scope_title(&scope)
-            } else {
-                label.to_string()
-            };
-            scope_bar = scope_bar.child(
-                segment(["s0", "s1", "s2", "s3", "s4"][i.min(4)], title, selected)
-                    .on_click(cx.listener(move |view, _, _, cx| view.set_scope(scope.clone(), cx))),
+        let title = div()
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .text_color(hsla(p.text))
+            .child(icon("file-diff", 13., p.text))
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(12.))
+                    .child(scope_title(&self.scope)),
             );
-        }
-        let context_title = match self.options.context_lines {
-            WHOLE_FILE => "Whole file".to_string(),
-            1 => "1 line".to_string(),
-            n => format!("{n} lines"),
+        let title: AnyElement = if self.embedded {
+            title.into_any_element()
+        } else {
+            gpui_kit::component::button::Button::new("review-scope")
+                .ghost()
+                .compact()
+                .tooltip("Choose what to compare")
+                .child(title.child(icon("chevron-down", 10., p.text)))
+                .dropdown_menu(scope_menu)
+                .into_any_element()
         };
         div()
             .flex()
@@ -1128,14 +1207,7 @@ impl ReviewView {
             .bg(hsla(p.panel))
             .border_b_1()
             .border_color(hsla(p.hairline))
-            .child(icon("file-diff", 13., p.text))
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(12.))
-                    .child(scope_title(&self.scope)),
-            )
-            .when(!self.embedded, |d| d.child(scope_bar))
+            .child(title)
             .when(count > 0, |d| {
                 d.child(
                     div()
@@ -1213,36 +1285,37 @@ impl ReviewView {
                     )),
             )
             .child(
-                div()
-                    .id("context")
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .px(px(6.))
-                    .h(px(22.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .cursor_pointer()
-                    .text_size(px(11.))
-                    .text_color(hsla(if self.options.context_lines > self.default_context {
-                        p.accent
-                    } else {
-                        p.text_secondary
-                    }))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .on_click(cx.listener(|view, _, _, cx| {
-                        // The Swift context menu's steps, in turn.
-                        let mut steps = vec![view.default_context, 3, 10, 25, WHOLE_FILE];
-                        steps.sort();
-                        steps.dedup();
-                        let current = view.options.context_lines;
-                        view.options.context_lines =
-                            *steps.iter().find(|s| **s > current).unwrap_or(&steps[0]);
-                        view.refresh(cx);
-                    }))
-                    .child(icon("chevrons-up-down", 13., p.text_secondary))
-                    .child(context_title),
+                gpui_kit::component::button::Button::new("context")
+                    .ghost()
+                    .compact()
+                    .tooltip(format!(
+                        "Context: {}",
+                        context_title(self.options.context_lines)
+                    ))
+                    .child(icon(
+                        "chevrons-up-down",
+                        13.,
+                        if self.options.context_lines > self.default_context {
+                            p.accent
+                        } else {
+                            p.text_secondary
+                        },
+                    ))
+                    .dropdown_menu(context_menu),
             )
             .child(self.comments_menu(cx))
+            .when(!self.embedded, |d| {
+                d.child(
+                    div()
+                        .id("show-changes")
+                        .p(px(4.))
+                        .rounded(px(metrics::RADIUS_SMALL))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(hsla(p.hover)))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::ShowChanges)))
+                        .child(icon("git-branch", 13., p.text_secondary)),
+                )
+            })
             .child(
                 div()
                     .id("refresh")
@@ -1454,6 +1527,27 @@ impl ReviewView {
         ));
         let (stage, unstage, revert) = self.capabilities();
         let viewed = file.viewed;
+        let expanded = file.expanded;
+        let can_edit_diff = stage && file.change.status != ChangeStatus::Deleted;
+        let full_path = PathBuf::from(&self.root)
+            .join(&file.change.path)
+            .to_string_lossy()
+            .into_owned();
+        let view = cx.entity().downgrade();
+        let plain = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .px(px(6.))
+                .h(px(22.))
+                .flex()
+                .items_center()
+                .rounded(px(metrics::RADIUS_SMALL))
+                .text_size(px(11.5))
+                .text_color(hsla(p.text_secondary))
+                .cursor_pointer()
+                .hover(|s| s.bg(hsla(p.hover)).text_color(hsla(p.text)))
+                .child(label)
+        };
         let action = |id: &'static str, label: &'static str, primary: bool| {
             div()
                 .id(id)
@@ -1600,19 +1694,54 @@ impl ReviewView {
                     },
                 )))
             })
-            .child(
-                div()
-                    .id(("open", f))
-                    .p(px(3.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .on_click(cx.listener(move |v, _, _, cx| {
+            .when(can_edit_diff, |d| {
+                d.child(plain("edit-diff", "Edit Diff").on_click(cx.listener(
+                    move |v, _, _, cx| {
                         cx.stop_propagation();
-                        v.open(f, Some(0), cx)
-                    }))
-                    .child(icon("external-link", 12., p.text_secondary)),
-            )
+                        v.open_diff(f, cx)
+                    },
+                )))
+            })
+            .child(plain("open-file", "Open").on_click(cx.listener(move |v, _, _, cx| {
+                cx.stop_propagation();
+                v.open(f, Some(0), cx)
+            })))
+            .context_menu(move |menu, _, _| {
+                let item = |label: &'static str, act: Box<dyn Fn(&mut ReviewView, &mut Context<ReviewView>)>| {
+                    let view = view.clone();
+                    gpui_kit::component::menu::PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        let _ = view.update(cx, |v, cx| act(v, cx));
+                    })
+                };
+                let copied = full_path.clone();
+                let mut menu = menu
+                    .item(item(
+                        "Copy Path",
+                        Box::new(move |_, cx| {
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copied.clone()))
+                        }),
+                    ))
+                    .item(item("Open File", Box::new(move |v, cx| v.open(f, Some(0), cx))));
+                if can_edit_diff {
+                    menu = menu.item(item(
+                        "Open in Diff Editor",
+                        Box::new(move |v, cx| v.open_diff(f, cx)),
+                    ));
+                }
+                menu.separator().item(item(
+                    if expanded { "Collapse" } else { "Expand" },
+                    Box::new(move |v, cx| v.toggle_expanded(f, cx)),
+                ))
+            })
             .into_any_element()
+    }
+
+    /// Edit Diff: the file in the editor's Diff View.
+    fn open_diff(&mut self, f: usize, cx: &mut Context<Self>) {
+        if let Some(file) = self.files.get(f) {
+            let path = PathBuf::from(&self.root).join(&file.change.path);
+            cx.emit(ReviewEvent::OpenDiff(path));
+        }
     }
 
     /// A diff line (unified), or an old and a new one side by side (split).

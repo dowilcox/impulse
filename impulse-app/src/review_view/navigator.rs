@@ -93,13 +93,13 @@ impl ReviewView {
                 if !dir.is_empty() {
                     list = list.child(
                         div()
+                            .flex_none()
                             .px(px(12.))
                             .pt(px(6.))
                             .pb(px(2.))
                             .text_size(px(10.5))
                             .text_color(hsla(p.text_tertiary))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
+                            .truncate()
                             .child(dir.clone()),
                     );
                 }
@@ -157,8 +157,7 @@ impl ReviewView {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
+                            .truncate()
                             .text_size(px(12.))
                             .text_color(hsla(if is_viewed { p.text_tertiary } else { p.text }))
                             .child(name),

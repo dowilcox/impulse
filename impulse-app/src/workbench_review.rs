@@ -102,13 +102,7 @@ impl Workbench {
             &review,
             window,
             |workbench, _, event, window, cx| match event {
-                ReviewEvent::OpenFile(path, line) => {
-                    workbench.open_file(&PathBuf::from(path), window, cx);
-                    if let (Some(line), Some(editor)) = (line, workbench.active_editor().cloned()) {
-                        let position = lsp_types::Position::new(line.saturating_sub(1), 0);
-                        editor.update(cx, |editor, cx| editor.go_to(position, window, cx));
-                    }
-                }
+                event => workbench.review_event(event, window, cx),
             },
         )
         .detach();
@@ -163,16 +157,39 @@ impl Workbench {
             &review,
             window,
             |workbench, _, event, window, cx| match event {
-                ReviewEvent::OpenFile(path, line) => {
-                    workbench.open_file(&PathBuf::from(path), window, cx);
-                    if let (Some(line), Some(editor)) = (line, workbench.active_editor().cloned()) {
-                        let position = lsp_types::Position::new(line.saturating_sub(1), 0);
-                        editor.update(cx, |editor, cx| editor.go_to(position, window, cx));
-                    }
-                }
+                event => workbench.review_event(event, window, cx),
             },
         )
         .detach();
         Surface::History(history)
+    }
+
+    /// What a Review (or History's) asks of the workbench.
+    fn review_event(&mut self, event: &ReviewEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            ReviewEvent::OpenFile(path, line) => {
+                self.open_file(&PathBuf::from(path), window, cx);
+                if let (Some(line), Some(editor)) = (line, self.active_editor().cloned()) {
+                    let position = lsp_types::Position::new(line.saturating_sub(1), 0);
+                    editor.update(cx, |editor, cx| editor.go_to(position, window, cx));
+                }
+            }
+            ReviewEvent::OpenDiff(path) => {
+                self.open_file(path, window, cx);
+                if let Some(editor) = self.active_editor().cloned() {
+                    let result = editor.update(cx, |editor, cx| {
+                        if editor.diff.is_some() {
+                            Ok(())
+                        } else {
+                            editor.toggle_diff_view(window, cx)
+                        }
+                    });
+                    if let Err(message) = result {
+                        self.set_notice(message, cx);
+                    }
+                }
+            }
+            ReviewEvent::ShowChanges => self.run_command("show_changes", window, cx),
+        }
     }
 }

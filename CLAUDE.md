@@ -130,7 +130,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           selected lines (review_view/selection.rs: gutter
                           click, Shift extends, ⌘C, Esc, the line menu),
                           viewed marks, the j/k/n/p/s/u/x/v/c/o/t keys and
-                          ⌘Y ⇧⌘Y ⌥⌘Z; the navigator in
+                          ⌘Y ⇧⌘Y ⌥⌘Z; the scope and context menus in the
+                          header, Edit Diff and Open on each file
+                          (ReviewEvent::OpenDiff, ShowChanges handled by
+                          Workbench::review_event); the navigator in
                           review_view/navigator.rs: filter, viewed bar,
                           files by folder; the snapshot's review-… actions
                           through ReviewView::debug_action; review comments

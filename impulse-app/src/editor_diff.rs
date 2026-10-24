@@ -67,8 +67,10 @@ impl EditorTab {
         }
         // The file's git base, as the change marks have it: its index
         // version (what's staged, else HEAD's).
+        // A file git doesn't track yet is all new.
         let base_text = impulse_git::base_content(&self.path.to_string_lossy())
             .map(|b| LineEnding::normalize(&b))
+            .or_else(|| self.git.root.is_some().then(String::new))
             .ok_or_else(|| "This file isn't in a git repository.".to_string())?;
         if self.preview == Some(false) {
             self.preview = None;
