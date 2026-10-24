@@ -1407,7 +1407,7 @@ impl Workbench {
                 );
                 right.push(
                     status_item("status-language", Some("code"), "Language", None, &p)
-                        .child(editor.language.clone())
+                        .child(impulse_kit::uri::editor_language_for_path(&editor.path))
                         .into_any_element(),
                 );
                 if impulse_kit::markdown_preview::is_previewable_file(

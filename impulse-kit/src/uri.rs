@@ -137,9 +137,91 @@ pub fn language_for_path(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// The editor's language for `path` as the Swift app names it (Monaco's
+/// language ids, `TabManager.languageIdForPath`): what the status bar
+/// shows. Language servers get `language_for_path`'s ids instead.
+pub fn editor_language_for_path(path: &Path) -> &'static str {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if name == "dockerfile"
+        || name == "containerfile"
+        || name.starts_with("dockerfile.")
+        || name.starts_with("containerfile.")
+    {
+        return "dockerfile";
+    }
+    match name.as_str() {
+        "makefile" | "gnumakefile" | "cmakelists.txt" => return "plaintext",
+        ".gitignore" | ".dockerignore" | ".env" | ".env.local" | ".env.example" => return "ini",
+        _ => {}
+    }
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    match extension.as_str() {
+        "rs" => "rust",
+        "swift" => "swift",
+        "py" | "pyi" => "python",
+        "js" | "mjs" | "cjs" | "jsx" => "javascript",
+        "ts" | "mts" | "cts" | "tsx" => "typescript",
+        "c" => "c",
+        "cpp" | "cc" | "cxx" | "hxx" | "hh" | "h" | "hpp" => "cpp",
+        "go" => "go",
+        "java" => "java",
+        "rb" => "ruby",
+        "sh" | "bash" | "zsh" | "fish" => "shell",
+        "json" | "jsonc" => "json",
+        "yaml" | "yml" => "yaml",
+        "toml" => "toml",
+        "md" | "markdown" => "markdown",
+        "html" | "htm" | "vue" | "svelte" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "less" => "less",
+        "xml" | "svg" | "xsl" | "xslt" => "xml",
+        "php" => "php",
+        "sql" => "sql",
+        "lua" => "lua",
+        "kt" | "kts" => "kotlin",
+        "dart" => "dart",
+        "ex" | "exs" => "elixir",
+        "graphql" | "gql" => "graphql",
+        "cs" => "csharp",
+        "fs" | "fsx" => "fsharp",
+        "pl" | "pm" => "perl",
+        "r" => "r",
+        "m" => "objective-c",
+        "scala" => "scala",
+        "clj" | "cljs" | "cljc" => "clojure",
+        "coffee" => "coffee",
+        "pug" => "pug",
+        "tf" | "tfvars" => "hcl",
+        "proto" => "protobuf",
+        "ini" | "cfg" | "conf" => "ini",
+        "bat" | "cmd" => "bat",
+        "ps1" | "psm1" => "powershell",
+        _ => "plaintext",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_languages_are_monacos() {
+        let lang = |p: &str| editor_language_for_path(Path::new(p));
+        assert_eq!(lang("/x/README.md"), "markdown");
+        assert_eq!(lang("/x/run.sh"), "shell");
+        assert_eq!(lang("/x/App.tsx"), "typescript");
+        assert_eq!(lang("/x/Dockerfile.dev"), "dockerfile");
+        assert_eq!(lang("/x/.env"), "ini");
+        assert_eq!(lang("/x/Makefile"), "plaintext");
+        assert_eq!(lang("/x/notes"), "plaintext");
+    }
 
     #[test]
     fn uri_to_file_path_non_file_uri_returns_as_is() {

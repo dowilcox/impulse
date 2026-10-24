@@ -58,6 +58,13 @@ pub struct EditorTab {
     reloading: bool,
     /// A Markdown preview: instead of the editor (false) or beside it (true).
     pub preview: Option<bool>,
+    /// The previewed text and its blocks (`markdown_view`).
+    markdown: std::cell::RefCell<
+        Option<(
+            String,
+            std::rc::Rc<Vec<impulse_kit::markdown_blocks::Block>>,
+        )>,
+    >,
     /// A message for the status bar ("changed on disk", a failed save).
     pub notice: Option<String>,
     pub(crate) state: Entity<EditorState>,
@@ -213,6 +220,7 @@ impl EditorTab {
             tab_size,
             use_spaces,
             preview: None,
+            markdown: Default::default(),
             untitled: None,
             reloading: false,
             notice: opened
@@ -880,23 +888,29 @@ impl EditorTab {
         Ok(())
     }
 
-    fn preview_element(&self, cx: &gpui_kit::App) -> gpui_kit::AnyElement {
+    fn preview_element(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let text = self.state.read(cx).text().to_string();
         if impulse_kit::svg_preview::is_svg_file(&self.path.to_string_lossy()) {
             return Self::svg_preview(&text);
         }
-        gpui_kit::div()
-            .id("markdown-preview")
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            .overflow_y_scroll()
-            .px(px(28.))
-            .py(px(20.))
-            .child(gpui_kit::div().max_w(px(860.)).child(
-                gpui_kit::component::text::TextView::markdown("markdown", text).selectable(true),
-            ))
-            .into_any_element()
+        // Parsed again only when the text changed.
+        let blocks = {
+            let mut cache = self.markdown.borrow_mut();
+            match cache.as_ref() {
+                Some((source, blocks)) if *source == text => blocks.clone(),
+                _ => {
+                    let blocks = std::rc::Rc::new(impulse_kit::markdown_blocks::parse(&text));
+                    *cache = Some((text, blocks.clone()));
+                    blocks
+                }
+            }
+        };
+        let folder = self
+            .path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        crate::markdown_view::preview(&blocks, &folder, cx)
     }
 
     /// The SVG drawn centered and scaled down to fit, without its scripts,

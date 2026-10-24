@@ -32,6 +32,7 @@ pub mod kitty_keyboard;
 pub mod layout_tree;
 pub mod line_edits;
 pub mod listening_ports;
+pub mod markdown_blocks;
 pub mod markdown_preview;
 pub mod markdown_theme;
 pub mod menus;

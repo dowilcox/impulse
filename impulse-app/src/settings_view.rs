@@ -11,9 +11,7 @@ use std::collections::HashMap;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{
-    Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction,
-};
+use gpui_kit::component::input::{Input, InputEvent, InputState, NumberInputEvent, StepAction};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tooltip::Tooltip;
@@ -936,6 +934,36 @@ impl SettingsView {
             )
     }
 
+    /// Up and down arrows, one above the other (`NSStepper`).
+    fn stepper(&self, key: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        let p = &self.palette;
+        let half = |id: &'static str, name: &'static str, action: StepAction| {
+            div()
+                .id(named(id, key))
+                .flex_1()
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|s| s.bg(hsla(p.hover)))
+                .on_click(
+                    cx.listener(move |view, _, window, cx| view.step(key, action, window, cx)),
+                )
+                .child(icon(name, 10., p.text_secondary))
+        };
+        div()
+            .flex()
+            .flex_col()
+            .w(px(14.))
+            .h(px(22.))
+            .rounded(px(4.))
+            .overflow_hidden()
+            .child(half("step-up", "chevron-up", StepAction::Increment))
+            .child(half("step-down", "chevron-down", StepAction::Decrement))
+            .into_any_element()
+    }
+
     fn control(&self, item: &SettingItem, cx: &mut Context<Self>) -> AnyElement {
         let key = item.key;
         let field = self.fields.get(key);
@@ -956,19 +984,17 @@ impl SettingsView {
                     })
                     .into_any_element()
             }
-            (Control::Integer { zero_label, .. }, Some(Field::Number(state))) => {
-                NumberInput::new(state)
-                    .small()
-                    .w(px(120.))
-                    .placeholder(zero_label.unwrap_or(""))
-                    .accessibility_label(item.title)
+            // A field and an up/down stepper beside it, as Swift's
+            // TextField and Stepper.
+            (Control::Integer { .. } | Control::Decimal { .. }, Some(Field::Number(state))) => {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(div().w(px(84.)).child(Input::new(state).small()))
+                    .child(self.stepper(key, cx))
                     .into_any_element()
             }
-            (Control::Decimal { .. }, Some(Field::Number(state))) => NumberInput::new(state)
-                .small()
-                .w(px(120.))
-                .accessibility_label(item.title)
-                .into_any_element(),
             (Control::Text { .. }, Some(Field::Text(state))) => div()
                 .w(px(210.))
                 .child(Input::new(state).small())

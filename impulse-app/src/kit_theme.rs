@@ -132,6 +132,7 @@ pub fn apply(
     ))));
     Theme::sync_base(cx);
     cx.refresh_windows();
+    cx.set_global(crate::markdown_view::MarkdownColors::new(theme));
     cx.set_global(EditorBackdrop {
         background: hsla(Rgba::from_hex(&theme.bg)),
         current_line: settings

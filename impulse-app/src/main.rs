@@ -49,6 +49,7 @@ mod image_view;
 mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
+mod markdown_view;
 mod menus;
 mod palette;
 mod port_scan;

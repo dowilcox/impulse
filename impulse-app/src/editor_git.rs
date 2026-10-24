@@ -899,6 +899,9 @@ impl crate::workbench::Workbench {
         if action == "save" {
             return self.save_editor(editor, window, cx);
         }
+        if let Some(command) = action.strip_prefix("run:") {
+            return self.run_from_preview(&editor, command, window, cx);
+        }
         let path = editor.read(cx).path.clone();
         let Some(root) = editor.read(cx).git.root.clone() else {
             return;

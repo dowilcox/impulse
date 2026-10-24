@@ -141,8 +141,12 @@ toolkit with Zed's editor through a fork, not a different toolkit.
   button (both from `impulse_kit::menus`, done). The palette has every
   command on both. On Linux, Quit is Ctrl+Shift+Q and Tab 1 to 9 Alt+1 to 9,
   keys a shell doesn't read.
-- **Markdown preview**: native, from cmark-gfm's AST or GPUI Kit's Markdown
-  (raw HTML is already elided).
+- **Markdown preview**: native (done): comrak's AST as blocks and styled
+  spans (`impulse_kit::markdown_blocks`) drawn with the Swift page's CSS
+  (heading color and rules, code backgrounds, tables, quotes, task lists,
+  local images; raw HTML is already elided), code blocks colored by the
+  editor's tree-sitter grammars, Run on shell blocks. Inline code keeps the
+  text's size (a GPUI text run has no size of its own).
 - **Review and History syntax colors**: the editor's tree-sitter grammars
   instead of highlight.js, so the editor and Review color code alike.
 - **Platform services** behind one `impulse-platform` crate:

@@ -325,6 +325,8 @@ pub struct TerminalView {
     pub(crate) branch: Option<String>,
     /// Between a command block's start and end (OSC 133).
     pub(crate) command_running: bool,
+    /// Commands to run at the shell's first prompt.
+    start_commands: Vec<String>,
     /// The shell reports its prompts, so `command_running` false means it
     /// waits at one.
     pub(crate) tracks_prompts: bool,
@@ -459,8 +461,22 @@ impl TerminalView {
             f32::from(metrics.height) as u16,
         )
         .expect("terminal backend");
-        for command in commands {
-            backend.write(format!("{command}\r").as_bytes());
+        // Commands to start with wait for the shell's first prompt, so they
+        // run as typed ones do (written before it, the tty echoes them and
+        // their output can go missing); a shell without integration gets
+        // them after a few seconds.
+        if !commands.is_empty() {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(3))
+                    .await;
+                let _ = this.update(cx, |view, _| {
+                    for command in std::mem::take(&mut view.start_commands) {
+                        view.backend.write(format!("{command}\r").as_bytes());
+                    }
+                });
+            })
+            .detach();
         }
 
         // Sleep until the backend says there's output (the Swift renderer's
@@ -544,6 +560,7 @@ impl TerminalView {
             lookup,
             branch: None,
             command_running: false,
+            start_commands: commands,
             tracks_prompts: false,
             password: false,
             last_exit: None,
@@ -689,6 +706,9 @@ impl TerminalView {
                     self.command_running = false;
                     self.tracks_prompts = true;
                     self.password = false;
+                    for command in std::mem::take(&mut self.start_commands) {
+                        self.run_command(&command);
+                    }
                 }
                 TerminalEvent::CommandBlockStarted(block) => {
                     self.command_running = true;

@@ -63,7 +63,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           keybindings (Mac and Linux defaults), KeyEncoder
                           (key_encoder), Monaco's line commands, LayoutTree,
                           palette + fuzzy matching, file tree patches,
-                          previews (comrak), Monaco/Markdown theme colors,
+                          previews (comrak; markdown_blocks for the native
+                          preview), Monaco/Markdown theme colors,
                           dates (History's "2d ago" and "Oct 5, 2026 at
                           3:27 PM"), tree_expansion (the file tree's open
                           folders per project, file-tree-expanded.json),
@@ -166,9 +167,12 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           (palette.rs: the Swift PaletteModel/PaletteView
                           modes by prefix, recents in
                           palette-recent-commands.json in the data
-                          directory), Markdown and SVG preview (sanitized by
-                          impulse_kit::svg_preview) in or beside the
-                          editor, Settings and Keyboard Shortcuts tabs
+                          directory), Markdown preview (markdown_view.rs:
+                          impulse_kit::markdown_blocks drawn with the Swift
+                          preview page's styles, Run on shell blocks as
+                          Workbench::run_from_preview) and SVG preview
+                          (sanitized by impulse_kit::svg_preview) in or
+                          beside the editor, Settings and Keyboard Shortcuts tabs
                           (settings_view.rs, keybindings_view.rs; shortcut
                           overrides rebind live through
                           commands::rebind_on_change), git
