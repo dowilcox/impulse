@@ -55,6 +55,7 @@ impl Workbench {
             .filter_map(Surface::terminal)
             .find(|t| t.read(cx).token == token)
             .cloned()
+            .or_else(|| crate::quick_terminal::terminal_with_token(token, cx))
     }
 
     pub(crate) fn handle_control(

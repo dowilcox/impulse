@@ -88,7 +88,7 @@ fn c(hex: &str) -> KitRgba {
 impl TerminalView {
     /// The bar is on and no program owns the grid.
     pub(crate) fn bar_shown(&self, cx: &gpui_kit::App) -> bool {
-        SettingsStore::get(cx).terminal_context_bar && !self.direct
+        SettingsStore::get(cx).terminal_context_bar && !self.direct && !self.no_bar
     }
 
     /// The bar is in this terminal (rather than its stand-in).

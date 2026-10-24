@@ -129,6 +129,10 @@ toolkit with Zed's editor through a fork, not a different toolkit.
   Ctrl+Shift for Impulse's shortcuts, as Linux terminals do. Find is
   Ctrl+Shift+F in a terminal (Project Search everywhere else), the way other
   Linux terminals use it (`keybindings::TERMINAL_FIRST`).
+- **Quick Terminal**: a borderless pop-up window at the top of the screen
+  with its system-wide shortcut from `global-hotkey` (Carbon on macOS, as
+  today; XGrabKey on X11). Wayland lets no app take a system-wide key, so
+  there it's Toggle Quick Terminal in the palette, or a desktop shortcut.
 - **Menus**: the macOS menu bar from `CommandRegistry`; on Linux the same menus
   from a titlebar button. The palette has every command on both.
 - **Markdown preview**: native, from cmark-gfm's AST or GPUI Kit's Markdown

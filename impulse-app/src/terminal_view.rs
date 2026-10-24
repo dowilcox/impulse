@@ -318,6 +318,8 @@ pub struct TerminalView {
     /// input (bracketed paste, the mouse), owns the grid: the bar hides and
     /// keys go straight to it.
     pub(crate) direct: bool,
+    /// No input bar at all (the Quick Terminal): type at the shell's prompt.
+    pub(crate) no_bar: bool,
     /// The command sent from the bar began with a space (kept out of the
     /// history).
     pub(crate) hidden_pending: bool,
@@ -514,6 +516,7 @@ impl TerminalView {
             password: false,
             last_exit: None,
             direct: false,
+            no_bar: false,
             hidden_pending: false,
             current_hidden: false,
             current_command: None,
@@ -2010,8 +2013,7 @@ impl Render for TerminalView {
         {
             cx.defer_in(window, |view, window, cx| view.focus(window, cx));
         }
-        let settings = SettingsStore::get(cx).clone();
-        let bottom = if settings.terminal_context_bar && !self.direct {
+        let bottom = if self.bar_shown(cx) {
             Some(if self.has_live_bar() {
                 self.input_bar(window, cx)
             } else {
@@ -2082,7 +2084,7 @@ impl Render for TerminalView {
                                 view.fit(bounds);
                                 let (grid, overlay, mode) = view.snapshot();
                                 let settings = SettingsStore::get(cx).clone();
-                                let suppress = settings.terminal_context_bar;
+                                let suppress = settings.terminal_context_bar && !view.no_bar;
                                 if let Some(grid) = &grid {
                                     view.layout_rows(grid, &overlay, suppress, cx);
                                 }

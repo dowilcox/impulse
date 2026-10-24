@@ -762,6 +762,7 @@ impl Workbench {
             "open_keybindings" => self.open_keybindings(window, cx),
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
+            "quick_terminal" => crate::quick_terminal::toggle(cx),
             "rename_workspace" => self.rename_workspace(self.active, window, cx),
             "clear_recent_workspaces" => self.clear_recent_workspaces(window, cx),
             "new_window" => {

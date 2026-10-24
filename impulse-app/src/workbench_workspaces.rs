@@ -9,7 +9,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, AppContext as _, Context, Window};
+use gpui_kit::{div, prelude::*, px, Context, Window};
 use impulse_kit::recent_workspaces;
 
 use crate::workbench::Workbench;

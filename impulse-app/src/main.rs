@@ -22,6 +22,7 @@ mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
 mod palette;
+mod quick_terminal;
 mod repository_state;
 mod review_view;
 mod search_panel;
@@ -173,6 +174,7 @@ fn main() {
             commands::bind_keys(&settings, cx);
             commands::rebind_on_change(cx);
             session::init(cx);
+            quick_terminal::init(cx);
             control_server::start(cx, control_commands::dispatch);
             cx.on_app_quit(|_| {
                 control_server::stop();
