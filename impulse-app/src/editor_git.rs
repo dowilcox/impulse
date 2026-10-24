@@ -12,7 +12,8 @@ use std::time::{Duration, SystemTime};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
-    RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
+    RangeDecoration, RangeDecorationCollection, RangeDecorationStyle, TextDecoration,
+    TextDecorationCollection,
 };
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
@@ -71,6 +72,8 @@ pub(crate) struct GitLayer {
     peek: Option<usize>,
     conflicts: Vec<ConflictBlock>,
     conflict_marks: Option<RangeDecorationCollection>,
+    /// Bracket pair colors (kept here as they follow the same edits).
+    brackets: Option<TextDecorationCollection>,
     _base: Option<Task<()>>,
     _diff: Option<Task<()>>,
     _blame: Option<Task<()>>,
@@ -157,6 +160,7 @@ impl EditorTab {
                 self.git.peek = None;
             }
         }
+        self.paint_brackets(&text, cx);
         let conflicts = editor_marks::find_conflicts(&text);
         let resolved = !self.git.conflicts.is_empty() && conflicts.is_empty();
         self.git.conflicts = conflicts;
@@ -168,6 +172,49 @@ impl EditorTab {
             });
         }
         cx.notify();
+    }
+
+    /// Color bracket pairs by depth (`bracket_pair_colorization`, Monaco's
+    /// three colors), unmatched ones red.
+    fn paint_brackets(&mut self, text: &str, cx: &mut Context<Self>) {
+        use impulse_kit::bracket_pairs::{self, Color};
+        let on = crate::settings_store::SettingsStore::get(cx).bracket_pair_colorization;
+        if !on || text.len() > 2 * 1024 * 1024 {
+            if let Some(marks) = self.git.brackets.as_ref() {
+                marks.clear(cx);
+            }
+            return;
+        }
+        let hex = |h: &str| crate::workbench_chrome::hsla(impulse_kit::chrome::Rgba::from_hex(h));
+        let levels = if cx.theme().mode.is_dark() {
+            bracket_pairs::DARK
+        } else {
+            bracket_pairs::LIGHT
+        }
+        .map(hex);
+        let unexpected = hex(bracket_pairs::UNEXPECTED);
+        let decorations: Vec<TextDecoration> = bracket_pairs::colorize(text, &self.language)
+            .into_iter()
+            .map(|(range, color)| {
+                let color = match color {
+                    Color::Level(depth) => levels[depth % 3],
+                    Color::Unexpected => unexpected,
+                };
+                TextDecoration::new(
+                    range,
+                    gpui_kit::HighlightStyle {
+                        color: Some(color),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let marks = self.git.brackets.get_or_insert_with(|| {
+            self.state.update(cx, |state, cx| {
+                state.create_decorations_collection(Vec::new(), cx)
+            })
+        });
+        marks.set(decorations, cx);
     }
 
     /// Tint each conflict's two sides (current green, incoming blue).

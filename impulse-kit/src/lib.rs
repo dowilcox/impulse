@@ -8,6 +8,7 @@
 
 pub mod accessible_text;
 pub mod agents;
+pub mod bracket_pairs;
 pub mod buffer_edits;
 pub mod child_process;
 pub mod chrome;
