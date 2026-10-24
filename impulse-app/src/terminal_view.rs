@@ -993,6 +993,27 @@ impl TerminalView {
         )
     }
 
+    /// Right-click: the terminal's menu, with the clicked block's actions
+    /// first (Swift's `rightMouseDown`, which always shows it).
+    fn context_menu_at(
+        &mut self,
+        event: &MouseDownEvent,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus(window, cx);
+        let (_, row) = self.cell_at(event.position, bounds);
+        let block = self.block_at_row(row, cx);
+        self.blocks.menu = Some(crate::terminal_blocks::BlockMenu {
+            block,
+            at: event.position,
+            full: true,
+        });
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     /// The program wants the mouse (and Shift isn't held to select anyway).
     fn reports_mouse(&self, modifiers: &Modifiers) -> bool {
         !modifiers.shift
@@ -1251,6 +1272,11 @@ impl TerminalView {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        self.copy_selection(cx)
+    }
+
+    /// Copy the selected blocks, else the selected text.
+    pub(crate) fn copy_selection(&mut self, cx: &mut Context<Self>) {
         // Selected blocks: each command and its output.
         if !self.blocks.selection.is_empty() {
             return self.copy_selected_blocks(cx);
@@ -1268,6 +1294,10 @@ impl TerminalView {
     /// goes as it is, inside a bracketed paste, which is how TUI agents
     /// (Claude Code) recognize an attached image.
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        self.paste_clipboard(window, cx)
+    }
+
+    pub(crate) fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else {
             return;
         };
@@ -2312,7 +2342,12 @@ impl TerminalView {
                                         view.send_blocks_to_agent(&[id], cx)
                                     }
                                     ToolbarButton::Menu => {
-                                        view.blocks.menu = Some((id, e.position));
+                                        view.blocks.menu =
+                                            Some(crate::terminal_blocks::BlockMenu {
+                                                block: Some(id),
+                                                at: e.position,
+                                                full: false,
+                                            });
                                         cx.notify();
                                     }
                                 }
@@ -2374,7 +2409,8 @@ impl Render for TerminalView {
         let link_cursor = self.hover_link.is_some();
         let toolbar = self.block_toolbar(cx);
         let bounds_cell = std::rc::Rc::new(std::cell::Cell::new(Bounds::<Pixels>::default()));
-        let (down_bounds, move_bounds, up_bounds, wheel_bounds) = (
+        let (down_bounds, move_bounds, up_bounds, wheel_bounds, menu_bounds) = (
+            bounds_cell.clone(),
             bounds_cell.clone(),
             bounds_cell.clone(),
             bounds_cell.clone(),
@@ -2399,11 +2435,8 @@ impl Render for TerminalView {
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|view, e: &MouseDownEvent, window, cx| {
-                    let bounds = Bounds::default();
-                    if view.reports_mouse(&e.modifiers) {
-                        view.mouse_down(e, bounds, window, cx);
-                    }
+                cx.listener(move |view, e: &MouseDownEvent, window, cx| {
+                    view.context_menu_at(e, menu_bounds.get(), window, cx)
                 }),
             )
             .on_mouse_move(cx.listener(move |view, e: &MouseMoveEvent, _, cx| {

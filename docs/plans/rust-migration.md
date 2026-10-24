@@ -475,6 +475,9 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   Branches, Agent Integration, Archive Merged Tasks, the overlap list,
   Keyboard Shortcuts' Search by keys, Install All) are drawn by
   `chrome_button`, and every dialog takes the UI font's line height.
+  The terminal's right-click menu is Swift's: the clicked block's
+  actions, Copy and Paste, the last command's Copy, Copy Output and
+  Rerun, Command History…, block navigation, Select All and Clear.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

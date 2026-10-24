@@ -33,8 +33,18 @@ pub(crate) struct Blocks {
     pub bookmarks: HashSet<u64>,
     /// The block under the pointer.
     pub hovered: Option<u64>,
-    /// The toolbar's "more" menu: the block and where it opens.
-    pub menu: Option<(u64, Point<Pixels>)>,
+    /// The toolbar's "more" menu or the right-click menu, where it opens.
+    pub menu: Option<BlockMenu>,
+}
+
+/// An open block menu: the toolbar's ⋯ (one block's actions and block
+/// navigation) or the right-click menu (also the terminal's own items, and
+/// the clicked block's first when there is one).
+#[derive(Clone, Copy)]
+pub(crate) struct BlockMenu {
+    pub block: Option<u64>,
+    pub at: Point<Pixels>,
+    pub full: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -498,38 +508,87 @@ impl TerminalView {
         }
     }
 
-    /// The toolbar's "more" menu, when open.
-    pub(crate) fn block_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let (id, at) = self.blocks.menu?;
-        let p = &self.palette;
-        let block = self
-            .backend
-            .block_overlay()
-            .blocks
+    /// The most recent block with a command.
+    fn latest_command(&self) -> Option<String> {
+        self.backend
+            .command_blocks()
             .into_iter()
-            .find(|b| b.id == id);
-        let has_command = block
-            .as_ref()
-            .is_some_and(|b| b.command.as_ref().is_some_and(|c| !c.is_empty()));
-        let running = block.as_ref().is_some_and(|b| b.is_running);
+            .rev()
+            .filter_map(|b| b.command)
+            .find(|c| !c.trim().is_empty())
+    }
+
+    /// The output of the most recent block that printed something.
+    fn latest_output(&self) -> Option<String> {
+        self.backend
+            .command_blocks()
+            .into_iter()
+            .rev()
+            .map(|b| b.output)
+            .find(|o| !o.is_empty())
+    }
+
+    /// The ⋯ menu or the right-click menu, when open (Swift's
+    /// `buildBlockActionMenu` and `buildTerminalContextMenu`).
+    pub(crate) fn block_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let BlockMenu {
+            block: id,
+            at,
+            full,
+        } = self.blocks.menu?;
+        let p = &self.palette;
+        let block = id.and_then(|id| {
+            self.backend
+                .block_overlay()
+                .blocks
+                .into_iter()
+                .find(|b| b.id == id)
+        });
         let flags = self.backend.command_block_flags();
-        let bookmarked = self.blocks.bookmarks.contains(&id);
-        let items: Vec<(&str, &str, bool)> = vec![
-            ("copy_command", "Copy Command", has_command),
-            ("copy_output", "Copy Output", true),
-            ("copy_both", "Copy Command & Output", true),
-            ("rerun", "Rerun Command", has_command && !running),
-            ("send_to_agent", "Send to Agent", !running),
-            (
-                "bookmark",
-                if bookmarked {
-                    "Remove Bookmark"
-                } else {
-                    "Bookmark Block"
-                },
-                true,
-            ),
-            ("-", "", false),
+        let mut items: Vec<(&str, &str, bool)> = Vec::new();
+        if let (Some(id), Some(block)) = (id, block.as_ref()) {
+            let has_command = block.command.as_ref().is_some_and(|c| !c.is_empty());
+            let running = block.is_running;
+            let bookmarked = self.blocks.bookmarks.contains(&id);
+            items.extend([
+                ("copy_command", "Copy Command", has_command),
+                ("copy_output", "Copy Output", true),
+                ("copy_both", "Copy Command & Output", true),
+                ("rerun", "Rerun Command", has_command && !running),
+                ("send_to_agent", "Send to Agent", !running),
+                (
+                    "bookmark",
+                    if bookmarked {
+                        "Remove Bookmark"
+                    } else {
+                        "Bookmark Block"
+                    },
+                    true,
+                ),
+                ("-", "", false),
+            ]);
+        }
+        if full {
+            let has_selection = self.backend.selected_text().is_some_and(|t| !t.is_empty());
+            let can_paste = cx.read_from_clipboard().is_some();
+            let has_history = !crate::command_history::CommandHistory::recent(cx).is_empty()
+                || !self.backend.command_blocks().is_empty();
+            items.extend([
+                ("copy", "Copy", has_selection),
+                ("paste", "Paste", can_paste),
+                ("-", "", false),
+                ("copy_last_command", "Copy Last Command", flags.has_command),
+                (
+                    "copy_last_output",
+                    "Copy Last Command Output",
+                    flags.has_output,
+                ),
+                ("rerun_last", "Rerun Last Command", flags.has_command),
+                ("command_history", "Command History…", has_history),
+                ("-", "", false),
+            ]);
+        }
+        items.extend([
             (
                 "previous_block",
                 "Previous Block",
@@ -541,7 +600,14 @@ impl TerminalView {
                 flags.has_command || flags.has_output,
             ),
             ("last_failed_block", "Last Failed Block", flags.has_failed),
-        ];
+        ]);
+        if full {
+            items.extend([
+                ("-", "", false),
+                ("select_all", "Select All", true),
+                ("clear", "Clear", true),
+            ]);
+        }
         let mut list = div()
             .id("block-menu")
             .occlude()
@@ -580,14 +646,48 @@ impl TerminalView {
                             cx.listener(move |view, _, window, cx| {
                                 cx.stop_propagation();
                                 view.blocks.menu = None;
-                                match action.as_str() {
-                                    "copy_command" => view.copy_block(id, true, false, cx),
-                                    "copy_output" => view.copy_block(id, false, true, cx),
-                                    "copy_both" => view.copy_block(id, true, true, cx),
-                                    "rerun" => view.rerun_block(id, cx),
-                                    "send_to_agent" => view.send_blocks_to_agent(&[id], cx),
-                                    "bookmark" => view.toggle_bookmarks(&[id], cx),
-                                    other => view.perform_block_command(other, window, cx),
+                                match (action.as_str(), id) {
+                                    ("copy_command", Some(id)) => {
+                                        view.copy_block(id, true, false, cx)
+                                    }
+                                    ("copy_output", Some(id)) => {
+                                        view.copy_block(id, false, true, cx)
+                                    }
+                                    ("copy_both", Some(id)) => view.copy_block(id, true, true, cx),
+                                    ("rerun", Some(id)) => view.rerun_block(id, cx),
+                                    ("send_to_agent", Some(id)) => {
+                                        view.send_blocks_to_agent(&[id], cx)
+                                    }
+                                    ("bookmark", Some(id)) => view.toggle_bookmarks(&[id], cx),
+                                    ("copy", _) => view.copy_selection(cx),
+                                    ("paste", _) => view.paste_clipboard(window, cx),
+                                    ("copy_last_command", _) => {
+                                        if let Some(command) = view.latest_command() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                command,
+                                            ));
+                                        }
+                                    }
+                                    ("copy_last_output", _) => {
+                                        if let Some(output) = view.latest_output() {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                output,
+                                            ));
+                                        }
+                                    }
+                                    ("rerun_last", _) => {
+                                        if let Some(command) = view.latest_command() {
+                                            view.backend.scroll_to_bottom();
+                                            view.backend.rerun_command(&command);
+                                        }
+                                    }
+                                    ("command_history", _) => cx.emit(
+                                        TerminalViewEvent::RunCommand("command_history".into()),
+                                    ),
+                                    ("select_all", _) => view.backend.select_all(),
+                                    // ⌃L, which the shell takes as clearing the screen.
+                                    ("clear", _) => view.backend.write(b"\x0c"),
+                                    (other, _) => view.perform_block_command(other, window, cx),
                                 }
                                 cx.notify();
                             }),
