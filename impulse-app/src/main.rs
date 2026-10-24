@@ -34,6 +34,7 @@ mod control_server;
 #[cfg(debug_assertions)]
 mod debug_snapshot;
 mod dependency_prompts;
+mod editor_brackets;
 mod editor_diff;
 mod editor_git;
 mod editor_keys;

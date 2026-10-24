@@ -75,6 +75,9 @@ pub(crate) struct GitLayer {
     line_fills: Vec<(std::ops::RangeInclusive<usize>, Hsla)>,
     /// Bracket pair colors (kept here as they follow the same edits).
     brackets: Option<TextDecorationCollection>,
+    /// The pairs and their guides, for the matching-bracket box and the
+    /// bracket pair guides (`editor_brackets`).
+    bracket_pairs: crate::editor_brackets::Brackets,
     _base: Option<Task<()>>,
     _diff: Option<Task<()>>,
     _blame: Option<Task<()>>,
@@ -184,6 +187,7 @@ impl EditorTab {
             if let Some(marks) = self.git.brackets.as_ref() {
                 marks.clear(cx);
             }
+            self.git.bracket_pairs = Default::default();
             return;
         }
         let hex = |h: &str| crate::workbench_chrome::hsla(impulse_kit::chrome::Rgba::from_hex(h));
@@ -194,7 +198,12 @@ impl EditorTab {
         }
         .map(hex);
         let unexpected = hex(bracket_pairs::UNEXPECTED);
-        let decorations: Vec<TextDecoration> = bracket_pairs::colorize(text, &self.language)
+        let (brackets, pairs) = bracket_pairs::scan(text, &self.language);
+        self.git.bracket_pairs = crate::editor_brackets::Brackets {
+            guides: std::rc::Rc::new(bracket_pairs::guides(text, &pairs, self.tab_size)),
+            pairs: std::rc::Rc::new(pairs),
+        };
+        let decorations: Vec<TextDecoration> = brackets
             .into_iter()
             .map(|(range, color)| {
                 let color = match color {
@@ -370,6 +379,12 @@ impl EditorTab {
         };
         let line_fills = self.git.line_fills.clone();
         let origin = self.git.origin.clone();
+        let brackets = (!self.git.bracket_pairs.pairs.is_empty()).then(|| {
+            (
+                self.git.bracket_pairs.clone(),
+                crate::editor_brackets::BracketColors::new(cx.theme().mode.is_dark()),
+            )
+        });
         let blame = self.git.blame_line.and_then(|line| {
             let info = self.git.blame.get(&line)?;
             let ago = SystemTime::now()
@@ -407,6 +422,9 @@ impl EditorTab {
             |_, _, _| {},
             move |bounds, _, window, cx| {
                 origin.set(Some(bounds.origin));
+                if let Some((brackets, bracket_colors)) = &brackets {
+                    brackets.paint(*bracket_colors, state.read(cx), bounds, window);
+                }
                 let Some(colors) = colors else {
                     return;
                 };
