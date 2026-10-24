@@ -1417,6 +1417,19 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.git_ask_for_tag_at(repo, "HEAD".into(), window, cx)
+    }
+
+    /// The tag prompt for `at` (a commit, or "HEAD"): History's Create Tag
+    /// Here.
+    pub(crate) fn git_ask_for_tag_at(
+        &mut self,
+        repo: &Entity<RepositoryState>,
+        at: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let revision = at.clone();
         let (root, trusted) = {
             let repo = repo.read(cx);
             (repo.root.clone(), repo.trusted)
@@ -1428,23 +1441,29 @@ impl Workbench {
                     .map(|out| out.lines().map(str::to_string).collect())
                     .unwrap_or_default();
             let suggestion = impulse_kit::git::refs::next_tag_name(&tags).unwrap_or_default();
-            let subject = RepositoryState::read_git(&root, trusted, &["log", "-1", "--format=%s"])
-                .map(|s| s.trim().to_string());
+            let subject = RepositoryState::read_git(
+                &root,
+                trusted,
+                &["log", "-1", "--format=%s", "--end-of-options", &revision, "--"],
+            )
+            .map(|s| s.trim().to_string());
             (remote, suggestion, subject)
         });
         let repo = repo.clone();
         cx.spawn_in(window, async move |workbench, cx| {
             let (remote, suggestion, subject) = lookup.await;
             let _ = workbench.update_in(cx, |this, window, cx| {
-                this.present_tag_prompt(repo, remote, suggestion, subject, window, cx)
+                this.present_tag_prompt(repo, at, remote, suggestion, subject, window, cx)
             });
         })
         .detach();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn present_tag_prompt(
         &mut self,
         repo: Entity<RepositoryState>,
+        at: String,
         remote: Option<String>,
         suggestion: String,
         subject: Option<String>,
@@ -1464,6 +1483,11 @@ impl Workbench {
         ));
         let workbench = cx.entity().downgrade();
         // The Create Tag button, and Enter in either field.
+        let title = if at == "HEAD" {
+            "New tag on the current commit".to_string()
+        } else {
+            format!("New tag at {}", &at[..at.len().min(7)])
+        };
         let create: Create = {
             let (name, message, push) = (name.clone(), message.clone(), push.clone());
             Rc::new(move |window, cx| {
@@ -1483,7 +1507,7 @@ impl Workbench {
                         );
                     }
                     let text = (!text.is_empty()).then_some(text);
-                    this.git_create_tag(&repo, tag, text, push, false, window, cx)
+                    this.git_create_tag(&repo, tag, at.clone(), text, push, false, window, cx)
                 });
             })
         };
@@ -1495,7 +1519,7 @@ impl Workbench {
             let (on_ok, on_click) = (create.clone(), create.clone());
             let checkbox = push.clone();
             dialog
-                .title("New tag on the current commit")
+                .title(title.clone())
                 .w(px(420.))
                 .on_ok(move |_, window, cx| {
                     on_ok(window, cx);
@@ -1539,19 +1563,21 @@ impl Workbench {
         });
     }
 
-    /// Tag the current commit; an empty message makes a lightweight tag.
+    /// Tag `at` (a commit, or "HEAD"); an empty message makes a
+    /// lightweight tag.
     #[allow(clippy::too_many_arguments)]
     fn git_create_tag(
         &mut self,
         repo: &Entity<RepositoryState>,
         name: String,
+        at: String,
         message: Option<String>,
         push: bool,
         force: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (tag, text) = (name.clone(), message.clone());
+        let (tag, text, revision) = (name.clone(), message.clone(), at.clone());
         let repo_after = repo.clone();
         self.git_run(
             repo,
@@ -1563,7 +1589,7 @@ impl Workbench {
                 let previous = force
                     .then(|| operations::resolve_ref(&format!("refs/tags/{tag}"), root))
                     .flatten();
-                operations::create_tag(&tag, "HEAD", text.as_deref(), force, root)?;
+                operations::create_tag(&tag, &revision, text.as_deref(), force, root)?;
                 Ok(previous)
             },
             window,
@@ -1571,7 +1597,7 @@ impl Workbench {
             move |this, result, _, window, cx| match result {
                 Ok(previous) => {
                     if push {
-                        return this.git_push_tag(&repo_after, name, force, window, cx);
+                        return this.git_push_tag(&repo_after, name, true, force, window, cx);
                     }
                     let repo = repo_after.clone();
                     let verb = if force { "Moved" } else { "Tagged" };
@@ -1613,9 +1639,16 @@ impl Workbench {
                     if error.kind == ErrorKind::TagAlreadyExists && !force =>
                 {
                     let repo = repo_after.clone();
+                    let target = if at == "HEAD" {
+                        "the current commit".to_string()
+                    } else {
+                        at[..at.len().min(7)].to_string()
+                    };
                     this.git_confirm(
                         format!("{name} already exists"),
-                        "Move it to the current commit? Anyone who already fetched it keeps the old one.",
+                        format!(
+                            "Move it to {target}? Anyone who already fetched it keeps the old one."
+                        ),
                         "Move Tag",
                         true,
                         window,
@@ -1624,6 +1657,7 @@ impl Workbench {
                             this.git_create_tag(
                                 &repo,
                                 name.clone(),
+                                at.clone(),
                                 message.clone(),
                                 push,
                                 true,
@@ -1640,10 +1674,12 @@ impl Workbench {
         );
     }
 
-    fn git_push_tag(
+    /// Push tag `name`; `created` when it was just made.
+    pub(crate) fn git_push_tag(
         &mut self,
         repo: &Entity<RepositoryState>,
         name: String,
+        created: bool,
         force: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1663,17 +1699,22 @@ impl Workbench {
             window,
             cx,
             move |this, result, _, window, cx| match result {
-                Ok(remote) => this.toast(
-                    Notification::success(format!("Tagged and pushed {name} to {remote}")),
-                    window,
-                    cx,
-                ),
-                Err(error) => this.present_git_error(
-                    &error,
-                    &format!("Tagged {name}, but couldn't push it"),
-                    window,
-                    cx,
-                ),
+                Ok(remote) => {
+                    let verb = if created { "Tagged and pushed" } else { "Pushed" };
+                    this.toast(
+                        Notification::success(format!("{verb} {name} to {remote}")),
+                        window,
+                        cx,
+                    )
+                }
+                Err(error) => {
+                    let title = if created {
+                        format!("Tagged {name}, but couldn't push it")
+                    } else {
+                        format!("Couldn't push {name}")
+                    };
+                    this.present_git_error(&error, &title, window, cx)
+                }
             },
         );
     }

@@ -150,8 +150,18 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Surface {
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
-        let history = cx.new(|cx| HistoryView::new(root, path, branch, &theme, &palette, cx));
+        let scope = match branch {
+            Some(branch) => impulse_git::log::LogScope::Branch(branch),
+            None => impulse_git::log::LogScope::Head,
+        };
+        let history =
+            cx.new(|cx| HistoryView::new(root, path, scope, &theme, &palette, window, cx));
         cx.observe(&history, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(&history, window, |workbench, history, event, window, cx| {
+            let root = history.read(cx).root.clone();
+            workbench.history_action(root, event, window, cx)
+        })
+        .detach();
         let review = history.read(cx).review().clone();
         cx.subscribe_in(
             &review,

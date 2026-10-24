@@ -42,6 +42,7 @@ mod editor_watch;
 mod file_icons;
 mod file_tree_actions;
 mod git_actions;
+mod history_actions;
 mod history_view;
 mod image_view;
 mod keybindings_view;

@@ -16,6 +16,7 @@ pub mod close_risk;
 pub mod command_palette;
 pub mod completion;
 pub mod css_color;
+pub mod dates;
 pub mod directory_lister;
 pub mod document_symbols;
 pub mod drag_reorder;

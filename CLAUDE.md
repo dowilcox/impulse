@@ -64,6 +64,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           (key_encoder), Monaco's line commands, LayoutTree,
                           palette + fuzzy matching, file tree patches,
                           previews (comrak), Monaco/Markdown theme colors,
+                          dates (History's "2d ago" and "Oct 5, 2026 at
+                          3:27 PM"),
                           problems, review comments, update checker, shell
                           (types, quoting, login shell, integration),
                           completion, command history (SQLite), kitty
@@ -153,8 +155,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           severity toggles and a filter, the status bar's
                           counts), `impulse review|comments|problems`
                           (control_review.rs), History (history_view.rs: the lane graph,
-                          ref chips, paging, the commit's details over its
-                          Review list), command palette and quick open
+                          ref chips, paging, Current branch / All branches,
+                          the filter with author:, path:, since: and until:
+                          and its presets, unpushed and unpulled marks, the
+                          fork point, refs refreshed in place, the commit's
+                          details over its Review list; history_view/menu.rs:
+                          the commit's and each ref's menus, carried out by
+                          history_actions.rs), command palette and quick open
                           (palette.rs: the Swift PaletteModel/PaletteView
                           modes by prefix, recents in
                           palette-recent-commands.json in the data

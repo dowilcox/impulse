@@ -658,6 +658,35 @@ fn perform_now(action: &str, cx: &mut App) {
                 let search = workbench.search.clone();
                 search.update(cx, |s, cx| s.search_for(text, window, cx));
             }
+            ("history-all", None) => {
+                // Every History open shows all branches.
+                let histories: Vec<_> = workbench
+                    .workspaces
+                    .iter()
+                    .flat_map(|w| w.all_surfaces())
+                    .filter_map(|s| match s {
+                        Surface::History(h) => Some(h.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                for history in histories {
+                    history.update(cx, |h, cx| {
+                        h.set_scope(impulse_git::log::LogScope::All, cx)
+                    });
+                }
+            }
+            ("history-filter", Some(text)) => {
+                workbench.run_command("git_history", window, cx);
+                if let Some(Surface::History(history)) = workbench.focused_surface().cloned() {
+                    history.update(cx, |h, cx| h.set_filter(text, window, cx));
+                }
+            }
+            ("history", Some(sha)) => {
+                workbench.run_command("git_history", window, cx);
+                if let Some(Surface::History(history)) = workbench.focused_surface().cloned() {
+                    history.update(cx, |h, cx| h.reveal(sha.to_string(), cx));
+                }
+            }
             ("expand-workspaces", None) => {
                 for workspace in &mut workbench.workspaces {
                     workspace.expanded = true;

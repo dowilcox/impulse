@@ -291,8 +291,6 @@ pub struct ReviewView {
     generation: u64,
     /// A file to show once the list has it (absolute path).
     pending_reveal: Option<std::path::PathBuf>,
-    /// Inside History: the commit is chosen there, so no scope bar.
-    pub embedded: bool,
     /// The repository's review comments, and when their file last changed.
     comments: impulse_kit::review_comments::CommentStore,
     comments_stamp: Option<std::time::SystemTime>,
@@ -358,7 +356,6 @@ impl ReviewView {
             message: None,
             base_branch,
             generation: 0,
-            embedded: false,
             pending_reveal: None,
             comments: impulse_kit::review_comments::CommentStore::load(PathBuf::new()),
             comments_stamp: None,
@@ -1186,17 +1183,12 @@ impl ReviewView {
                     .text_size(px(12.))
                     .child(scope_title(&self.scope)),
             );
-        let title: AnyElement = if self.embedded {
-            title.into_any_element()
-        } else {
-            gpui_kit::component::button::Button::new("review-scope")
-                .ghost()
-                .compact()
-                .tooltip("Choose what to compare")
-                .child(title.child(icon("chevron-down", 10., p.text)))
-                .dropdown_menu(scope_menu)
-                .into_any_element()
-        };
+        let title = gpui_kit::component::button::Button::new("review-scope")
+            .ghost()
+            .compact()
+            .tooltip("Choose what to compare")
+            .child(title.child(icon("chevron-down", 10., p.text)))
+            .dropdown_menu(scope_menu);
         div()
             .flex()
             .flex_none()
@@ -1304,18 +1296,16 @@ impl ReviewView {
                     .dropdown_menu(context_menu),
             )
             .child(self.comments_menu(cx))
-            .when(!self.embedded, |d| {
-                d.child(
-                    div()
-                        .id("show-changes")
-                        .p(px(4.))
-                        .rounded(px(metrics::RADIUS_SMALL))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(hsla(p.hover)))
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::ShowChanges)))
-                        .child(icon("git-branch", 13., p.text_secondary)),
-                )
-            })
+            .child(
+                div()
+                    .id("show-changes")
+                    .p(px(4.))
+                    .rounded(px(metrics::RADIUS_SMALL))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(hsla(p.hover)))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::ShowChanges)))
+                    .child(icon("git-branch", 13., p.text_secondary)),
+            )
             .child(
                 div()
                     .id("refresh")
