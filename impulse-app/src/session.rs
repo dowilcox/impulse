@@ -65,7 +65,7 @@ pub fn init(cx: &mut App) {
         cx.background_executor()
             .timer(Duration::from_secs(15))
             .await;
-        cx.update(|cx| autosave(cx));
+        cx.update(autosave);
     })
     .detach();
     cx.on_app_quit(|cx| {
