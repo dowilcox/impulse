@@ -278,8 +278,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           context menu, Go to Type Definition,
                           Implementations and Declaration through
                           DocumentLink::navigate, Change All Occurrences,
-                          the Diff View: HEAD read-only beside the buffer,
-                          lines marked by impulse_git::buffer_diff,
+                          the Diff View (editor_diff.rs: the index
+                          version read-only beside the buffer, scrolling
+                          with it, or inline in one read-only document,
+                          under a bar with the summary, ↑ ↓, the layout
+                          switch and Done; impulse_kit::git::diff_view),
                           signature help over the caret with
                           impulse_lsp::signature; Vim mode in
                           editor_vim.rs over impulse_kit::vim, its keys

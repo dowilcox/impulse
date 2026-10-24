@@ -69,7 +69,7 @@ pub(crate) struct GitLayer {
     /// The line whose blame shows.
     blame_line: Option<usize>,
     /// The peeked hunk, by its start line.
-    peek: Option<usize>,
+    pub(crate) peek: Option<usize>,
     conflicts: Vec<ConflictBlock>,
     conflict_marks: Option<RangeDecorationCollection>,
     /// Bracket pair colors (kept here as they follow the same edits).

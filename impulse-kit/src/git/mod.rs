@@ -2,14 +2,15 @@
 //! folder): task worktrees and their registry, the commit graph's lanes,
 //! ref names and decorations, History's filter, diff scopes, what a shell
 //! command does with git, where workspaces change the same files, conflict
-//! prompts, what a server says during a push, and the editor's change
-//! marks, conflict blocks and blame text. Reading and writing a
+//! prompts, what a server says during a push, the editor's change
+//! marks, conflict blocks and blame text, and Diff View's layout. Reading and writing a
 //! repository is another crate's job; nothing here runs git.
 
 pub mod command_inspector;
 pub mod commit_graph;
 pub mod conflict_prompt;
 pub mod diff_scope;
+pub mod diff_view;
 pub mod editor_marks;
 pub mod history_query;
 pub mod refs;
