@@ -18,7 +18,7 @@ use impulse_lsp::workspace_edit::{
     repository_root, uri_path, user_edit_boundary, Confirmation, Operation, WorkspaceEdit,
 };
 
-use crate::workbench::{Tab, Workbench};
+use crate::workbench::Workbench;
 
 /// A workspace edit a server sent for something the user did in `origin`.
 #[derive(Clone)]
@@ -278,20 +278,13 @@ impl Workbench {
         }
     }
 
-    /// The tab showing `path`, if one does.
+    /// The editor showing `path`, if one does.
     pub fn editor_for(
         &self,
         path: &Path,
         cx: &gpui_kit::App,
     ) -> Option<gpui_kit::Entity<crate::editor_tab::EditorTab>> {
-        let wanted = impulse_lsp::workspace_edit::resolved_path(path);
-        self.tabs.iter().find_map(|tab| match tab {
-            Tab::Editor(editor)
-                if impulse_lsp::workspace_edit::resolved_path(&editor.read(cx).path) == wanted =>
-            {
-                Some(editor.clone())
-            }
-            _ => None,
-        })
+        let (w, t, pane) = self.find_editor(path, cx)?;
+        self.workspaces[w].tabs[t].panes[&pane].editor().cloned()
     }
 }

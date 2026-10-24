@@ -211,6 +211,8 @@ pub struct TerminalView {
     marked: Option<String>,
     blink_on: bool,
     last_input: Instant,
+    /// The shell's startup files, removed when the terminal closes.
+    temp_paths: Vec<std::path::PathBuf>,
     _wake: gpui_kit::Task<()>,
     _blink: gpui_kit::Task<()>,
 }
@@ -236,18 +238,12 @@ impl TerminalView {
         let settings = SettingsStore::get(cx).clone();
         let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         let metrics = measure(&font, settings.terminal_font_size as f32, window);
+        let launch = crate::shell_launch::launch(&[]);
         let config = TerminalConfig {
-            shell_path: "/bin/bash".into(),
-            shell_args: vec!["--rcfile".into(), write_bash_rc()],
+            shell_path: launch.shell.clone(),
+            shell_args: launch.args.clone(),
             working_directory: Some(cwd.clone()),
-            env_vars: [
-                ("TERM", "xterm-256color"),
-                ("TERM_PROGRAM", "Impulse"),
-                ("COLORTERM", "truecolor"),
-            ]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
+            env_vars: launch.env.clone(),
             colors: colors(&theme),
             scrollback_lines: settings.terminal_scrollback.max(0) as usize,
             minimum_contrast: settings.terminal_minimum_contrast as f32,
@@ -309,7 +305,8 @@ impl TerminalView {
             metrics,
             size,
             buffer: Vec::new(),
-            title: "bash".into(),
+            title: String::new(),
+            temp_paths: launch.temp_paths,
             cwd,
             last_duration_ms: None,
             exited: None,
@@ -377,7 +374,7 @@ impl TerminalView {
                     cx.emit(TerminalViewEvent::TitleChanged);
                 }
                 TerminalEvent::ResetTitle => {
-                    self.title = "bash".into();
+                    self.title.clear();
                     cx.emit(TerminalViewEvent::TitleChanged);
                 }
                 TerminalEvent::CommandBlockEnded(block) => {
@@ -789,24 +786,6 @@ fn format_block_duration(ms: u64) -> String {
         return format!("{minutes}m {}s", seconds as u64 % 60);
     }
     format!("{}h {}m", minutes / 60, minutes % 60)
-}
-
-/// bash started the way `TerminalTab` starts it: `--rcfile` with the user's
-/// login files and then Impulse's shell integration. The prompt imitates the
-/// docs' demo prompt.
-fn write_bash_rc() -> String {
-    let integration =
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/ShellIntegration/bash.sh");
-    let rc = format!(
-        r#"[ -f /etc/profile ] && source /etc/profile
-__branch() {{ git rev-parse --abbrev-ref HEAD 2>/dev/null; }}
-PS1='\[\e[34m\]\w \[\e[90m\]$(__branch)\n\[\e[35m\]❯\[\e[0m\] '
-{integration}
-"#
-    );
-    let path = std::env::temp_dir().join(format!("impulse-bash-rc-{}", std::process::id()));
-    std::fs::write(&path, rc).expect("write rc");
-    path.to_string_lossy().into_owned()
 }
 
 /// Everything a frame paints, worked out before painting.
@@ -1361,6 +1340,19 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+    }
+}
+
+impl Drop for TerminalView {
+    fn drop(&mut self) {
+        self.backend.shutdown();
+        for path in &self.temp_paths {
+            let _ = if path.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            };
+        }
     }
 }
 

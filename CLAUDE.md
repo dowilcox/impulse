@@ -85,9 +85,14 @@ impulse-lsp/              Rust (rust branch): the language-server client
                           detection), TextEditApplier and WorkspaceEdit; its
                           e2e test runs rust-analyzer when installed
 impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
-                          macOS and Linux: workbench chrome, the terminal
-                          (its own painted grid, keys, input methods,
-                          selection, mouse reporting),
+                          macOS and Linux: workspaces (folder + Scratch)
+                          with tabs of split panes (LayoutTree, draggable
+                          dividers, zoom), commands as one RunCommand
+                          action bound from impulse_kit::keybindings,
+                          workbench chrome, the terminal (the login shell
+                          with integration, shell_launch.rs),
+                          its own painted grid, keys, input methods,
+                          selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language

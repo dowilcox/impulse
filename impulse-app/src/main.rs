@@ -11,8 +11,13 @@ mod editor_tab;
 mod kit_theme;
 mod lsp_hub;
 mod settings_store;
+mod shell_launch;
 mod terminal_view;
 mod workbench;
+mod workbench_chrome;
+mod workbench_panes;
+mod workbench_trust;
+mod workspace;
 mod workspace_edits;
 
 use std::borrow::Cow;
@@ -120,23 +125,32 @@ fn main() {
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");
-            let settings = settings_store::SettingsStore::get(cx);
-            let (width, height) = (settings.window_width as f32, settings.window_height as f32);
-            let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
-            gpui_kit::open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Impulse".into()),
-                        appears_transparent: true,
-                        traffic_light_position: Some(gpui_kit::point(px(14.), px(13.))),
-                    }),
-                    ..Default::default()
-                },
-                cx,
-                |window, cx| cx.new(|cx| workbench::Workbench::new(args, window, cx)),
-            )
-            .unwrap();
+            let settings = settings_store::SettingsStore::get(cx).clone();
+            commands::bind_keys(&settings, cx);
+            open_main_window(args, cx);
             cx.activate(true);
         });
+}
+
+/// A main window, sized from the settings.
+pub fn open_main_window(args: Args, cx: &mut App) {
+    let settings = settings_store::SettingsStore::get(cx);
+    let (width, height) = (settings.window_width as f32, settings.window_height as f32);
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    let opened = gpui_kit::open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Impulse".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(gpui_kit::point(px(14.), px(13.))),
+            }),
+            ..Default::default()
+        },
+        cx,
+        |window, cx| cx.new(|cx| workbench::Workbench::new(args, window, cx)),
+    );
+    if let Err(error) = opened {
+        log::error!("couldn't open a window: {error}");
+    }
 }

@@ -797,6 +797,11 @@ impl EditorTab {
         });
     }
 
+    pub fn focus_handle(&self, cx: &gpui_kit::App) -> gpui_kit::FocusHandle {
+        use gpui_kit::Focusable as _;
+        self.state.read(cx).focus_handle(cx)
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.state.update(cx, |state, cx| state.focus(window, cx));
     }

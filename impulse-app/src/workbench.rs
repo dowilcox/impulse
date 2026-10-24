@@ -1,149 +1,82 @@
-//! The window's chrome, laid out as `WorkbenchView` lays it out: a 40pt
-//! titlebar band with the workspace and tabs, the left dock (workspaces,
-//! then files), the content pane with the terminal's context chips and
-//! input bar, and the 24pt status bar. Sizes come from
-//! `impulse_kit::chrome::metrics`, colors from `ChromePalette`.
+//! The window: its workspaces, their tabs and panes, and every command
+//! (`RunCommand`) run against them, as `MainWindowController` and
+//! `TabManager` do in the Swift app. Drawing is in `workbench_chrome`
+//! (titlebar, sidebar, status bar) and `workbench_panes` (a tab's split
+//! panes); trust and language servers in `workbench_trust`.
 
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
-    actions, div, prelude::*, px, svg, AnyElement, App, Context, Entity, FocusHandle, FontWeight,
-    Hsla, KeyBinding, Window,
+    actions, div, prelude::*, px, App, Context, Entity, FocusHandle, KeyBinding, Window,
 };
-use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
+use impulse_kit::chrome::ChromePalette;
+use impulse_kit::layout_tree::{PaneDirection, SplitAxis};
+use impulse_kit::theme::ResolvedTheme;
 use impulse_kit::trust::WorkspaceTrust;
 
-use crate::editor_tab::{ApplyEdit, EditorHooks, EditorTab, EditorTabChanged, ShowDocument};
-use crate::lsp_hub::LspHub;
+use crate::commands::RunCommand;
+use crate::editor_tab::{EditorTab, EditorTabChanged};
 use crate::settings_store::SettingsStore;
-use crate::terminal_view::{rgba, TerminalView};
+use crate::terminal_view::{TerminalView, TerminalViewEvent};
+use crate::workspace::{Kind, PaneId, Surface, Tab, Workspace};
 use crate::Args;
 
-const UI_FONT: &str = "Inter";
+pub(crate) const UI_FONT: &str = "Inter";
 
-actions!(
-    impulse,
-    [Save, CloseTab, FormatDocument, RenameSymbol, FindReferences]
-);
+actions!(impulse, [FormatDocument, RenameSymbol, FindReferences]);
 
-/// Keys for the workbench's commands: `secondary` is Cmd on macOS and Ctrl
-/// on Linux.
+/// Monaco's keys for the editor commands that go through the workbench
+/// (they reach other files).
 pub fn bind_keys(cx: &mut App) {
+    let c = Some(crate::editor_keys::CONTEXT);
     cx.bind_keys([
-        KeyBinding::new("secondary-s", Save, None),
-        KeyBinding::new("secondary-w", CloseTab, None),
-        // Monaco's Format Document.
-        KeyBinding::new("alt-shift-f", FormatDocument, None),
-        KeyBinding::new("f2", RenameSymbol, None),
-        KeyBinding::new("shift-f12", FindReferences, None),
+        KeyBinding::new("alt-shift-f", FormatDocument, c),
+        KeyBinding::new("f2", RenameSymbol, c),
+        KeyBinding::new("shift-f12", FindReferences, c),
     ]);
 }
 
-pub(crate) enum Tab {
-    /// The workspace's terminal (`Workbench::terminal`).
-    Terminal,
-    Editor(Entity<EditorTab>),
+/// A closed tab that Reopen Closed Tab brings back: files reopen, terminals
+/// get a new shell in the same folder.
+enum Closed {
+    File(PathBuf),
+    Terminal(PathBuf),
 }
 
-/// One row of the file tree.
-struct TreeRow {
-    path: PathBuf,
-    name: String,
-    is_dir: bool,
-    depth: usize,
+/// What the sidebar shows below the workspaces.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SidebarPanel {
+    Files,
+    Changes,
+    Search,
 }
 
 pub struct Workbench {
-    palette: ChromePalette,
-    terminal: Entity<TerminalView>,
-    pub(crate) tabs: Vec<Tab>,
-    active: usize,
-    focus: FocusHandle,
-    root: PathBuf,
-    workspace: String,
-    branch: String,
-    /// Each listed folder's entries (folders first, then by name), read
-    /// when the folder is first expanded.
-    children: HashMap<PathBuf, Vec<(String, bool)>>,
-    expanded: HashSet<PathBuf>,
+    pub(crate) palette: ChromePalette,
+    pub(crate) theme: ResolvedTheme,
+    pub(crate) workspaces: Vec<Workspace>,
+    pub(crate) active: usize,
+    next_id: u64,
+    pub(crate) focus: FocusHandle,
     /// A message for the status bar, such as why a file didn't open.
-    notice: Option<String>,
+    pub(crate) notice: Option<String>,
     /// The trusted folders (shared by every window).
     pub(crate) trust: Arc<WorkspaceTrust>,
-    /// The user kept this folder restricted this session: don't ask again.
-    declined: bool,
-    /// Language servers, when the folder is trusted.
-    lsp: Option<std::rc::Rc<LspHub>>,
-    _lsp_events: Option<gpui_kit::Task<()>>,
+    pub(crate) panel: SidebarPanel,
+    closed: Vec<Closed>,
+    pub(crate) drag: Option<crate::workbench_panes::DividerDrag>,
+    pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
     /// `--theme`, which wins over `color_scheme` for this run.
     theme_override: Option<String>,
-    /// The theme the window shows.
     theme_id: String,
     _settings: gpui_kit::Subscription,
-}
-
-/// Not the home folder or the disk: trusting those trusts everything.
-fn offers_parent(parent: &str) -> bool {
-    let normalized = impulse_kit::trust::normalize(parent);
-    let home = dirs_home();
-    !["/", "/Users", "/Volumes", "/home", home.as_str()].contains(&normalized.as_str())
-}
-
-fn dirs_home() -> String {
-    impulse_kit::trust::normalize(&std::env::var("HOME").unwrap_or_default())
-}
-
-/// `~/…` for paths in the home folder.
-fn abbreviate_home(path: &str) -> String {
-    let home = dirs_home();
-    match path.strip_prefix(&home) {
-        Some(rest) if !home.is_empty() && (rest.is_empty() || rest.starts_with('/')) => {
-            format!("~{rest}")
-        }
-        _ => path.to_string(),
-    }
-}
-
-fn list_dir(dir: &Path) -> Vec<(String, bool)> {
-    let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| {
-                    (
-                        e.file_name().to_string_lossy().into_owned(),
-                        e.path().is_dir(),
-                    )
-                })
-                .filter(|(name, _)| !name.starts_with('.'))
-                .collect()
-        })
-        .unwrap_or_default();
-    entries.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
-    });
-    entries
-}
-
-fn git(cwd: &str, args: &[&str]) -> String {
-    Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
 }
 
 impl Workbench {
     pub fn new(args: Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = SettingsStore::get(cx).clone();
+        crate::workspace::SCRATCH.with(|s| *s.borrow_mut() = settings.scratch_directory.clone());
         let theme_id = args
             .theme
             .clone()
@@ -155,369 +88,678 @@ impl Workbench {
             .observe_global_in::<SettingsStore>(window, |workbench, window, cx| {
                 workbench.apply_settings(window, cx)
             });
-        let terminal = cx.new(|cx| {
-            TerminalView::new(
-                theme.clone(),
-                palette.clone(),
-                args.cwd.clone(),
-                args.commands.clone(),
-                window,
-                cx,
-            )
-        });
-        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
-
-        let root = PathBuf::from(&args.cwd);
-        let focus = cx.focus_handle();
-        let terminal_focus = terminal.read(cx).focus_handle().clone();
-        window.focus(&terminal_focus, cx);
         let mut workbench = Self {
             palette,
-            tabs: vec![Tab::Terminal],
-            terminal,
+            theme,
+            workspaces: Vec::new(),
             active: 0,
-            focus,
-            workspace: root
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            branch: git(&args.cwd, &["rev-parse", "--abbrev-ref", "HEAD"]),
-            children: HashMap::from([(root.clone(), list_dir(&root))]),
-            expanded: HashSet::new(),
-            root: root.clone(),
+            next_id: 1,
+            focus: cx.focus_handle(),
             notice: None,
             trust: args.trust_store.clone(),
-            declined: false,
-            lsp: None,
-            _lsp_events: None,
+            panel: SidebarPanel::Files,
+            closed: Vec::new(),
+            drag: None,
+            split_bounds: Default::default(),
             theme_override: args.theme.clone(),
             theme_id,
             _settings: settings_subscription,
         };
+        let cwd = crate::workspace::normalize(Path::new(&args.cwd));
         if args.trust {
-            workbench.trust.trust(&root.to_string_lossy());
+            workbench.trust.trust(&cwd.to_string_lossy());
         }
+        // A folder workspace for the folder Impulse started in (unless
+        // that's home), and Scratch.
+        let home = crate::workspace::home();
+        if cwd != home {
+            let id = workbench.next_id();
+            workbench
+                .workspaces
+                .push(Workspace::new(id, Kind::Folder, cwd.clone()));
+        }
+        let id = workbench.next_id();
+        workbench
+            .workspaces
+            .push(Workspace::new(id, Kind::Scratch, home));
+        let dir = workbench.workspaces[0].default_directory();
+        let terminal = workbench.new_terminal(dir, args.commands.clone(), window, cx);
+        workbench.add_tab(0, terminal, window, cx);
         for path in &args.open {
-            let path = workbench.root.join(path);
+            let path = cwd.join(path);
             workbench.open_file(&path, window, cx);
         }
         // Once the window (and its dialog layer) exists: language servers if
         // the folder is trusted, otherwise ask.
         cx.defer_in(window, |workbench, window, cx| {
-            workbench.request_trust(window, cx)
+            workbench.request_trust(workbench.active, window, cx)
         });
         workbench
     }
 
-    /// Settings changed: the theme, the editor's font and options.
+    pub(crate) fn next_id(&mut self) -> u64 {
+        self.next_id += 1;
+        self.next_id
+    }
+
+    pub(crate) fn workspace(&self) -> &Workspace {
+        &self.workspaces[self.active]
+    }
+
+    pub(crate) fn workspace_mut(&mut self) -> &mut Workspace {
+        &mut self.workspaces[self.active]
+    }
+
+    /// The focused surface of the active tab.
+    pub(crate) fn focused_surface(&self) -> Option<&Surface> {
+        self.workspace().active_tab().map(Tab::focused_surface)
+    }
+
+    pub(crate) fn active_editor(&self) -> Option<&Entity<EditorTab>> {
+        self.focused_surface().and_then(Surface::editor)
+    }
+
+    pub(crate) fn active_terminal(&self) -> Option<&Entity<TerminalView>> {
+        self.focused_surface().and_then(Surface::terminal)
+    }
+
+    /// Settings changed: the theme, the editor's and terminals' fonts.
     fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = SettingsStore::get(cx).clone();
+        crate::workspace::SCRATCH.with(|s| *s.borrow_mut() = settings.scratch_directory.clone());
         let theme_id = self
             .theme_override
             .clone()
             .unwrap_or_else(|| settings.color_scheme.clone());
-        let theme = impulse_kit::theme::get_theme(&theme_id);
         if theme_id != self.theme_id {
-            self.theme_id = theme_id;
-            self.palette = ChromePalette::new(&theme, false);
+            self.theme_id = theme_id.clone();
+            self.theme = impulse_kit::theme::get_theme(&theme_id);
+            self.palette = ChromePalette::new(&self.theme, false);
         }
-        crate::kit_theme::apply(&theme, &self.palette, &settings, cx);
-        let palette = self.palette.clone();
-        self.terminal
-            .update(cx, |terminal, cx| terminal.set_theme(theme.clone(), palette, window, cx));
-        for tab in &self.tabs {
-            if let Tab::Editor(editor) = tab {
-                editor.update(cx, |editor, cx| {
+        crate::kit_theme::apply(&self.theme, &self.palette, &settings, cx);
+        let surfaces: Vec<Surface> = self
+            .workspaces
+            .iter()
+            .flat_map(|w| w.all_surfaces().cloned().collect::<Vec<_>>())
+            .collect();
+        for surface in surfaces {
+            match surface {
+                Surface::Editor(editor) => editor.update(cx, |editor, cx| {
                     editor.apply_settings(&settings, window, cx)
-                });
+                }),
+                Surface::Terminal(terminal) => {
+                    let (theme, palette) = (self.theme.clone(), self.palette.clone());
+                    terminal.update(cx, |t, cx| t.set_theme(theme, palette, window, cx))
+                }
             }
         }
         cx.notify();
     }
 
-    /// Open `path` in an editor tab, or go to the tab it's already in.
-    fn open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        let existing = self.tabs.iter().position(|tab| match tab {
-            Tab::Editor(editor) => editor.read(cx).path == path,
-            Tab::Terminal => false,
+    // MARK: Surfaces and tabs
+
+    /// A terminal starting in `dir`, running `commands` first.
+    pub(crate) fn new_terminal(
+        &mut self,
+        dir: PathBuf,
+        commands: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Surface {
+        let (theme, palette) = (self.theme.clone(), self.palette.clone());
+        let terminal = cx.new(|cx| {
+            TerminalView::new(
+                theme,
+                palette,
+                dir.to_string_lossy().into_owned(),
+                commands,
+                window,
+                cx,
+            )
         });
-        if let Some(index) = existing {
-            self.activate(index, window, cx);
+        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(
+            &terminal,
+            window,
+            |workbench, terminal, event, window, cx| {
+                if let TerminalViewEvent::Exited(_) = event {
+                    // The shell exited: close its pane, as Terminal.app does.
+                    let surface = Surface::Terminal(terminal.clone());
+                    workbench.close_surface(&surface, window, cx);
+                }
+            },
+        )
+        .detach();
+        Surface::Terminal(terminal)
+    }
+
+    /// Put `surface` in a new tab of workspace `index` and show it.
+    pub(crate) fn add_tab(
+        &mut self,
+        index: usize,
+        surface: Surface,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (tab_id, pane) = (self.next_id(), self.next_id());
+        let workspace = &mut self.workspaces[index];
+        // After the active tab, as the Swift app inserts them.
+        let at = if workspace.tabs.is_empty() {
+            0
+        } else {
+            workspace.active + 1
+        };
+        workspace.tabs.insert(at, Tab::new(tab_id, pane, surface));
+        workspace.active = at;
+        self.active = index;
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// Give the focused pane of the active tab the keyboard.
+    pub(crate) fn focus_active(&self, window: &mut Window, cx: &mut App) {
+        if let Some(surface) = self.focused_surface() {
+            surface.focus(window, cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    pub(crate) fn activate_tab(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace_mut();
+        if workspace.tabs.is_empty() {
+            return;
+        }
+        workspace.active = index.min(workspace.tabs.len() - 1);
+        self.notice = None;
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// Show workspace `index`; one with no tabs gets a terminal.
+    pub(crate) fn activate_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.workspaces.len() {
+            return;
+        }
+        self.active = index;
+        self.workspaces[index].refresh_branch();
+        if self.workspaces[index].tabs.is_empty() {
+            let dir = self.workspaces[index].default_directory();
+            let terminal = self.new_terminal(dir, Vec::new(), window, cx);
+            self.add_tab(index, terminal, window, cx);
+        }
+        self.focus_active(window, cx);
+        self.request_trust(index, window, cx);
+        cx.notify();
+    }
+
+    /// Open `path` in an editor tab, or go to the tab it's already in.
+    pub(crate) fn open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((w, t, pane)) = self.find_editor(path, cx) {
+            self.active = w;
+            self.workspaces[w].active = t;
+            self.workspaces[w].tabs[t].focused = pane;
+            self.focus_active(window, cx);
+            cx.notify();
             return;
         }
         match impulse_kit::text_file::open(path)
             .map(|opened| cx.new(|cx| EditorTab::new(path, opened, window, cx)))
         {
             Ok(editor) => {
-                self.start_lsp(&editor, window, cx);
+                let index = self.active;
+                self.start_lsp(index, &editor, window, cx);
                 cx.subscribe(&editor, |_, _, _: &EditorTabChanged, cx| cx.notify())
                     .detach();
                 cx.observe(&editor, |_, _, cx| cx.notify()).detach();
-                self.tabs.push(Tab::Editor(editor));
                 self.notice = None;
-                self.activate(self.tabs.len() - 1, window, cx);
+                self.add_tab(index, Surface::Editor(editor), window, cx);
             }
             Err(refusal) => {
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.notice = Some(refusal.message(&name));
-                cx.notify();
+                self.set_notice(refusal.message(&name), cx);
             }
         }
     }
 
-    /// The folder is trusted: run language servers for it, else ask once
-    /// (the Swift app's `requestTrustIfNeeded`).
-    fn request_trust(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let root = self.root.to_string_lossy().into_owned();
-        if self.trust.is_trusted(&root) {
-            self.enable_lsp(window, cx);
-        } else if !self.declined {
-            self.present_trust_prompt(window, cx);
-        }
-    }
-
-    /// "Do you trust the files in …?", as the Swift app asks it.
-    fn present_trust_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let folder = impulse_kit::trust::normalize(&self.root.to_string_lossy());
-        let name = Path::new(&folder)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| folder.clone());
-        let parent = Path::new(&folder)
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let offer_parent = offers_parent(&parent);
-        let trust_parent = std::rc::Rc::new(std::cell::Cell::new(false));
-        let workbench = cx.entity().downgrade();
-        let shown_folder = abbreviate_home(&folder);
-        let shown_parent = abbreviate_home(&parent);
-        window.open_dialog(cx, move |dialog, _, _| {
-            let (trust_workbench, stay_workbench) = (workbench.clone(), workbench.clone());
-            let (folder, parent, trust_parent) =
-                (folder.clone(), parent.clone(), trust_parent.clone());
-            let checkbox_value = trust_parent.clone();
-            dialog
-                .title(format!("Do you trust the files in “{name}”?"))
-                .w(px(480.))
-                .keyboard(false)
-                .overlay_closable(false)
-                .close_button(false)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .child(
-                            "Impulse can run code from this folder on its own: language servers \
-                             (some run a project's build scripts and tools), formatters and \
-                             commands on save, and background git fetch. Until you trust it, \
-                             they stay off. The terminal and editing work as usual.",
-                        )
-                        .child(
-                            div()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(12.))
-                                .child(shown_folder.clone()),
-                        )
-                        .children(offer_parent.then(|| {
-                            Checkbox::new("trust-parent")
-                                .label(format!("Trust everything in “{shown_parent}”"))
-                                .checked(checkbox_value.get())
-                                .on_change(move |checked, window, _| {
-                                    checkbox_value.set(*checked);
-                                    window.refresh();
-                                })
-                        })),
-                )
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("stay-restricted")
-                                .label("Stay Restricted")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    let _ = stay_workbench.update(cx, |workbench, cx| {
-                                        workbench.declined = true;
-                                        cx.notify();
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("trust-folder")
-                                .primary()
-                                .label("Trust Folder")
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    let _ = trust_workbench.update(cx, |workbench, cx| {
-                                        // The folder itself first: trusting the parent
-                                        // doesn't lift a restriction on a folder inside it.
-                                        workbench.trust.trust(&folder);
-                                        if trust_parent.get() {
-                                            workbench.trust.trust(&parent);
-                                        }
-                                        workbench.declined = false;
-                                        workbench.enable_lsp(window, cx);
-                                    });
-                                }),
-                        ),
-                )
-        });
-    }
-
-    /// Language servers for this workspace, and for the files already open.
-    fn enable_lsp(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.lsp.is_none() {
-            let (hub, events) = LspHub::new(self.root.clone(), self.trust.clone());
-            self.lsp = Some(hub);
-            self._lsp_events = Some(cx.spawn(async move |workbench, cx| {
-                while let Ok(event) = events.recv().await {
-                    let alive =
-                        workbench.update(cx, |workbench, cx| workbench.server_event(event, cx));
-                    if alive.is_err() {
-                        break;
-                    }
-                }
-            }));
-        }
-        let editors: Vec<_> = self
-            .tabs
-            .iter()
-            .filter_map(|tab| match tab {
-                Tab::Editor(editor) => Some(editor.clone()),
-                Tab::Terminal => None,
-            })
-            .collect();
-        for editor in editors {
-            self.start_lsp(&editor, window, cx);
-        }
-        cx.notify();
-    }
-
-    /// Hand a tab its language server, if its file is in a trusted folder.
-    fn start_lsp(
-        &mut self,
-        editor: &Entity<EditorTab>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(hub) = self.lsp.clone() else { return };
-        let path = editor.read(cx).path.to_string_lossy().into_owned();
-        if !self.trust.is_trusted(&path) {
-            return;
-        }
-        let hooks = EditorHooks {
-            show_document: self.show_document_handler(cx),
-            apply_edit: self.apply_edit_handler(cx),
-        };
-        editor.update(cx, |editor, cx| editor.start_lsp(&hub, hooks, window, cx));
-    }
-
-    fn is_restricted(&self) -> bool {
-        !self.trust.is_trusted(&self.root.to_string_lossy())
-    }
-
-    /// Go-to-definition into another file: open it in a tab at the target.
-    /// Targets in the same file are left to the editor.
-    fn apply_edit_handler(&self, cx: &mut Context<Self>) -> ApplyEdit {
-        let workbench = cx.entity().downgrade();
-        std::rc::Rc::new(move |pending, window, cx| {
-            let _ = workbench.update(cx, |workbench, cx| {
-                workbench.apply_workspace_edit(pending, window, cx)
-            });
-        })
-    }
-
-    fn show_document_handler(&self, cx: &mut Context<Self>) -> ShowDocument {
-        let workbench = cx.entity().downgrade();
-        std::rc::Rc::new(move |params, window, cx| {
-            let path =
-                std::path::PathBuf::from(impulse_kit::uri::uri_to_file_path(params.uri.as_str()));
-            let Some(workbench) = workbench.upgrade() else {
-                return false;
-            };
-            if workbench.read(cx).active_path(cx).as_deref() == Some(path.as_path())
-                || !path.is_file()
-            {
-                return false;
-            }
-            let start = params.selection.map(|range| range.start);
-            workbench.update(cx, |workbench, cx| {
-                workbench.open_file(&path, window, cx);
-                if let (Some(start), Some(editor)) = (start, workbench.active_editor().cloned()) {
-                    editor.update(cx, |editor, cx| editor.go_to(start, window, cx));
-                }
-            });
-            true
-        })
-    }
-
-    fn active_path(&self, cx: &App) -> Option<PathBuf> {
-        self.active_editor()
-            .map(|editor| editor.read(cx).path.clone())
-    }
-
-    /// What a language server sent on its own.
-    fn server_event(&mut self, event: impulse_lsp::ServerEvent, cx: &mut Context<Self>) {
-        match event {
-            impulse_lsp::ServerEvent::Diagnostics(server, params) => {
-                log::debug!(
-                    "diagnostics for {}: {:?}",
-                    params.uri.as_str(),
-                    params
-                        .diagnostics
-                        .iter()
-                        .map(|d| (d.source.clone(), d.message.clone()))
-                        .collect::<Vec<_>>()
-                );
-                for tab in &self.tabs {
-                    if let Tab::Editor(editor) = tab {
-                        if editor.read(cx).is_document(&params.uri) {
-                            editor.update(cx, |editor, cx| {
-                                editor.set_diagnostics(
-                                    server.clone(),
-                                    params.diagnostics.clone(),
-                                    cx,
-                                )
-                            });
+    /// The (workspace, tab, pane) showing `path` in an editor.
+    pub(crate) fn find_editor(&self, path: &Path, cx: &App) -> Option<(usize, usize, PaneId)> {
+        let wanted = impulse_lsp::workspace_edit::resolved_path(path);
+        for (w, workspace) in self.workspaces.iter().enumerate() {
+            for (t, tab) in workspace.tabs.iter().enumerate() {
+                for (pane, surface) in tab.surfaces() {
+                    if let Surface::Editor(editor) = surface {
+                        if impulse_lsp::workspace_edit::resolved_path(&editor.read(cx).path)
+                            == wanted
+                        {
+                            return Some((w, t, pane));
                         }
                     }
                 }
             }
-            impulse_lsp::ServerEvent::Message(message) => log::info!("language server: {message}"),
-            impulse_lsp::ServerEvent::Exited => log::warn!("a language server exited"),
+        }
+        None
+    }
+
+    /// Close the focused pane (the tab with it when it's the only one). An
+    /// editor with unsaved changes needs a second close, as a warning.
+    pub(crate) fn close_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(surface) = self.focused_surface().cloned() else {
+            return;
+        };
+        if surface.is_dirty(cx) {
+            let warning = format!(
+                "{} has unsaved changes. Close again to discard them.",
+                surface.title(cx)
+            );
+            if self.notice.as_deref() != Some(warning.as_str()) {
+                self.set_notice(warning, cx);
+                return;
+            }
+        }
+        self.close_surface(&surface, window, cx);
+    }
+
+    /// Close the tab at `index` of the active workspace, every pane in it.
+    pub(crate) fn close_tab_at(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.workspace().tabs.get(index) else {
+            return;
+        };
+        let dirty: Vec<String> = tab
+            .panes
+            .values()
+            .filter(|s| s.is_dirty(cx))
+            .map(|s| s.title(cx))
+            .collect();
+        if !dirty.is_empty() {
+            let warning = format!(
+                "{} has unsaved changes. Close again to discard them.",
+                dirty.join(", ")
+            );
+            if self.notice.as_deref() != Some(warning.as_str()) {
+                self.set_notice(warning, cx);
+                return;
+            }
+        }
+        let tab = self.workspace_mut().tabs.remove(index);
+        for surface in tab.panes.values() {
+            self.remember_closed(surface, cx);
+        }
+        self.after_tab_removed(index, window, cx);
+    }
+
+    fn remember_closed(&mut self, surface: &Surface, cx: &App) {
+        self.closed.push(match surface {
+            Surface::Editor(e) => Closed::File(e.read(cx).path.clone()),
+            Surface::Terminal(t) => Closed::Terminal(PathBuf::from(&t.read(cx).cwd)),
+        });
+    }
+
+    /// Take a surface out of whichever tab holds it.
+    pub(crate) fn close_surface(
+        &mut self,
+        surface: &Surface,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.notice = None;
+        let id = surface_id(surface);
+        for w in 0..self.workspaces.len() {
+            for t in 0..self.workspaces[w].tabs.len() {
+                let Some(pane) = self.workspaces[w].tabs[t].pane_of(|s| surface_id(s) == id) else {
+                    continue;
+                };
+                self.remember_closed(surface, cx);
+                if !self.workspaces[w].tabs[t].remove(pane) {
+                    self.workspaces[w].tabs.remove(t);
+                    let previous = self.active;
+                    self.active = w;
+                    self.after_tab_removed(t, window, cx);
+                    if previous != w && previous < self.workspaces.len() {
+                        self.active = previous;
+                        self.focus_active(window, cx);
+                    }
+                } else {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                }
+                return;
+            }
         }
     }
 
-    fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.active = index.min(self.tabs.len().saturating_sub(1));
-        match &self.tabs[self.active] {
-            Tab::Editor(editor) => editor.update(cx, |editor, cx| editor.focus(window, cx)),
-            Tab::Terminal => {
-                let focus = self.terminal.read(cx).focus_handle().clone();
-                window.focus(&focus, cx)
-            }
+    /// The active workspace lost tab `index`: show its neighbor, or a new
+    /// terminal when it was the last (a workspace always has a tab while
+    /// it's shown).
+    fn after_tab_removed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace_mut();
+        if workspace.tabs.is_empty() {
+            let dir = workspace.default_directory();
+            let terminal = self.new_terminal(dir, Vec::new(), window, cx);
+            let active = self.active;
+            self.add_tab(active, terminal, window, cx);
+            return;
+        }
+        if workspace.active >= index && workspace.active > 0 {
+            workspace.active -= 1;
+        }
+        workspace.active = workspace.active.min(workspace.tabs.len() - 1);
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    /// A message in the status bar.
+    pub(crate) fn set_notice(&mut self, notice: String, cx: &mut Context<Self>) {
+        self.notice = Some(notice);
+        cx.notify();
+    }
+
+    /// Read every listed folder again (files were created, moved or deleted).
+    pub(crate) fn reload_tree(&mut self, cx: &mut Context<Self>) {
+        for workspace in &mut self.workspaces {
+            workspace.reload_tree();
         }
         cx.notify();
     }
 
-    fn active_editor(&self) -> Option<&Entity<EditorTab>> {
-        match self.tabs.get(self.active) {
-            Some(Tab::Editor(editor)) => Some(editor),
-            _ => None,
+    /// The folder new terminals and splits start in: the focused surface's.
+    fn current_directory(&self, cx: &App) -> PathBuf {
+        self.focused_surface()
+            .and_then(|s| s.directory(cx))
+            .filter(|d| d.is_dir())
+            .unwrap_or_else(|| self.workspace().default_directory())
+    }
+
+    // MARK: Commands
+
+    fn run_command_action(
+        &mut self,
+        action: &RunCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.run_command(&action.id, window, cx);
+    }
+
+    /// Run the command `id` (see `commands::catalog`).
+    pub(crate) fn run_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match id {
+            "new_tab" => {
+                let dir = self.current_directory(cx);
+                let terminal = self.new_terminal(dir, Vec::new(), window, cx);
+                let active = self.active;
+                self.add_tab(active, terminal, window, cx);
+            }
+            "close_tab" => self.close_focused(window, cx),
+            "reopen_tab" => match self.closed.pop() {
+                Some(Closed::File(path)) => self.open_file(&path, window, cx),
+                Some(Closed::Terminal(dir)) => {
+                    let terminal = self.new_terminal(dir, Vec::new(), window, cx);
+                    let active = self.active;
+                    self.add_tab(active, terminal, window, cx);
+                }
+                None => {}
+            },
+            "next_tab" | "prev_tab" => {
+                let count = self.workspace().tabs.len();
+                if count > 0 {
+                    let current = self.workspace().active;
+                    let next = if id == "next_tab" {
+                        (current + 1) % count
+                    } else {
+                        (current + count - 1) % count
+                    };
+                    self.activate_tab(next, window, cx);
+                }
+            }
+            "split_right" | "split_down" => {
+                let dir = self.current_directory(cx);
+                let terminal = self.new_terminal(dir, Vec::new(), window, cx);
+                let axis = if id == "split_right" {
+                    SplitAxis::Horizontal
+                } else {
+                    SplitAxis::Vertical
+                };
+                self.split_focused(terminal, axis, window, cx);
+            }
+            "focus_pane_left" => self.focus_neighbor(PaneDirection::Left, window, cx),
+            "focus_pane_right" => self.focus_neighbor(PaneDirection::Right, window, cx),
+            "focus_pane_up" => self.focus_neighbor(PaneDirection::Up, window, cx),
+            "focus_pane_down" => self.focus_neighbor(PaneDirection::Down, window, cx),
+            "resize_pane_left" => self.resize_focused(PaneDirection::Left, cx),
+            "resize_pane_right" => self.resize_focused(PaneDirection::Right, cx),
+            "resize_pane_up" => self.resize_focused(PaneDirection::Up, cx),
+            "resize_pane_down" => self.resize_focused(PaneDirection::Down, cx),
+            "next_pane" => self.cycle_pane(1, window, cx),
+            "prev_pane" => self.cycle_pane(-1, window, cx),
+            "zoom_pane" => self.toggle_zoom(cx),
+            "equalize_panes" => self.equalize(cx),
+            "move_pane_to_tab" => self.move_pane_to_tab(window, cx),
+            "save" => {
+                if let Some(editor) = self.active_editor().cloned() {
+                    editor.update(cx, |editor, cx| editor.save(cx));
+                }
+            }
+            "toggle_sidebar" => {
+                SettingsStore::update(cx, |s| s.sidebar_visible = !s.sidebar_visible)
+            }
+            "show_files" | "show_changes" | "project_search" | "search_text" => {
+                self.panel = match id {
+                    "show_files" => SidebarPanel::Files,
+                    "show_changes" => SidebarPanel::Changes,
+                    _ => SidebarPanel::Search,
+                };
+                SettingsStore::update(cx, |s| s.sidebar_visible = true);
+                cx.notify();
+            }
+            "font_increase" | "font_decrease" | "font_reset" => {
+                let delta = match id {
+                    "font_increase" => 1,
+                    "font_decrease" => -1,
+                    _ => 0,
+                };
+                SettingsStore::update(cx, |s| {
+                    if delta == 0 {
+                        let defaults = impulse_kit::settings::Settings::default();
+                        s.font_size = defaults.font_size;
+                        s.terminal_font_size = defaults.terminal_font_size;
+                    } else {
+                        s.font_size += delta;
+                        s.terminal_font_size += delta;
+                    }
+                });
+            }
+            "fullscreen" => window.toggle_fullscreen(),
+            "trust_folder" => {
+                let index = self.active;
+                self.workspaces[index].declined = false;
+                self.present_trust_prompt(index, window, cx);
+            }
+            "restrict_folder" => {
+                let root = self.workspace().root.to_string_lossy().into_owned();
+                self.trust.restrict(&root);
+                self.disable_lsp(self.active, cx);
+                let name = self.workspace().name();
+                self.set_notice(
+                    format!("{name} is restricted: language servers are off."),
+                    cx,
+                );
+            }
+            "forget_trusted_folders" => {
+                self.trust.revoke_all();
+                for index in 0..self.workspaces.len() {
+                    self.disable_lsp(index, cx);
+                }
+                self.set_notice("Every folder is restricted again.".into(), cx);
+            }
+            "open_settings_json" => {
+                let path = impulse_kit::settings::settings_path(cfg!(debug_assertions));
+                if !path.exists() {
+                    let defaults = impulse_kit::settings::Settings::default().encode();
+                    let _ = std::fs::write(&path, defaults);
+                }
+                self.open_file(&path, window, cx);
+            }
+            "open_workspace" => self.choose_workspace_folder(window, cx),
+            "close_workspace" => self.close_workspace(self.active, window, cx),
+            "new_window" => {
+                let args = Args {
+                    theme: self.theme_override.clone(),
+                    cwd: self.workspace().root.to_string_lossy().into_owned(),
+                    commands: Vec::new(),
+                    open: Vec::new(),
+                    trust: false,
+                    trust_store: self.trust.clone(),
+                };
+                crate::open_main_window(args, cx);
+            }
+            custom if custom.starts_with("custom_") => {
+                self.run_custom(&custom["custom_".len()..], window, cx)
+            }
+            other => {
+                let title = crate::commands::catalog(SettingsStore::get(cx))
+                    .into_iter()
+                    .find(|c| c.id == other)
+                    .map(|c| c.title)
+                    .unwrap_or_else(|| other.to_string());
+                self.set_notice(format!("{title} isn't in the Rust app yet."), cx);
+            }
         }
     }
 
-    fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.active_editor().cloned() {
-            editor.update(cx, |editor, cx| editor.save(cx));
+    /// A custom shortcut: its command line in the focused terminal, or in a
+    /// new terminal tab when none is focused.
+    fn run_custom(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(custom) = SettingsStore::get(cx)
+            .custom_keybindings
+            .iter()
+            .find(|c| c.name == name)
+            .cloned()
+        else {
+            return;
+        };
+        let shell =
+            impulse_kit::shell::ShellType::detect(&impulse_kit::shell::login::default_shell_path());
+        let line = std::iter::once(custom.command.trim().to_string())
+            .chain(
+                custom
+                    .args
+                    .iter()
+                    .map(|a| impulse_kit::shell::quoting::quoted(a, shell)),
+            )
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        match self.active_terminal() {
+            Some(terminal) => terminal.read(cx).write(format!("{line}\r").as_bytes()),
+            None => {
+                let dir = self.current_directory(cx);
+                let terminal = self.new_terminal(dir, vec![line], window, cx);
+                let active = self.active;
+                self.add_tab(active, terminal, window, cx);
+            }
         }
+    }
+
+    /// Open Folder as Workspace…
+    fn choose_workspace_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await {
+                if let Some(path) = paths.into_iter().next() {
+                    let _ = workbench.update_in(cx, |workbench, window, cx| {
+                        workbench.open_workspace(&path, window, cx)
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Show the workspace for `folder`, adding one if there's none.
+    pub(crate) fn open_workspace(
+        &mut self,
+        folder: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let folder = crate::workspace::normalize(folder);
+        let existing = self
+            .workspaces
+            .iter()
+            .position(|w| w.kind == Kind::Folder && w.root == folder);
+        let index = match existing {
+            Some(index) => index,
+            None => {
+                let id = self.next_id();
+                // Before Scratch, which stays last.
+                let at = self
+                    .workspaces
+                    .iter()
+                    .position(|w| w.kind == Kind::Scratch)
+                    .unwrap_or(self.workspaces.len());
+                self.workspaces
+                    .insert(at, Workspace::new(id, Kind::Folder, folder));
+                at
+            }
+        };
+        self.activate_workspace(index, window, cx);
+    }
+
+    /// Close a folder workspace and its tabs (Scratch stays).
+    pub(crate) fn close_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .workspaces
+            .get(index)
+            .is_none_or(|w| w.kind == Kind::Scratch)
+        {
+            return;
+        }
+        let dirty = self.workspaces[index]
+            .all_surfaces()
+            .any(|s| s.is_dirty(cx));
+        let warning = format!(
+            "{} has unsaved files. Close it again to discard them.",
+            self.workspaces[index].name()
+        );
+        if dirty && self.notice.as_deref() != Some(warning.as_str()) {
+            self.set_notice(warning, cx);
+            return;
+        }
+        self.workspaces.remove(index);
+        if self.active >= index && self.active > 0 {
+            self.active -= 1;
+        }
+        let active = self.active.min(self.workspaces.len() - 1);
+        self.activate_workspace(active, window, cx);
     }
 
     fn format_document(&mut self, _: &FormatDocument, window: &mut Window, cx: &mut Context<Self>) {
@@ -537,526 +779,37 @@ impl Workbench {
             editor.update(cx, |editor, cx| editor.find_references(window, cx));
         }
     }
+}
 
-    /// Close the active tab. The terminal stays; an editor with unsaved
-    /// changes asks first, by needing a second close.
-    fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
-        self.close(self.active, window, cx);
-    }
-
-    fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(Tab::Editor(editor)) = self.tabs.get(index) else {
-            return;
-        };
-        let (dirty, title) = {
-            let editor = editor.read(cx);
-            (editor.dirty, editor.title.clone())
-        };
-        let warning = format!("{title} has unsaved changes. Close again to discard them.");
-        if dirty && self.notice.as_deref() != Some(warning.as_str()) {
-            self.notice = Some(warning);
-            cx.notify();
-            return;
-        }
-        self.notice = None;
-        self.tabs.remove(index);
-        let next = if self.active >= index {
-            self.active.saturating_sub(1)
-        } else {
-            self.active
-        };
-        self.activate(next, window, cx);
-    }
-
-    /// A message in the status bar.
-    pub(crate) fn set_notice(&mut self, notice: String, cx: &mut Context<Self>) {
-        self.notice = Some(notice);
-        cx.notify();
-    }
-
-    /// Read every listed folder again (files were created, moved or deleted).
-    pub(crate) fn reload_tree(&mut self, cx: &mut Context<Self>) {
-        for (dir, entries) in self.children.iter_mut() {
-            *entries = list_dir(dir);
-        }
-        cx.notify();
-    }
-
-    fn toggle_dir(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if !self.expanded.remove(&path) {
-            self.children
-                .entry(path.clone())
-                .or_insert_with(|| list_dir(&path));
-            self.expanded.insert(path);
-        }
-        cx.notify();
-    }
-
-    /// The visible rows: the root's entries, and those of every expanded
-    /// folder under them.
-    fn tree_rows(&self) -> Vec<TreeRow> {
-        fn walk(wb: &Workbench, dir: &Path, depth: usize, rows: &mut Vec<TreeRow>) {
-            for (name, is_dir) in wb.children.get(dir).map(Vec::as_slice).unwrap_or_default() {
-                let path = dir.join(name);
-                let expanded = *is_dir && wb.expanded.contains(&path);
-                rows.push(TreeRow {
-                    path: path.clone(),
-                    name: name.clone(),
-                    is_dir: *is_dir,
-                    depth,
-                });
-                if expanded {
-                    walk(wb, &path, depth + 1, rows);
-                }
-            }
-        }
-        let mut rows = Vec::new();
-        walk(self, &self.root, 0, &mut rows);
-        rows
-    }
-
-    fn c(&self, color: KitRgba) -> Hsla {
-        rgba(color).into()
-    }
-
-    fn icon(&self, name: &str, size: f32, color: KitRgba) -> impl IntoElement {
-        svg()
-            .path(format!("icons/{name}.svg"))
-            .size(px(size))
-            .flex_none()
-            .text_color(self.c(color))
-    }
-
-    fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &self.palette;
-        // macOS draws its traffic lights in this inset; on Linux the window
-        // controls are Impulse's own (client-side decorations).
-        let leading = if cfg!(target_os = "macos") {
-            metrics::TRAFFIC_LIGHT_INSET
-        } else {
-            12.0
-        };
-        let tab = |icon: &str, title: &str, active: bool| {
-            let mut t = div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .h(px(metrics::TAB_HEIGHT))
-                .px(px(12.))
-                .rounded(px(metrics::RADIUS))
-                .text_color(self.c(if active { p.text } else { p.text_secondary }))
-                .child(self.icon(
-                    icon,
-                    metrics::ICON,
-                    if active { p.text } else { p.text_secondary },
-                ))
-                .child(title.to_string());
-            if active {
-                t = t
-                    .bg(self.c(p.raised))
-                    .border_b_2()
-                    .border_color(self.c(p.accent));
-            }
-            t
-        };
-        div()
-            .flex()
-            .items_center()
-            .h(px(metrics::TITLEBAR_HEIGHT))
-            .pl(px(leading))
-            .pr(px(10.))
-            .gap(px(10.))
-            .bg(self.c(p.chrome))
-            .border_b_1()
-            .border_color(self.c(p.hairline))
-            .child(
-                div()
-                    .id("toggle-sidebar")
-                    .cursor_pointer()
-                    .on_click(|_, _, cx| {
-                        SettingsStore::update(cx, |s| s.sidebar_visible = !s.sidebar_visible)
-                    })
-                    .child(self.icon("panel-left", metrics::ICON_LARGE, p.text_secondary)),
-            )
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.workspace.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .text_color(self.c(p.text_secondary))
-                    .child(self.icon("git-branch", metrics::ICON_SMALL, p.text_secondary))
-                    .child(self.branch.clone()),
-            )
-            .child(div().w(px(8.)))
-            .children(self.tabs.iter().enumerate().map(|(index, tab_kind)| {
-                let active = index == self.active;
-                let (icon, title, dirty) = match tab_kind {
-                    Tab::Terminal => ("terminal", "bash".to_string(), false),
-                    Tab::Editor(editor) => {
-                        let editor = editor.read(cx);
-                        ("file-code", editor.title.clone(), editor.dirty)
-                    }
-                };
-                let mut t = tab(icon, &title, active).id(("tab", index)).on_click(
-                    cx.listener(move |this, _, window, cx| this.activate(index, window, cx)),
-                );
-                if matches!(tab_kind, Tab::Editor(_)) {
-                    // A dot while there are unsaved changes, otherwise a close button.
-                    t = t.child(if dirty {
-                        div()
-                            .w(px(8.))
-                            .h(px(8.))
-                            .rounded_full()
-                            .bg(self.c(p.text_secondary))
-                            .into_any_element()
-                    } else {
-                        div()
-                            .id(("close", index))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.close(index, window, cx)
-                            }))
-                            .child(self.icon("x", metrics::ICON_SMALL, p.text_tertiary))
-                            .into_any_element()
-                    });
-                }
-                t
-            }))
-            .child(self.icon("plus", metrics::ICON, p.text_secondary))
-            .child(div().flex_1())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .w(px(300.))
-                    .h(px(26.))
-                    .px(px(8.))
-                    .rounded(px(metrics::RADIUS))
-                    .bg(self.c(p.overlay))
-                    .border_1()
-                    .border_color(self.c(p.hairline))
-                    .text_color(self.c(p.text_tertiary))
-                    .child(self.icon("search", metrics::ICON_SMALL, p.text_tertiary))
-                    .child("Search or run a command")
-                    .child(div().flex_1())
-                    .child(if cfg!(target_os = "macos") {
-                        "⇧⌘P"
-                    } else {
-                        "Ctrl+Shift+P"
-                    }),
-            )
-    }
-
-    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &self.palette;
-        let row = |icon: &str, label: String, selected: bool, indent: f32| {
-            let mut r = div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .h(px(metrics::ROW_HEIGHT + 4.))
-                .pl(px(indent))
-                .pr(px(8.))
-                .mx(px(6.))
-                .rounded(px(metrics::RADIUS))
-                .child(self.icon(icon, metrics::ICON, p.text_secondary))
-                .child(label);
-            if selected {
-                r = r.bg(self.c(p.selection)).font_weight(FontWeight::SEMIBOLD);
-            }
-            r
-        };
-        let open_path = self.active_editor().map(|e| e.read(cx).path.clone());
-        let mut files = div()
-            .id("files")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .py(px(4.));
-        for (index, row) in self.tree_rows().into_iter().enumerate() {
-            let expanded = self.expanded.contains(&row.path);
-            let selected = open_path.as_deref() == Some(row.path.as_path());
-            let path = row.path.clone();
-            let is_dir = row.is_dir;
-            let mut r = div()
-                .id(("file", index))
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(6.))
-                .h(px(metrics::ROW_HEIGHT))
-                .pl(px(10. + 14. * row.depth as f32))
-                .pr(px(10.))
-                .hover(|style| style.bg(rgba(p.hover)))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if is_dir {
-                        this.toggle_dir(path.clone(), cx);
-                    } else {
-                        this.open_file(&path, window, cx);
-                    }
-                }))
-                .child(div().w(px(12.)).child(if row.is_dir {
-                    self.icon(
-                        if expanded {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        },
-                        metrics::ICON_SMALL,
-                        p.text_tertiary,
-                    )
-                    .into_any_element()
-                } else {
-                    div().into_any_element()
-                }))
-                .child(self.icon(
-                    match (row.is_dir, expanded) {
-                        (true, true) => "folder-open",
-                        (true, false) => "folder",
-                        _ => "file",
-                    },
-                    metrics::ICON,
-                    if row.is_dir { p.info } else { p.text_secondary },
-                ))
-                .child(row.name);
-            if selected {
-                r = r.bg(self.c(p.selection));
-            }
-            files = files.child(r);
-        }
-        div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .w(px(SettingsStore::get(cx).sidebar_width as f32))
-            .h_full()
-            .bg(self.c(p.panel))
-            .border_r_1()
-            .border_color(self.c(p.hairline))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .py(px(8.))
-                    .gap(px(2.))
-                    .border_b_1()
-                    .border_color(self.c(p.hairline))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .px(px(14.))
-                            .h(px(metrics::ROW_HEIGHT))
-                            .text_size(px(11.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(self.c(p.text_secondary))
-                            .child(self.icon("folder-git-2", metrics::ICON_SMALL, p.text_secondary))
-                            .child(self.workspace.clone()),
-                    )
-                    .child(row("folder-git-2", self.workspace.clone(), true, 18.))
-                    .child(row("terminal", "Scratch".into(), false, 10.)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(metrics::PANE_HEADER_HEIGHT + 6.))
-                    .px(px(8.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .px(px(8.))
-                            .h(px(24.))
-                            .rounded(px(metrics::RADIUS))
-                            .bg(self.c(p.raised))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(self.icon("folder-tree", metrics::ICON, p.text))
-                            .child("Files"),
-                    )
-                    .child(self.icon("git-branch", metrics::ICON, p.text_tertiary))
-                    .child(self.icon("search", metrics::ICON, p.text_tertiary)),
-            )
-            .child(files)
-    }
-
-    fn chip(&self, icon: &str, text: String, color: KitRgba) -> AnyElement {
-        let p = &self.palette;
-        div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .h(px(24.))
-            .px(px(8.))
-            .rounded(px(metrics::RADIUS))
-            .bg(self.c(p.raised))
-            .font_family("JetBrains Mono")
-            .text_size(px(12.))
-            .text_color(self.c(color))
-            .child(self.icon(icon, metrics::ICON_SMALL, p.text_secondary))
-            .child(text)
-            .into_any_element()
-    }
-
-    fn content(&self, cx: &Context<Self>) -> impl IntoElement {
-        let p = &self.palette;
-        let terminal = self.terminal.read(cx);
-        let home = std::env::var("HOME").unwrap_or_default();
-        let cwd = match terminal.cwd.strip_prefix(&home) {
-            Some(rest) if !home.is_empty() => format!("~{rest}"),
-            _ => terminal.cwd.clone(),
-        };
-        let mut chips = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(self.chip("terminal", "bash".into(), p.text))
-            .child(self.chip("folder", cwd, p.text))
-            .child(self.chip("git-branch", self.branch.clone(), p.text));
-        if let Some(ms) = terminal.last_duration_ms {
-            chips = chips.child(self.chip("history", format!("{ms}ms"), p.success));
-        }
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .child(self.terminal.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(10.))
-                    .bg(self.c(p.content))
-                    .child(chips),
-            )
-    }
-
-    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &self.palette;
-        let item = |icon: &str, text: String| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .child(self.icon(icon, metrics::ICON_SMALL, p.text_secondary))
-                .child(text)
-        };
-        div()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .h(px(metrics::STATUS_BAR_HEIGHT))
-            .px(px(12.))
-            .bg(self.c(p.chrome))
-            .border_t_1()
-            .border_color(self.c(p.hairline))
-            .text_size(px(12.))
-            .text_color(self.c(p.text_secondary))
-            .child(item("git-branch", self.branch.clone()))
-            .children(self.is_restricted().then(|| {
-                div()
-                    .id("restricted")
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .text_color(self.c(p.warning))
-                    .cursor_pointer()
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.present_trust_prompt(window, cx)),
-                    )
-                    .child(self.icon("shield-alert", metrics::ICON_SMALL, p.warning))
-                    .child("Restricted")
-            }))
-            .children(
-                self.notice
-                    .clone()
-                    .map(|notice| div().text_color(self.c(p.warning)).child(notice)),
-            )
-            .child(div().flex_1())
-            .children(match self.active_editor() {
-                Some(editor) => {
-                    let editor = editor.read(cx);
-                    let (line, column) = editor.cursor(cx);
-                    vec![
-                        editor.notice.clone().map(|n| {
-                            div()
-                                .text_color(self.c(p.warning))
-                                .child(n)
-                                .into_any_element()
-                        }),
-                        Some(
-                            div()
-                                .child(format!("Ln {line}, Col {column}"))
-                                .into_any_element(),
-                        ),
-                        Some(
-                            div()
-                                .child(format!("Spaces: {}", editor.tab_size))
-                                .into_any_element(),
-                        ),
-                        Some(div().child("UTF-8").into_any_element()),
-                        Some(div().child(editor.language.clone()).into_any_element()),
-                        Some(editor.server_names())
-                            .filter(|names| !names.is_empty())
-                            .map(|names| {
-                                div()
-                                    .text_color(self.c(p.text_tertiary))
-                                    .child(names.join(", "))
-                                    .into_any_element()
-                            }),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                }
-                None => vec![
-                    item("folder", self.terminal.read(cx).cwd.clone()).into_any_element(),
-                    item("terminal", "bash".into()).into_any_element(),
-                ],
-            })
+/// Identity of the entity behind a surface.
+pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
+    match surface {
+        Surface::Terminal(t) => t.entity_id(),
+        Surface::Editor(e) => e.entity_id(),
     }
 }
 
 impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = SettingsStore::get(cx);
-        let sidebar = settings.sidebar_visible;
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar = SettingsStore::get(cx).sidebar_visible;
         let p = &self.palette;
         div()
+            .id("workbench")
             .track_focus(&self.focus)
-            .on_action(cx.listener(Self::save))
-            .on_action(cx.listener(Self::close_tab))
+            .key_context("Workbench")
+            .on_action(cx.listener(Self::run_command_action))
             .on_action(cx.listener(Self::format_document))
             .on_action(cx.listener(Self::rename_symbol))
             .on_action(cx.listener(Self::find_references))
+            .on_mouse_move(cx.listener(Self::drag_divider))
+            .on_mouse_up(gpui_kit::MouseButton::Left, cx.listener(Self::end_drag))
             .flex()
             .flex_col()
             .size_full()
-            .bg(self.c(p.window))
+            .bg(crate::workbench_chrome::hsla(p.window))
             .font_family(UI_FONT)
             .text_size(px(13.))
-            .text_color(self.c(p.text))
+            .text_color(crate::workbench_chrome::hsla(p.text))
             .child(self.titlebar(cx))
             .child(
                 div()
@@ -1064,15 +817,7 @@ impl Render for Workbench {
                     .flex_1()
                     .min_h_0()
                     .when(sidebar, |row| row.child(self.sidebar(cx)))
-                    .child(match self.active_editor() {
-                        Some(editor) => div()
-                            .flex_1()
-                            .h_full()
-                            .min_w_0()
-                            .child(editor.clone())
-                            .into_any_element(),
-                        None => self.content(cx).into_any_element(),
-                    }),
+                    .child(self.content(window, cx)),
             )
             .child(self.status_bar(cx))
     }
