@@ -31,6 +31,8 @@ gpui-kit = { version = "=0.8.0", features = [
     "tree-sitter-ruby",
     "tree-sitter-rust",
     "tree-sitter-scala",
+    # Its grammar (tree-sitter-sequel) keeps `cc` on 1.2 for the workspace.
+    "tree-sitter-sql",
     "tree-sitter-swift",
     "tree-sitter-toml",
     "tree-sitter-tsx",

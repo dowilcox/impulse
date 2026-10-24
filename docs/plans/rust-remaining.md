@@ -56,9 +56,11 @@ Work that doesn't depend on anyone else.
   cursor was there but blinking, and the shot caught it off. The
   terminal now blinks only in the active window, as Swift's
   `shouldBlink` does, so it stays solid elsewhere (and in snapshots).
-- [ ] **SQL highlighting.** Its tree-sitter grammar needs an older `cc`
-  than the workspace uses; either pin a compatible grammar or build it
-  another way.
+- [x] **SQL highlighting.** Done: GPUI Kit's `tree-sitter-sql` feature
+  is on. Its grammar (`tree-sitter-sequel`) asks for `cc ~1.2`, and
+  nothing else in the workspace needs a newer one, so `Cargo.lock` holds
+  `cc` at 1.2.67, and `cargo update` keeps it on 1.2 while the grammar
+  asks for that.
 - [ ] **Remove the line on the editor's right side.** A vertical line shows
   along the right of an editor tab, which the Swift app doesn't have.
   Found: on a window wide enough, it's the right margin at column 120
