@@ -672,6 +672,7 @@ impl ReviewView {
 
     fn set_viewed(&mut self, index: usize, viewed: bool, cx: &mut Context<Self>) {
         let key = self.scope_key();
+        let was_complete = !self.files.is_empty() && self.files.iter().all(|f| f.viewed);
         let Some(file) = self.files.get_mut(index) else {
             return;
         };
@@ -689,6 +690,11 @@ impl ReviewView {
             }
         }
         save_viewed(&key, &map);
+        // The last file seen: remember "reviewed up to here" for the
+        // scope menu's "Since my last review", as Swift does.
+        if viewed && !was_complete && self.files.iter().all(|f| f.viewed) {
+            crate::agent_send::mark_reviewed(&self.root);
+        }
         self.rebuild_rows();
         cx.notify();
     }

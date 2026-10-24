@@ -521,6 +521,8 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   A Run in Terminal shortcut runs in the focused terminal only when its
   shell is at the prompt and the input bar is on (`TerminalView::at_prompt`,
   Swift's `isAtPrompt`); otherwise in a new terminal tab.
+  Marking Review's last file viewed remembers "reviewed up to here" for
+  the scope menu's Since your review, as Swift does.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.
