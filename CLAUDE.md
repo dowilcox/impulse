@@ -135,7 +135,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           (terminal_input_bar.rs over command_editor.rs:
                           chips, shell colors, ghost suggestions, Tab menu,
                           history from command_history.rs, which shares
-                          history.sqlite3), find (terminal_find_bar.rs), and
+                          history.sqlite3 and backs the palette's h:
+                          mode, Import Shell History and Clear Command
+                          History), find (terminal_find_bar.rs), and
                           block commands, hints and links
                           (terminal_blocks.rs, reached through
                           TerminalView::perform_block_command), the Search panel

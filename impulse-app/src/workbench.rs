@@ -672,6 +672,8 @@ impl Workbench {
                     editor.update(cx, |editor, cx| editor.save(cx));
                 }
             }
+            "import_shell_history" => self.import_shell_history(window, cx),
+            "clear_command_history" => self.clear_command_history(window, cx),
             "toggle_sidebar" => {
                 SettingsStore::update(cx, |s| s.sidebar_visible = !s.sidebar_visible)
             }

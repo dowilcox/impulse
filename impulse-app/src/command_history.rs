@@ -13,8 +13,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use gpui_kit::{App, AppContext as _, Global};
-use impulse_kit::history::{CommandHistoryDatabase, HistoryEntry};
+use gpui_kit::{App, AppContext as _, Global, Task};
+use impulse_kit::history::{CommandHistoryDatabase, HistoryEntry, HistoryFilter, HistoryHit};
 
 use crate::settings_store::SettingsStore;
 
@@ -148,6 +148,105 @@ impl CommandHistory {
         .detach();
     }
 
+    /// Distinct commands matching `text` (fuzzy, with the matched byte
+    /// positions) within `filter`, newest first when `text` is empty. With
+    /// `repo_of`, only commands run in that folder's repository.
+    pub fn search(
+        text: String,
+        mut filter: HistoryFilter,
+        repo_of: Option<String>,
+        cx: &mut App,
+    ) -> Task<Vec<(HistoryHit, Vec<usize>)>> {
+        const LIMIT: usize = 200;
+        if !enabled(cx) {
+            return Task::ready(Vec::new());
+        }
+        cx.background_spawn(async move {
+            let Some(database) = database() else {
+                return Vec::new();
+            };
+            if let Some(dir) = repo_of {
+                // No repository: nothing can match.
+                filter.repo = Some(git_root(&dir).unwrap_or_default());
+            }
+            let limit = if text.is_empty() { LIMIT } else { 5000 };
+            let candidates = database.recent(None, &filter, limit);
+            if text.is_empty() {
+                return candidates
+                    .into_iter()
+                    .map(|hit| (hit, Vec::new()))
+                    .collect();
+            }
+            impulse_kit::fuzzy::rank(&candidates, &text, LIMIT, false, |hit| {
+                hit.entry.command.as_str()
+            })
+            .into_iter()
+            .map(|(hit, m)| (hit.clone(), m.positions))
+            .collect()
+        })
+    }
+
+    /// Import the zsh, bash and fish history files in the home folder:
+    /// how many commands they had and how many were new.
+    pub fn import_shell_history(cx: &mut App) -> Task<(usize, usize)> {
+        Self::load_if_needed(cx);
+        let task = cx.background_spawn(async move {
+            let home = crate::workspace::home();
+            let mut entries = Vec::new();
+            if let Ok(data) = std::fs::read(home.join(".zsh_history")) {
+                entries.extend(impulse_kit::history::import::zsh(&data));
+            }
+            if let Ok(data) = std::fs::read(home.join(".bash_history")) {
+                entries.extend(impulse_kit::history::import::bash_bytes(&data));
+            }
+            if let Ok(data) = std::fs::read(home.join(".local/share/fish/fish_history")) {
+                entries.extend(impulse_kit::history::import::fish_bytes(&data));
+            }
+            let Some(database) = database() else {
+                return (entries.len(), 0, Vec::new());
+            };
+            let added = database.import_entries(&entries);
+            let recent = database
+                .recent(None, &Default::default(), CACHE_SIZE)
+                .into_iter()
+                .map(|hit| hit.entry.command)
+                .collect();
+            (entries.len(), added, recent)
+        });
+        cx.spawn(async move |cx| {
+            let (found, added, recent) = task.await;
+            cx.update(|cx| {
+                let history = Self::global_mut(cx);
+                history.cache.clear();
+                history.merge(recent, false);
+            });
+            (found, added)
+        })
+    }
+
+    /// Forget every stored command.
+    pub fn clear(cx: &mut App) -> Task<()> {
+        let history = Self::global_mut(cx);
+        history.cleared_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        history.revision += 1;
+        let task = cx.background_spawn(async move {
+            if let Some(database) = database() {
+                database.remove_all();
+            }
+        });
+        cx.spawn(async move |cx| {
+            task.await;
+            cx.update(|cx| {
+                let history = Self::global_mut(cx);
+                history.cache.clear();
+                history.revision += 1;
+            });
+        })
+    }
+
     fn merge(&mut self, commands: Vec<String>, at_front: bool) {
         if at_front {
             let incoming: HashSet<&String> = commands.iter().collect();
@@ -186,4 +285,65 @@ fn git_root(dir: &str) -> Option<String> {
 
 fn git_branch(root: &str) -> Option<String> {
     git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD")
+}
+
+impl crate::workbench::Workbench {
+    /// Import Shell History: zsh, bash and fish history into Impulse's.
+    pub(crate) fn import_shell_history(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        use gpui_kit::component::notification::Notification;
+        if !enabled(cx) {
+            self.toast(
+                Notification::info(
+                    "Command history is off. Turn on Keep command history in Settings.",
+                ),
+                window,
+                cx,
+            );
+            return;
+        }
+        let import = CommandHistory::import_shell_history(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let (found, added) = import.await;
+            let message = if found == 0 {
+                "No zsh, bash or fish history found.".to_string()
+            } else if added == 0 {
+                "Shell history is already imported.".to_string()
+            } else {
+                format!(
+                    "Imported {added} command{} from shell history.",
+                    if added == 1 { "" } else { "s" }
+                )
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let note = if found == 0 {
+                    Notification::info(message)
+                } else {
+                    Notification::success(message)
+                };
+                this.toast(note, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Clear Command History, after asking.
+    pub(crate) fn clear_command_history(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        self.git_confirm(
+            "Clear command history?",
+            "Impulse forgets every command it has recorded, in every terminal. Your shell's own history isn't touched.",
+            "Clear History",
+            true,
+            window,
+            cx,
+            |_, _, cx| CommandHistory::clear(cx).detach(),
+        );
+    }
 }

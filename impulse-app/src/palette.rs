@@ -29,8 +29,10 @@ use impulse_kit::chrome::{metrics, ChromePalette};
 use impulse_kit::command_palette::{CommandPaletteItem, RecentCommandStore};
 use impulse_kit::document_symbols::OutlineSymbol;
 use impulse_kit::fuzzy::{self, Match};
+use impulse_kit::history::HistoryFilter;
 use impulse_kit::settings::Settings;
 
+use crate::command_history::CommandHistory;
 use crate::commands::AppCommand;
 use crate::editor_tab::EditorTab;
 use crate::settings_store::SettingsStore;
@@ -79,6 +81,7 @@ pub fn prefix_for(id: &str) -> Option<&'static str> {
         "find_setting" => "set:",
         "go_to_symbol" => "@",
         "go_to_project_symbol" => "#",
+        "command_history" => "h:",
         _ => return None,
     })
 }
@@ -175,6 +178,60 @@ fn parse(query: &str) -> (Mode, &str) {
     (Mode::Files, query)
 }
 
+/// A command on one line (line breaks shown as " ⏎ "), with match
+/// positions moved to where their characters ended up.
+fn one_line(command: &str, positions: Vec<usize>) -> (String, Vec<usize>) {
+    let mut title = String::with_capacity(command.len());
+    let mut map = Vec::with_capacity(command.len() + 1);
+    for (i, c) in command.char_indices() {
+        while map.len() < i {
+            map.push(title.len());
+        }
+        map.push(title.len());
+        if c == '\n' {
+            title.push_str(" ⏎ ");
+        } else {
+            title.push(c);
+        }
+    }
+    let highlights = positions
+        .into_iter()
+        .filter(|p| command[*p..].chars().next().is_some_and(|c| c != '\n'))
+        .filter_map(|p| map.get(p).copied())
+        .collect();
+    (title, highlights)
+}
+
+/// Midnight today, local time, in seconds since 1970.
+fn start_of_today() -> f64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let offset = local_utc_offset_seconds();
+    let local = now + offset;
+    (local - local.rem_euclid(86_400) - offset) as f64
+}
+
+/// The local time zone's offset from UTC, from `date +%z` (no time zone
+/// database in the standard library).
+fn local_utc_offset_seconds() -> i64 {
+    std::process::Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|z| {
+            let z = z.trim();
+            let sign = if z.starts_with('-') { -1 } else { 1 };
+            let digits = z.trim_start_matches(['+', '-']);
+            let hours: i64 = digits.get(0..2)?.parse().ok()?;
+            let minutes: i64 = digits.get(2..4)?.parse().ok()?;
+            Some(sign * (hours * 3600 + minutes * 60))
+        })
+        .unwrap_or(0)
+}
+
 /// Trim spaces and tabs, as Swift's `.whitespaces`.
 fn trim(term: &str) -> &str {
     term.trim_matches([' ', '\t'])
@@ -258,6 +315,8 @@ pub(crate) struct Host {
     tabs: Vec<TabInfo>,
     workspaces: Vec<WorkspaceInfo>,
     branch: Option<String>,
+    /// The focused terminal's folder, for history's @here (and @repo).
+    terminal_cwd: Option<String>,
     editor: Option<Entity<EditorTab>>,
     commands: Vec<AppCommand>,
     settings: Settings,
@@ -506,7 +565,7 @@ impl Palette {
             Mode::Branches => self.refresh_branches(&term, window, cx),
             Mode::Tabs => self.refresh_tabs(&term),
             Mode::Workspaces => self.refresh_workspaces(&term),
-            Mode::History => self.not_yet("Command history"),
+            Mode::History => self.refresh_history(&term, window, cx),
             Mode::TaskBranches => self.not_yet("New Task from Branch"),
             Mode::Settings => self.refresh_settings(&term),
             Mode::Symbols => self.refresh_symbols(&term, window, cx),
@@ -784,6 +843,75 @@ impl Palette {
                     })
                     .collect();
                 palette.empty_message = format!("No matches for “{term}”");
+                cx.notify();
+            });
+        }));
+    }
+
+    // MARK: History
+
+    fn refresh_history(&mut self, term: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let mut filter = HistoryFilter::default();
+        let mut repo_of = None;
+        let mut words = Vec::new();
+        let cwd = self.host.terminal_cwd.clone();
+        for word in term.split(' ').filter(|w| !w.is_empty()) {
+            match word.to_lowercase().as_str() {
+                "@here" => filter.cwd = cwd.clone(),
+                "@repo" => repo_of = Some(cwd.clone().unwrap_or_else(|| self.host.root.clone())),
+                "@failed" => filter.failed_only = true,
+                "@today" => filter.since = Some(start_of_today()),
+                _ => words.push(word),
+            }
+        }
+        let text = words.join(" ");
+        self.empty_message =
+            if text.is_empty() && filter == HistoryFilter::default() && repo_of.is_none() {
+                "No history yet".into()
+            } else {
+                "No matching commands".into()
+            };
+        self.busy = true;
+        let generation = self.generation;
+        let search = CommandHistory::search(text, filter, repo_of, cx);
+        self.work = Some(cx.spawn_in(window, async move |this, cx| {
+            let results = search.await;
+            let _ = this.update(cx, |palette, cx| {
+                if palette.generation != generation {
+                    return;
+                }
+                palette.busy = false;
+                let now = impulse_kit::history::database::now();
+                palette.rows = results
+                    .into_iter()
+                    .map(|(hit, positions)| {
+                        let entry = hit.entry;
+                        let (title, highlights) = one_line(&entry.command, positions);
+                        let mut details = Vec::new();
+                        if let Some(cwd) = &entry.cwd {
+                            details.push(abbreviate_home(cwd));
+                        }
+                        if entry.started_at > 0.0 {
+                            details
+                                .push(impulse_kit::history::relative_time(now - entry.started_at));
+                        }
+                        let failed = entry.exit_code.is_some_and(|c| c != 0);
+                        if let Some(code) = entry.exit_code.filter(|c| *c != 0) {
+                            details.push(format!("exit {code}"));
+                        }
+                        let command = entry.command.clone();
+                        Row::new(
+                            format!("history:{}", entry.command),
+                            Some(if failed { "circle-x" } else { "history" }),
+                            title,
+                            move |w, window, cx| w.palette_insert_command(&command, window, cx),
+                        )
+                        .highlights(highlights)
+                        .subtitle(Some(details.join(" · ")))
+                        .trailing((hit.uses > 1).then(|| format!("×{}", hit.uses)))
+                    })
+                    .collect();
+                palette.selected = 0;
                 cx.notify();
             });
         }));
@@ -1572,6 +1700,10 @@ impl Workbench {
             trusted: self.trust.is_trusted(&root),
             root,
             branch: Some(self.workspace().branch.clone()).filter(|b| !b.is_empty()),
+            terminal_cwd: self
+                .active_terminal()
+                .map(|t| t.read(cx).cwd.clone())
+                .filter(|cwd| !cwd.is_empty()),
             editor: self.active_editor().cloned(),
             commands: crate::commands::catalog(SettingsStore::get(cx)),
             settings: SettingsStore::get(cx).clone(),
@@ -1606,6 +1738,25 @@ impl Workbench {
             }
         }
         host
+    }
+
+    /// Put a command from history in the focused terminal (not run), or
+    /// copy it when no terminal is focused.
+    fn palette_insert_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.active_terminal().cloned() {
+            Some(terminal) => {
+                terminal.update(cx, |t, cx| t.put_command(command, window, cx));
+            }
+            None => {
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(command.to_string()));
+                self.set_notice("Copied the command (no terminal is focused).".into(), cx);
+            }
+        }
     }
 
     /// Open `path`, at a 1-based line and column when given.

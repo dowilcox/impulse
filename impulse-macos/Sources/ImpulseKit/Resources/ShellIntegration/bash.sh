@@ -10,6 +10,9 @@ __impulse_command_started=""
 __impulse_in_prompt=""
 __impulse_names_sent=""
 __impulse_path_sent=""
+# The newest history entry when the prompt was drawn: a different one at
+# preexec is the line just typed.
+__impulse_history_mark=""
 __impulse_urlencode() {
     # Byte by byte in the C locale, so non-ASCII text is sent as its UTF-8
     # bytes (bash 3.2 reports bytes above 0x7F as negative numbers).
@@ -59,6 +62,7 @@ __impulse_prompt_command() {
     fi
     printf '\e]7;file://%s%s;Nonce=%s\a' "$HOSTNAME" "$(__impulse_urlencode "$PWD")" "$__impulse_nonce"
     __impulse_report_names
+    __impulse_history_mark=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
     printf '\e]133;A;Nonce=%s\a' "$__impulse_nonce"
 }
 __impulse_prompt_end() {
@@ -74,6 +78,27 @@ __impulse_preexec() {
         return
     fi
     __impulse_command_started=1
+    # $BASH_COMMAND is the first simple command with aliases expanded; the
+    # line as typed is the newest history entry when one was added. When
+    # none was (a repeat left out by ignoredups, a line by ignorespace or
+    # HISTIGNORE), the newest entry is still the line if, with its alias
+    # expanded, it starts with $BASH_COMMAND.
+    local entry typed first value expanded
+    entry=$(HISTTIMEFORMAT= builtin history 1 2>/dev/null)
+    if [ -n "$entry" ] && [[ $entry =~ ^[[:space:]]*[0-9]+\*?[[:space:]]+(.*)$ ]]; then
+        typed="${BASH_REMATCH[1]}"
+        if [ "$entry" != "$__impulse_history_mark" ]; then
+            command="$typed"
+        else
+            first="${typed%%[[:space:]]*}"
+            expanded="$typed"
+            if value=$(builtin alias -- "$first" 2>/dev/null); then
+                eval "value=${value#alias "$first"=}"
+                expanded="$value${typed#"$first"}"
+            fi
+            [[ "$expanded" == "$command"* ]] && command="$typed"
+        fi
+    fi
     case "$command" in
         alias*|unalias*|source*|". "*|function*|*"()"*|unset*|eval*) __impulse_names_sent="" ;;
     esac

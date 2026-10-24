@@ -121,6 +121,30 @@ impl TerminalView {
         window.focus(&handle, cx);
     }
 
+    /// A command picked elsewhere (the palette's history): into the bar,
+    /// replacing what's there, or typed at the grid's prompt when the bar
+    /// isn't up. Not run.
+    pub(crate) fn put_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bar_shown(cx) {
+            self.set_bar_text(command.to_string(), cx);
+            let handle = self.editor.read(cx).focus_handle().clone();
+            window.focus(&handle, cx);
+        } else {
+            let bracketed = self
+                .backend
+                .mode()
+                .contains(impulse_terminal::TerminalMode::BRACKETED_PASTE);
+            self.backend
+                .write(&impulse_kit::key_encoder::paste_bytes(command, bracketed));
+            self.focus(window, cx);
+        }
+    }
+
     fn editor_text(&self, cx: &gpui_kit::App) -> String {
         self.editor.read(cx).text().to_string()
     }

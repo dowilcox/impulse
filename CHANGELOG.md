@@ -6,6 +6,7 @@ All notable changes to Impulse are documented in this file.
 
 ### Fixes
 
+- In bash, command history, block headers and the palette's history now show the command as you typed it: a whole pipeline (`ls | wc -l`, not just `ls`), with aliases as written instead of expanded.
 - Closing a terminal that wanted your attention (finishing a task whose agent had just notified you, say) clears it from the Dock badge and Notification Center instead of leaving the badge counting it.
 - On a busy Mac, a git command that had already finished could look stuck, and one with a time limit could be reported as timed out and stopped.
 - Impulse's MCP server answers tool lists and tool calls even when your Mac is busy; an agent's request could go unanswered.
