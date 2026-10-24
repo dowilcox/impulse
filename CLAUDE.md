@@ -131,7 +131,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           git_actions.rs: GitActions/GitPrompts and the git
                           commands; branch_switcher.rs; file_icons.rs:
                           material icons from icon-mapping.json, served as
-                          material/<file>.svg),
+                          material/<file>.svg), the Search panel
+                          (search_panel.rs; workbench_search.rs opens
+                          results and runs Replace All with Undo, reloading
+                          clean editors with EditorTab::reload_from_disk),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

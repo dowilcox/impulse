@@ -211,7 +211,7 @@ impl Workbench {
 
     /// A success notification with a button (Undo, Pop Stash, …); `detail`
     /// goes under the message.
-    fn toast_with_action(
+    pub(crate) fn toast_with_action(
         &mut self,
         message: String,
         detail: Option<String>,

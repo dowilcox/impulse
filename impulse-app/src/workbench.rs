@@ -54,6 +54,7 @@ pub(crate) enum SidebarPanel {
 }
 
 pub struct Workbench {
+    pub(crate) search: Entity<crate::search_panel::SearchPanel>,
     pub(crate) palette: ChromePalette,
     pub(crate) theme: ResolvedTheme,
     pub(crate) workspaces: Vec<Workspace>,
@@ -122,7 +123,14 @@ impl Workbench {
             .observe_global_in::<SettingsStore>(window, |workbench, window, cx| {
                 workbench.apply_settings(window, cx)
             });
+        let search =
+            cx.new(|cx| crate::search_panel::SearchPanel::new(palette.clone(), window, cx));
+        cx.subscribe_in(&search, window, |workbench, panel, event, window, cx| {
+            workbench.search_event(panel.clone(), event, window, cx)
+        })
+        .detach();
         Self {
+            search,
             palette: palette.clone(),
             theme,
             workspaces: Vec::new(),
@@ -206,6 +214,9 @@ impl Workbench {
             self.theme_id = theme_id.clone();
             self.theme = impulse_kit::theme::get_theme(&theme_id);
             self.palette = ChromePalette::new(&self.theme, false);
+            let palette = self.palette.clone();
+            self.search
+                .update(cx, |search, cx| search.set_palette(palette, cx));
         }
         crate::kit_theme::apply(&self.theme, &self.palette, &settings, cx);
         let surfaces: Vec<Surface> = self
@@ -662,6 +673,10 @@ impl Workbench {
                     _ => SidebarPanel::Search,
                 };
                 SettingsStore::update(cx, |s| s.sidebar_visible = true);
+                if self.panel == SidebarPanel::Search {
+                    self.search
+                        .update(cx, |search, cx| search.focus(window, cx));
+                }
                 cx.notify();
             }
             "font_increase" | "font_decrease" | "font_reset" => {

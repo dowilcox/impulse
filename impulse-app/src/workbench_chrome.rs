@@ -490,14 +490,11 @@ impl Workbench {
                         )),
                 );
             }
-        } else if self.panel == SidebarPanel::Search {
-            files = files.child(
-                div()
-                    .px(px(14.))
-                    .py(px(8.))
-                    .text_color(hsla(p.text_tertiary))
-                    .child("Search isn't in the Rust app yet."),
-            );
+        }
+        if self.panel == SidebarPanel::Search {
+            let root = root.to_string_lossy().into_owned();
+            self.search
+                .update(cx, |search, cx| search.set_root(root, cx));
         }
         let panel_button = |id: &'static str,
                             panel: SidebarPanel,
@@ -594,7 +591,8 @@ impl Workbench {
             )
             .child(match self.panel {
                 SidebarPanel::Changes => self.changes_panel(cx),
-                _ => files.into_any_element(),
+                SidebarPanel::Search => self.search.clone().into_any_element(),
+                SidebarPanel::Files => files.into_any_element(),
             })
     }
 

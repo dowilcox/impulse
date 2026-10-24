@@ -46,6 +46,8 @@ pub struct EditorTab {
     pub tab_size: usize,
     /// Indent with spaces (`use_spaces`, or the file type's override).
     pub use_spaces: bool,
+    /// The next change is a reload from disk, not an edit.
+    reloading: bool,
     /// A Markdown preview: instead of the editor (false) or beside it (true).
     pub preview: Option<bool>,
     /// A message for the status bar ("changed on disk", a failed save).
@@ -117,12 +119,18 @@ impl EditorTab {
             if !matches!(event, InputEvent::Change) {
                 return;
             }
+            for (_, link) in &tab.links {
+                link.sync(state.read(cx).text());
+            }
+            // A reload from disk isn't an edit of the user's.
+            if tab.reloading {
+                tab.reloading = false;
+                cx.notify();
+                return;
+            }
             // A preview beside the editor follows every edit.
             if tab.preview.is_some() {
                 cx.notify();
-            }
-            for (_, link) in &tab.links {
-                link.sync(state.read(cx).text());
             }
             if !tab.dirty {
                 tab.dirty = true;
@@ -142,6 +150,7 @@ impl EditorTab {
             tab_size,
             use_spaces,
             preview: None,
+            reloading: false,
             notice: opened
                 .large
                 .then(|| "Larger than 5 MB: opened read-only.".to_string()),
@@ -870,6 +879,38 @@ impl EditorTab {
     pub fn cursor(&self, cx: &gpui_kit::App) -> (u32, u32) {
         let position = self.state.read(cx).cursor_position();
         (position.line + 1, position.character + 1)
+    }
+
+    /// The file changed on disk (Replace All, a discard): show it, as one
+    /// undoable edit, unless there are unsaved edits here, which win.
+    pub fn reload_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dirty {
+            return;
+        }
+        let Some(file) = text_file::read(&self.path) else {
+            return;
+        };
+        let state = self.state.clone();
+        self.reloading = true;
+        state.update(cx, |state, cx| {
+            let old = state.value().to_string();
+            let (range, replacement) = impulse_lsp::edits::changed_span(&old, &file.text);
+            if range.is_empty() && replacement.is_empty() {
+                return;
+            }
+            let utf16 = |byte: usize| old[..byte].encode_utf16().count();
+            state.replace_text_in_range(
+                Some(utf16(range.start)..utf16(range.end)),
+                replacement,
+                window,
+                cx,
+            );
+        });
+        // Reloading isn't an edit of the user's.
+        self.dirty = false;
+        self.stamp = text_file::stamp(&self.path);
+        cx.emit(EditorTabChanged);
+        cx.notify();
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) {
