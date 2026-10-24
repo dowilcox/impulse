@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, WindowExt as _};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, ClipboardItem, Context, FontWeight, Window};
 use impulse_kit::agents::hook_installer::{self as hooks, InstallError, OpencodePlugin, Status};
 use impulse_kit::agents::mcp_installer::{self as mcp, ClaudeScope};
@@ -647,6 +647,9 @@ pub struct AgentIntegration {
     palette: ChromePalette,
     workbench: gpui_kit::WeakEntity<Workbench>,
     busy: bool,
+    /// Claude Code's scope, a pop-up as the Swift sheet's.
+    scope: crate::settings_view::ChoiceSelect,
+    _scope_changed: gpui_kit::Subscription,
 }
 
 impl AgentIntegration {
@@ -727,7 +730,19 @@ impl AgentIntegration {
 }
 
 impl Render for AgentIntegration {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The pop-up follows the scope when it's set another way (the
+        // headless snapshots).
+        let scope = if self.model.scope == Scope::Project {
+            "project"
+        } else {
+            "user"
+        };
+        if self.scope.read(cx).selected_value().map(String::as_str) != Some(scope) {
+            self.scope.update(cx, |select, cx| {
+                select.set_selected_value(&scope.to_string(), window, cx)
+            });
+        }
         let p = self.palette.clone();
         let m = &self.model;
         let info = |text: String, warning: bool| {
@@ -748,69 +763,63 @@ impl Render for AgentIntegration {
                         .child(text),
                 )
         };
+        let light = p.is_light;
         let parts = [Part::Hooks, Part::Mcp];
-        let part_picker = ButtonGroup::new("agent-part")
-            .outline()
-            .small()
-            .children(parts.iter().map(|part| {
-                Button::new(match part {
-                    Part::Hooks => "part-hooks",
-                    Part::Mcp => "part-mcp",
-                })
-                .label(match part {
-                    Part::Hooks => "Hooks",
-                    Part::Mcp => "MCP Server",
-                })
-                .selected(*part == m.part)
-            }))
-            .on_click(cx.listener(move |sheet, clicked: &Vec<usize>, _, cx| {
-                if let Some(part) = clicked.first().and_then(|i| parts.get(*i)) {
-                    sheet.model.set_part(*part);
+        let sheet = cx.entity().downgrade();
+        let part_picker = crate::workbench_chrome::native_segmented(
+            "agent-part",
+            vec!["Hooks".into(), "MCP Server".into()],
+            parts.iter().position(|part| *part == m.part).unwrap_or(0),
+            94.,
+            light,
+            false,
+            move |index, _, cx| {
+                let _ = sheet.update(cx, |sheet, cx| {
+                    sheet.model.set_part(parts[index]);
                     cx.notify();
-                }
-            }));
+                });
+            },
+        );
         let agents = m.agents();
-        let agent_picker = ButtonGroup::new(if m.part == Part::Hooks {
-            "agent-hooks-agents"
-        } else {
-            "agent-mcp-agents"
-        })
-        .outline()
-        .small()
-        .children(agents.iter().map(|agent| {
-            Button::new(agent.name())
-                .label(agent.name())
-                .selected(*agent == m.agent)
-        }))
-        .on_click(cx.listener(move |sheet, clicked: &Vec<usize>, _, cx| {
-            if let Some(agent) = clicked.first().and_then(|i| agents.get(*i)) {
-                sheet.model.set_agent(*agent);
-                cx.notify();
-            }
-        }));
-        let scopes = [Scope::User, Scope::Project];
-        let scope_picker = (m.agent == Agent::Claude).then(|| {
-            ButtonGroup::new("agent-scope")
-                .outline()
-                .small()
-                .disabled(m.project_root.is_none())
-                .children(scopes.iter().map(|scope| {
-                    Button::new(match scope {
-                        Scope::User => "scope-user",
-                        Scope::Project => "scope-project",
-                    })
-                    .label(match scope {
-                        Scope::User => "All projects",
-                        Scope::Project => "This project only",
-                    })
-                    .selected(*scope == m.scope)
-                }))
-                .on_click(cx.listener(move |sheet, clicked: &Vec<usize>, _, cx| {
-                    if let Some(scope) = clicked.first().and_then(|i| scopes.get(*i)) {
-                        sheet.model.set_scope(*scope);
+        let sheet = cx.entity().downgrade();
+        let agent_picker = crate::workbench_chrome::native_segmented(
+            if m.part == Part::Hooks {
+                "agent-hooks-agents"
+            } else {
+                "agent-mcp-agents"
+            },
+            agents.iter().map(|agent| agent.name().into()).collect(),
+            agents
+                .iter()
+                .position(|agent| *agent == m.agent)
+                .unwrap_or(0),
+            100.,
+            light,
+            false,
+            {
+                let agents = agents.clone();
+                move |index, _, cx| {
+                    let _ = sheet.update(cx, |sheet, cx| {
+                        sheet.model.set_agent(agents[index]);
                         cx.notify();
-                    }
-                }))
+                    });
+                }
+            },
+        );
+        let scope_picker = (m.agent == Agent::Claude).then(|| {
+            div()
+                .w(px(170.))
+                .h(px(24.))
+                .flex()
+                .items_center()
+                .when(m.project_root.is_none(), |d| d.opacity(0.5))
+                .child(
+                    crate::settings_view::popup_frame(&p).w_full().child(
+                        crate::settings_view::popup(&self.scope)
+                            .disabled(m.project_root.is_none())
+                            .menu_width(px(200.)),
+                    ),
+                )
         });
         let old_entry = m.part == Part::Mcp && m.agent == Agent::Opencode;
         let dot = if old_entry {
@@ -1039,16 +1048,58 @@ impl Workbench {
         );
         let palette = self.palette.clone();
         let workbench = cx.entity().downgrade();
-        let sheet = cx.new(|_| AgentIntegration {
-            model,
-            palette,
-            workbench,
-            busy: false,
+        let scope = crate::settings_view::choice_select(
+            vec![
+                crate::settings_view::Choice::new("user", "All projects"),
+                crate::settings_view::Choice::new("project", "This project only"),
+            ],
+            if model.scope == Scope::Project {
+                "project"
+            } else {
+                "user"
+            },
+            false,
+            window,
+            cx,
+        );
+        let sheet = cx.new(|cx| {
+            let changed = cx.subscribe(
+                &scope,
+                |sheet: &mut AgentIntegration,
+                 _,
+                 event: &gpui_kit::component::select::SelectEvent<
+                    gpui_kit::component::select::SearchableVec<crate::settings_view::Choice>,
+                >,
+                 cx| {
+                    if let gpui_kit::component::select::SelectEvent::Confirm(Some(value)) = event {
+                        sheet.model.set_scope(if value == "project" {
+                            Scope::Project
+                        } else {
+                            Scope::User
+                        });
+                        cx.notify();
+                    }
+                },
+            );
+            AgentIntegration {
+                model,
+                palette,
+                workbench,
+                busy: false,
+                scope: scope.clone(),
+                _scope_changed: changed,
+            }
         });
         #[cfg(debug_assertions)]
         crate::debug_snapshot::note_agent_sheet(&sheet);
+        // The sheet's own color, as the Swift sheet's `overlay` background.
+        let background = hsla(self.palette.overlay);
         crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
-            dialog.w(px(660.)).close_button(false).child(sheet.clone())
+            dialog
+                .w(px(660.))
+                .bg(background)
+                .close_button(false)
+                .child(sheet.clone())
         });
     }
 }

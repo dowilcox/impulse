@@ -116,6 +116,82 @@ pub(crate) fn segment(
         .child(label.into())
 }
 
+/// AppKit's segmented control (SwiftUI's `.segmented` picker): a 24-high
+/// track, segments of equal width, the selected one raised, a hairline
+/// between two that aren't.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn native_segmented(
+    id: &'static str,
+    labels: Vec<gpui_kit::SharedString>,
+    selected: usize,
+    segment_width: f32,
+    light: bool,
+    disabled: bool,
+    on_select: impl Fn(usize, &mut Window, &mut gpui_kit::App) + 'static,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let ink = if light {
+        KitRgba::BLACK
+    } else {
+        KitRgba::WHITE
+    };
+    let on_select = Rc::new(on_select);
+    let count = labels.len();
+    let mut track = div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(px(24.))
+        .p(px(1.))
+        .rounded(px(7.))
+        .bg(hsla(ink.opacity(if light { 0.06 } else { 0.075 })))
+        .text_size(px(13.))
+        .text_color(hsla(ink.opacity(if disabled { 0.35 } else { 0.88 })));
+    for (index, label) in labels.into_iter().enumerate() {
+        let on_select = on_select.clone();
+        let chosen = index == selected;
+        track = track.child(
+            div()
+                .id((id, index))
+                .relative()
+                .w(px(segment_width))
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(6.))
+                .when(chosen, |d| {
+                    d.bg(if light {
+                        gpui_kit::white()
+                    } else {
+                        hsla(KitRgba::WHITE.opacity(0.2))
+                    })
+                    .shadow_xs()
+                })
+                .when(!disabled, |d| {
+                    d.on_click(move |_, window, cx| on_select(index, window, cx))
+                })
+                // A hairline before a segment, between two unselected ones.
+                .when(
+                    index > 0 && !chosen && index - 1 != selected && count > 1,
+                    |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top(px(5.))
+                                .bottom(px(5.))
+                                .w(px(1.))
+                                .bg(hsla(ink.opacity(0.15))),
+                        )
+                    },
+                )
+                .child(label),
+        );
+    }
+    track
+}
+
 /// The macOS spinner (a small `ProgressView` at 0.8): eight rounded spokes
 /// turning clockwise a spoke per `step`, the newest brightest. `color` is
 /// the label color it's drawn in at low strength.
