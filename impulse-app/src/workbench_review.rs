@@ -60,6 +60,20 @@ impl Workbench {
         self.add_tab(active, surface, window, cx);
     }
 
+    /// Review of `scope`, scrolled to the file at `path`.
+    pub(crate) fn open_review_at(
+        &mut self,
+        scope: DiffScope,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_review(Some(scope), window, cx);
+        if let Some(Surface::Review(review)) = self.focused_surface().cloned() {
+            review.update(cx, |review, cx| review.reveal_path(path, cx));
+        }
+    }
+
     /// A Review surface wired to the workbench, not yet in a tab.
     pub(crate) fn make_review(
         &mut self,

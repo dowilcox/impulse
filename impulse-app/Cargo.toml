@@ -21,10 +21,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 impulse-terminal = { path = "../impulse-terminal" }
 impulse-kit = { path = "../impulse-kit" }
+impulse-git = { path = "../impulse-git" }
 env_logger = "0.11"
 log = { workspace = true }
 impulse-protocol = { path = "../impulse-protocol" }
-impulse-git = { path = "../impulse-git" }
 libc = "0.2"
 sha2 = "0.10"
 impulse-lsp = { path = "../impulse-lsp" }

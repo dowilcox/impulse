@@ -120,7 +120,18 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           editor, Settings and Keyboard Shortcuts tabs
                           (settings_view.rs, keybindings_view.rs; shortcut
                           overrides rebind live through
-                          commands::rebind_on_change),
+                          commands::rebind_on_change), git
+                          (repository_state.rs: RepositoryState per
+                          repository root via RepositoryStore, refreshed by
+                          impulse_git's RepoWatcher and after every action,
+                          operations serialized with safety snapshots, CLI
+                          reads through RepositoryState::read_git, restricted
+                          in untrusted folders; changes_panel.rs: the Changes
+                          panel and commit composer, rows opening Review;
+                          git_actions.rs: GitActions/GitPrompts and the git
+                          commands; branch_switcher.rs; file_icons.rs:
+                          material icons from icon-mapping.json, served as
+                          material/<file>.svg),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

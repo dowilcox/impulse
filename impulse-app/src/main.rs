@@ -5,17 +5,22 @@
 //!
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
+mod branch_switcher;
+mod changes_panel;
 mod commands;
 mod control_commands;
 mod control_server;
 mod editor_keys;
 mod editor_tab;
+mod file_icons;
+mod git_actions;
 mod history_view;
 mod image_view;
 mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
 mod palette;
+mod repository_state;
 mod review_view;
 mod session;
 mod settings_store;
@@ -38,12 +43,16 @@ use gpui_kit::{
     WindowOptions,
 };
 
-/// Icons from the vendored lucide set, by name (`icons/<name>.svg`).
+/// Icons from the vendored lucide set, by name (`icons/<name>.svg`), and
+/// the material file icons (`material/<file>.svg`).
 struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
-        let file = repo_root().join("vendor/lucide").join(path);
+        let file = match path.strip_prefix("material/") {
+            Some(name) => file_icons::material_dir().join(name),
+            None => repo_root().join("vendor/lucide").join(path),
+        };
         match std::fs::read(file) {
             Ok(bytes) => Ok(Some(Cow::Owned(bytes))),
             // GPUI Kit's own icons (the editor's search panel, menus).

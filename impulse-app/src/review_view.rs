@@ -248,6 +248,8 @@ pub struct ReviewView {
     message: Option<String>,
     base_branch: Option<String>,
     generation: u64,
+    /// A file to show once the list has it (absolute path).
+    pending_reveal: Option<std::path::PathBuf>,
     /// Inside History: the commit is chosen there, so no scope bar.
     pub embedded: bool,
     _refresh: gpui_kit::Task<()>,
@@ -307,6 +309,7 @@ impl ReviewView {
             base_branch,
             generation: 0,
             embedded: false,
+            pending_reveal: None,
             _refresh: refresh,
         };
         view.refresh(cx);
@@ -380,7 +383,13 @@ impl ReviewView {
                 }
                 view.loading = false;
                 match result {
-                    Ok((changes, diffs)) => view.merge(changes, diffs),
+                    Ok((changes, diffs)) => {
+                        view.merge(changes, diffs);
+                        view.rebuild_rows();
+                        if let Some(path) = view.pending_reveal.take() {
+                            view.reveal_path(&path, cx);
+                        }
+                    }
                     Err(error) => {
                         view.files.clear();
                         view.message = Some(error);
@@ -777,6 +786,18 @@ impl ReviewView {
                 self.reveal_file(index as usize, cx);
                 return;
             }
+        }
+    }
+
+    /// Scroll to the file at `path` (absolute), now or once it's loaded.
+    pub fn reveal_path(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match self.files.iter().position(|f| f.change.path == relative) {
+            Some(index) if !self.loading => self.reveal_file(index, cx),
+            _ => self.pending_reveal = Some(path.to_path_buf()),
         }
     }
 

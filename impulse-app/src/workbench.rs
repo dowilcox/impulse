@@ -35,6 +35,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("f2", RenameSymbol, c),
         KeyBinding::new("shift-f12", FindReferences, c),
     ]);
+    crate::changes_panel::bind_keys(cx);
 }
 
 /// A closed tab that Reopen Closed Tab brings back: files reopen, terminals
@@ -78,6 +79,8 @@ pub struct Workbench {
     /// The command palette and quick open (`palette.rs`).
     pub(crate) command_palette: Entity<crate::palette::Palette>,
     _settings: gpui_kit::Subscription,
+    /// Repositories and the Changes panel (`changes_panel`, `git_actions`).
+    pub(crate) git: crate::changes_panel::GitPanel,
 }
 
 impl Workbench {
@@ -140,6 +143,7 @@ impl Workbench {
                 cx.new(|cx| crate::palette::Palette::new(workbench, colors, window, cx))
             },
             _settings: settings_subscription,
+            git: crate::changes_panel::GitPanel::new(window, cx),
         }
     }
 
@@ -736,6 +740,9 @@ impl Workbench {
                 };
                 crate::open_main_window(args, cx);
             }
+            git if crate::git_actions::GIT_COMMANDS.contains(&git) => {
+                self.run_git_command(git, window, cx)
+            }
             custom if custom.starts_with("custom_") => {
                 self.run_custom(&custom["custom_".len()..], window, cx)
             }
@@ -901,6 +908,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_git(cx);
         let sidebar = SettingsStore::get(cx).sidebar_visible;
         let p = &self.palette;
         div()

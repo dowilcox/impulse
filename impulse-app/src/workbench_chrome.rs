@@ -210,13 +210,25 @@ impl Workbench {
             .when(!workspace.branch.is_empty(), |d| {
                 d.child(
                     div()
+                        .id("titlebar-branch")
                         .flex()
                         .flex_none()
                         .items_center()
                         .gap(px(4.))
                         .text_color(hsla(p.text_secondary))
+                        .cursor_pointer()
+                        .on_click(cx.listener(|w, _, window, cx| {
+                            w.run_command("switch_branch", window, cx)
+                        }))
                         .child(icon("git-branch", metrics::ICON_SMALL, p.text_secondary))
-                        .child(workspace.branch.clone()),
+                        .child(workspace.branch.clone())
+                        .children(self.branch_sync_text(cx).map(|sync| {
+                            div()
+                                .font_family("JetBrains Mono")
+                                .text_size(px(10.5))
+                                .text_color(hsla(p.text_tertiary))
+                                .child(sync)
+                        })),
                 )
             })
             .child(div().w(px(8.)).flex_none())
@@ -394,6 +406,7 @@ impl Workbench {
             .overflow_y_scroll()
             .py(px(4.));
         if self.panel == SidebarPanel::Files {
+            let ignored = KitRgba::from_hex(&self.theme.git_ignored);
             // Scratch's tree follows the tab: list its folder when it's new.
             let rows = if workspace.children.contains_key(&root) {
                 tree_rows(workspace, &root)
@@ -413,6 +426,7 @@ impl Workbench {
                 let selected = open_path.as_deref() == Some(row.path.as_path());
                 let path = row.path.clone();
                 let is_dir = row.is_dir;
+                let status = self.git.tree_status(&row.path, p, ignored, cx);
                 files = files.child(
                     div()
                         .id(("file", index))
@@ -446,28 +460,43 @@ impl Workbench {
                         } else {
                             div().into_any_element()
                         }))
-                        .child(icon(
-                            match (row.is_dir, expanded) {
-                                (true, true) => "folder-open",
-                                (true, false) => "folder",
-                                _ => "file",
+                        .child(
+                            gpui_kit::img(crate::file_icons::icon_path(
+                                &row.name, row.is_dir, expanded,
+                            ))
+                            .size(px(16.))
+                            .flex_none(),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
+                                .child(row.name),
+                        )
+                        .children(status.filter(|(letter, _)| !letter.is_empty()).map(
+                            |(letter, color)| {
+                                div()
+                                    .flex_none()
+                                    .font_family("JetBrains Mono")
+                                    .text_size(px(10.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(hsla(color))
+                                    .child(letter)
                             },
-                            metrics::ICON,
-                            if row.is_dir { p.info } else { p.text_secondary },
-                        ))
-                        .child(div().overflow_hidden().whitespace_nowrap().child(row.name)),
+                        )),
                 );
             }
-        } else {
+        } else if self.panel == SidebarPanel::Search {
             files = files.child(
                 div()
                     .px(px(14.))
                     .py(px(8.))
                     .text_color(hsla(p.text_tertiary))
-                    .child(match self.panel {
-                        SidebarPanel::Changes => "Changes aren't in the Rust app yet.",
-                        _ => "Search isn't in the Rust app yet.",
-                    }),
+                    .child("Search isn't in the Rust app yet."),
             );
         }
         let panel_button = |id: &'static str,
@@ -563,7 +592,10 @@ impl Workbench {
                         cx,
                     )),
             )
-            .child(files)
+            .child(match self.panel {
+                SidebarPanel::Changes => self.changes_panel(cx),
+                _ => files.into_any_element(),
+            })
     }
 
     pub(crate) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -639,7 +671,15 @@ impl Workbench {
             .text_size(px(12.))
             .text_color(hsla(p.text_secondary))
             .when(!workspace.branch.is_empty(), |d| {
-                d.child(item("git-branch", workspace.branch.clone()))
+                d.child(
+                    div()
+                        .id("status-branch")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|w, _, window, cx| {
+                            w.run_command("switch_branch", window, cx)
+                        }))
+                        .child(item("git-branch", workspace.branch.clone())),
+                )
             })
             .children(self.is_restricted().then(|| {
                 div()
