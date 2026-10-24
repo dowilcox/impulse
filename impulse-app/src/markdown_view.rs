@@ -4,7 +4,8 @@
 //! ruled), code in its own background with tree-sitter colors, tables with
 //! a shaded header, quotes with a left rule, task lists, images from beside
 //! the file. Shell blocks get a Run button, as the Swift page's
-//! `run_button_script` adds; links open in the browser.
+//! `run_button_script` adds. Web and mail links open in the browser,
+//! links to files open in the editor and `#anchors` scroll to the heading.
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,11 @@ struct Page<'a> {
     font: &'a str,
     /// Ids for interactive text and buttons.
     next_id: usize,
+    /// Where links go: the editor (to open files) and the page's scroll,
+    /// with each heading's anchor and block.
+    editor: gpui_kit::WeakEntity<EditorTab>,
+    scroll: gpui_kit::ScrollHandle,
+    anchors: std::rc::Rc<Vec<(usize, String)>>,
 }
 
 impl Page<'_> {
@@ -71,7 +77,12 @@ impl Page<'_> {
 }
 
 /// The preview of `blocks`, for the editor tab of a file in `folder`.
-pub(crate) fn preview(blocks: &[Block], folder: &Path, cx: &mut Context<EditorTab>) -> AnyElement {
+pub(crate) fn preview(
+    blocks: &[Block],
+    folder: &Path,
+    scroll: &gpui_kit::ScrollHandle,
+    cx: &mut Context<EditorTab>,
+) -> AnyElement {
     let colors = cx
         .try_global::<MarkdownColors>()
         .copied()
@@ -81,6 +92,9 @@ pub(crate) fn preview(blocks: &[Block], folder: &Path, cx: &mut Context<EditorTa
         folder: folder.to_path_buf(),
         font: crate::workbench::UI_FONT,
         next_id: 0,
+        editor: cx.weak_entity(),
+        scroll: scroll.clone(),
+        anchors: std::rc::Rc::new(markdown_blocks::heading_slugs(blocks)),
     };
     let body = render_blocks(blocks, &mut page, cx);
     div()
@@ -89,6 +103,9 @@ pub(crate) fn preview(blocks: &[Block], folder: &Path, cx: &mut Context<EditorTa
         .h_full()
         .min_w_0()
         .overflow_y_scroll()
+        .track_scroll(scroll)
+        .flex()
+        .flex_col()
         .bg(colors.bg)
         .text_color(colors.fg)
         .font_family(crate::workbench::UI_FONT)
@@ -96,7 +113,9 @@ pub(crate) fn preview(blocks: &[Block], folder: &Path, cx: &mut Context<EditorTa
         .line_height(gpui_kit::relative(1.6))
         .px(px(28.))
         .py(px(24.))
-        .child(div().flex().flex_col().children(body))
+        // Each block a child of the scroll, so an anchor scrolls to its
+        // heading by index.
+        .children(body)
         .into_any_element()
 }
 
@@ -345,23 +364,39 @@ fn inline_text(text: &Inlines, page: &mut Page, color: Hsla, bold: bool) -> AnyE
         return styled.into_any_element();
     }
     let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
+    let (folder, editor, scroll, anchors) = (
+        page.folder.clone(),
+        page.editor.clone(),
+        page.scroll.clone(),
+        page.anchors.clone(),
+    );
     InteractiveText::new(("md-text", page.id()), styled)
         .on_click(ranges, move |index, _, cx: &mut App| {
-            if let Some(url) = targets.get(index) {
-                open_link(url, cx)
+            let Some(url) = targets.get(index) else {
+                return;
+            };
+            match markdown_blocks::resolve_link(url, &folder) {
+                markdown_blocks::LinkTarget::Web(url) => cx.open_url(&url),
+                markdown_blocks::LinkTarget::Anchor(anchor) => {
+                    if let Some((block, _)) = anchors.iter().find(|(_, slug)| *slug == anchor) {
+                        scroll.scroll_to_top_of_item(*block);
+                        let _ = editor.update(cx, |_, cx| cx.notify());
+                    }
+                }
+                markdown_blocks::LinkTarget::File(path) => {
+                    let _ = editor.update(cx, |_, cx| {
+                        cx.emit(crate::editor_git::EditorGitAction {
+                            action: format!("open:{}", path.display()),
+                            line: 0,
+                        })
+                    });
+                }
+                // A page is never navigated elsewhere, as the Swift
+                // preview keeps it.
+                markdown_blocks::LinkTarget::Other => {}
             }
         })
         .into_any_element()
-}
-
-/// Web and mail links open in the browser; nothing else does (a page is
-/// never navigated, as the Swift preview keeps it).
-fn open_link(url: &str, cx: &mut App) {
-    let lower = url.to_ascii_lowercase();
-    if lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("mailto:")
-    {
-        cx.open_url(url);
-    }
 }
 
 /// The tree-sitter grammar for a fence's language.

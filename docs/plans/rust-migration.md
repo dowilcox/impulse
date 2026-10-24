@@ -544,6 +544,15 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   bounces the Dock or marks the taskbar entry urgent (`request_attention`,
   at most once per bell interval). Resting the pointer on a web link shows
   where it goes ("⌘-click to open …", Ctrl-click on Linux).
+  The Markdown preview follows links as Swift's does: web and mail in the
+  browser, files (relative to the document) in an editor tab, and
+  `#anchors` to the heading with that GitHub-style name
+  (`markdown_blocks::resolve_link`, `heading_slugs`). ⌥-click in the file
+  tree opens beside the current tab; a workspace's menu has Rename… and
+  Reveal; File ▸ Open… takes a folder as a workspace; a binary or
+  non-UTF-8 file's toast offers Open in Default App, or Reveal for one
+  that would run (`text_file::opens_as_program`); and a settings.json
+  edited outside Impulse while Impulse saved says so, with Open File.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

@@ -240,11 +240,12 @@ impl Workbench {
             }))
     }
 
-    /// File ▸ Open…: files to open in editor tabs.
+    /// File ▸ Open…: files to open in editor tabs, or a folder to open as
+    /// a workspace (Swift's Open… takes either).
     fn open_files_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
             files: true,
-            directories: false,
+            directories: true,
             multiple: true,
             prompt: Some("Open".into()),
         });
@@ -254,7 +255,11 @@ impl Workbench {
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 for path in paths {
-                    this.open_file(&path, window, cx);
+                    if path.is_dir() {
+                        this.open_workspace(&path, window, cx);
+                    } else {
+                        this.open_file(&path, window, cx);
+                    }
                 }
             });
         })

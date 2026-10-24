@@ -125,6 +125,8 @@ pub struct EditorTab {
     _lsp_start: Vec<gpui_kit::Task<()>>,
     /// Servers being started for this file (`_lsp_start`), not attached yet.
     lsp_pending: std::collections::HashSet<String>,
+    /// The Markdown preview's scroll, for its `#anchor` links.
+    preview_scroll: gpui_kit::ScrollHandle,
 }
 
 impl EventEmitter<EditorTabChanged> for EditorTab {}
@@ -279,6 +281,7 @@ impl EditorTab {
             _observe_state: observe_state,
             _lsp_start: Vec::new(),
             lsp_pending: Default::default(),
+            preview_scroll: gpui_kit::ScrollHandle::new(),
         };
         tab.apply_settings(&settings, window, cx);
         tab.refresh_git(cx);
@@ -982,7 +985,8 @@ impl EditorTab {
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        crate::markdown_view::preview(&blocks, &folder, cx)
+        let scroll = self.preview_scroll.clone();
+        crate::markdown_view::preview(&blocks, &folder, &scroll, cx)
     }
 
     /// The SVG drawn centered and scaled down to fit, without its scripts,

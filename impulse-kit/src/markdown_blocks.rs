@@ -271,6 +271,80 @@ fn plain_text<'a>(node: &'a AstNode<'a>) -> String {
     spans.into_iter().map(|s| s.text).collect()
 }
 
+/// Where a link in the preview goes.
+#[derive(Debug, PartialEq)]
+pub enum LinkTarget {
+    /// A web or mail link, for the browser.
+    Web(String),
+    /// A `#section` of the page (`heading_slugs` names them).
+    Anchor(String),
+    /// A file, relative to the Markdown file's folder or absolute.
+    File(std::path::PathBuf),
+    /// Anything else, which stays put (as the Swift preview's other schemes).
+    Other,
+}
+
+/// What clicking `href` in a preview of a file in `folder` does: web and
+/// mail links open in the browser, `#anchors` scroll the page, and paths
+/// (decoded, without their own `#fragment`) open in the editor.
+pub fn resolve_link(href: &str, folder: &std::path::Path) -> LinkTarget {
+    if let Some(fragment) = href.strip_prefix('#') {
+        let decoded = url::form_urlencoded::parse(format!("x={fragment}").as_bytes())
+            .next()
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
+        return LinkTarget::Anchor(decoded.to_lowercase());
+    }
+    let lower = href.to_ascii_lowercase();
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+    {
+        return LinkTarget::Web(href.to_string());
+    }
+    let Ok(base) = url::Url::from_directory_path(folder) else {
+        return LinkTarget::Other;
+    };
+    match base.join(href) {
+        Ok(url) if url.scheme() == "file" => url
+            .to_file_path()
+            .map(LinkTarget::File)
+            .unwrap_or(LinkTarget::Other),
+        _ => LinkTarget::Other,
+    }
+}
+
+/// Each top-level heading's index in `blocks` and its anchor, as GitHub
+/// names them: lowercased, punctuation dropped, spaces as hyphens, and a
+/// repeated name numbered (`-1`, `-2`).
+pub fn heading_slugs(blocks: &[Block]) -> Vec<(usize, String)> {
+    let mut seen: std::collections::HashMap<String, usize> = Default::default();
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| match block {
+            Block::Heading { text, .. } => Some((index, text)),
+            _ => None,
+        })
+        .map(|(index, text)| {
+            let words: String = text.iter().map(|span| span.text.as_str()).collect();
+            let base: String = words
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+                .map(|c| if c == ' ' { '-' } else { c })
+                .collect();
+            let count = seen.entry(base.clone()).or_insert(0);
+            let slug = match *count {
+                0 => base.clone(),
+                n => format!("{base}-{n}"),
+            };
+            *count += 1;
+            (index, slug)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,5 +435,52 @@ mod tests {
             "npm install\nnpm run dev"
         );
         assert_eq!(shell_command("$ npm test\nok\n  $ ls\n"), "npm test\nls");
+    }
+
+    #[test]
+    fn links_resolve_as_the_preview_follows_them() {
+        let folder = std::path::Path::new("/repo/docs");
+        assert_eq!(
+            resolve_link("https://example.com", folder),
+            LinkTarget::Web("https://example.com".into())
+        );
+        assert_eq!(
+            resolve_link("#Get%20Started", folder),
+            LinkTarget::Anchor("get started".into())
+        );
+        assert_eq!(
+            resolve_link("guide%20one.md#setup", folder),
+            LinkTarget::File("/repo/docs/guide one.md".into())
+        );
+        assert_eq!(
+            resolve_link("../README.md", folder),
+            LinkTarget::File("/repo/README.md".into())
+        );
+        assert_eq!(
+            resolve_link("javascript:alert(1)", folder),
+            LinkTarget::Other
+        );
+    }
+
+    #[test]
+    fn headings_get_github_anchors() {
+        let blocks = vec![
+            Block::Heading {
+                level: 1,
+                text: vec![span("Get Started!")],
+            },
+            Block::Paragraph(vec![span("x")]),
+            Block::Heading {
+                level: 2,
+                text: vec![span("Get Started")],
+            },
+        ];
+        assert_eq!(
+            heading_slugs(&blocks),
+            vec![
+                (0, "get-started".to_string()),
+                (2, "get-started-1".to_string())
+            ]
+        );
     }
 }

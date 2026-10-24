@@ -101,23 +101,59 @@ impl SettingsStore {
             return;
         }
         store.settings = settings;
-        store.save();
+        if store.save() {
+            cx.defer(announce_merge);
+        }
         cx.refresh_windows();
     }
 
-    fn save(&mut self) {
+    /// Write the settings; true when the file had changed outside Impulse
+    /// and the change was merged under Impulse's own.
+    fn save(&mut self) -> bool {
         match self.file.save(&self.settings) {
             SaveOutcome::Saved => self.base = self.settings.clone(),
             SaveOutcome::ChangedOnDisk => {
                 if let Some(theirs) = self.file.load(true) {
                     self.settings = Settings::merged(&self.settings, &theirs, &self.base);
+                    let kept_ours = self.settings != theirs;
                     self.base = theirs;
                     if self.file.save(&self.settings) == SaveOutcome::Saved {
                         self.base = self.settings.clone();
                     }
+                    return kept_ours;
                 }
             }
             SaveOutcome::Failed => {}
         }
+        false
     }
+}
+
+/// Say that settings.json changed outside Impulse and Impulse's changes
+/// were kept on top of it, in the front window (Swift's `announceMerge`).
+fn announce_merge(cx: &mut App) {
+    let windows = crate::session::workbenches(cx);
+    let active = cx.active_window();
+    let Some((workbench, handle)) = windows
+        .iter()
+        .find(|(_, handle)| Some(*handle) == active)
+        .or(windows.first())
+        .cloned()
+    else {
+        return;
+    };
+    let _ = handle.update(cx, move |_, window, cx| {
+        let path = impulse_kit::settings::settings_path(cfg!(debug_assertions));
+        let open: crate::tasks::Run = std::rc::Rc::new(move |window, cx| {
+            workbench.update(cx, |w, cx| w.open_file(&path, window, cx));
+        });
+        crate::toasts::show(
+            window,
+            cx,
+            crate::toasts::Toast::info("Your changes here were kept on top of it.")
+                .title("settings.json was changed outside Impulse")
+                .action("Open File", open)
+                .lifetime(Some(Duration::from_secs(10))),
+        );
+    });
 }

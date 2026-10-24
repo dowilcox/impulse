@@ -675,7 +675,35 @@ impl Workbench {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if refusal != impulse_kit::text_file::OpenRefusal::TooLarge {
+                use impulse_kit::text_file::OpenRefusal;
+                if matches!(refusal, OpenRefusal::Binary | OpenRefusal::NotUtf8) {
+                    // The system's app can show it; one that would run is
+                    // shown in the file manager instead, never a click away.
+                    let file = path.to_path_buf();
+                    let runs = impulse_kit::text_file::opens_as_program(&file);
+                    let open: crate::tasks::Run = Rc::new(move |_, cx| {
+                        if runs {
+                            crate::file_tree_actions::reveal(&file, cx)
+                        } else {
+                            cx.open_with_system(&file)
+                        }
+                    });
+                    return crate::toasts::show(
+                        window,
+                        cx,
+                        crate::toasts::Toast::info(refusal.message(&name))
+                            .action(
+                                if runs {
+                                    crate::file_tree_actions::REVEAL
+                                } else {
+                                    "Open in Default App"
+                                },
+                                open,
+                            )
+                            .lifetime(Some(std::time::Duration::from_secs(10))),
+                    );
+                }
+                if refusal != OpenRefusal::TooLarge {
                     return crate::tasks::toast(
                         window,
                         cx,

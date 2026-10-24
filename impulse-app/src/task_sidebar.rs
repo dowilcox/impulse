@@ -318,8 +318,18 @@ impl Workbench {
             "Open Folder as Workspace…".into(),
             action(|w, _, window, cx| w.run_command("open_workspace", window, cx)),
         ));
+        items.push((String::new(), None));
+        items.push((
+            "Rename…".into(),
+            action(|w, i, window, cx| w.rename_workspace(i, window, cx)),
+        ));
         if workspace.kind == Kind::Folder {
-            items.push((String::new(), None));
+            items.push((
+                crate::file_tree_actions::REVEAL.into(),
+                action(|w, i, _, cx| {
+                    crate::file_tree_actions::reveal(&w.workspaces[i].root.clone(), cx)
+                }),
+            ));
             items.push((
                 "Copy Path".into(),
                 action(|w, i, _, cx| {

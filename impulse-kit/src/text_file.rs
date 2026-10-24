@@ -231,6 +231,68 @@ pub fn write(text: &str, bom: bool, path: &Path) -> io::Result<()> {
     })
 }
 
+/// Whether opening `path` with the system would run it (a program, a
+/// script, an app or installer), so a file the editor refuses is shown in
+/// the file manager rather than opened (the Swift `opensAsProgram`):
+/// runnable extensions, the executable bit, a `#!` line, or a Mach-O or
+/// ELF header.
+pub fn opens_as_program(path: &Path) -> bool {
+    const RUNNABLE: [&str; 23] = [
+        "app",
+        "command",
+        "tool",
+        "terminal",
+        "workflow",
+        "action",
+        "pkg",
+        "mpkg",
+        "jar",
+        "fileloc",
+        "webloc",
+        "inetloc",
+        "scpt",
+        "scptd",
+        "applescript",
+        "prefpane",
+        "desktop",
+        "appimage",
+        "deb",
+        "rpm",
+        "run",
+        "sh",
+        "exe",
+    ];
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if RUNNABLE.contains(&extension.as_str()) || path.is_dir() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
+            return true;
+        }
+    }
+    let mut head = [0u8; 4];
+    let read = std::fs::File::open(path)
+        .and_then(|mut f| std::io::Read::read(&mut f, &mut head))
+        .unwrap_or(0);
+    let head = &head[..read];
+    const HEADERS: [[u8; 4]; 7] = [
+        [0xFE, 0xED, 0xFA, 0xCE],
+        [0xFE, 0xED, 0xFA, 0xCF],
+        [0xCE, 0xFA, 0xED, 0xFE],
+        [0xCF, 0xFA, 0xED, 0xFE],
+        [0xCA, 0xFE, 0xBA, 0xBE],
+        [0xBE, 0xBA, 0xFE, 0xCA],
+        [0x7F, b'E', b'L', b'F'],
+    ];
+    head.starts_with(b"#!") || HEADERS.iter().any(|h| head == h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +377,20 @@ mod tests {
 
         let missing = open(&dir.path().join("new.rs")).unwrap();
         assert_eq!(missing.contents.text, "");
+    }
+
+    #[test]
+    fn programs_are_told_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("photo.png");
+        std::fs::write(&image, [0x89, b'P', b'N', b'G', 0]).unwrap();
+        assert!(!opens_as_program(&image));
+        let elf = dir.path().join("tool");
+        std::fs::write(&elf, [0x7F, b'E', b'L', b'F', 2]).unwrap();
+        assert!(opens_as_program(&elf));
+        let script = dir.path().join("run.txt");
+        std::fs::write(&script, "#!/bin/sh\n").unwrap();
+        assert!(opens_as_program(&script));
+        assert!(opens_as_program(&dir.path().join("Setup.AppImage")));
     }
 }

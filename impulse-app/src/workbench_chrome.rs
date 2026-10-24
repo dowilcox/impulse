@@ -1398,6 +1398,10 @@ impl Workbench {
                             this.tree_selection = Some(path.clone());
                             if is_dir {
                                 this.toggle_dir(path.clone(), cx);
+                            } else if event.modifiers().alt {
+                                // ⌥-click: beside the current tab, as Swift's
+                                // tree opens it.
+                                this.open_beside(&path, window, cx);
                             } else if event.click_count() >= 2 {
                                 // The second click of a double-click keeps the
                                 // preview.

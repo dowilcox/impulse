@@ -975,6 +975,10 @@ impl crate::workbench::Workbench {
         if let Some(command) = action.strip_prefix("run:") {
             return self.run_from_preview(&editor, command, window, cx);
         }
+        // A link to a file in a Markdown preview.
+        if let Some(path) = action.strip_prefix("open:") {
+            return self.open_file(std::path::Path::new(path), window, cx);
+        }
         let path = editor.read(cx).path.clone();
         let Some(root) = editor.read(cx).git.root.clone() else {
             return;
