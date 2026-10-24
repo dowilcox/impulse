@@ -6,12 +6,21 @@
 //! against the golden fixtures the Swift port is checked against
 //! (`impulse-macos/Tests/ImpulseKitTests/Fixtures/`).
 
+pub mod accessible_text;
+pub mod child_process;
 pub mod chrome;
 pub mod close_risk;
+pub mod completion;
 pub mod glob;
+pub mod history;
+pub mod kitty_keyboard;
 pub mod line_edits;
 pub mod paths;
+pub mod shell;
 pub mod shell_parser;
+pub mod terminal_find;
+pub mod terminal_hints;
+pub mod terminal_paths;
 pub mod text_file;
 pub mod theme;
 pub mod trust;

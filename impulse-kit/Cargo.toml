@@ -12,6 +12,10 @@ log = { workspace = true }
 toml = "0.8"
 dirs = "6"
 url = "2"
+regex = "1"
+libc = "0.2"
+# The command history database, the same SQLite file the Swift app keeps.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"
