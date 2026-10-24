@@ -17,6 +17,9 @@ regex = "1"
 unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
 getrandom = "0.3"
 base64 = "0.22"
+libc = "0.2"
+# The command history database, the same SQLite file the Swift app keeps.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"
