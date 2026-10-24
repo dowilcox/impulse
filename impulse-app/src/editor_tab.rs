@@ -123,6 +123,8 @@ pub struct EditorTab {
     _subscription: Subscription,
     _observe_state: Subscription,
     _lsp_start: Vec<gpui_kit::Task<()>>,
+    /// Servers being started for this file (`_lsp_start`), not attached yet.
+    lsp_pending: std::collections::HashSet<String>,
 }
 
 impl EventEmitter<EditorTabChanged> for EditorTab {}
@@ -276,6 +278,7 @@ impl EditorTab {
             _subscription: subscription,
             _observe_state: observe_state,
             _lsp_start: Vec::new(),
+            lsp_pending: Default::default(),
         };
         tab.apply_settings(&settings, window, cx);
         tab.refresh_git(cx);
@@ -349,30 +352,45 @@ impl EditorTab {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self._lsp_start.is_empty() {
-            return;
-        }
         self.hooks = Some(hooks.clone());
+        // Servers lsp.json no longer names for this language go.
+        let configured = crate::lsp_hub::LspHub::configured(&self.path, &self.language);
+        let dropped: Vec<String> = self
+            .links
+            .iter()
+            .map(|(id, _)| id.clone())
+            .filter(|id| !configured.contains(id))
+            .collect();
+        for id in dropped {
+            if let Some((_, link)) = self.links.iter().find(|(server, _)| *server == id) {
+                link.closed();
+            }
+            self.detach_server(&id, cx);
+        }
         let servers = hub.servers_for(&self.path, &self.language, cx);
         if self.primary.is_none() || self.links.is_empty() {
             self.primary = servers.first().map(|server| server.id.clone());
         }
-        // Servers already attached stay (another one crashed and is back).
+        // Servers already attached or on their way stay (another one
+        // crashed and is back, or lsp.json changed).
         let servers: Vec<_> = servers
             .into_iter()
-            .filter(|s| !self.serves(&s.id))
+            .filter(|s| !self.serves(&s.id) && !self.lsp_pending.contains(&s.id))
             .collect();
         for server in servers {
             let hooks = hooks.clone();
-            self._lsp_start.push(cx.spawn_in(
-                window,
-                async move |tab, cx| match server.client.await {
-                    Ok(client) => {
-                        let _ = tab.update(cx, |tab, cx| tab.attach(server.id, client, hooks, cx));
-                    }
-                    Err(error) => log::warn!("{}: {error}", server.id),
-                },
-            ));
+            self.lsp_pending.insert(server.id.clone());
+            self._lsp_start
+                .push(cx.spawn_in(window, async move |tab, cx| {
+                    let started = server.client.await;
+                    let _ = tab.update(cx, |tab, cx| {
+                        tab.lsp_pending.remove(&server.id);
+                        match started {
+                            Ok(client) => tab.attach(server.id, client, hooks, cx),
+                            Err(error) => log::warn!("{}: {error}", server.id),
+                        }
+                    });
+                }));
         }
     }
 
@@ -435,6 +453,7 @@ impl EditorTab {
             }
         });
         self._lsp_start.clear();
+        self.lsp_pending.clear();
     }
 
     fn primary_link(&self) -> Option<Rc<DocumentLink>> {

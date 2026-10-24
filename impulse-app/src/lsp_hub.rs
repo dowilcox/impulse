@@ -44,6 +44,9 @@ pub struct LspHub {
     unavailable_until: RefCell<HashMap<(String, PathBuf), Instant>>,
     /// Recent crashes per server: how many, and the last one.
     crashes: RefCell<HashMap<(String, PathBuf), (usize, Instant)>>,
+    /// What each started server was started with (command, arguments,
+    /// options), to tell when lsp.json changes it.
+    started_with: RefCell<HashMap<(String, PathBuf), String>>,
     events: async_channel::Sender<ServerEvent>,
 }
 
@@ -73,6 +76,7 @@ impl LspHub {
             clients: RefCell::default(),
             unavailable_until: RefCell::default(),
             crashes: RefCell::default(),
+            started_with: RefCell::default(),
             events,
         });
         (hub, receiver)
@@ -143,6 +147,9 @@ impl LspHub {
                     .initialization_options
                     .clone()
                     .or_else(|| default_init_options(&id, None));
+                self.started_with
+                    .borrow_mut()
+                    .insert(key.clone(), signature(&server));
                 let (name, root, events) = (id.clone(), root.clone(), self.events.clone());
                 let task = cx
                     .background_executor()
@@ -158,7 +165,96 @@ impl LspHub {
     }
 }
 
+/// What a server is started with, compared when lsp.json changes.
+fn signature(server: &impulse_lsp::config::ServerConfig) -> String {
+    serde_json::json!([server.command, server.args, server.initialization_options]).to_string()
+}
+
+/// The config that applies in `folder` (its project's lsp.json, the global
+/// one, the defaults).
+fn config_in(folder: &Path) -> LspConfig {
+    LspConfig::load(
+        global_config_path().as_deref(),
+        project_config_folder(folder).as_deref(),
+    )
+}
+
+/// The lsp.json files that can apply to files in `folders`, with their
+/// modification times, to notice when one changes.
+pub fn config_stamp(folders: &[PathBuf]) -> String {
+    let mut paths: Vec<PathBuf> = global_config_path().into_iter().collect();
+    for folder in folders {
+        if let Some(project) = project_config_folder(folder) {
+            paths.extend(impulse_lsp::config::project_config_paths(&project));
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+        .iter()
+        .map(|path| {
+            let modified = std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            format!("{}:{modified}", path.display())
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 impl LspHub {
+    /// The server ids lsp.json names for `language` at `path`, whether or
+    /// not they're installed or running.
+    pub fn configured(path: &Path, language: &str) -> Vec<String> {
+        config_in(path.parent().unwrap_or(path))
+            .servers_for(language)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
+    /// lsp.json changed: stop the servers whose command, arguments or
+    /// options changed, or that it no longer names, so they start again
+    /// with the new ones when next needed (Swift's `restartServers`), and
+    /// forget which commands were missing. Returns the ids stopped.
+    pub fn reconfigure(&self, cx: &App) -> Vec<String> {
+        self.unavailable_until.borrow_mut().clear();
+        let changed: Vec<(String, PathBuf)> = self
+            .started_with
+            .borrow()
+            .iter()
+            .filter(|((id, root), started)| {
+                config_in(root).servers.get(id).map(signature).as_ref() != Some(*started)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &changed {
+            self.started_with.borrow_mut().remove(key);
+            self.crashes.borrow_mut().remove(key);
+            let task = self.clients.borrow_mut().remove(key);
+            log::info!(
+                "language server {} configuration changed; restarting it",
+                key.0
+            );
+            if let Some(task) = task {
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Ok(client) = task.await {
+                            client.shutdown().await;
+                        }
+                    })
+                    .detach();
+            }
+        }
+        let mut ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
     /// A server's process ended on its own: forget it, and say how long to
     /// wait before starting it again (longer each time it keeps crashing).
     pub fn server_exited(&self, server: &str, root: &Path) -> Duration {

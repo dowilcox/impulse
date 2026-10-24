@@ -4,7 +4,7 @@
 //! window asks, and editors in a trusted folder get the servers for their
 //! language.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::WindowExt as _;
@@ -378,6 +378,67 @@ impl Workbench {
             crate::toasts::Toast::warning(message)
                 .lifetime(Some(std::time::Duration::from_secs(12))),
         );
+    }
+
+    /// Notice lsp.json edits (the global file and the projects' of open
+    /// files), checked every two seconds, as the Swift registry re-reads
+    /// it when its stamp changes.
+    pub(crate) fn start_lsp_config_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |workbench, cx| loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(2))
+                .await;
+            let alive = workbench.update_in(cx, |w, window, cx| {
+                let folders: Vec<PathBuf> = w
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| ws.all_surfaces())
+                    .filter_map(Surface::editor)
+                    .filter_map(|e| e.read(cx).path.parent().map(Path::to_path_buf))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                let stamp = crate::lsp_hub::config_stamp(&folders);
+                // The first look only records where things stand.
+                if w.lsp_config_stamp.as_ref().is_some_and(|s| *s != stamp) {
+                    w.lsp_config_changed(window, cx);
+                }
+                w.lsp_config_stamp = Some(stamp);
+            });
+            if alive.is_err() {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    /// lsp.json changed: servers whose settings changed stop, and every
+    /// open editor gets the servers now configured for it.
+    fn lsp_config_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for index in 0..self.workspaces.len() {
+            let Some(hub) = self.workspaces[index].lsp.clone() else {
+                continue;
+            };
+            let stopped = hub.reconfigure(cx);
+            self.lsp_progress
+                .retain(|(key, _)| !stopped.iter().any(|id| key.starts_with(&format!("{id}:"))));
+            let editors: Vec<Entity<EditorTab>> = self.workspaces[index]
+                .all_surfaces()
+                .filter_map(Surface::editor)
+                .cloned()
+                .collect();
+            for editor in editors {
+                editor.update(cx, |editor, cx| {
+                    for id in &stopped {
+                        if editor.serves(id) {
+                            editor.detach_server(id, cx);
+                        }
+                    }
+                });
+                self.start_lsp(index, &editor, window, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// A crashed server's restart delay is over: start it again for the

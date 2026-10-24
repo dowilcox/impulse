@@ -467,9 +467,11 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   30 or 120 seconds for the editors it served; `window/showMessage`
   shows as a toast and `$/progress` in the status bar; requests time out
   (5, 10 or 15 seconds) with `$/cancelRequest`; quitting shuts them all
-  down, stopping any still running after two seconds. Still different:
-  servers belong to each workspace rather than being shared across
-  windows, and editing lsp.json doesn't restart running servers.
+  down, stopping any still running after two seconds. Editing lsp.json
+  (the global file or a project's) restarts the servers whose command,
+  arguments or options changed and gives open editors the servers now
+  configured for them. Still different: servers belong to each workspace
+  rather than being shared across windows.
 - The New Task sheet uses the Swift sheet's controls: rounded-border
   fields, a pop-up button as wide as its title, `ChromeButton`s
   (`workbench_chrome::chrome_button`), 20 of padding and the UI line

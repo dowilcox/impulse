@@ -371,7 +371,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           servers (lsp_hub.rs: missing servers told once and
                           looked for again after 15 s, crashed ones restarted
                           after 2, 10, 30 or 120 s, showMessage as toasts,
-                          $/progress in the status bar, shut down at quit;
+                          $/progress in the status bar, shut down at quit,
+                          restarted when lsp.json changes their command,
+                          args or options (LspHub::reconfigure, watched by
+                          Workbench::start_lsp_config_watch);
                           impulse-lsp's requests time out with
                           $/cancelRequest) (code actions, formatting, rename in
                           Monaco's inline box (EditorTab's RenameBox) and

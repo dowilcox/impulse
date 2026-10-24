@@ -89,6 +89,8 @@ pub struct Workbench {
     /// until the keys move it) and its scrolling.
     pub(crate) tree_focus: gpui_kit::FocusHandle,
     pub(crate) tree_selection: Option<std::path::PathBuf>,
+    /// The lsp.json files' stamp last seen (`start_lsp_config_watch`).
+    pub(crate) lsp_config_stamp: Option<String>,
     /// The settings.json warning dismissed (`SettingsStore::warning`'s count).
     pub(crate) dismissed_settings_warning: Option<u64>,
     pub(crate) tree_scroll: gpui_kit::ScrollHandle,
@@ -167,6 +169,7 @@ impl Workbench {
         workbench.start_port_scan(window, cx);
         workbench.start_editor_watch(window, cx);
         workbench.start_tree_watch(window, cx);
+        workbench.start_lsp_config_watch(window, cx);
         // Workspaces list their folders before settings are at hand.
         if SettingsStore::get(cx).sidebar_show_hidden {
             workbench.reload_tree(cx);
@@ -220,6 +223,7 @@ impl Workbench {
             tree_selection: None,
             tree_scroll: gpui_kit::ScrollHandle::new(),
             dismissed_settings_warning: None,
+            lsp_config_stamp: None,
             closed: Vec::new(),
             last_closed: None,
             lsp_progress: Vec::new(),
