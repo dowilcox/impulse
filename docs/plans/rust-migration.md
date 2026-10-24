@@ -108,7 +108,7 @@ for:
 | LSP: signature help, inlay hints | no | add on its overlay hooks (our LSP layer already speaks them) |
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
 | Diff editor (side by side and inline) | diff component exists | **done** side by side (Toggle Diff View: HEAD read-only beside the live buffer, changed lines tinted); not yet padded to line up, no inline mode |
-| Vim mode (monaco-vim) | no | port: a modal layer over the editor's actions |
+| Vim mode (monaco-vim) | no | **done**: `impulse_kit::vim`, a state machine on plain text (Normal, Insert, Visual, Visual Line and Replace; counts, motions, `d c y > < gu gU g~` with motions and text objects, registers with `+`/`*` as the clipboard, `.`, `/ ? n N * #`, `:w :q :wq :x :{line} :s :d :y :noh`), over the editor in `editor_vim.rs`; the mode in the status bar, an inverted character as the block cursor; not yet macros, marks, Visual Block or incremental search |
 | Sticky scroll, minimap, bracket pair colors | no | sticky scroll and bracket colors first; minimap last |
 | Context menu with Impulse's items | menus yes | **done**: Monaco's items (navigation, rename, Change All Occurrences, format, code actions, clipboard, Command Palette) |
 
@@ -201,9 +201,9 @@ The shipped Swift app keeps working through every phase.
    definition, code actions, Format Document, rename, references), edits
    across files with the Swift app's confirmation rules, and Monaco's keymap.
    Since: occurrence highlights, Go to Type Definition, Implementations and
-   Declaration, Monaco's context menu and the Diff View. Next: signature
-   help and inlay hints, Undo for a whole cross-file edit, peek views and
-   Vim mode. Exit:
+   Declaration, Monaco's context menu, the Diff View and Vim mode. Next:
+   signature help and inlay hints, Undo for a whole cross-file edit and
+   peek views. Exit:
    daily-drivable on a real project, on both platforms.
 2. **Logic crates, with parity** (done). Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden
@@ -409,8 +409,8 @@ Known issues:
 
 ## Risks
 
-- **The editor gap** (table above): peek views, the diff editor and Vim mode
-  are ours to build.
+- **The editor gap** (table above): peek views and the diff editor are
+  ours to build.
 - **Two young dependencies**: GPUI is pre-1.0 and GPUI Kit pins its own GPUI
   snapshots. Exact pins plus `impulse-ui` contain the churn; the fallback for
   either is the code itself (both are open source).

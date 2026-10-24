@@ -23,6 +23,7 @@ mod control_review;
 mod control_server;
 mod editor_keys;
 mod editor_tab;
+mod editor_vim;
 mod file_icons;
 mod git_actions;
 mod history_view;
@@ -180,6 +181,7 @@ fn main() {
             settings_store::SettingsStore::init(cx);
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);
+            editor_vim::bind_keys(cx);
             terminal_view::bind_keys(cx);
             palette::bind_keys(cx);
             command_editor::bind_keys(cx);
