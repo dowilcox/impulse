@@ -286,6 +286,22 @@ impl TerminalView {
         true
     }
 
+    /// Select the newest `count` blocks (the snapshot's `select-blocks=`).
+    pub(crate) fn select_last_blocks(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.begin_block_selection(window, cx) {
+            return;
+        }
+        let ids: Vec<u64> = self.navigable_blocks().iter().map(|b| b.id.0).collect();
+        if let Some(&first) = ids.get(ids.len().saturating_sub(count.max(1))) {
+            self.select_blocks(first, true, cx);
+        }
+    }
+
     fn select_blocks(&mut self, cursor: u64, extend: bool, cx: &mut Context<Self>) {
         let ids: Vec<u64> = self.navigable_blocks().iter().map(|b| b.id.0).collect();
         let anchor = self.blocks.anchor.or(self.blocks.cursor);

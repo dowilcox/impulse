@@ -668,6 +668,15 @@ pub fn catalog(settings: &Settings) -> Vec<AppCommand> {
     for (id, title, keywords, icon) in BLOCKS {
         add(id, title, "Terminal", keywords, icon);
     }
+    if cfg!(debug_assertions) {
+        add(
+            "component_gallery",
+            "Component Gallery",
+            "Developer",
+            &["themes", "design", "components"],
+            "palette",
+        );
+    }
     for custom in settings
         .custom_keybindings
         .iter()

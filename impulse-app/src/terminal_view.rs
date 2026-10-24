@@ -380,7 +380,8 @@ pub struct TerminalView {
 /// What a terminal reports to whoever shows it.
 pub enum TerminalViewEvent {
     TitleChanged,
-    Exited(i32),
+    /// The shell exited (its status is `TerminalView::exited`).
+    Exited,
     Bell,
     /// Open a file in an editor tab (a link or hint), at a 1-based line and
     /// column.
@@ -423,7 +424,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = SettingsStore::get(cx).clone();
-        let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
+        let font = terminal_font(&settings.terminal_font_family);
         let metrics = measure(&font, settings.terminal_font_size as f32, window);
         let token = crate::control_server::new_token();
         let mut env = crate::control_server::terminal_env(
@@ -639,13 +640,6 @@ impl TerminalView {
         self.backend.child_pid() as i32
     }
 
-    /// The program in the foreground, if it isn't the shell.
-    pub fn is_busy(&self) -> bool {
-        self.backend
-            .foreground_pid()
-            .is_some_and(|pid| pid as u32 != self.backend.child_pid())
-    }
-
     /// New theme or terminal settings.
     pub fn set_theme(
         &mut self,
@@ -662,7 +656,7 @@ impl TerminalView {
         };
         config.scrollback_lines = settings.terminal_scrollback.max(0) as usize;
         self.backend.set_colors(&config);
-        self.font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
+        self.font = terminal_font(&settings.terminal_font_family);
         self.metrics = measure(&self.font, settings.terminal_font_size as f32, window);
         let colors = EditorColors::new(&theme);
         self.editor
@@ -767,7 +761,7 @@ impl TerminalView {
                 TerminalEvent::Bell => cx.emit(TerminalViewEvent::Bell),
                 TerminalEvent::ChildExited(code) => {
                     self.exited = Some(code);
-                    cx.emit(TerminalViewEvent::Exited(code));
+                    cx.emit(TerminalViewEvent::Exited);
                 }
                 _ => {}
             }
@@ -1357,6 +1351,17 @@ fn colors(theme: &ResolvedTheme) -> TerminalColors {
     }
 }
 
+/// The terminal's font, without ligatures: each cell shows its own
+/// character, as the Swift renderer draws them one by one.
+fn terminal_font(family: &str) -> Font {
+    let mut font = gpui_kit::font(SharedString::from(family.to_string()));
+    font.features = gpui_kit::FontFeatures(std::sync::Arc::new(vec![
+        ("calt".into(), 0),
+        ("liga".into(), 0),
+    ]));
+    font
+}
+
 /// `TerminalFontMetrics`: the cell is the width of "W" and the font's
 /// ascent plus descent, rounded up.
 fn measure(font: &Font, font_size: f32, window: &Window) -> Metrics {
@@ -1370,7 +1375,7 @@ fn measure(font: &Font, font_size: f32, window: &Window) -> Metrics {
     let height = text.ascent(id, size) + text.descent(id, size).abs();
     Metrics {
         width: px(f32::from(width).ceil()),
-        height: px((f32::from(height) * 1.15).ceil()),
+        height: px(f32::from(height).ceil()),
         font_size: size,
     }
 }

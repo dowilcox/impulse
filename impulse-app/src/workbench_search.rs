@@ -32,6 +32,10 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         match event {
+            SearchPanelEvent::Close => {
+                self.panel = crate::workbench::SidebarPanel::Files;
+                cx.notify();
+            }
             SearchPanelEvent::Open(path, line) => {
                 self.open_file(path, window, cx);
                 if let (Some(line), Some(editor)) = (line, self.active_editor().cloned()) {

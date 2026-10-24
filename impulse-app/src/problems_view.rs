@@ -264,17 +264,13 @@ impl ProblemsView {
             .child(self.severity_toggle(Severity::Info, counts.others, "info", p.info, cx))
             .child(div().flex_1())
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .w(px(176.))
-                    .child(icon("list-filter", 12., p.text_tertiary))
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.filter).small().cleanable(true)),
-                    ),
+                // The icon inside the field, as Swift's ChromeTextField.
+                div().w(px(196.)).child(
+                    Input::new(&self.filter)
+                        .small()
+                        .cleanable(true)
+                        .prefix(icon("list-filter", 12., p.text_tertiary)),
+                ),
             )
             .child(
                 Button::new("fix-with-agent")

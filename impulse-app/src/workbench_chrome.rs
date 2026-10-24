@@ -148,6 +148,7 @@ impl Workbench {
             workspace.children.insert(path.clone(), entries);
             workspace.expanded_dirs.insert(path);
         }
+        workspace.save_expanded();
         cx.notify();
     }
 
@@ -1239,7 +1240,9 @@ impl Workbench {
                                 )
                                 .on_click(cx.listener(
                                     |w, _, _, cx| {
-                                        w.workspace_mut().expanded_dirs.clear();
+                                        let workspace = w.workspace_mut();
+                                        workspace.expanded_dirs.clear();
+                                        workspace.save_expanded();
                                         cx.notify();
                                     },
                                 )),

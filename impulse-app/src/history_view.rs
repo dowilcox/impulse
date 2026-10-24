@@ -279,8 +279,9 @@ impl HistoryView {
 
     /// Type `text` into the filter (the snapshot's `history-filter=`).
     pub fn set_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter
-            .update(cx, |input, cx| input.set_value(text.to_string(), window, cx));
+        self.filter.update(cx, |input, cx| {
+            input.set_value(text.to_string(), window, cx)
+        });
         self.filter_changed(cx);
     }
 
@@ -701,7 +702,13 @@ impl HistoryView {
             .collect()
     }
 
-    fn ref_chip(&self, id: (&'static str, usize), decoration: RefDecoration, entry: &LogEntry, cx: &mut Context<Self>) -> AnyElement {
+    fn ref_chip(
+        &self,
+        id: (&'static str, usize),
+        decoration: RefDecoration,
+        entry: &LogEntry,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = &self.palette;
         let (color, name) = match &decoration {
             RefDecoration::Tag(_) => (p.warning, "tag"),
@@ -725,7 +732,9 @@ impl HistoryView {
             .px(px(5.))
             .h(px(17.))
             .rounded(px(4.))
-            .bg(hsla(if remote { p.text_tertiary } else { color }.opacity(0.14)))
+            .bg(hsla(
+                if remote { p.text_tertiary } else { color }.opacity(0.14),
+            ))
             .text_size(px(10.5))
             .font_weight(if head {
                 FontWeight::SEMIBOLD
@@ -742,7 +751,13 @@ impl HistoryView {
             .into_any_element()
     }
 
-    fn row(&self, index: usize, lanes: usize, focused: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn row(
+        &self,
+        index: usize,
+        lanes: usize,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let p = &self.palette;
         let entry = &self.entries[index];
         let selected = self.selected.as_deref() == Some(entry.sha.as_str());
@@ -750,8 +765,8 @@ impl HistoryView {
         let row = self.rows.get(index).cloned();
         let colors = self.lane_colors();
         let before_fork = self.is_before_fork(&entry.sha);
-        let fork_here = self.scope == LogScope::Head
-            && self.fork.as_ref().is_some_and(|f| f.sha == entry.sha);
+        let fork_here =
+            self.scope == LogScope::Head && self.fork.as_ref().is_some_and(|f| f.sha == entry.sha);
         let mut line = div()
             .id(("commit", index))
             .w_full()
@@ -909,19 +924,24 @@ impl HistoryView {
                     .child(icon(
                         "list-filter",
                         13.,
-                        if filtering { p.accent } else { p.text_secondary },
+                        if filtering {
+                            p.accent
+                        } else {
+                            p.text_secondary
+                        },
                     ))
                     .dropdown_menu(move |menu, _, _| {
-                        let preset = |label: &'static str, key: &'static str, value: &'static str| {
-                            let view = view.clone();
-                            PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                                view.update(cx, |view, cx| {
-                                    let text = view.filter.read(cx).value().to_string();
-                                    let next = HistoryQuery::setting(key, Some(value), &text);
-                                    view.set_filter_text(next, window, cx)
+                        let preset =
+                            |label: &'static str, key: &'static str, value: &'static str| {
+                                let view = view.clone();
+                                PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                                    view.update(cx, |view, cx| {
+                                        let text = view.filter.read(cx).value().to_string();
+                                        let next = HistoryQuery::setting(key, Some(value), &text);
+                                        view.set_filter_text(next, window, cx)
+                                    })
                                 })
-                            })
-                        };
+                            };
                         let mine = {
                             let view = view.clone();
                             PopupMenuItem::new("My Commits").on_click(move |_, window, cx| {
@@ -938,13 +958,13 @@ impl HistoryView {
                         };
                         let clear = {
                             let view = view.clone();
-                            PopupMenuItem::new("Clear Filter")
-                                .disabled(empty)
-                                .on_click(move |_, window, cx| {
+                            PopupMenuItem::new("Clear Filter").disabled(empty).on_click(
+                                move |_, window, cx| {
                                     view.update(cx, |view, cx| {
                                         view.set_filter_text(String::new(), window, cx)
                                     })
-                                })
+                                },
+                            )
                         };
                         menu.item(mine)
                             .separator()
@@ -1028,7 +1048,9 @@ impl HistoryView {
             .bg(hsla(p.raised))
             .cursor_pointer()
             .text_color(hsla(p.text_secondary))
-            .tooltip(move |window, cx| gpui_kit::component::tooltip::Tooltip::new(tooltip).build(window, cx))
+            .tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(tooltip).build(window, cx)
+            })
             .child(icon(name, 9., p.text_secondary))
             .child(
                 div()
@@ -1099,7 +1121,11 @@ impl HistoryView {
                                 view.expanded = !view.expanded;
                                 cx.notify();
                             }))
-                            .child(if self.expanded { "Show less" } else { "Show more" }),
+                            .child(if self.expanded {
+                                "Show less"
+                            } else {
+                                "Show more"
+                            }),
                     )
                 })
             })
@@ -1201,7 +1227,11 @@ fn paint_graph(
 impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette.clone();
-        let lanes = if self.shows_graph() { self.max_lanes } else { 0 };
+        let lanes = if self.shows_graph() {
+            self.max_lanes
+        } else {
+            0
+        };
         let focused = self.focus.is_focused(window);
         let count = self.visible.len();
         let view = cx.entity();

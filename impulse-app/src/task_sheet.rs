@@ -760,10 +760,16 @@ impl Render for TaskSheet {
                                 .text_color(hsla(p.text_tertiary))
                                 .child(div().whitespace_normal().child(reason))
                                 .when(!blocked, |d| d.child(
-                                    Button::new("task-start-from-head")
-                                        .ghost()
-                                        .small()
-                                        .label(format!("Start from {head}"))
+                                    // A plain button, as the Swift sheet's.
+                                    div()
+                                        .id("task-start-from-head")
+                                        .self_start()
+                                        .cursor_pointer()
+                                        .text_size(px(11.5))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(hsla(p.text))
+                                        .hover(|s| s.opacity(0.8))
+                                        .child(format!("Start from {head}"))
                                         .on_click(cx.listener(move |sheet, _, window, cx| {
                                             let head = sheet.head_name.clone();
                                             sheet.base.update(cx, |input, cx| {

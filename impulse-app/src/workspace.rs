@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::{App, Entity, FocusHandle, Window};
+use gpui_kit::{App, Entity, Window};
 use impulse_kit::layout_tree::{LayoutTree, SplitAxis};
 
 use crate::editor_tab::EditorTab;
@@ -75,7 +75,7 @@ impl Surface {
             Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",
             Surface::Keybindings(_) => "keyboard",
-            Surface::TaskFinish(_) => "git-merge",
+            Surface::TaskFinish(_) => "flag",
             Surface::Problems(_) => "triangle-alert",
             Surface::ProjectSetup(_) => "sliders-horizontal",
         }
@@ -97,21 +97,6 @@ impl Surface {
             Surface::Editor(e) => e.read(cx).dirty,
             Surface::ProjectSetup(s) => s.read(cx).is_modified(),
             _ => false,
-        }
-    }
-
-    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self {
-            Surface::Terminal(t) => t.read(cx).focus_handle().clone(),
-            Surface::Editor(e) => e.read(cx).focus_handle(cx),
-            Surface::Review(r) => r.read(cx).focus_handle().clone(),
-            Surface::History(h) => h.read(cx).focus_handle().clone(),
-            Surface::Image(i) => i.read(cx).focus_handle().clone(),
-            Surface::Settings(s) => s.read(cx).focus.clone(),
-            Surface::Keybindings(k) => k.read(cx).focus.clone(),
-            Surface::TaskFinish(f) => f.read(cx).focus_handle().clone(),
-            Surface::Problems(p) => p.read(cx).focus.clone(),
-            Surface::ProjectSetup(s) => s.read(cx).focus.clone(),
         }
     }
 
@@ -144,10 +129,6 @@ impl Surface {
                 window.focus(&handle, cx);
             }
         }
-    }
-
-    pub fn contains_focus(&self, window: &Window, cx: &App) -> bool {
-        self.focus_handle(cx).contains_focused(window, cx)
     }
 
     /// The folder it's in: a terminal's working directory, a file's folder.
@@ -323,8 +304,23 @@ impl Workspace {
             ports: Vec::new(),
         };
         workspace.refresh_branch();
+        // The folders left open in this project last time.
+        if kind == Kind::Folder {
+            for dir in impulse_kit::tree_expansion::load(&expansion_file(), &workspace.root) {
+                workspace.children.insert(dir.clone(), Vec::new());
+                workspace.expanded_dirs.insert(dir);
+            }
+        }
         workspace.reload_tree(false);
         workspace
+    }
+
+    /// Remember the file tree's open folders for next time (the Swift
+    /// app's per-root expanded paths).
+    pub fn save_expanded(&self) {
+        if self.kind == Kind::Folder {
+            impulse_kit::tree_expansion::save(&expansion_file(), &self.root, &self.expanded_dirs);
+        }
     }
 
     pub fn name(&self) -> String {
@@ -381,6 +377,11 @@ impl Workspace {
     pub fn all_surfaces(&self) -> impl Iterator<Item = &Surface> {
         self.tabs.iter().flat_map(|t| t.panes.values())
     }
+}
+
+/// Where the file tree's open folders are kept, per project.
+fn expansion_file() -> PathBuf {
+    impulse_kit::paths::data_dir(cfg!(debug_assertions)).join("file-tree-expanded.json")
 }
 
 /// `~` and symlinks resolved, as `Workspace.normalize` does.

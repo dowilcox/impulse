@@ -269,6 +269,25 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The sidebar as it was (Swift keeps it per window; here it's the
+        // settings' sidebar_visible and sidebar_width).
+        let (visible, width) = (state.sidebar_visible, state.sidebar_width);
+        let settings = SettingsStore::get(cx);
+        let width = width
+            .filter(|w| *w > 120.)
+            .map(|w| w.round() as i64)
+            .filter(|w| *w != settings.sidebar_width);
+        let visible = visible.filter(|v| *v != settings.sidebar_visible);
+        if width.is_some() || visible.is_some() {
+            SettingsStore::update(cx, |s| {
+                if let Some(width) = width {
+                    s.sidebar_width = width;
+                }
+                if let Some(visible) = visible {
+                    s.sidebar_visible = visible;
+                }
+            });
+        }
         for saved in state.workspaces.unwrap_or_default() {
             if saved.kind != "folder" && self.workspaces.iter().any(|w| w.kind == Kind::Scratch) {
                 continue;

@@ -25,6 +25,8 @@ const LIMIT: usize = 500;
 
 pub enum SearchPanelEvent {
     Open(PathBuf, Option<u32>),
+    /// Close Search: back to the file tree.
+    Close,
     ReplaceAll {
         query: String,
         replacement: String,
@@ -101,6 +103,22 @@ impl SearchPanel {
             input.set_value(text.to_string(), window, cx)
         });
         self.schedule(Duration::ZERO, cx);
+    }
+
+    /// Replace `query` with `replacement`, shown and searched now (the
+    /// snapshot's `replace=`).
+    pub fn replace_for(
+        &mut self,
+        query: &str,
+        replacement: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_visible = true;
+        self.replacement.update(cx, |input, cx| {
+            input.set_value(replacement.to_string(), window, cx)
+        });
+        self.search_for(query, window, cx);
     }
 
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -328,10 +346,13 @@ impl Render for SearchPanel {
                                 p.text_secondary,
                             )),
                     )
+                    .child(icon("search", 11., p.text_secondary))
+                    // Borderless fields, as Swift's plain text fields.
                     .child(
                         div()
                             .flex_1()
-                            .child(Input::new(&self.query).small().cleanable(true)),
+                            .min_w_0()
+                            .child(Input::new(&self.query).small().appearance(false)),
                     )
                     .child(
                         toggle("match-case", self.case_sensitive)
@@ -340,6 +361,17 @@ impl Render for SearchPanel {
                                 panel.case_sensitive = !panel.case_sensitive;
                                 panel.schedule(Duration::ZERO, cx);
                             })),
+                    )
+                    .child(
+                        div()
+                            .id("close-search")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|panel, _, window, cx| {
+                                panel.query.update(cx, |q, cx| q.set_value("", window, cx));
+                                panel.schedule(Duration::ZERO, cx);
+                                cx.emit(SearchPanelEvent::Close);
+                            }))
+                            .child(icon("circle-x", 12., p.text_tertiary)),
                     ),
             )
             .when(replacing, |d| {
@@ -350,8 +382,13 @@ impl Render for SearchPanel {
                         .gap(px(6.))
                         .px(px(10.))
                         .pb(px(6.))
-                        .child(div().w(px(10.)))
-                        .child(div().flex_1().child(Input::new(&self.replacement).small()))
+                        .child(icon("repeat-2", 10., p.text_secondary))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Input::new(&self.replacement).small().appearance(false)),
+                        )
                         .child(
                             div()
                                 .id("replace-all")

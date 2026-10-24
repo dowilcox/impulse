@@ -1444,7 +1444,14 @@ impl Workbench {
             let subject = RepositoryState::read_git(
                 &root,
                 trusted,
-                &["log", "-1", "--format=%s", "--end-of-options", &revision, "--"],
+                &[
+                    "log",
+                    "-1",
+                    "--format=%s",
+                    "--end-of-options",
+                    &revision,
+                    "--",
+                ],
             )
             .map(|s| s.trim().to_string());
             (remote, suggestion, subject)
@@ -1566,7 +1573,7 @@ impl Workbench {
     /// Tag `at` (a commit, or "HEAD"); an empty message makes a
     /// lightweight tag.
     #[allow(clippy::too_many_arguments)]
-    fn git_create_tag(
+    pub(crate) fn git_create_tag(
         &mut self,
         repo: &Entity<RepositoryState>,
         name: String,
@@ -1700,7 +1707,11 @@ impl Workbench {
             cx,
             move |this, result, _, window, cx| match result {
                 Ok(remote) => {
-                    let verb = if created { "Tagged and pushed" } else { "Pushed" };
+                    let verb = if created {
+                        "Tagged and pushed"
+                    } else {
+                        "Pushed"
+                    };
                     this.toast(
                         Notification::success(format!("{verb} {name} to {remote}")),
                         window,

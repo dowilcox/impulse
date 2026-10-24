@@ -260,7 +260,7 @@ impl QuickTerminalView {
         terminal.update(cx, |t, cx| t.focus(window, cx));
         let subscriptions = vec![
             cx.subscribe_in(&terminal, window, |_, _, event, window, cx| match event {
-                TerminalViewEvent::Exited(_) => {
+                TerminalViewEvent::Exited => {
                     cx.global_mut::<QuickTerminal>().terminal = None;
                     cx.global_mut::<QuickTerminal>().window = None;
                     window.remove_window();

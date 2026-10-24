@@ -65,7 +65,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           palette + fuzzy matching, file tree patches,
                           previews (comrak), Monaco/Markdown theme colors,
                           dates (History's "2d ago" and "Oct 5, 2026 at
-                          3:27 PM"),
+                          3:27 PM"), tree_expansion (the file tree's open
+                          folders per project, file-tree-expanded.json),
                           problems, review comments, update checker, shell
                           (types, quoting, login shell, integration),
                           completion, command history (SQLite), kitty
@@ -217,7 +218,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           `impulse edit` by control_server::terminal_env),
                           the file tree following the disk (tree_watch.rs:
                           every listed folder watched on its own, listed
-                          again when its entries change),
+                          again when its entries change; the open folders
+                          remembered per project, Workspace::save_expanded),
                           the file tree's context menu
                           (file_tree_actions.rs: new file and folder, open
                           to the side, mention in an agent, history,
@@ -322,7 +324,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Monaco's js= (EditorTab::debug_edit and
                           debug_lsp); window images by ImageMagick's
                           import on X11, screencapture on macOS) that
-                          scripts/smoke and scripts/docs drive,
+                          scripts/smoke and scripts/docs drive, the
+                          Component Gallery of debug builds
+                          (component_gallery.rs: every built-in theme's
+                          chrome in a window of its own),
                           --install-lsp-servers;
                           scripts/spike/linux-shot.sh screenshots it on Linux
 vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide

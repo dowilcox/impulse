@@ -106,6 +106,31 @@ impl TerminalView {
         self.run_find(cx);
     }
 
+    /// Find `text` (the snapshot's `find=`), showing the bar if it's hidden.
+    pub(crate) fn find_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.is_none() {
+            self.toggle_find(window, cx);
+        }
+        if let Some(find) = self.find.as_mut() {
+            find.query.text = text.to_string();
+            let editor = find.editor.clone();
+            let text = text.to_string();
+            editor.update(cx, |e, cx| e.set_text(text, cx));
+        }
+        self.run_find(cx);
+    }
+
+    /// Whole words only (the snapshot's `find-word`).
+    pub(crate) fn find_whole_word(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find.is_none() {
+            self.toggle_find(window, cx);
+        }
+        if let Some(find) = self.find.as_mut() {
+            find.query.whole_word = true;
+        }
+        self.run_find(cx);
+    }
+
     /// Hide the bar, clear the matches and give the terminal the keyboard.
     pub(crate) fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(find) = self.find.take() {

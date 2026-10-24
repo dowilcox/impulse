@@ -802,11 +802,15 @@ fn inbox(
                 )
                 .when(!hint.is_empty(), |d| {
                     d.child(
+                        // A key chip, as Swift's KeyHint.
                         div()
-                            .px(px(4.))
+                            .px(px(5.))
+                            .py(px(1.))
                             .rounded(px(metrics::RADIUS_SMALL))
-                            .bg(hsla(p.raised))
+                            .border_1()
+                            .border_color(hsla(p.hairline_strong))
                             .text_size(px(10.5))
+                            .font_weight(gpui_kit::FontWeight::MEDIUM)
                             .text_color(hsla(p.text_secondary))
                             .child(hint.to_string()),
                     )

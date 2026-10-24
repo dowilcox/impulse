@@ -25,6 +25,9 @@ use crate::workspace::{Kind, PaneId, Surface, Tab, Workspace};
 use crate::Args;
 
 pub(crate) const UI_FONT: &str = "Inter";
+/// Lines of chrome text, in font sizes (Inter's ascent plus descent, which
+/// is what SwiftUI lays text out with).
+pub(crate) const UI_LINE_HEIGHT: f32 = 1.22;
 
 actions!(impulse, [FormatDocument, RenameSymbol, FindReferences]);
 
@@ -364,7 +367,7 @@ impl Workbench {
             &terminal,
             window,
             |workbench, terminal, event, window, cx| match event {
-                TerminalViewEvent::Exited(_) => {
+                TerminalViewEvent::Exited => {
                     // The shell exited: close its pane, as Terminal.app does.
                     let surface = Surface::Terminal(terminal.clone());
                     workbench.close_surface(&surface, window, cx);
@@ -1192,6 +1195,7 @@ impl Workbench {
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "quick_terminal" => crate::quick_terminal::toggle(cx),
+            "component_gallery" => crate::component_gallery::show(None, false, cx),
             "manage_branches" => self.show_branch_manager(window, cx),
             "diff_view" => match self.active_editor().cloned() {
                 Some(editor) => {
@@ -1465,6 +1469,11 @@ impl Render for Workbench {
             .bg(crate::workbench_chrome::hsla(p.window))
             .font_family(UI_FONT)
             .text_size(px(13.))
+            // SwiftUI's line height for the UI font, not GPUI's 1.6.
+            .line_height(gpui_kit::relative(UI_LINE_HEIGHT))
+            // The chrome's monospaced text shows no ligatures (Swift's is SF
+            // Mono); the editor sets its own.
+            .font_features(gpui_kit::FontFeatures::disable_ligatures())
             .text_color(crate::workbench_chrome::hsla(p.text))
             .child(self.titlebar(cx))
             .child(

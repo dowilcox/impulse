@@ -98,13 +98,9 @@ impl Workbench {
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
         let review = cx.new(|cx| ReviewView::new(root, scope, &theme, &palette, cx));
         cx.observe(&review, |_, _, cx| cx.notify()).detach();
-        cx.subscribe_in(
-            &review,
-            window,
-            |workbench, _, event, window, cx| match event {
-                event => workbench.review_event(event, window, cx),
-            },
-        )
+        cx.subscribe_in(&review, window, |workbench, _, event, window, cx| {
+            workbench.review_event(event, window, cx)
+        })
         .detach();
         Surface::Review(review)
     }
@@ -163,13 +159,9 @@ impl Workbench {
         })
         .detach();
         let review = history.read(cx).review().clone();
-        cx.subscribe_in(
-            &review,
-            window,
-            |workbench, _, event, window, cx| match event {
-                event => workbench.review_event(event, window, cx),
-            },
-        )
+        cx.subscribe_in(&review, window, |workbench, _, event, window, cx| {
+            workbench.review_event(event, window, cx)
+        })
         .detach();
         Surface::History(history)
     }

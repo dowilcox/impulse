@@ -193,7 +193,13 @@ impl EditorTab {
                 cx.notify();
             }
         });
-        let observe_state = cx.observe(&state, |tab, _, cx| tab.selection_moved(cx));
+        let observe_state = cx.observe(&state, |tab, _, cx| {
+            tab.selection_moved(cx);
+            // The peek follows its change as the editor scrolls.
+            if tab.git.peek.is_some() {
+                cx.notify();
+            }
+        });
         let vim = crate::editor_vim::Attached::new(settings.editor_vim_mode, &state, cx);
         let mut tab = Self {
             title: path
@@ -1356,9 +1362,12 @@ impl Render for EditorTab {
             .font_family(family)
             .text_size(px(size))
             .bordered(false);
-        if !settings.font_ligatures {
-            editor = editor.font_features(gpui_kit::FontFeatures::disable_ligatures());
-        }
+        // Set either way: the chrome around it turns ligatures off.
+        editor = editor.font_features(if settings.font_ligatures {
+            gpui_kit::FontFeatures::default()
+        } else {
+            gpui_kit::FontFeatures::disable_ligatures()
+        });
         if line_height > 0 {
             editor = editor.line_height(px(line_height as f32));
         }

@@ -146,16 +146,12 @@ impl Workbench {
             HistoryAction::RebaseOnto(revision) => self.git_rebase(&repo, revision, window, cx),
             HistoryAction::Compare(scope) => self.open_review_of(root, Some(scope), window, cx),
             HistoryAction::SwitchToBranch(name) => self.git_switch_branch(&repo, name, window, cx),
-            HistoryAction::DeleteBranch(name) => self.git_delete_branch(
-                &repo,
-                name,
-                None,
-                false,
-                Rc::new(|_, _, _| {}),
-                window,
-                cx,
-            ),
-            HistoryAction::PushTag(name) => self.git_push_tag(&repo, name, false, false, window, cx),
+            HistoryAction::DeleteBranch(name) => {
+                self.git_delete_branch(&repo, name, None, false, Rc::new(|_, _, _| {}), window, cx)
+            }
+            HistoryAction::PushTag(name) => {
+                self.git_push_tag(&repo, name, false, false, window, cx)
+            }
             HistoryAction::DeleteTag(name) => self.git_delete_tag(&repo, name, window, cx),
             HistoryAction::DeleteRemoteTag(name) => {
                 self.git_delete_remote_tag(&repo, name, window, cx)

@@ -885,13 +885,15 @@ impl Workbench {
             .child(div().flex_1())
             .when(has_conflicts, |d| {
                 let repo = repo.clone();
+                // The label when the sidebar has room for it (as Swift's
+                // ViewThatFits), else only the icon so Abort stays in view.
+                let wide = crate::settings_store::SettingsStore::get(cx).sidebar_width >= 320;
                 d.child(
-                    // Only the icon: the sidebar is narrow, and Abort stays
-                    // in view.
                     Button::new("op-ask-agent")
                         .ghost()
                         .compact()
                         .icon(Icon::empty().path("icons/bot.svg"))
+                        .when(wide, |b| b.label("Ask Agent"))
                         .tooltip("Ask Agent: ask an agent to resolve the conflicts")
                         .dropdown_menu(move |menu: PopupMenu, window, cx| {
                             crate::agent_send::conflict_menu_items(

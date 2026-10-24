@@ -11,10 +11,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{
-    RangeDecoration, RangeDecorationCollection, RangeDecorationStyle, TextDecoration,
-    TextDecorationCollection,
-};
+use gpui_kit::component::input::{TextDecoration, TextDecorationCollection};
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
     canvas, div, fill, point, prelude::*, px, size, AnyElement, App, Bounds, Context,
@@ -70,8 +67,12 @@ pub(crate) struct GitLayer {
     blame_line: Option<usize>,
     /// The peeked hunk, by its start line.
     pub(crate) peek: Option<usize>,
+    /// Where the editor's text area was last painted (the peek sits under
+    /// its change, as Monaco's view zone does).
+    origin: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Point<Pixels>>>>,
     conflicts: Vec<ConflictBlock>,
-    conflict_marks: Option<RangeDecorationCollection>,
+    /// Whole lines tinted (1-based, inclusive): the conflicts' sides.
+    line_fills: Vec<(std::ops::RangeInclusive<usize>, Hsla)>,
     /// Bracket pair colors (kept here as they follow the same edits).
     brackets: Option<TextDecorationCollection>,
     _base: Option<Task<()>>,
@@ -164,7 +165,7 @@ impl EditorTab {
         let conflicts = editor_marks::find_conflicts(&text);
         let resolved = !self.git.conflicts.is_empty() && conflicts.is_empty();
         self.git.conflicts = conflicts;
-        self.paint_conflicts(&text, cx);
+        self.paint_conflicts(cx);
         if resolved {
             cx.emit(EditorGitAction {
                 action: "conflicts-resolved".into(),
@@ -217,48 +218,33 @@ impl EditorTab {
         marks.set(decorations, cx);
     }
 
-    /// Tint each conflict's two sides (current green, incoming blue).
-    fn paint_conflicts(&mut self, text: &str, cx: &mut Context<Self>) {
-        if self.git.conflicts.is_empty() && self.git.conflict_marks.is_none() {
+    /// Tint each conflict's lines across the editor, as Monaco's whole-line
+    /// decorations do: the current side green, the incoming blue, the
+    /// marker lines in the modified color.
+    fn paint_conflicts(&mut self, cx: &mut Context<Self>) {
+        let Some(colors) = cx.try_global::<GitColors>().copied() else {
             return;
-        }
-        let theme = cx.theme();
-        let (current, incoming, marker) = (
-            theme.green.opacity(0.14),
-            theme.blue.opacity(0.14),
-            theme.muted_foreground.opacity(0.12),
-        );
-        let starts = line_starts(text);
-        let lines = |from: usize, to: usize| -> std::ops::Range<usize> {
-            let at = |line: usize| starts.get(line - 1).copied().unwrap_or(text.len());
-            at(from)..at(to + 1)
         };
-        let mut decorations = Vec::new();
+        let (current, incoming, marker) = (
+            colors.added.opacity(0.13),
+            gpui_kit::rgb(0x7aa2f7).into(),
+            colors.modified.opacity(0.18 * 0.85),
+        );
+        let incoming: Hsla = Hsla::opacity(&incoming, 0.15);
+        let mut fills = Vec::new();
         for block in &self.git.conflicts {
             let current_end = block.base.unwrap_or(block.middle);
-            let fill = |range, color| {
-                RangeDecoration::new(range)
-                    .with_style(RangeDecorationStyle::Fill)
-                    .with_color(color)
-            };
-            decorations.push(fill(lines(block.start, block.start), marker));
-            decorations.push(fill(lines(block.start + 1, current_end - 1), current));
-            decorations.push(fill(lines(current_end, block.middle), marker));
-            decorations.push(fill(lines(block.middle + 1, block.end - 1), incoming));
-            decorations.push(fill(lines(block.end, block.end), marker));
+            fills.push((block.start..=block.start, marker));
+            fills.push((block.start + 1..=current_end - 1, current));
+            if let Some(base) = block.base {
+                fills.push((base..=block.middle - 1, marker));
+            }
+            fills.push((block.middle..=block.middle, marker));
+            fills.push((block.middle + 1..=block.end - 1, incoming));
+            fills.push((block.end..=block.end, marker));
         }
-        let marks = self.git.conflict_marks.get_or_insert_with(|| {
-            self.state.update(cx, |state, cx| {
-                state.create_range_decorations_collection(Vec::new(), cx)
-            })
-        });
-        marks.set(
-            decorations
-                .into_iter()
-                .filter(|d| !d.range().is_empty())
-                .collect(),
-            cx,
-        );
+        fills.retain(|(lines, _)| !lines.is_empty());
+        self.git.line_fills = fills;
     }
 
     /// The cursor moved: its line's blame shows once it rests.
@@ -288,6 +274,16 @@ impl EditorTab {
                 }
             });
         }));
+    }
+
+    /// Peek the change on buffer line `line` (the snapshot's `git-peek=`,
+    /// what a click on its mark does).
+    pub(crate) fn peek_change_at(&mut self, line: usize, cx: &mut Context<Self>) -> bool {
+        let start = impulse_kit::git::editor_marks::hunk_at_line(&self.git.hunks, line)
+            .map(|h| h.new_start);
+        self.git.peek = start;
+        cx.notify();
+        start.is_some()
     }
 
     /// Put the peeked hunk's base lines back (one undoable edit).
@@ -366,6 +362,8 @@ impl EditorTab {
         let colors = cx.try_global::<GitColors>().copied();
         let state = self.state.clone();
         let hunks = self.git.hunks.clone();
+        let line_fills = self.git.line_fills.clone();
+        let origin = self.git.origin.clone();
         let blame = self.git.blame_line.and_then(|line| {
             let info = self.git.blame.get(&line)?;
             let ago = SystemTime::now()
@@ -402,6 +400,7 @@ impl EditorTab {
         let overlay = canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
+                origin.set(Some(bounds.origin));
                 let Some(colors) = colors else {
                     return;
                 };
@@ -439,6 +438,28 @@ impl EditorTab {
                     let row = line.checked_sub(1)?;
                     (row < text.lines_len()).then(|| text.line_start_offset(row))
                 };
+                // Whole-line tints, from the text's left edge to the right.
+                if let Some(rows) = state.visible_row_range() {
+                    for (lines, color) in &line_fills {
+                        let first = (*lines.start()).max(rows.start + 1);
+                        let last = (*lines.end()).min(rows.end);
+                        if first > last {
+                            continue;
+                        }
+                        let top = line_offset(first).and_then(|o| state.range_to_bounds(&(o..o)));
+                        let bottom = line_offset(last).and_then(|o| state.range_to_bounds(&(o..o)));
+                        if let (Some(top), Some(bottom)) = (top, bottom) {
+                            let left = top.origin.x - px(4.);
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    point(left, top.top()),
+                                    point(bounds.right(), bottom.bottom()),
+                                ),
+                                *color,
+                            ));
+                        }
+                    }
+                }
                 let mut bars: Vec<(Bounds<Pixels>, usize)> = Vec::new();
                 for hunk in &hunks {
                     let (color, lines) = match hunk.kind() {
@@ -551,6 +572,24 @@ impl EditorTab {
         .top_0()
         .left_0()
         .size_full();
+        // The peek under its change's last line when that's on screen, else
+        // under the editor.
+        let peek = self.git_peek(cx);
+        let (inline, below) = match (peek, self.peek_position(cx)) {
+            (Some(peek), Some((left, top))) => (
+                Some(
+                    div()
+                        .absolute()
+                        .top(top)
+                        .left(left)
+                        .right_0()
+                        .child(peek)
+                        .into_any_element(),
+                ),
+                None,
+            ),
+            (peek, _) => (None, peek),
+        };
         div()
             .size_full()
             .flex()
@@ -562,9 +601,10 @@ impl EditorTab {
                     .flex_1()
                     .min_h_0()
                     .child(editor)
-                    .child(overlay),
+                    .child(overlay)
+                    .children(inline),
             )
-            .children(self.git_peek(cx))
+            .children(below)
             .into_any_element()
     }
 
@@ -641,6 +681,30 @@ impl EditorTab {
         )
     }
 
+    /// Where the peek goes: under the peeked change's last line, from the
+    /// text's left edge, relative to the editor (from the last frame).
+    fn peek_position(&self, cx: &App) -> Option<(Pixels, Pixels)> {
+        let start = self.git.peek?;
+        let hunk = self.git.hunks.iter().find(|h| h.new_start == start)?;
+        let origin = self.git.origin.get()?;
+        let state = self.state.read(cx);
+        let text = state.text();
+        let row = hunk.marked_lines().end.checked_sub(2)?;
+        if row >= text.lines_len() {
+            return None;
+        }
+        let rows = state.visible_row_range()?;
+        if !rows.contains(&row) {
+            return None;
+        }
+        let offset = text.line_start_offset(row);
+        let line = state.range_to_bounds(&(offset..offset))?;
+        Some((
+            line.left() - origin.x - px(4.),
+            line.bottom() - origin.y + px(4.),
+        ))
+    }
+
     /// The peeked change: what it was, and Revert, Stage, Diff and Review.
     fn git_peek(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let start = self.git.peek?;
@@ -652,17 +716,25 @@ impl EditorTab {
             .clone();
         let theme = cx.theme();
         let anchor = hunk.anchor_line();
-        let button = |id: &'static str, label: &'static str| Button::new(id).label(label).xsmall();
+        // Swift's .git-peek-button: transparent with a faint border.
+        let button =
+            |id: &'static str, label: &'static str| Button::new(id).label(label).small().outline();
         let settings = crate::settings_store::SettingsStore::get(cx);
         let mono = settings.font_family.clone();
+        let colors = cx.try_global::<GitColors>().copied();
+        let (edge, removed) = colors
+            .map(|c| (c.modified, c.deleted.opacity(0.12)))
+            .unwrap_or((theme.border, theme.secondary));
         Some(
             div()
                 .flex()
                 .flex_col()
                 .max_h(px(260.))
                 .border_t_1()
-                .border_color(theme.border)
+                .border_b_1()
+                .border_color(edge)
                 .bg(theme.secondary)
+                .shadow_md()
                 .child(
                     div()
                         .flex()
@@ -671,8 +743,7 @@ impl EditorTab {
                         .px(px(10.))
                         .py(px(4.))
                         .text_size(px(12.))
-                        .child(format!("Line {anchor}: {}", hunk.title()))
-                        .child(div().flex_1())
+                        .child(div().flex_1().opacity(0.8).child(hunk.title()))
                         .child(button("peek-revert", "Revert").on_click(cx.listener(
                             move |tab, _, window, cx| tab.revert_hunk(start, window, cx),
                         )))
@@ -701,8 +772,8 @@ impl EditorTab {
                         .child(
                             Button::new("peek-close")
                                 .label("✕")
-                                .xsmall()
-                                .ghost()
+                                .small()
+                                .outline()
                                 .on_click(cx.listener(|tab, _, _, cx| {
                                     tab.git.peek = None;
                                     cx.notify();
@@ -714,8 +785,11 @@ impl EditorTab {
                         div()
                             .id("peek-old")
                             .overflow_y_scroll()
-                            .px(px(10.))
+                            .pl(px(14.))
+                            .pr(px(10.))
+                            .pt(px(2.))
                             .pb(px(6.))
+                            .bg(removed)
                             .font_family(mono)
                             .text_size(px(12.))
                             .text_color(theme.muted_foreground)
@@ -742,13 +816,6 @@ impl EditorTab {
             });
         }
     }
-}
-
-/// Where each line starts in `text` (byte offsets).
-fn line_starts(text: &str) -> Vec<usize> {
-    std::iter::once(0)
-        .chain(text.match_indices('\n').map(|(i, _)| i + 1))
-        .collect()
 }
 
 /// The editor's text size, from a line's height.

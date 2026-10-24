@@ -33,7 +33,10 @@ header() {
   printf '%s╭──────────────────────────────────────────────────────────╮%s\n' "$dim" "$reset"
   printf '%s│%s %s%s%s  %s(demo agent)%s%*s%s│%s\n' "$dim" "$reset" "$bold" "$agent" "$reset" "$dim" "$reset" \
     $((43 - ${#agent})) "" "$dim" "$reset"
-  printf '%s│%s %s%-56s%s %s│%s\n' "$dim" "$reset" "$dim" "${PWD/#$HOME/~}" "$reset" "$dim" "$reset"
+  # ~ for the home folder (bash 5 would expand a ~ in ${PWD/#$HOME/~}).
+  local here=$PWD
+  case $here in "$HOME"/*) here="~${here#"$HOME"}" ;; esac
+  printf '%s│%s %s%-56s%s %s│%s\n' "$dim" "$reset" "$dim" "$here" "$reset" "$dim" "$reset"
   printf '%s╰──────────────────────────────────────────────────────────╯%s\n\n' "$dim" "$reset"
 }
 

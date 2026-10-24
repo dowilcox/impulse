@@ -13,13 +13,11 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{
-    Editor, EditorState, Position, RangeDecoration, RangeDecorationCollection,
-    RangeDecorationStyle, TabSize,
-};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _};
+use gpui_kit::component::input::{Editor, EditorState, Position, TabSize};
+use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
-    canvas, div, point, prelude::*, px, AnyElement, Context, Entity, FontWeight, Pixels, Window,
+    canvas, div, fill, point, prelude::*, px, AnyElement, Bounds, Context, Entity, FontWeight,
+    Hsla, Pixels, Window,
 };
 use impulse_kit::git::diff_view;
 use impulse_kit::git::editor_marks::{line_hunks, LineHunk};
@@ -30,12 +28,15 @@ use crate::editor_tab::EditorTab;
 /// How long typing rests before the Diff View marks again.
 pub(crate) const DIFF_DELAY: Duration = Duration::from_millis(200);
 
+/// Rows (0-based, end exclusive) tinted across the editor, and the tint.
+type Tints = Vec<(std::ops::Range<u32>, Hsla)>;
+
 /// The Diff View's other editor and its marks.
 pub(crate) struct DiffView {
     base: Entity<EditorState>,
     base_text: String,
-    base_marks: RangeDecorationCollection,
-    own_marks: RangeDecorationCollection,
+    base_tints: Tints,
+    own_tints: Tints,
     hunks: Vec<LineHunk>,
     /// Inline: the combined document, rebuilt as the buffer changes.
     inline: Option<InlineView>,
@@ -47,7 +48,7 @@ pub(crate) struct DiffView {
 
 struct InlineView {
     state: Entity<EditorState>,
-    marks: RangeDecorationCollection,
+    tints: Tints,
     rows: diff_view::InlineDiff,
     /// The text to show at the next render (setting it needs the window).
     pending: Option<String>,
@@ -77,17 +78,11 @@ impl EditorTab {
         }
         self.git.peek = None;
         let base = self.read_only_state(base_text.clone(), window, cx);
-        let base_marks = base.update(cx, |state, cx| {
-            state.create_range_decorations_collection(Vec::new(), cx)
-        });
-        let own_marks = self.state.update(cx, |state, cx| {
-            state.create_range_decorations_collection(Vec::new(), cx)
-        });
         self.diff = Some(DiffView {
             base,
             base_text,
-            base_marks,
-            own_marks,
+            base_tints: Vec::new(),
+            own_tints: Vec::new(),
             hunks: Vec::new(),
             inline: None,
             synced: Rc::default(),
@@ -103,9 +98,7 @@ impl EditorTab {
 
     /// Done: back to the editor, the cursor where it was.
     fn close_diff_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(diff) = self.diff.take() {
-            diff.own_marks.dispose(cx);
-        }
+        self.diff = None;
         let focus = self.state.clone();
         focus.update(cx, |state, cx| state.focus(window, cx));
         cx.notify();
@@ -160,13 +153,10 @@ impl EditorTab {
         let at = rows.buffer_rows.iter().position(|r| *r == Some(cursor));
         let shown = rows.text.clone();
         let state = self.read_only_state(shown, window, cx);
-        let marks = state.update(cx, |state, cx| {
-            state.create_range_decorations_collection(Vec::new(), cx)
-        });
         if let Some(diff) = self.diff.as_mut() {
             diff.inline = Some(InlineView {
                 state: state.clone(),
-                marks,
+                tints: Vec::new(),
                 rows,
                 pending: None,
             });
@@ -193,7 +183,6 @@ impl EditorTab {
             let (hunks, removed, added, inline) = cx
                 .background_executor()
                 .spawn(async move {
-                    use impulse_git::buffer_diff::line_byte_ranges;
                     let hunks = line_hunks(&old, &new);
                     let rows = |start: usize, len: usize| {
                         let start = start.saturating_sub(1) as u32;
@@ -210,12 +199,7 @@ impl EditorTab {
                         .map(|h| rows(h.new_start, h.new_count))
                         .collect();
                     let inline = diff_view::inline(&new, &hunks);
-                    (
-                        hunks,
-                        line_byte_ranges(&old, &removed),
-                        line_byte_ranges(&new, &added),
-                        inline,
-                    )
+                    (hunks, removed, added, inline)
                 })
                 .await;
             let _ = tab.update(cx, |tab, cx| {
@@ -225,23 +209,16 @@ impl EditorTab {
                 let theme = cx.theme();
                 let (red, green) = (theme.danger.opacity(0.22), theme.success.opacity(0.18));
                 diff.hunks = hunks;
-                let (base_marks, own_marks) = (diff.base_marks.clone(), diff.own_marks.clone());
-                base_marks.set(fills(removed, red), cx);
-                own_marks.set(fills(added, green), cx);
+                diff.base_tints = tints(removed, red);
+                diff.own_tints = tints(added, green);
                 if let Some(view) = diff.inline.as_mut() {
-                    let text = &inline.text;
-                    let ranges = |rows: &[std::ops::Range<u32>]| {
-                        impulse_git::buffer_diff::line_byte_ranges(text, rows)
-                    };
-                    let (removed, added) = (ranges(&inline.removed), ranges(&inline.added));
                     if view.rows.text != inline.text {
                         view.pending = Some(inline.text.clone());
                     }
+                    let mut all = tints(inline.removed.clone(), red);
+                    all.extend(tints(inline.added.clone(), green));
+                    view.tints = all;
                     view.rows = inline;
-                    let marks = view.marks.clone();
-                    let mut all = fills(removed, red);
-                    all.extend(fills(added, green));
-                    marks.set(all, cx);
                 }
                 cx.notify();
             });
@@ -311,17 +288,18 @@ impl EditorTab {
             if settings.editor_line_height > 0 {
                 editor = editor.line_height(px(settings.editor_line_height as f32));
             }
-            if !settings.font_ligatures {
-                editor = editor.font_features(gpui_kit::FontFeatures::disable_ligatures());
-            }
-            editor
+            editor.font_features(if settings.font_ligatures {
+                gpui_kit::FontFeatures::default()
+            } else {
+                gpui_kit::FontFeatures::disable_ligatures()
+            })
         };
         let border = cx.theme().border;
         let body = match &diff.inline {
             Some(view) => div()
                 .flex_1()
                 .min_h_0()
-                .child(styled(&view.state))
+                .child(tinted(styled(&view.state), &view.state, &view.tints))
                 .into_any_element(),
             None => {
                 let sync = scroll_sync(
@@ -335,9 +313,17 @@ impl EditorTab {
                     .min_h_0()
                     .relative()
                     .flex()
-                    .child(div().flex_1().min_w_0().h_full().child(styled(&diff.base)))
+                    .child(div().flex_1().min_w_0().h_full().child(tinted(
+                        styled(&diff.base),
+                        &diff.base,
+                        &diff.base_tints,
+                    )))
                     .child(div().w(px(1.)).h_full().bg(border))
-                    .child(div().flex_1().min_w_0().h_full().child(editor))
+                    .child(div().flex_1().min_w_0().h_full().child(tinted(
+                        editor,
+                        &self.state,
+                        &diff.own_tints,
+                    )))
                     .child(sync)
                     .into_any_element()
             }
@@ -434,15 +420,60 @@ pub(crate) fn center(
     });
 }
 
-fn fills(ranges: Vec<std::ops::Range<usize>>, color: gpui_kit::Hsla) -> Vec<RangeDecoration> {
-    ranges
-        .into_iter()
-        .map(|range| {
-            RangeDecoration::new(range)
-                .with_style(RangeDecorationStyle::Fill)
-                .with_color(color)
-        })
+fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla) -> Tints {
+    rows.into_iter()
+        .filter(|r| !r.is_empty())
+        .map(|r| (r, color))
         .collect()
+}
+
+/// `editor` with `tints` painted over its rows across its whole width, as
+/// Monaco's whole-line decorations are (a range decoration stops at the
+/// end of the text).
+fn tinted(editor: impl IntoElement, state: &Entity<EditorState>, tints: &Tints) -> AnyElement {
+    let (state, tints) = (state.clone(), tints.clone());
+    div()
+        .relative()
+        .size_full()
+        .child(editor)
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, cx| {
+                    let state = state.read(cx);
+                    let Some(visible) = state.visible_row_range() else {
+                        return;
+                    };
+                    let text = state.text();
+                    let at = |row: usize| {
+                        (row < text.lines_len())
+                            .then(|| text.line_start_offset(row))
+                            .and_then(|o| state.range_to_bounds(&(o..o)))
+                    };
+                    for (rows, color) in &tints {
+                        let first = (rows.start as usize).max(visible.start);
+                        let last = (rows.end as usize).min(visible.end);
+                        if first >= last {
+                            continue;
+                        }
+                        if let (Some(top), Some(bottom)) = (at(first), at(last - 1)) {
+                            window.paint_quad(fill(
+                                Bounds::from_corners(
+                                    point(top.origin.x - px(4.), top.top()),
+                                    point(bounds.right(), bottom.bottom()),
+                                ),
+                                *color,
+                            ));
+                        }
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+        .into_any_element()
 }
 
 /// Keeps the two sides at matching lines: the side under the pointer leads

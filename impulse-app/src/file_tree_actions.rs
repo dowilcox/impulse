@@ -295,11 +295,12 @@ impl Workbench {
         if workspace.expanded_dirs.insert(dir.to_path_buf()) {
             let entries = crate::workspace::list_dir(dir, show_hidden);
             workspace.children.insert(dir.to_path_buf(), entries);
+            workspace.save_expanded();
         }
     }
 
     /// Open to the Side: the file in a new pane beside the focused one.
-    fn open_beside(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_beside(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let Some(surface) = self.make_editor(path, window, cx) else {
             return self.open_file(path, window, cx);
         };

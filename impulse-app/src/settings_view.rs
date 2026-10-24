@@ -610,7 +610,12 @@ impl SettingsView {
         window.dispatch_action(Box::new(RunCommand::new(id)), cx);
     }
 
-    fn select_category(&mut self, category: Category, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_category(
+        &mut self,
+        category: Category,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.search
             .update(cx, |search, cx| search.set_value("", window, cx));
         self.only_modified = false;

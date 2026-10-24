@@ -166,7 +166,7 @@ impl AgentComposer {
         self.editor.read(cx).text().to_string()
     }
 
-    fn set_text(&mut self, text: String, cx: &mut Context<Self>) {
+    pub(crate) fn set_text(&mut self, text: String, cx: &mut Context<Self>) {
         KEPT.with(|k| k.borrow_mut().0 = text.clone());
         self.editor.update(cx, |e, cx| e.set_text(text.clone(), cx));
         self.update_mentions(&text, cx);

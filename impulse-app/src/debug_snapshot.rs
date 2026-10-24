@@ -509,6 +509,20 @@ fn perform_now(action: &str, cx: &mut App) {
         None => (action, None),
     };
     let unknown = || fail(format!("unknown action “{action}”"));
+    // A click goes to the window, outside the workbench's update (its
+    // handlers update the workbench themselves).
+    if let ("click", Some(at)) = (name, argument) {
+        let point = at
+            .split_once(':')
+            .and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?)));
+        let Some((x, y)) = point else {
+            return unknown();
+        };
+        if let Some((_, handle)) = crate::session::workbenches(cx).into_iter().next() {
+            let _ = handle.update(cx, |_, window, cx| click(window, x, y, cx));
+        }
+        return;
+    }
     let done = with_workbench(cx, |workbench, window, cx| {
         if let Some(command) = command_for(action) {
             workbench.run_command(command, window, cx);
@@ -607,6 +621,8 @@ fn perform_now(action: &str, cx: &mut App) {
                     let entries = crate::workspace::list_dir(&path, show_hidden);
                     workspace.children.insert(path.clone(), entries);
                     workspace.expanded_dirs.insert(path);
+                    // Remembered, as a click would (Swift: expandDirectory).
+                    workspace.save_expanded();
                 }
                 cx.notify();
             }
@@ -658,6 +674,18 @@ fn perform_now(action: &str, cx: &mut App) {
                 let search = workbench.search.clone();
                 search.update(cx, |s, cx| s.search_for(text, window, cx));
             }
+            ("gallery", options) => {
+                // gallery, gallery=dark, gallery=light+contrast …
+                let options = options.unwrap_or("");
+                let light = if options.contains("light") {
+                    Some(true)
+                } else if options.contains("dark") {
+                    Some(false)
+                } else {
+                    None
+                };
+                crate::component_gallery::show(light, options.contains("contrast"), cx);
+            }
             ("history-all", None) => {
                 // Every History open shows all branches.
                 let histories: Vec<_> = workbench
@@ -670,9 +698,7 @@ fn perform_now(action: &str, cx: &mut App) {
                     })
                     .collect();
                 for history in histories {
-                    history.update(cx, |h, cx| {
-                        h.set_scope(impulse_git::log::LogScope::All, cx)
-                    });
+                    history.update(cx, |h, cx| h.set_scope(impulse_git::log::LogScope::All, cx));
                 }
             }
             ("history-filter", Some(text)) => {
@@ -715,6 +741,168 @@ fn perform_now(action: &str, cx: &mut App) {
                         // As typing it would: the ghost suggestion follows.
                         t.bar_text_changed(cx);
                     });
+                }
+            }
+            ("problems", Some(file)) => {
+                // A JSON list of {path (root-relative), line, column,
+                // severity, message, source, code?}.
+                use impulse_kit::problems::{Problem, Severity};
+                let list: Vec<Value> = std::fs::read_to_string(file)
+                    .ok()
+                    .and_then(|t| serde_json::from_str(&t).ok())
+                    .unwrap_or_default();
+                let root = first_root(workbench);
+                let mut by_path: std::collections::BTreeMap<String, Vec<Problem>> =
+                    Default::default();
+                for item in list {
+                    let (Some(relative), Some(message)) =
+                        (item["path"].as_str(), item["message"].as_str())
+                    else {
+                        continue;
+                    };
+                    let path = root.join(relative).to_string_lossy().into_owned();
+                    let severity = match item["severity"].as_str() {
+                        Some("error") => Severity::Error,
+                        Some("warning") => Severity::Warning,
+                        Some("hint") => Severity::Hint,
+                        _ => Severity::Info,
+                    };
+                    by_path.entry(path.clone()).or_default().push(Problem {
+                        path,
+                        line: item["line"].as_u64().unwrap_or(1) as usize,
+                        column: item["column"].as_u64().unwrap_or(1) as usize,
+                        severity,
+                        message: message.to_string(),
+                        source: item["source"].as_str().map(str::to_string),
+                        code: item["code"].as_str().map(str::to_string),
+                    });
+                }
+                let store = workbench.problems.clone();
+                store.update(cx, |store, cx| {
+                    for (path, list) in by_path {
+                        store.set(&path, "snapshot", list);
+                    }
+                    cx.notify();
+                });
+                workbench.run_command("show_problems", window, cx);
+            }
+            ("focus-pane", Some(n)) => {
+                // The nth pane of the active tab, in layout order (the
+                // session's pane ids).
+                let pane = n.parse::<usize>().ok().and_then(|n| {
+                    let tab = workbench.workspace().active_tab()?;
+                    tab.layout.leaves().get(n).copied()
+                });
+                match pane {
+                    Some(pane) => {
+                        if let Some(tab) = workbench.workspace_mut().active_tab_mut() {
+                            tab.focused = pane;
+                            tab.zoomed = None;
+                        }
+                        workbench.focus_active(window, cx);
+                        cx.notify();
+                    }
+                    None => fail(format!("focus-pane: no pane {n}")),
+                }
+            }
+            ("select-blocks", Some(n)) => {
+                if let Some(terminal) = workbench.active_terminal().cloned() {
+                    let count = n.parse().unwrap_or(1);
+                    terminal.update(cx, |t, cx| t.select_last_blocks(count, window, cx));
+                }
+            }
+            ("find-word", None) => {
+                if let Some(terminal) = workbench.active_terminal().cloned() {
+                    terminal.update(cx, |t, cx| t.find_whole_word(window, cx));
+                }
+            }
+            ("settings-category", Some(name)) => {
+                workbench.open_settings(None, window, cx);
+                let category = impulse_kit::settings::Category::ALL
+                    .into_iter()
+                    .find(|c| c.title() == name);
+                match (category, workbench.focused_surface().cloned()) {
+                    (Some(category), Some(Surface::Settings(view))) => {
+                        view.update(cx, |v, cx| v.select_category(category, window, cx))
+                    }
+                    _ => fail(format!("settings-category: no category “{name}”")),
+                }
+            }
+            ("replace", Some(spec)) => {
+                let (query, replacement) = spec.split_once(':').unwrap_or((spec, ""));
+                workbench.run_command("project_search", window, cx);
+                let search = workbench.search.clone();
+                search.update(cx, |s, cx| s.replace_for(query, replacement, window, cx));
+            }
+            ("git-peek", Some(line)) => {
+                let editor = workbench.active_editor().cloned();
+                let peeked = match (editor, line.parse::<usize>()) {
+                    (Some(editor), Ok(line)) => {
+                        editor.update(cx, |e, cx| e.peek_change_at(line, cx))
+                    }
+                    _ => false,
+                };
+                if !peeked {
+                    fail(format!("git-peek: no change on line {line}"));
+                }
+            }
+            ("beside", Some(path)) => {
+                let path = debug_path(path, workbench);
+                workbench.open_beside(&path, window, cx)
+            }
+            ("tag-sheet", None) => workbench.run_command("git_create_tag", window, cx),
+            ("tag" | "tag-push", Some(spec)) => {
+                // Tag HEAD without the prompt (name[:message]).
+                let (tag, message) = match spec.split_once(':') {
+                    Some((tag, message)) => (tag, Some(message.to_string())),
+                    None => (spec, None),
+                };
+                match workbench.git.active.clone() {
+                    Some(repo) => workbench.git_create_tag(
+                        &repo,
+                        tag.to_string(),
+                        "HEAD".into(),
+                        message,
+                        name == "tag-push",
+                        false,
+                        window,
+                        cx,
+                    ),
+                    None => fail(format!("{name}: not in a git repository")),
+                }
+            }
+            ("project-trust", None) => {
+                let root = workbench.workspace().root.to_string_lossy().into_owned();
+                workbench.trust_project_config(&root, window, cx, Box::new(|_, _, _, _| {}));
+            }
+            ("project-setup", None) => workbench.open_project_setup(None, None, window, cx),
+            ("move-sheet", None) => workbench.present_new_task(None, true, window, cx),
+            ("archive-merged", None) => {
+                let index = workbench.active;
+                workbench.present_archive_merged_tasks(index, window, cx)
+            }
+            ("composer", Some(text)) => {
+                // The agent composer, opened with a draft.
+                workbench.run_command("agent_composer", window, cx);
+                if let Some(terminal) = workbench.active_terminal().cloned() {
+                    let composer = terminal.read(cx).agent.composer.clone();
+                    match composer {
+                        Some(composer) => {
+                            composer.update(cx, |c, cx| c.set_text(text.to_string(), cx))
+                        }
+                        None => fail(format!("composer: no agent composer opened ({text})")),
+                    }
+                }
+            }
+            ("find", Some(text)) => {
+                if let Some(terminal) = workbench.active_terminal().cloned() {
+                    terminal.update(cx, |t, cx| t.find_text(text, window, cx));
+                }
+            }
+            ("complete", None) => {
+                // Tab in the input bar: the completion menu.
+                if let Some(terminal) = workbench.active_terminal().cloned() {
+                    terminal.update(cx, |t, cx| t.request_completions(cx));
                 }
             }
             ("block", Some(id)) => {
@@ -875,15 +1063,6 @@ fn perform_now(action: &str, cx: &mut App) {
             ("key", Some(key)) => {
                 if let Ok(keystroke) = gpui_kit::Keystroke::parse(key) {
                     window.dispatch_keystroke(keystroke, cx);
-                }
-            }
-            ("click", Some(at)) => {
-                let point = at
-                    .split_once(':')
-                    .and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?)));
-                match point {
-                    Some((x, y)) => click(window, x, y, cx),
-                    None => unknown(),
                 }
             }
             _ => unknown(),

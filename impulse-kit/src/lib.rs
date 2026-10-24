@@ -57,6 +57,7 @@ pub mod terminal_hints;
 pub mod terminal_paths;
 pub mod text_file;
 pub mod theme;
+pub mod tree_expansion;
 pub mod trust;
 pub mod update_checker;
 pub mod uri;

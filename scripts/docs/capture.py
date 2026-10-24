@@ -262,7 +262,9 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
     width, height = shot.get("size", (1280, 800))
     if shot.get("base"):
         # A window other than the main one (e.g. the theme gallery).
-        main = next(w for w in windows if w["class"] == shot["base"])
+        # The Rust app's other windows are all class "Window".
+        base = "Window" if RUST and shot["base"] == "NSWindow" else shot["base"]
+        main = next(w for w in windows if w["class"] == base)
     else:
         mains = [w for w in windows if w["w"] == width and w["h"] == height and not w["sheet"]]
         if not mains:
@@ -304,6 +306,10 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
     }
     if crop:
         x, y, w, h = crop
+        if RUST and shot.get("base") == "NSWindow":
+            # Crops of an AppKit window count its 28-point titlebar; the
+            # Rust app's window images start below the system's.
+            y -= 28
         x, y = max(0, x), max(0, y)
         spec["crop"] = {"x": x, "y": y, "w": min(w, width - x), "h": min(h, height - y)}
     spec_file = folder / "spec.json"

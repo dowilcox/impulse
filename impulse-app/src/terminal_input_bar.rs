@@ -479,7 +479,7 @@ impl TerminalView {
 
     /// Tab with the menu closed: two or more candidates open it, a lone one
     /// goes in as a shell's Tab would, and with none the suggestion is taken.
-    fn request_completions(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn request_completions(&mut self, cx: &mut Context<Self>) {
         let text = self.editor_text(cx);
         if text.is_empty() || self.command_running {
             self.accept_suggestion(cx);

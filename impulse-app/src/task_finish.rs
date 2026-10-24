@@ -1248,7 +1248,7 @@ impl Workbench {
                     move |w, _, event: &TerminalViewEvent, window, cx| {
                         let code = match event {
                             TerminalViewEvent::CommandEnded(code) => Some(code.unwrap_or(1)),
-                            TerminalViewEvent::Exited(_) => None,
+                            TerminalViewEvent::Exited => None,
                             _ => return,
                         };
                         w.end_check(watched.clone(), code, window, cx);

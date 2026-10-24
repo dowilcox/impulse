@@ -113,8 +113,25 @@ pub fn apply(
     c.magenta = hsla(p.working);
     c.cyan = hsla(Rgba::from_hex(&theme.cyan));
 
+    // Buttons have colors of their own (the theme file's fallbacks don't
+    // apply to colors set here): Create Task and the like in the accent.
+    c.button_primary = c.primary;
+    c.button_primary_hover = c.primary_hover;
+    c.button_primary_active = c.primary_active;
+    c.button_primary_foreground = c.primary_foreground;
+    c.button_secondary = c.secondary;
+    c.button_secondary_hover = c.secondary_hover;
+    c.button_secondary_active = c.secondary_active;
+    c.button_secondary_foreground = c.secondary_foreground;
+
     k.tokens = ThemeTokens::from(&k.colors);
-    k.highlight_theme = highlight_theme(theme, settings.highlight_current_line).into();
+    k.highlight_theme = highlight_theme(theme, settings.highlight_current_line, false).into();
+    // Review colors code as highlight.js does, function names included.
+    cx.set_global(ReviewHighlight(std::sync::Arc::new(highlight_theme(
+        theme,
+        settings.highlight_current_line,
+        true,
+    ))));
     Theme::sync_base(cx);
     cx.refresh_windows();
     cx.set_global(crate::editor_git::GitColors {
@@ -124,9 +141,17 @@ pub fn apply(
     });
 }
 
+/// Review's syntax colors (`highlight_theme` with function names colored).
+#[derive(Clone)]
+pub(crate) struct ReviewHighlight(pub std::sync::Arc<HighlightTheme>);
+
+impl gpui_kit::Global for ReviewHighlight {}
+
 /// Impulse's theme as GPUI Kit's highlight theme (Zed's theme format), with
-/// the scopes `themeToMonaco` colors.
-fn highlight_theme(theme: &ResolvedTheme, current_line: bool) -> HighlightTheme {
+/// the scopes `themeToMonaco` colors. Monaco's tokenizers leave function
+/// names plain and color operators as delimiters, so the editor does too;
+/// `functions` colors them, as highlight.js does in Review.
+fn highlight_theme(theme: &ResolvedTheme, current_line: bool, functions: bool) -> HighlightTheme {
     let style = |color: &str| json!({ "color": color });
     let italic = |color: &str| json!({ "color": color, "font_style": "italic" });
     let syntax: serde_json::Map<String, serde_json::Value> = [
@@ -140,12 +165,26 @@ fn highlight_theme(theme: &ResolvedTheme, current_line: bool) -> HighlightTheme 
         ("string.escape", style(&theme.syntax_escape)),
         ("string.regex", style(&theme.syntax_regexp)),
         ("string.special", style(&theme.syntax_string)),
-        ("operator", style(&theme.syntax_operator)),
+        (
+            "operator",
+            style(if functions {
+                &theme.syntax_operator
+            } else {
+                &theme.syntax_delimiter
+            }),
+        ),
         ("type", style(&theme.syntax_type)),
         ("constructor", style(&theme.syntax_type)),
         ("enum", style(&theme.syntax_type)),
         ("variant", style(&theme.syntax_constant)),
-        ("function", style(&theme.syntax_function)),
+        (
+            "function",
+            style(if functions {
+                &theme.syntax_function
+            } else {
+                &theme.fg
+            }),
+        ),
         ("attribute", style(&theme.syntax_attribute)),
         ("tag", style(&theme.syntax_tag)),
         ("property", style(&theme.syntax_variable)),

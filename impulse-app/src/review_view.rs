@@ -56,7 +56,6 @@ struct ReviewFile {
     change: FileChange,
     diff: Option<FileDiff>,
     error: Option<String>,
-    loading: bool,
     expanded: bool,
     viewed: bool,
     /// Viewed earlier, but the diff changed since.
@@ -540,7 +539,6 @@ impl ReviewView {
                     changed_since_viewed: viewed_at.is_some() && !is_viewed,
                     viewed: is_viewed,
                     expanded,
-                    loading: false,
                     busy: false,
                     error,
                     diff,
@@ -1070,10 +1068,6 @@ impl ReviewView {
 
     // MARK: Drawing
 
-    fn c(&self, color: KitRgba) -> Hsla {
-        hsla(color)
-    }
-
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let (added, removed) = self.files.iter().fold((0, 0), |(a, r), f| {
@@ -1497,9 +1491,12 @@ impl ReviewView {
         let Some(diff) = &file.diff else {
             return;
         };
-        let theme = gpui_kit::component::ActiveTheme::theme(&**cx)
-            .highlight_theme
-            .clone();
+        let theme = match cx.try_global::<crate::kit_theme::ReviewHighlight>() {
+            Some(review) => review.0.clone(),
+            None => gpui_kit::component::ActiveTheme::theme(&**cx)
+                .highlight_theme
+                .clone(),
+        };
         file.syntax = Some(std::rc::Rc::new(syntax::highlight(diff, &theme)));
     }
 

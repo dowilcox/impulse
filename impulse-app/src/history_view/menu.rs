@@ -36,7 +36,8 @@ fn local(
 }
 
 fn copy(label: &'static str, text: String) -> PopupMenuItem {
-    PopupMenuItem::new(label).on_click(move |_, _, cx: &mut App| HistoryView::copy(text.clone(), cx))
+    PopupMenuItem::new(label)
+        .on_click(move |_, _, cx: &mut App| HistoryView::copy(text.clone(), cx))
 }
 
 /// "Tag v1.0", "Remote Branch origin/main", "Branch main".
@@ -86,21 +87,33 @@ pub(super) fn commit_items(
         )
     };
     let current = context.branch.clone().unwrap_or_else(|| "HEAD".into());
-    let is_head = decorations.iter().any(|d| {
-        matches!(
-            d,
-            RefDecoration::Head { .. } | RefDecoration::DetachedHead
-        )
-    });
+    let is_head = decorations
+        .iter()
+        .any(|d| matches!(d, RefDecoration::Head { .. } | RefDecoration::DetachedHead));
     let target = merge_target(&decorations, entry);
     let mut menu = menu
-        .item(ask(view, "Check Out (Detached)", HistoryAction::Checkout, entry))
-        .item(ask(view, "Create Branch Here…", HistoryAction::BranchHere, entry))
+        .item(ask(
+            view,
+            "Check Out (Detached)",
+            HistoryAction::Checkout,
+            entry,
+        ))
+        .item(ask(
+            view,
+            "Create Branch Here…",
+            HistoryAction::BranchHere,
+            entry,
+        ))
         .item(ask(view, "Create Tag Here…", HistoryAction::TagHere, entry))
         .separator()
         .item(
-            ask(view, format!("Merge into {current}"), HistoryAction::Merge(target.clone()), entry)
-                .disabled(is_head),
+            ask(
+                view,
+                format!("Merge into {current}"),
+                HistoryAction::Merge(target.clone()),
+                entry,
+            )
+            .disabled(is_head),
         )
         .item(
             ask(
@@ -149,12 +162,9 @@ pub(super) fn commit_items(
         menu = menu.separator();
         for decoration in named {
             let (view, entry, context) = (view.clone(), entry.clone(), context.clone());
-            menu = menu.submenu(
-                menu_title(&decoration),
-                window,
-                cx,
-                move |menu, _, _| ref_items(menu, &view, &decoration, &entry, &context),
-            );
+            menu = menu.submenu(menu_title(&decoration), window, cx, move |menu, _, _| {
+                ref_items(menu, &view, &decoration, &entry, &context)
+            });
         }
     }
     menu = menu.separator().item(ask(
@@ -192,7 +202,11 @@ pub(super) fn commit_items(
             "Select for Compare"
         },
         move |view, cx| {
-            view.compare_base = if is_base { None } else { Some(selected.clone()) };
+            view.compare_base = if is_base {
+                None
+            } else {
+                Some(selected.clone())
+            };
             cx.notify();
         },
     ))
@@ -331,12 +345,23 @@ mod tests {
     fn merges_take_the_branch_on_the_commit() {
         let remotes = vec!["origin".to_string()];
         let parse = |refs: &[&str]| -> Vec<RefDecoration> {
-            refs.iter().map(|r| RefDecoration::parse(r, &remotes)).collect()
+            refs.iter()
+                .map(|r| RefDecoration::parse(r, &remotes))
+                .collect()
         };
-        assert_eq!(merge_target(&parse(&["HEAD -> main", "feature"]), &entry()), "feature");
-        assert_eq!(merge_target(&parse(&["origin/HEAD", "origin/main"]), &entry()), "origin/main");
+        assert_eq!(
+            merge_target(&parse(&["HEAD -> main", "feature"]), &entry()),
+            "feature"
+        );
+        assert_eq!(
+            merge_target(&parse(&["origin/HEAD", "origin/main"]), &entry()),
+            "origin/main"
+        );
         assert_eq!(merge_target(&parse(&["tag: v1.0"]), &entry()), "v1.0");
-        assert_eq!(merge_target(&parse(&["HEAD -> main"]), &entry()), "abc1234def");
+        assert_eq!(
+            merge_target(&parse(&["HEAD -> main"]), &entry()),
+            "abc1234def"
+        );
         assert_eq!(menu_title(&RefDecoration::Tag("v1".into())), "Tag v1");
         assert_eq!(
             menu_title(&RefDecoration::RemoteBranch {
