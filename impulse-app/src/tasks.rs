@@ -945,7 +945,7 @@ impl Workbench {
         let workbench = cx.entity().downgrade();
         let config = Rc::new(config);
         let untrusted = Rc::new(untrusted);
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             let answer = {
                 let (then, workbench, config, untrusted) = (
                     then.clone(),
@@ -1629,55 +1629,25 @@ pub(crate) fn confirm(
             vec![(cancel, press(false)), (ok, press(true))],
         );
     }
-    window.open_dialog(cx, move |dialog, _, _| {
-        let (no, yes) = (answer.clone(), answer.clone());
-        let (enter, escape) = (answer.clone(), answer.clone());
-        dialog
-            .title(title.clone())
-            .w(px(460.))
-            .overlay_closable(false)
-            .close_button(false)
-            // Return answers yes, Escape no, as an alert's buttons do.
-            .on_ok(move |_, window, cx| {
-                window.close_dialog(cx);
-                if let Some(answer) = enter.borrow_mut().take() {
-                    answer(true, window, cx)
-                }
-                false
-            })
-            .on_cancel(move |_, window, cx| {
-                window.close_dialog(cx);
-                if let Some(answer) = escape.borrow_mut().take() {
-                    answer(false, window, cx)
-                }
-                false
-            })
-            .child(div().whitespace_normal().child(message.clone()))
-            .footer(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(Button::new("confirm-cancel").label(cancel).on_click(
-                        move |_, window, cx| {
-                            window.close_dialog(cx);
-                            if let Some(answer) = no.borrow_mut().take() {
-                                answer(false, window, cx)
-                            }
-                        },
-                    ))
-                    .child(
-                        Button::new("confirm-ok")
-                            .when(destructive, |b| b.danger())
-                            .when(!destructive, |b| b.primary())
-                            .label(ok)
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                                if let Some(answer) = yes.borrow_mut().take() {
-                                    answer(true, window, cx)
-                                }
-                            }),
-                    ),
-            )
-    });
+    let reply = |yes: bool| {
+        let answer = answer.clone();
+        move |window: &mut Window, cx: &mut App| {
+            window.close_dialog(cx);
+            if let Some(answer) = answer.borrow_mut().take() {
+                answer(yes, window, cx)
+            }
+        }
+    };
+    let alert = crate::alert::Alert::new(title)
+        .message(message)
+        .button(ok, reply(true))
+        .button(cancel, reply(false))
+        // Escape answers no, whatever the button says.
+        .escape(1);
+    if destructive {
+        alert.destructive()
+    } else {
+        alert
+    }
+    .show(window, cx);
 }

@@ -142,7 +142,7 @@ impl Workbench {
         let place = boundary
             .map(|b| format!("“{}”", name(&b)))
             .unwrap_or_else(|| "the project".into());
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             let (apply_workbench, pending) = (workbench.clone(), pending.clone());
             dialog
                 .title(format!("Apply “{}”?", pending.title))

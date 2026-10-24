@@ -297,7 +297,7 @@ impl Workbench {
         let palette = self.palette.clone();
         let switcher = cx.new(|cx| BranchSwitcher::new(workbench, repo, palette, window, cx));
         let focused = std::cell::Cell::new(false);
-        window.open_dialog(cx, move |dialog, window, cx| {
+        crate::overlays::open_dialog(window, cx, move |dialog, window, cx| {
             if !focused.replace(true) {
                 let handle = switcher.read(cx).focus_handle(cx);
                 window.focus(&handle, cx);

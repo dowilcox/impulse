@@ -8,9 +8,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, App, Context, EntityId, Window};
+use gpui_kit::{App, Context, EntityId, Window};
 use impulse_kit::close_risk::{CloseRiskAction, CloseRiskInput, RunningCommandRisk};
 
 use crate::settings_store::SettingsStore;
@@ -350,61 +349,21 @@ fn choice_dialog(
             ],
         );
     }
-    window.open_dialog(cx, move |dialog, _, _| {
-        let reply = |choice: Choice| {
-            let chosen = chosen.clone();
-            move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
-                window.close_dialog(cx);
-                if let Some(chosen) = chosen.borrow_mut().take() {
-                    chosen(choice, window, cx)
-                }
+    let reply = |choice: Choice| {
+        let chosen = chosen.clone();
+        move |window: &mut Window, cx: &mut App| {
+            window.close_dialog(cx);
+            if let Some(chosen) = chosen.borrow_mut().take() {
+                chosen(choice, window, cx)
             }
-        };
-        let (enter, escape) = (chosen.clone(), chosen.clone());
-        dialog
-            .title(title.clone())
-            .w(px(460.))
-            .overlay_closable(false)
-            .close_button(false)
-            .on_ok(move |_, window, cx| {
-                window.close_dialog(cx);
-                if let Some(chosen) = enter.borrow_mut().take() {
-                    chosen(Choice::Save, window, cx)
-                }
-                false
-            })
-            .on_cancel(move |_, window, cx| {
-                window.close_dialog(cx);
-                if let Some(chosen) = escape.borrow_mut().take() {
-                    chosen(Choice::Cancel, window, cx)
-                }
-                false
-            })
-            .child(div().whitespace_normal().child(message.clone()))
-            .footer(
-                div()
-                    .flex()
-                    .w_full()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("close-dont-save")
-                            .label("Don't Save")
-                            .on_click(reply(Choice::DontSave)),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        Button::new("close-cancel")
-                            .label("Cancel")
-                            .on_click(reply(Choice::Cancel)),
-                    )
-                    .child(
-                        Button::new("close-save")
-                            .primary()
-                            .label("Save")
-                            .on_click(reply(Choice::Save)),
-                    ),
-            )
-    });
+        }
+    };
+    crate::alert::Alert::new(title)
+        .message(message)
+        .button("Save", reply(Choice::Save))
+        .button("Cancel", reply(Choice::Cancel))
+        .button("Don't Save", reply(Choice::DontSave))
+        .show(window, cx);
 }
 
 impl Workbench {

@@ -411,7 +411,7 @@ impl Workbench {
         let workbench = cx.entity().downgrade();
         let palette = self.palette.clone();
         let manager = cx.new(|cx| BranchManager::new(workbench, repo, palette, window, cx));
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             dialog
                 .title("Branches")
                 .w(px(640.))

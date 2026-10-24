@@ -385,7 +385,7 @@ impl Workbench {
             pairs: workspace.task.overlaps.clone(),
             conflicts: HashMap::new(),
         });
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             dialog
                 .w(px(420.))
                 .title("Changed in more than one workspace")

@@ -666,7 +666,7 @@ impl Workbench {
                 });
             }
         });
-        window.open_dialog(cx, move |dialog, _, cx| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, cx| {
             let count = sheet
                 .read(cx)
                 .rows

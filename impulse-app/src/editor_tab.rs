@@ -528,7 +528,7 @@ impl EditorTab {
         )
         .detach();
         let field = input.clone();
-        window.open_dialog(cx, move |dialog, window, cx| {
+        crate::overlays::open_dialog(window, cx, move |dialog, window, cx| {
             if initial_focus.replace(false) {
                 field.update(cx, |field, cx| {
                     field.focus(window, cx);

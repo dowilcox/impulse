@@ -263,9 +263,8 @@ impl Workbench {
 
     /// About Impulse: the name and version.
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_kit::component::WindowExt as _;
         let version = env!("CARGO_PKG_VERSION");
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             dialog.title("Impulse").w(gpui_kit::px(340.)).child(
                 gpui_kit::div()
                     .flex()

@@ -5,11 +5,10 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, Context, Window};
+use gpui_kit::{prelude::*, Context, Window};
 use impulse_kit::recent_workspaces;
 
 use crate::workbench::Workbench;
@@ -130,46 +129,25 @@ impl Workbench {
             },
         )
         .detach();
-        let (title, message) = (title.to_string(), message.to_string());
         let first = std::cell::Cell::new(true);
-        window.open_dialog(cx, move |dialog, window, cx| {
-            if first.replace(false) {
-                input.update(cx, |field, cx| {
-                    field.focus(window, cx);
-                    field.select_all(window, cx);
-                });
-            }
-            let done = done.clone();
-            dialog
-                .title(title.clone())
-                .w(px(420.))
-                .close_button(false)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .when(!message.is_empty(), |d| d.child(message.clone()))
-                        .child(Input::new(&input)),
-                )
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("prompt-cancel")
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("prompt-ok")
-                                .primary()
-                                .label(confirm)
-                                .on_click(move |_, window, cx| done(window, cx)),
-                        ),
-                )
-        });
+        let light = self.palette.is_light;
+        let mut alert = crate::alert::Alert::new(title.to_string());
+        if !message.is_empty() {
+            alert = alert.message(message.to_string());
+        }
+        alert
+            .accessory(Some(260.), move |window, cx| {
+                if first.replace(false) {
+                    input.update(cx, |field, cx| {
+                        field.focus(window, cx);
+                        field.select_all(window, cx);
+                    });
+                }
+                crate::alert::field(&input, 260., 24., light).into_any_element()
+            })
+            .button(confirm, move |window, cx| done(window, cx))
+            .button("Cancel", |window, cx| window.close_dialog(cx))
+            .show(window, cx);
     }
 }
 

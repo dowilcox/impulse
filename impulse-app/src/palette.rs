@@ -1609,6 +1609,13 @@ impl Palette {
     }
 }
 
+impl Palette {
+    #[cfg(debug_assertions)]
+    pub(crate) fn is_visible(&self) -> bool {
+        self.visible
+    }
+}
+
 impl Render for Palette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.visible {
@@ -1650,7 +1657,9 @@ impl Render for Palette {
                     .child(hairline())
                     .child(self.results(cx))
                     .child(hairline())
-                    .child(self.footer()),
+                    .child(self.footer())
+                    .relative()
+                    .child(crate::overlays::probe()),
             )
             .into_any_element()
     }

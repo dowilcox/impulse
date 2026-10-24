@@ -160,6 +160,9 @@ struct State {
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
+    /// Where the last dialog or palette painted (`overlay_probe`).
+    static OVERLAY: std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>> =
+        const { std::cell::Cell::new(None) };
 }
 
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
@@ -1434,6 +1437,18 @@ fn hide(window: &Window) {
     let _ = window;
 }
 
+/// Records where it's painted: put in a dialog's body (`overlays`) or the
+/// palette, it tells `capture` where the overlay is for the docs shots'
+/// crop (Swift's are windows of their own; GPUI Kit's are drawn inside).
+pub(crate) fn overlay_probe() -> impl gpui_kit::IntoElement {
+    use gpui_kit::Styled as _;
+    gpui_kit::canvas(|bounds, _, _| OVERLAY.set(Some(bounds)), |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+}
+
 /// Writes `window-<n>.png` for every open window and `snapshot.log`.
 fn capture(cx: &mut App) {
     let Some(config) = config() else {
@@ -1465,9 +1480,27 @@ fn capture(cx: &mut App) {
             } else {
                 "Window"
             };
-            let frame = format!(
+            let mut frame = format!(
                 "frame window-{index} x={x} y={y_up} w={w} h={h} level=0 sheet=false class={class}\n"
             );
+            // An open dialog or palette, inside its frame, from the window's
+            // top left.
+            let palette = crate::session::workbenches(cx)
+                .iter()
+                .find(|(_, h)| h.window_id() == handle.window_id())
+                .is_some_and(|(w, _)| w.read(cx).command_palette.read(cx).is_visible());
+            if let Some(o) = OVERLAY
+                .get()
+                .filter(|_| palette || window.has_active_dialog(cx))
+            {
+                frame.push_str(&format!(
+                    "overlay window-{index} x={} y={} w={} h={}\n",
+                    f32::from(o.origin.x),
+                    f32::from(o.origin.y),
+                    f32::from(o.size.width),
+                    f32::from(o.size.height)
+                ));
+            }
             (frame, write_image(window, &path))
         });
         match outcome {

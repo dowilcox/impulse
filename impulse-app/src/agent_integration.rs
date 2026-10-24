@@ -1047,7 +1047,7 @@ impl Workbench {
         });
         #[cfg(debug_assertions)]
         crate::debug_snapshot::note_agent_sheet(&sheet);
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             dialog.w(px(660.)).close_button(false).child(sheet.clone())
         });
     }

@@ -69,6 +69,9 @@ KEEP = False
 FRAME = re.compile(
     r"frame window-(\d+) x=(\S+) y=(\S+) w=(\S+) h=(\S+) level=(\S+) sheet=(\S+) class=(\S+)"
 )
+# The Rust app draws dialogs and the palette inside its window: where one is,
+# inside its frame, from the window's top left.
+OVERLAY = re.compile(r"overlay window-(\d+) x=(\S+) y=(\S+) w=(\S+) h=(\S+)")
 
 
 def read_preferences() -> dict:
@@ -207,7 +210,39 @@ def read_windows(folder: Path) -> list[dict]:
             "path": str(folder / f"window-{index}.png"), "x": float(x), "y": float(y), "w": float(w),
             "h": float(h), "level": int(level), "sheet": sheet == "true", "class": cls,
         })
+    for match in OVERLAY.finditer((folder / "snapshot.log").read_text()):
+        index, *rect = match.groups()
+        for w in windows:
+            if w["path"].endswith(f"window-{index}.png"):
+                w["overlay"] = tuple(float(v) for v in rect)
     return [w for w in windows if Path(w["path"]).exists() and w["class"] not in IGNORED_CLASSES]
+
+
+def drawn_overlay(window: dict, scale: int) -> tuple[float, float, float, float]:
+    """The frame of a dialog or palette the Rust app drew inside `window`:
+    from the rectangle it reported, outward to where the frame's own
+    background ends (its border), along lines through its padding."""
+    from PIL import Image
+    image = Image.open(window["path"]).convert("RGB")
+    x, y, w, h = (round(v * scale) for v in window["overlay"])
+    left, top, right, bottom = x, y, x + w - 1, y + h - 1
+    inset = 4 * scale
+    background = image.getpixel((left + inset, top + inset))
+
+    def same(px: tuple[int, int]) -> bool:
+        return sum(abs(a - b) for a, b in zip(image.getpixel(px), background)) < 24
+
+    def walk(px: int, py: int, dx: int, dy: int) -> tuple[int, int]:
+        while 0 < px < image.width - 1 and 0 < py < image.height - 1 and same((px + dx, py + dy)):
+            px, py = px + dx, py + dy
+        return px, py
+
+    middle = (top + bottom) // 2
+    left = walk(left + inset, middle, -1, 0)[0] - 1
+    right = walk(right - inset, middle, 1, 0)[0] + 1
+    top = walk(x + inset, top + inset, 0, -1)[1] - 1
+    bottom = walk(x + inset, bottom - inset, 0, 1)[1] + 1
+    return (left / scale, top / scale, (right - left + 1) / scale, (bottom - top + 1) / scale)
 
 
 def snapshot(shot: dict, folder: Path) -> list[dict]:
@@ -286,11 +321,17 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
     crop = shot.get("crop")
     if crop == "overlay":
         # The first floating window plus a margin of the window around it.
-        if not overlays:
-            sys.exit(f"{shot['name']}: no floating window to crop to in {folder}")
-        o = overlays[0]
         pad = shot.get("pad", 24)
-        crop = (o["x"] - pad, o["y"] - pad, o["w"] + 2 * pad, o["h"] + 2 * pad)
+        if overlays:
+            o = overlays[0]
+            crop = (o["x"] - pad, o["y"] - pad, o["w"] + 2 * pad, o["h"] + 2 * pad)
+        elif RUST and "overlay" in main:
+            with open(main["path"], "rb") as png:
+                scale = round(int.from_bytes(png.read(24)[16:20], "big") / width) or 1
+            x, y, w, h = drawn_overlay(main, scale)
+            crop = (x - pad, y - pad, w + 2 * pad, h + 2 * pad)
+        else:
+            sys.exit(f"{shot['name']}: no floating window to crop to in {folder}")
     style = shot.get("style", "window" if crop is None else "crop")
     # Pixels per point, as the window was captured (2 on a Retina Mac).
     with open(main["path"], "rb") as png:

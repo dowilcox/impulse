@@ -967,7 +967,7 @@ impl Workbench {
     ) {
         #[cfg(debug_assertions)]
         crate::debug_snapshot::note_task_sheet(&sheet);
-        window.open_dialog(cx, move |dialog, window, cx| {
+        crate::overlays::open_dialog(window, cx, move |dialog, window, cx| {
             if sheet.update(cx, |s, _| std::mem::replace(&mut s.initial_focus, false)) {
                 let title = sheet.read(cx).title.clone();
                 title.update(cx, |input, cx| input.focus(window, cx));

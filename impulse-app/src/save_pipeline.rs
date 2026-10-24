@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, App, Context, Entity, Window};
+use gpui_kit::{prelude::*, App, Context, Entity, Window};
 use impulse_kit::child_process::ChildProcess;
 use impulse_kit::save_command;
 
@@ -264,51 +263,20 @@ fn changed_on_disk_dialog(
             ],
         );
     }
-    window.open_dialog(cx, move |dialog, _, _| {
-        let reply = |answer: Answer| {
-            let answered = answered.clone();
-            move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
-                window.close_dialog(cx);
-                if let Some(answered) = answered.borrow_mut().take() {
-                    answered(answer, window, cx)
-                }
+    let reply = |answer: Answer| {
+        let answered = answered.clone();
+        move |window: &mut Window, cx: &mut App| {
+            window.close_dialog(cx);
+            if let Some(answered) = answered.borrow_mut().take() {
+                answered(answer, window, cx)
             }
-        };
-        let escape = answered.clone();
-        dialog
-            .title(title.clone())
-            .w(px(480.))
-            .overlay_closable(false)
-            .close_button(false)
-            .on_cancel(move |_, window, cx| {
-                window.close_dialog(cx);
-                if let Some(answered) = escape.borrow_mut().take() {
-                    answered(Answer::Cancel, window, cx)
-                }
-                false
-            })
-            .child(div().whitespace_normal().child(DISK_CHANGED))
-            .footer(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("disk-cancel")
-                            .label("Cancel")
-                            .on_click(reply(Answer::Cancel)),
-                    )
-                    .child(
-                        Button::new("disk-reload")
-                            .label("Reload from Disk")
-                            .on_click(reply(Answer::Reload)),
-                    )
-                    .child(
-                        Button::new("disk-save")
-                            .danger()
-                            .label("Save Anyway")
-                            .on_click(reply(Answer::Save)),
-                    ),
-            )
-    });
+        }
+    };
+    crate::alert::Alert::new(title)
+        .message(DISK_CHANGED)
+        .button("Save Anyway", reply(Answer::Save))
+        .button("Reload from Disk", reply(Answer::Reload))
+        .button("Cancel", reply(Answer::Cancel))
+        .destructive()
+        .show(window, cx);
 }

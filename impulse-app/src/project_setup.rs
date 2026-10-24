@@ -2168,9 +2168,13 @@ impl Workbench {
                 }
             });
         });
-        window.open_dialog(cx, move |dialog, _, _| {
-            let (reload, save, cancel, escape) =
-                (answer.clone(), answer.clone(), answer.clone(), answer.clone());
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
+            let (reload, save, cancel, escape) = (
+                answer.clone(),
+                answer.clone(),
+                answer.clone(),
+                answer.clone(),
+            );
             dialog
                 .title(format!("{RELATIVE_PATH} changed since Project Setup read it"))
                 .w(px(480.))

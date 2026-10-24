@@ -7,10 +7,8 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, App, Context, Entity, Window};
+use gpui_kit::{prelude::*, App, Context, Entity, Window};
 
 use crate::editor_tab::{ApplyEdit, EditorHooks, EditorTab, ShowDocument};
 use crate::lsp_hub::LspHub;
@@ -140,55 +138,29 @@ impl Workbench {
                 ("Trust Folder", trust_it.clone()),
             ],
         );
-        window.open_dialog(cx, move |dialog, _, _| {
-            let (stay, trust_it) = (stay.clone(), trust_it.clone());
-            let checkbox_value = trust_parent.clone();
-            dialog
-                .title(title.clone())
-                .w(px(480.))
-                .keyboard(false)
-                .overlay_closable(false)
-                .close_button(false)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .child(ABOUT)
-                        .child(
-                            div()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(12.))
-                                .child(shown_folder.clone()),
-                        )
-                        .children(offer_parent.then(|| {
-                            Checkbox::new("trust-parent")
-                                .label(format!("Trust everything in “{shown_parent}”"))
-                                .checked(checkbox_value.get())
-                                .on_change(move |checked, window, _| {
-                                    checkbox_value.set(*checked);
-                                    window.refresh();
-                                })
-                        })),
+        let light = self.palette.is_light;
+        let mut alert =
+            crate::alert::Alert::new(title).message(format!("{ABOUT}\n\n{shown_folder}"));
+        if offer_parent {
+            alert = alert.accessory(None, move |_, _| {
+                let checked = trust_parent.clone();
+                crate::alert::checkbox(
+                    "trust-parent",
+                    format!("Trust everything in \u{201c}{shown_parent}\u{201d}"),
+                    checked.get(),
+                    light,
+                    move |window, _| {
+                        checked.set(!checked.get());
+                        window.refresh();
+                    },
                 )
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("stay-restricted")
-                                .label("Stay Restricted")
-                                .on_click(move |_, window, cx| stay(window, cx)),
-                        )
-                        .child(
-                            Button::new("trust-folder")
-                                .primary()
-                                .label("Trust Folder")
-                                .on_click(move |_, window, cx| trust_it(window, cx)),
-                        ),
-                )
-        });
+                .into_any_element()
+            });
+        }
+        alert
+            .button("Trust Folder", move |window, cx| trust_it(window, cx))
+            .button("Stay Restricted", move |window, cx| stay(window, cx))
+            .show(window, cx);
     }
 
     /// Language servers for workspace `index`, and for its open files.

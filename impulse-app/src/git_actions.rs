@@ -11,9 +11,8 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::button::Button;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
@@ -101,35 +100,15 @@ impl Workbench {
         let generic = matches!(error, OperationError::Cli(cli) if cli.kind == ErrorKind::Other);
         let message = error.message();
         let detail = (!detail.is_empty() && !generic).then_some(detail);
-        let title = title.to_string();
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog
-                .title(title.clone())
-                .w(px(460.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .child(message.clone())
-                        .children(detail.clone().map(|detail| {
-                            div()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(11.5))
-                                .max_h(px(220.))
-                                .overflow_hidden()
-                                .child(detail)
-                        })),
-                )
-                .footer(
-                    div().flex().justify_end().child(
-                        Button::new("git-error-ok")
-                            .primary()
-                            .label("OK")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    ),
-                )
-        });
+        let message = match detail {
+            Some(detail) => format!("{message}\n\n{detail}"),
+            None => message,
+        };
+        crate::alert::Alert::new(title.to_string())
+            .message(message)
+            .button("OK", |window, cx| window.close_dialog(cx))
+            .escape(0)
+            .show(window, cx);
     }
 
     pub(crate) fn report(
@@ -159,44 +138,20 @@ impl Workbench {
         let (title, message) = (title.into(), message.into());
         let then: Then = Rc::new(then);
         let workbench = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let (then, workbench) = (then.clone(), workbench.clone());
-            // Return confirms, as the Swift app's alerts' default button.
-            let (on_ok, ok_workbench) = (then.clone(), workbench.clone());
-            let dialog = dialog.on_ok(move |_, window, cx| {
+        let alert = crate::alert::Alert::new(title)
+            .message(message)
+            .button(confirm, move |window, cx| {
                 window.close_dialog(cx);
-                let then = on_ok.clone();
-                let _ = ok_workbench.update(cx, |workbench, cx| then(workbench, window, cx));
-                false
-            });
-            let button = Button::new("git-confirm").label(confirm);
-            let button = if destructive {
-                button.danger()
-            } else {
-                button.primary()
-            };
-            dialog
-                .title(title.clone())
-                .w(px(440.))
-                .child(div().child(message.clone()))
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("git-cancel")
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(button.on_click(move |_, window, cx| {
-                            window.close_dialog(cx);
-                            let then = then.clone();
-                            let _ =
-                                workbench.update(cx, |workbench, cx| then(workbench, window, cx));
-                        })),
-                )
-        });
+                let then = then.clone();
+                let _ = workbench.update(cx, |workbench, cx| then(workbench, window, cx));
+            })
+            .button("Cancel", |window, cx| window.close_dialog(cx));
+        if destructive {
+            alert.destructive()
+        } else {
+            alert
+        }
+        .show(window, cx);
     }
 
     /// A notification (the Swift app's toast).
@@ -1519,55 +1474,42 @@ impl Workbench {
             })
         };
         let focused = std::cell::Cell::new(false);
-        window.open_dialog(cx, move |dialog, window, cx| {
-            if !focused.replace(true) {
-                name.update(cx, |input, cx| input.focus(window, cx));
-            }
-            let (on_ok, on_click) = (create.clone(), create.clone());
-            let checkbox = push.clone();
-            dialog
-                .title(title.clone())
-                .w(px(420.))
-                .on_ok(move |_, window, cx| {
-                    on_ok(window, cx);
-                    false
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .children(subject.clone().map(|s| div().child(s)))
-                        .child(Input::new(&name))
-                        .child(Input::new(&message))
-                        .children(remote.clone().map(|remote| {
-                            Checkbox::new("push-tag")
-                                .label(format!("Push to {remote}"))
-                                .checked(checkbox.get())
-                                .on_change(move |checked, window, _| {
-                                    checkbox.set(*checked);
-                                    window.refresh();
-                                })
-                        })),
-                )
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("tag-cancel")
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
+        let light = self.palette.is_light;
+        let mut alert = crate::alert::Alert::new(title);
+        if let Some(subject) = subject {
+            alert = alert.message(subject);
+        }
+        let on_click = create.clone();
+        alert
+            .accessory(Some(300.), move |window, cx| {
+                if !focused.replace(true) {
+                    name.update(cx, |input, cx| input.focus(window, cx));
+                }
+                let checkbox = push.clone();
+                div()
+                    .w(px(300.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(crate::alert::field(&name, 300., 26., light))
+                    .child(crate::alert::field(&message, 300., 26., light))
+                    .children(remote.clone().map(|remote| {
+                        crate::alert::checkbox(
+                            "push-tag",
+                            format!("Push to {remote}"),
+                            checkbox.get(),
+                            light,
+                            move |window, _| {
+                                checkbox.set(!checkbox.get());
+                                window.refresh();
+                            },
                         )
-                        .child(
-                            Button::new("tag-create")
-                                .primary()
-                                .label("Create Tag")
-                                .on_click(move |_, window, cx| on_click(window, cx)),
-                        ),
-                )
-        });
+                    }))
+                    .into_any_element()
+            })
+            .button("Create Tag", move |window, cx| on_click(window, cx))
+            .button("Cancel", |window, cx| window.close_dialog(cx))
+            .show(window, cx);
     }
 
     /// Tag `at` (a commit, or "HEAD"); an empty message makes a
