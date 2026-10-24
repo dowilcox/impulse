@@ -533,6 +533,9 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   unsaved documents anywhere, one question (Review Changes…, Cancel,
   Discard Changes), reviewing goes through each window's documents in
   turn, and the work still running is asked about once for every window.
+  The "Closed …" toast lasts Swift's ten seconds, and on macOS reads
+  Undo ⌘Z: ⌘Z reopens what closed while nothing focused takes it for
+  text (`UndoClose`, bound in the Workbench context).
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

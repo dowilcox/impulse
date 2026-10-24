@@ -29,7 +29,10 @@ pub(crate) const UI_FONT: &str = "Inter";
 /// is what SwiftUI lays text out with).
 pub(crate) const UI_LINE_HEIGHT: f32 = 1.22;
 
-actions!(impulse, [FormatDocument, RenameSymbol, FindReferences]);
+actions!(
+    impulse,
+    [FormatDocument, RenameSymbol, FindReferences, UndoClose]
+);
 
 /// Monaco's keys for the editor commands that go through the workbench
 /// (they reach other files).
@@ -40,8 +43,17 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("f2", RenameSymbol, c),
         KeyBinding::new("shift-f12", FindReferences, c),
     ]);
+    // ⌘Z brings back what just closed when nothing focused undoes text
+    // (the editor's and input bar's own bindings are deeper), as the Swift
+    // window's undo manager does. Linux's Ctrl+Z belongs to the shell.
+    if cfg!(target_os = "macos") {
+        cx.bind_keys([KeyBinding::new("cmd-z", UndoClose, Some("Workbench"))]);
+    }
     crate::changes_panel::bind_keys(cx);
 }
+
+/// How long a close can be undone from its toast or with ⌘Z (Swift's).
+const UNDO_CLOSE_FOR: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Something closed that Reopen Closed Tab (or the close's Undo) brings
 /// back as it was: a tab, its layout and its terminals' scrollback, back in
@@ -91,6 +103,9 @@ pub struct Workbench {
     pub(crate) tree_selection: Option<std::path::PathBuf>,
     /// The lsp.json files' stamp last seen (`start_lsp_config_watch`).
     pub(crate) lsp_config_stamp: Option<String>,
+    /// The last close and when, for ⌘Z (`UndoClose`) within
+    /// `UNDO_CLOSE_FOR`.
+    undo_close: Option<(u64, std::time::Instant)>,
     /// The settings.json warning dismissed (`SettingsStore::warning`'s count).
     pub(crate) dismissed_settings_warning: Option<u64>,
     pub(crate) tree_scroll: gpui_kit::ScrollHandle,
@@ -223,6 +238,7 @@ impl Workbench {
             tree_selection: None,
             tree_scroll: gpui_kit::ScrollHandle::new(),
             dismissed_settings_warning: None,
+            undo_close: None,
             lsp_config_stamp: None,
             closed: Vec::new(),
             last_closed: None,
@@ -961,14 +977,30 @@ impl Workbench {
         let undo: crate::tasks::Run = std::rc::Rc::new(move |window, cx| {
             let _ = workbench.update(cx, |w, cx| w.reopen(Some(id), window, cx));
         });
-        crate::tasks::toast(
+        self.undo_close = Some((id, std::time::Instant::now()));
+        crate::toasts::show(
             window,
             cx,
-            crate::tasks::ToastKind::Info,
-            format!("Closed {title}"),
-            None,
-            Some(("Undo", undo)),
+            crate::toasts::Toast::info(format!("Closed {title}"))
+                .action(
+                    if cfg!(target_os = "macos") {
+                        "Undo ⌘Z"
+                    } else {
+                        "Undo"
+                    },
+                    undo,
+                )
+                .lifetime(Some(UNDO_CLOSE_FOR)),
         );
+    }
+
+    /// ⌘Z while the last close can still be undone; otherwise the key
+    /// goes on.
+    fn undo_close_action(&mut self, _: &UndoClose, window: &mut Window, cx: &mut Context<Self>) {
+        match self.undo_close.take() {
+            Some((id, at)) if at.elapsed() < UNDO_CLOSE_FOR => self.reopen(Some(id), window, cx),
+            _ => cx.propagate(),
+        }
     }
 
     /// Bring back closed item `id`, or the newest.
@@ -1612,6 +1644,7 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::format_document))
             .on_action(cx.listener(Self::rename_symbol))
             .on_action(cx.listener(Self::find_references))
+            .on_action(cx.listener(Self::undo_close_action))
             .on_mouse_move(cx.listener(Self::drag_divider))
             .on_mouse_up(gpui_kit::MouseButton::Left, cx.listener(Self::end_drag))
             .relative()
