@@ -247,8 +247,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           and drop moving project items and copying ones
                           from outside, Workbench::tree_drop),
                           close_flow.rs (asking before closing a pane,
-                          tab or window, or quitting: a pinned tab, Save,
-                          Don't Save or Cancel for each unsaved editor,
+                          tab, workspace or window, or quitting: a pinned
+                          tab, Save, Don't Save or Cancel for each unsaved
+                          editor,
                           then running terminal work from
                           impulse_kit::close_risk),
                           update_check.rs (a newer release, once a day,

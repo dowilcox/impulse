@@ -22,6 +22,7 @@ use crate::workspace::{PaneId, Surface};
 pub(crate) enum Target {
     Pane { tab: u64, pane: PaneId },
     Tab(u64),
+    Workspace(u64),
     Window,
 }
 
@@ -85,6 +86,15 @@ impl Workbench {
                 let tab = find(id)?;
                 Some((tab.panes.values().cloned().collect(), tab.pinned))
             }
+            Target::Workspace(id) => Some((
+                self.workspaces
+                    .iter()
+                    .find(|w| w.id == id)?
+                    .all_surfaces()
+                    .cloned()
+                    .collect(),
+                false,
+            )),
             Target::Window => Some((
                 self.workspaces
                     .iter()
@@ -157,8 +167,8 @@ impl Workbench {
             let name = editor.read(cx).title.clone();
             let workbench = cx.entity().downgrade();
             return choice_dialog(
-                format!("Do you want to save the changes made to {name}?"),
-                "Your changes will be lost if you don't save them.".into(),
+                &name,
+                target == Target::Window,
                 window,
                 cx,
                 move |choice, window, cx| {
@@ -320,14 +330,38 @@ enum Choice {
 
 type Chosen = Rc<RefCell<Option<Box<dyn FnOnce(Choice, &mut Window, &mut App)>>>>;
 
-/// Save, Cancel or Don't Save, as an unsaved document's close sheet asks.
+/// What to do with an editor's unsaved changes. Closing the window or
+/// quitting asks as a document's close sheet does (Save, Cancel, Don't
+/// Save); closing a pane, tab or workspace asks as Swift's `confirmClosing`
+/// does (Save & Close, Don't Save, Cancel).
 fn choice_dialog(
-    title: String,
-    message: String,
+    name: &str,
+    window_close: bool,
     window: &mut Window,
     cx: &mut App,
     answer: impl FnOnce(Choice, &mut Window, &mut App) + 'static,
 ) {
+    let (title, message, buttons) = if window_close {
+        (
+            format!("Do you want to save the changes made to {name}?"),
+            "Your changes will be lost if you don't save them.".to_string(),
+            [
+                ("Save", Choice::Save),
+                ("Cancel", Choice::Cancel),
+                ("Don't Save", Choice::DontSave),
+            ],
+        )
+    } else {
+        (
+            "Unsaved Changes".to_string(),
+            format!("\"{name}\" has unsaved changes. Close anyway?"),
+            [
+                ("Save & Close", Choice::Save),
+                ("Don't Save", Choice::DontSave),
+                ("Cancel", Choice::Cancel),
+            ],
+        )
+    };
     let chosen: Chosen = Rc::new(RefCell::new(Some(Box::new(answer))));
     #[cfg(debug_assertions)]
     {
@@ -342,11 +376,10 @@ fn choice_dialog(
         };
         crate::debug_snapshot::note_sheet(
             vec![title.clone(), message.clone()],
-            vec![
-                ("Don't Save", press(Choice::DontSave)),
-                ("Cancel", press(Choice::Cancel)),
-                ("Save", press(Choice::Save)),
-            ],
+            buttons
+                .iter()
+                .map(|&(label, choice)| (label, press(choice)))
+                .collect(),
         );
     }
     let reply = |choice: Choice| {
@@ -358,12 +391,11 @@ fn choice_dialog(
             }
         }
     };
-    crate::alert::Alert::new(title)
-        .message(message)
-        .button("Save", reply(Choice::Save))
-        .button("Cancel", reply(Choice::Cancel))
-        .button("Don't Save", reply(Choice::DontSave))
-        .show(window, cx);
+    let mut alert = crate::alert::Alert::new(title).message(message);
+    for (label, choice) in buttons {
+        alert = alert.button(label, reply(choice));
+    }
+    alert.show(window, cx);
 }
 
 impl Workbench {

@@ -1239,8 +1239,9 @@ impl Workbench {
             );
             return false;
         }
-        self.close_workspace(index, window, cx);
-        !self.workspaces.iter().any(|w| w.id == id)
+        // The task flow has its own Undo, so there's no Undo Close.
+        self.remove_workspace(index, false, window, cx);
+        true
     }
 
     // MARK: New Task from Branch

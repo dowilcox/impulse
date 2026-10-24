@@ -497,6 +497,12 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   move, right to open a folder or step into it, left to close it or go
   to its parent, Return to open), and Show Files, Changes or Search
   pressed again while that panel has the keyboard goes back to the tab.
+  Closing a workspace asks about its unsaved editors and running
+  commands as closing a tab does, and a workspace closes with its last
+  tab while the window has another. Closing a pane, tab or workspace asks
+  about an unsaved editor in Swift's words (Save & Close, Don't Save,
+  Cancel); closing the window or quitting asks as a document does (Save,
+  Cancel, Don't Save).
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

@@ -1012,11 +1012,17 @@ impl Workbench {
                 if !self.workspaces[w].tabs[t].remove(pane) {
                     self.workspaces[w].tabs.remove(t);
                     let previous = self.active;
+                    let count = self.workspaces.len();
                     self.active = w;
                     self.after_tab_removed(t, window, cx);
-                    if previous != w && previous < self.workspaces.len() {
-                        self.active = previous;
-                        self.focus_active(window, cx);
+                    // Its workspace may have gone with its last tab.
+                    let gone = self.workspaces.len() < count;
+                    if previous != w {
+                        let previous = previous - usize::from(gone && previous > w);
+                        if previous < self.workspaces.len() {
+                            self.active = previous;
+                            self.focus_active(window, cx);
+                        }
                     }
                 } else {
                     self.focus_active(window, cx);
@@ -1031,6 +1037,11 @@ impl Workbench {
     /// terminal when it was the last (a workspace always has a tab while
     /// it's shown).
     fn after_tab_removed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // A workspace closes with its last tab while others remain.
+        if self.workspace().tabs.is_empty() && self.workspaces.len() > 1 {
+            let active = self.active;
+            return self.remove_workspace(active, false, window, cx);
+        }
         let workspace = self.workspace_mut();
         if workspace.tabs.is_empty() {
             let dir = workspace.default_directory();
@@ -1401,32 +1412,50 @@ impl Workbench {
         self.activate_workspace(index, window, cx);
     }
 
-    /// Close a folder workspace and its tabs (Scratch can't be closed).
+    /// Close a folder workspace and its tabs (Scratch can't be closed),
+    /// asking first about unsaved files and running commands as closing a
+    /// tab does.
     pub(crate) fn close_workspace(
         &mut self,
         index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
+        let Some(id) = self
             .workspaces
             .get(index)
-            .is_none_or(|w| w.kind == Kind::Scratch)
-        {
+            .filter(|w| w.kind != Kind::Scratch)
+            .map(|w| w.id)
+        else {
             return;
-        }
-        let dirty = self.workspaces[index]
-            .all_surfaces()
-            .any(|s| s.is_dirty(cx));
-        let warning = format!(
-            "{} has unsaved files. Close it again to discard them.",
-            self.workspaces[index].name()
+        };
+        self.confirm_close(
+            crate::close_flow::Target::Workspace(id),
+            CloseRiskAction::CloseTab,
+            Default::default(),
+            window,
+            cx,
+            Rc::new(move |w, window, cx| {
+                if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
+                    w.remove_workspace(index, true, window, cx);
+                    w.offer_undo_close(window, cx);
+                }
+            }),
         );
-        if dirty && self.notice.as_deref() != Some(warning.as_str()) {
-            self.set_notice(warning, cx);
+    }
+
+    /// Take the workspace at `index` out now, remembered for Undo Close
+    /// when `remember`. Closing the last folder leaves Scratch to land in.
+    pub(crate) fn remove_workspace(
+        &mut self,
+        index: usize,
+        remember: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.workspaces.len() {
             return;
         }
-        // Closing the last folder leaves Scratch to land in.
         if self.workspaces.len() == 1 {
             let id = self.next_id();
             self.workspaces
@@ -1436,21 +1465,22 @@ impl Workbench {
         for surface in removed.all_surfaces() {
             self.editor_closed(surface);
         }
-        let saved = crate::session::session_workspace(&removed, true, cx);
-        self.remember(
-            Closed::Workspace {
-                id: removed.id,
-                position: index,
-                saved,
-            },
-            format!("workspace {}", removed.name()),
-        );
+        if remember {
+            let saved = crate::session::session_workspace(&removed, true, cx);
+            self.remember(
+                Closed::Workspace {
+                    id: removed.id,
+                    position: index,
+                    saved,
+                },
+                format!("workspace {}", removed.name()),
+            );
+        }
         if self.active >= index && self.active > 0 {
             self.active -= 1;
         }
         let active = self.active.min(self.workspaces.len() - 1);
         self.activate_workspace(active, window, cx);
-        self.offer_undo_close(window, cx);
     }
 
     fn format_document(&mut self, _: &FormatDocument, window: &mut Window, cx: &mut Context<Self>) {
