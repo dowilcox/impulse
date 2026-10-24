@@ -104,12 +104,13 @@ for:
 | LSP: completion, hover, diagnostics, definition | yes | **done**: wired to `impulse-lsp`, checked against rust-analyzer; definition into another file not yet exercised |
 | LSP: code actions, Format Document (⌥⇧F) | yes | **done**: every server's actions (⌘. or Ctrl+.), resolved when picked; formatting as one undo step |
 | Rename (F2), Find References (⇧F12), edits across files | no | **done**: rename through `prepareRename`; workspace edits applied across open tabs and files on disk, asking first as `LSPWorkspaceEdits` does; references in a list that opens each place (a peek view comes with the peek work) |
-| LSP: signature help, document highlight, type definition, implementation, declaration, inlay hints | partly | add providers (our LSP layer already speaks them) |
+| LSP: document highlight, type definition, implementation, declaration | no | **done**: occurrences as range decorations (with Monaco's word fallback), the three Go to commands (⌘F12/Ctrl+F12 for implementations) |
+| LSP: signature help, inlay hints | no | add on its overlay hooks (our LSP layer already speaks them) |
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
-| Diff editor (side by side and inline) | diff component exists | build the editor diff view on it |
+| Diff editor (side by side and inline) | diff component exists | **done** side by side (Toggle Diff View: HEAD read-only beside the live buffer, changed lines tinted); not yet padded to line up, no inline mode |
 | Vim mode (monaco-vim) | no | port: a modal layer over the editor's actions |
 | Sticky scroll, minimap, bracket pair colors | no | sticky scroll and bracket colors first; minimap last |
-| Context menu with Impulse's items | menus yes | wire |
+| Context menu with Impulse's items | menus yes | **done**: Monaco's items (navigation, rename, Change All Occurrences, format, code actions, clipboard, Command Palette) |
 
 This is real work, but it is work on an editor built for embedding, and the
 rest of Impulse's editor behavior (save, format on save, reload in place,
@@ -199,8 +200,10 @@ The shipped Swift app keeps working through every phase.
    config, `impulse-lsp` wired to the editor (diagnostics, hover, completion,
    definition, code actions, Format Document, rename, references), edits
    across files with the Swift app's confirmation rules, and Monaco's keymap.
-   Next: signature help and the other LSP features in the table, Undo for a
-   whole cross-file edit, then peek views, the diff view and Vim mode. Exit:
+   Since: occurrence highlights, Go to Type Definition, Implementations and
+   Declaration, Monaco's context menu and the Diff View. Next: signature
+   help and inlay hints, Undo for a whole cross-file edit, peek views and
+   Vim mode. Exit:
    daily-drivable on a real project, on both platforms.
 2. **Logic crates, with parity** (done). Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden
