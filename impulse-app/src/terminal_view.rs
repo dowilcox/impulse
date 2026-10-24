@@ -308,6 +308,9 @@ pub struct TerminalView {
     /// Text being composed by an input method, shown at the cursor.
     marked: Option<String>,
     blink_on: bool,
+    /// Whether the grid had the focus when last drawn: only then does its
+    /// cursor blink (each blink redraws the window).
+    shown_focused: bool,
     last_input: Instant,
     /// `IMPULSE_PANE_TOKEN`: how `impulse` in this terminal names it.
     pub token: String,
@@ -499,8 +502,10 @@ impl TerminalView {
                 .timer(Duration::from_millis(530))
                 .await;
             let alive = this.update(cx, |view, cx| {
-                // Solid while typing, as macOS text cursors are.
-                let blinks = SettingsStore::get(cx).terminal_cursor_blink
+                // Solid while typing, as macOS text cursors are, and not
+                // blinking at all without the focus.
+                let blinks = view.shown_focused
+                    && SettingsStore::get(cx).terminal_cursor_blink
                     && view.last_input.elapsed() > Duration::from_millis(600);
                 let on = !blinks || !view.blink_on;
                 if on != view.blink_on {
@@ -554,6 +559,7 @@ impl TerminalView {
             scroll_remainder: 0.0,
             marked: None,
             blink_on: true,
+            shown_focused: false,
             last_input: Instant::now(),
             editor,
             bar: InputBar::default(),
@@ -2320,6 +2326,7 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let focused = self.focus.is_focused(window);
+        self.shown_focused = focused;
         let contains_focus = self.focus_handle().contains_focused(window, cx);
         if contains_focus {
             self.note_active();
