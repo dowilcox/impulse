@@ -194,7 +194,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Implementations and Declaration through
                           DocumentLink::navigate, Change All Occurrences,
                           the Diff View: HEAD read-only beside the buffer,
-                          lines marked by impulse_git::buffer_diff), workspace trust, language
+                          lines marked by impulse_git::buffer_diff,
+                          signature help over the caret with
+                          impulse_lsp::signature), workspace trust, language
                           servers (code actions, formatting, rename and
                           references with edits across files);
                           scripts/spike/linux-shot.sh screenshots it on Linux

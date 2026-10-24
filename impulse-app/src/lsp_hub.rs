@@ -311,6 +311,26 @@ impl DocumentLink {
         })
     }
 
+    /// The signature of the call the cursor is in (Monaco's parameter hints).
+    pub fn signature_help(
+        &self,
+        text: &Rope,
+        offset: usize,
+        cx: &App,
+    ) -> Task<Result<Option<lsp_types::SignatureHelp>, String>> {
+        let params = lsp_types::SignatureHelpParams {
+            context: None,
+            text_document_position_params: self.at(text, offset),
+            work_done_progress_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            client
+                .request::<lsp_types::request::SignatureHelpRequest>(params)
+                .await
+        })
+    }
+
     /// The other places the symbol at `offset` appears in this file, as
     /// byte ranges, and whether each is written there (Monaco's document
     /// highlights).

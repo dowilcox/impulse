@@ -78,6 +78,9 @@ pub struct EditorTab {
     marks: Option<RangeDecorationCollection>,
     /// Diff View: the file at HEAD beside the editor, changed lines tinted.
     diff: Option<DiffView>,
+    /// The call's signature over the cursor (Monaco's parameter hints).
+    signature: Option<lsp_types::SignatureHelp>,
+    _signature_request: Option<gpui_kit::Task<()>>,
     /// The selection the marks were worked out for.
     marked_at: Option<std::ops::Range<usize>>,
     _marking: Option<gpui_kit::Task<()>>,
@@ -129,6 +132,9 @@ impl EditorTab {
             state
         });
         let subscription = cx.subscribe(&state, |tab, state, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Blur) {
+                tab.hide_signature(cx);
+            }
             if !matches!(event, InputEvent::Change) {
                 return;
             }
@@ -149,6 +155,7 @@ impl EditorTab {
             if tab.diff.is_some() {
                 tab.refresh_diff(DIFF_DELAY, cx);
             }
+            tab.typed_for_signature(cx);
             if !tab.dirty {
                 tab.dirty = true;
                 cx.emit(EditorTabChanged);
@@ -183,6 +190,8 @@ impl EditorTab {
             occurrences: None,
             marks: None,
             diff: None,
+            signature: None,
+            _signature_request: None,
             marked_at: None,
             _marking: None,
             _subscription: subscription,
@@ -981,7 +990,8 @@ impl Drop for EditorTab {
 
 impl Render for EditorTab {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = crate::settings_store::SettingsStore::get(cx);
+        let signature = self.signature_popup(cx);
+        let settings = crate::settings_store::SettingsStore::get(cx).clone();
         let (family, size) = (settings.font_family.clone(), settings.font_size as f32);
         let line_height = settings.editor_line_height;
         let mut editor = Editor::new(&self.state)
@@ -1009,6 +1019,12 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::insert_line_above))
             .on_action(cx.listener(Self::add_next_occurrence))
             .on_action(cx.listener(Self::change_all_occurrences))
+            .on_key_down(cx.listener(|tab, event: &gpui_kit::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && tab.signature.is_some() {
+                    tab.hide_signature(cx);
+                }
+            }))
+            .children(signature)
             .on_action(cx.listener(
                 |tab, _: &crate::editor_keys::GoToTypeDefinition, window, cx| {
                     tab.navigate(crate::lsp_hub::Navigation::TypeDefinition, window, cx)
@@ -1398,5 +1414,145 @@ impl EditorTab {
                 own_marks.set(marks(added, green), cx);
             });
         }));
+    }
+}
+
+impl EditorTab {
+    /// After typing: ask for the signature on `(` and `,` (and again while
+    /// it shows, so the active parameter follows); `)` closes it.
+    fn typed_for_signature(&mut self, cx: &mut Context<Self>) {
+        let (before, offset) = {
+            let state = self.state.read(cx);
+            let offset = state.cursor();
+            let text = state.text();
+            let before = (offset > 0)
+                .then(|| text.slice(offset.saturating_sub(4)..offset).to_string())
+                .and_then(|s| s.chars().last());
+            (before, offset)
+        };
+        match before {
+            Some(')') => return self.hide_signature(cx),
+            Some('(' | ',') => {}
+            _ if self.signature.is_some() => {}
+            _ => return,
+        }
+        let Some(link) = self.primary_link() else {
+            return;
+        };
+        let text = self.state.read(cx).text().clone();
+        let task = link.signature_help(&text, offset, cx);
+        self._signature_request = Some(cx.spawn(async move |tab, cx| {
+            let help = task
+                .await
+                .ok()
+                .flatten()
+                .filter(|h| !h.signatures.is_empty());
+            let _ = tab.update(cx, |tab, cx| {
+                tab.signature = help;
+                cx.notify();
+            });
+        }));
+    }
+
+    fn hide_signature(&mut self, cx: &mut Context<Self>) {
+        self._signature_request = None;
+        if self.signature.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The signature over the caret: the active parameter in bold, its
+    /// documentation and the signature's under it, and which of several.
+    fn signature_popup(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        use gpui_kit::component::ActiveTheme as _;
+        use impulse_lsp::signature::{active_parameter_range, active_signature};
+        let help = self.signature.as_ref()?;
+        let (index, signature) = active_signature(help)?;
+        let (caret, _) = self.state.read(cx).cursor_layout()?;
+        let theme = cx.theme();
+        let label = signature.label.clone();
+        let bold = active_parameter_range(help, signature);
+        let mut runs = Vec::new();
+        let font = gpui_kit::font("JetBrains Mono");
+        let run = |len: usize, weight| gpui_kit::TextRun {
+            len,
+            font: gpui_kit::Font {
+                weight,
+                ..font.clone()
+            },
+            color: theme.popover_foreground,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        match &bold {
+            Some(range) => {
+                runs.push(run(range.start, gpui_kit::FontWeight::NORMAL));
+                runs.push(run(range.len(), gpui_kit::FontWeight::BOLD));
+                runs.push(run(label.len() - range.end, gpui_kit::FontWeight::NORMAL));
+                runs.retain(|r| r.len > 0);
+            }
+            None => runs.push(run(label.len(), gpui_kit::FontWeight::NORMAL)),
+        }
+        let documentation = |doc: &Option<lsp_types::Documentation>| -> Option<String> {
+            match doc.as_ref()? {
+                lsp_types::Documentation::String(s) => Some(s.clone()),
+                lsp_types::Documentation::MarkupContent(m) => Some(m.value.clone()),
+            }
+            .filter(|s| !s.trim().is_empty())
+        };
+        let active = signature
+            .active_parameter
+            .or(help.active_parameter)
+            .and_then(|i| signature.parameters.as_ref()?.get(i as usize));
+        let parameter_doc = active.and_then(|p| documentation(&p.documentation));
+        let signature_doc = documentation(&signature.documentation);
+        let count = help.signatures.len();
+        let popup = gpui_kit::div()
+            .occlude()
+            .max_w(px(560.))
+            .px(px(10.))
+            .py(px(6.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.popover)
+            .shadow_md()
+            .text_size(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(
+                gpui_kit::div()
+                    .flex()
+                    .gap(px(8.))
+                    .when(count > 1, |d| {
+                        d.child(
+                            gpui_kit::div()
+                                .flex_none()
+                                .text_color(theme.muted_foreground)
+                                .child(format!("{}/{count}", index + 1)),
+                        )
+                    })
+                    .child(gpui_kit::StyledText::new(label).with_runs(runs)),
+            )
+            .children(parameter_doc.map(|doc| {
+                gpui_kit::div()
+                    .text_color(theme.popover_foreground)
+                    .child(doc)
+            }))
+            .children(signature_doc.map(|doc| {
+                gpui_kit::div()
+                    .text_color(theme.muted_foreground)
+                    .max_h(px(160.))
+                    .overflow_hidden()
+                    .child(doc)
+            }));
+        Some(gpui_kit::deferred(
+            gpui_kit::anchored()
+                .position(caret.origin)
+                .anchor(gpui_kit::Anchor::BottomLeft)
+                .child(gpui_kit::div().pb(px(4.)).child(popup)),
+        ))
     }
 }

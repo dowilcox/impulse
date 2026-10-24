@@ -10,6 +10,7 @@ pub mod edits;
 pub mod framing;
 pub mod managed;
 pub mod registry;
+pub mod signature;
 pub mod workspace_edit;
 
 pub use client::{path_uri, LspClient, ServerEvent};
