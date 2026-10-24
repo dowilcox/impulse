@@ -1233,7 +1233,7 @@ fn holds(condition: &str, cx: &mut App) -> bool {
                 .workspaces
                 .iter()
                 .flat_map(|w| w.all_surfaces())
-                .any(|s| is_tool(s) && s.title(cx).contains(argument)),
+                .any(|s| is_tool(s) && s.name(cx).contains(argument)),
             _ => {
                 fail(format!("until: unknown condition “{condition}”"));
                 true
@@ -1409,7 +1409,7 @@ fn describe(surface: &Surface, cx: &App) -> Value {
         Surface::Image(i) => json!({"kind": "image", "path": i.read(cx).path.to_string_lossy()}),
         Surface::Review(r) => json!({"kind": "review", "root": r.read(cx).root}),
         Surface::History(h) => json!({"kind": "history", "root": h.read(cx).root}),
-        other => json!({"kind": "tool", "title": other.title(cx)}),
+        other => json!({"kind": "tool", "title": other.name(cx)}),
     }
 }
 

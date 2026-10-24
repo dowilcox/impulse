@@ -837,7 +837,7 @@ impl Workbench {
             self.editor_closed(surface);
         }
         let saved = crate::session::session_tab(&tab, true, cx);
-        let title = tab.focused_surface().title(cx);
+        let title = tab.focused_surface().name(cx);
         self.remember(
             Closed::Tab {
                 workspace,
@@ -989,7 +989,7 @@ impl Workbench {
                         tab: crate::session::session_surface_tab(surface, cx),
                         from_tab: Some(from_tab),
                     },
-                    surface.title(cx),
+                    surface.name(cx),
                 );
                 if !self.workspaces[w].tabs[t].remove(pane) {
                     self.workspaces[w].tabs.remove(t);

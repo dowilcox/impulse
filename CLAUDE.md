@@ -302,6 +302,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Incoming or Both, from
                           impulse_kit::git::editor_marks; Monaco's keys,
                           bracket pair colors (impulse_kit::bracket_pairs),
+                          tree-sitter grammars for Monaco's languages, with
+                          the vs-dark/vs rules Swift's themes inherit for
+                          JSON and HTML (base_rules.rs),
                           sticky scroll (impulse_kit::sticky_scroll),
                           the minimap (editor_minimap.rs on
                           impulse_kit::minimap),

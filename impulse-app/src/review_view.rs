@@ -1149,22 +1149,8 @@ impl ReviewView {
                 })
             }
         };
-        let segment = |id: &'static str, label: String, selected: bool| {
-            div()
-                .id(id)
-                .px(px(8.))
-                .h(px(22.))
-                .flex()
-                .items_center()
-                .rounded(px(metrics::RADIUS_SMALL))
-                .text_size(px(11.5))
-                .cursor_pointer()
-                .when(selected, |d| d.bg(hsla(p.raised)).text_color(hsla(p.text)))
-                .when(!selected, |d| {
-                    d.text_color(hsla(p.text_secondary))
-                        .hover(|s| s.bg(hsla(p.hover)))
-                })
-                .child(label)
+        let segment = |id: &'static str, label: &'static str, selected: bool| {
+            crate::workbench_chrome::segment(id, label, selected, p)
         };
         let title = div()
             .flex()
@@ -1227,21 +1213,18 @@ impl ReviewView {
                 )
             })
             .child(
-                div()
-                    .flex()
-                    .p(px(2.))
-                    .rounded(px(metrics::RADIUS))
-                    .bg(hsla(p.overlay))
+                crate::workbench_chrome::segmented(p)
                     .child(
-                        segment("unified", "Unified".into(), self.layout == Layout::Unified)
-                            .on_click(cx.listener(|view, _, _, cx| {
+                        segment("unified", "Unified", self.layout == Layout::Unified).on_click(
+                            cx.listener(|view, _, _, cx| {
                                 view.layout = Layout::Unified;
                                 view.rebuild_rows();
                                 cx.notify();
-                            })),
+                            }),
+                        ),
                     )
                     .child(
-                        segment("split", "Split".into(), self.layout == Layout::Split).on_click(
+                        segment("split", "Split", self.layout == Layout::Split).on_click(
                             cx.listener(|view, _, _, cx| {
                                 view.layout = Layout::Split;
                                 view.rebuild_rows();

@@ -193,7 +193,7 @@ impl Workbench {
                 && !answered.editors.contains(&crate::workbench::surface_id(s))
         });
         if let Some(surface) = modified {
-            let (id, name) = (crate::workbench::surface_id(surface), surface.title(cx));
+            let (id, name) = (crate::workbench::surface_id(surface), surface.name(cx));
             return crate::tasks::confirm(
                 window,
                 cx,

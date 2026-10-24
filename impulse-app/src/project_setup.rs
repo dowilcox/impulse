@@ -24,7 +24,7 @@ use gpui_kit::{
     ScrollHandle, Subscription, WeakEntity, Window,
 };
 use impulse_git::{branches, ignored};
-use impulse_kit::chrome::{metrics, ChromePalette};
+use impulse_kit::chrome::ChromePalette;
 use impulse_kit::project::config::{self, Landing, LoadError, ProjectConfig, RELATIVE_PATH};
 use impulse_kit::project::{compose_file, detector, settings_file, task_environment};
 
@@ -1349,37 +1349,16 @@ impl ProjectSetupView {
             (Some(Landing::Merge), "Merge and push"),
             (Some(Landing::Review), "Push for review"),
         ];
-        let mut bar = div()
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded(px(metrics::RADIUS))
-            .bg(hsla(p.panel))
-            .border_1()
-            .border_color(hsla(p.hairline));
+        let mut bar = crate::workbench_chrome::segmented(p);
         for (i, (option, label)) in options.into_iter().enumerate() {
             let selected = landing == option;
             bar = bar.child(
-                div()
-                    .id(("landing", i))
-                    .px(px(10.))
-                    .h(px(22.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .text_size(px(11.5))
-                    .cursor_pointer()
-                    .when(selected, |d| d.bg(hsla(p.raised)).text_color(hsla(p.text)))
-                    .when(!selected, |d| {
-                        d.text_color(hsla(p.text_secondary))
-                            .hover(|s| s.bg(hsla(p.hover)))
-                    })
-                    .on_click(cx.listener(move |view, _, _, cx| {
+                crate::workbench_chrome::segment(("landing", i), label, selected, p).on_click(
+                    cx.listener(move |view, _, _, cx| {
                         view.model.landing = option;
                         cx.notify();
-                    }))
-                    .child(label),
+                    }),
+                ),
             );
         }
         let caption = match landing {

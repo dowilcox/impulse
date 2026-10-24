@@ -135,7 +135,7 @@ impl EditorTab {
         if peek.previewing.as_ref() != Some(&item.path) {
             // Another file: a fresh editor in its language.
             let language = language_for_path(&item.path);
-            let grammar = crate::editor_tab::grammar_for(&language).to_string();
+            let grammar = crate::editor_tab::grammar_for(&language, &item.path).to_string();
             let text = item.text.to_string();
             peek.preview.update(cx, |state, cx| {
                 state.set_highlighter(grammar, cx);

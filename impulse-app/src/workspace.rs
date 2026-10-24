@@ -43,8 +43,19 @@ pub enum Surface {
 }
 
 impl Surface {
-    /// The tab strip's title: a terminal's title (or its shell), a file's name.
+    /// The tab strip's title: the name, with " *" while there are unsaved
+    /// changes (Swift's `TabEntry.title`).
     pub fn title(&self, cx: &App) -> String {
+        let name = self.name(cx);
+        if self.is_dirty(cx) {
+            format!("{name} *")
+        } else {
+            name
+        }
+    }
+
+    /// A terminal's title (or its shell), a file's name, a tool's name.
+    pub fn name(&self, cx: &App) -> String {
         match self {
             Surface::Terminal(t) => {
                 let title = t.read(cx).title.clone();

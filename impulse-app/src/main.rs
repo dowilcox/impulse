@@ -18,6 +18,7 @@ mod agent_tasks;
 mod agent_toolbelt;
 mod agent_tracker;
 mod agent_views;
+mod base_rules;
 mod bell;
 mod branch_manager;
 mod branch_switcher;
@@ -236,6 +237,7 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
+            base_rules::register();
             settings_store::SettingsStore::init(cx);
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);

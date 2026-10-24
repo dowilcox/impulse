@@ -38,7 +38,7 @@ pub(super) fn highlight(diff: &FileDiff, theme: &HighlightTheme) -> FileSyntax {
     if total == 0 || total > MAX_LINES || diff.is_binary {
         return out;
     }
-    let grammar = crate::editor_tab::grammar_for(&diff.language);
+    let grammar = crate::editor_tab::grammar_for(&diff.language, std::path::Path::new(&diff.path));
     if grammar.is_empty() || grammar == "plaintext" || grammar == "text" {
         return out;
     }

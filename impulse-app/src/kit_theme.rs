@@ -201,7 +201,6 @@ fn highlight_theme(theme: &ResolvedTheme, functions: bool) -> HighlightTheme {
         ("type", style(&theme.syntax_type)),
         ("constructor", style(&theme.syntax_type)),
         ("enum", style(&theme.syntax_type)),
-        ("variant", style(&theme.syntax_constant)),
         (
             "function",
             style(if functions {
@@ -224,6 +223,25 @@ fn highlight_theme(theme: &ResolvedTheme, functions: bool) -> HighlightTheme {
         ("title", style(&theme.syntax_keyword)),
     ]
     .into_iter()
+    .chain(if functions {
+        // Review: the theme's colors, as before the names moved.
+        vec![
+            (crate::base_rules::JSON_KEY, style(&theme.syntax_variable)),
+            (crate::base_rules::JSON_VALUE, style(&theme.syntax_string)),
+            (
+                crate::base_rules::JSON_KEYWORD,
+                style(&theme.syntax_constant),
+            ),
+            (
+                crate::base_rules::HTML_DELIMITER,
+                style(&theme.syntax_delimiter),
+            ),
+        ]
+    } else {
+        crate::base_rules::colors(theme.is_light)
+            .map(|(scope, color)| (scope, style(color)))
+            .to_vec()
+    })
     .map(|(scope, style)| (scope.to_string(), style))
     .collect();
     let highlight = json!({

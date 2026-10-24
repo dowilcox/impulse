@@ -31,7 +31,7 @@ use impulse_git::history_query::HistoryQuery;
 use impulse_git::log::{CommitDetails, ForkPoint, LogEntry, LogScope};
 use impulse_git::operations::ResetMode;
 use impulse_git::types::DiffScope;
-use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
+use impulse_kit::chrome::{ChromePalette, Rgba as KitRgba};
 use impulse_kit::dates;
 use impulse_kit::git::commit_graph::{GraphCommit, GraphRow, Layout as GraphLayout};
 use impulse_kit::git::refs::RefDecoration;
@@ -984,41 +984,16 @@ impl HistoryView {
         if let LogScope::Branch(name) = &self.scope {
             options.push((self.scope.clone(), name.clone()));
         }
-        let mut switch = div()
-            .flex()
-            .flex_none()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded(px(metrics::RADIUS_SMALL + 2.))
-            .bg(hsla(p.hover))
-            .border_1()
-            .border_color(hsla(p.hairline));
+        let mut switch = crate::workbench_chrome::segmented(p);
         for (n, (scope, label)) in options.into_iter().enumerate() {
             let selected = scope == self.scope;
             switch = switch.child(
-                div()
-                    .id(("history-scope", n))
-                    .flex()
-                    .items_center()
-                    .px(px(10.))
-                    .h(px(20.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .text_size(px(11.5))
-                    .font_weight(if selected {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::MEDIUM
-                    })
-                    .text_color(hsla(if selected { p.text } else { p.text_secondary }))
-                    .when(selected, |d| d.bg(hsla(p.raised)).shadow_xs())
-                    .cursor_pointer()
-                    .whitespace_nowrap()
+                crate::workbench_chrome::segment(("history-scope", n), label, selected, p)
                     .on_click(cx.listener(move |view, _, _, cx| {
                         if !matches!(scope, LogScope::Branch(_)) {
                             view.set_scope(scope.clone(), cx)
                         }
-                    }))
-                    .child(label),
+                    })),
             );
         }
         switch

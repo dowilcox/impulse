@@ -8,15 +8,40 @@ license = "GPL-3.0-only"
 [dependencies]
 # GPUI Kit (Longbridge's GPUI component library) re-exports the GPUI snapshot
 # it was built against, so this one pin decides both.
+# The grammars for the languages Monaco colors in the Swift app.
 gpui-kit = { version = "=0.8.0", features = [
     "tree-sitter",
     "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-csharp",
+    "tree-sitter-css",
+    "tree-sitter-elixir",
+    "tree-sitter-go",
+    "tree-sitter-graphql",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-kotlin",
+    "tree-sitter-lua",
     "tree-sitter-markdown",
+    "tree-sitter-php",
+    "tree-sitter-proto",
     "tree-sitter-python",
+    "tree-sitter-ruby",
     "tree-sitter-rust",
+    "tree-sitter-scala",
+    "tree-sitter-swift",
     "tree-sitter-toml",
+    "tree-sitter-tsx",
     "tree-sitter-typescript",
+    "tree-sitter-yaml",
 ] }
+# JSON and HTML re-registered with Monaco's own token colors (base_rules.rs),
+# at the versions GPUI Kit links.
+tree-sitter = "0.26.13"
+tree-sitter-json = "0.24.8"
+tree-sitter-html = "0.23.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 impulse-terminal = { path = "../impulse-terminal" }

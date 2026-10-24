@@ -116,10 +116,18 @@ pub struct EditorTab {
 
 impl EventEmitter<EditorTabChanged> for EditorTab {}
 
-/// GPUI Kit's grammar name for Impulse's language id.
-pub(crate) fn grammar_for(language: &str) -> &str {
+/// GPUI Kit's grammar name for Impulse's language id, by the path's
+/// extension where the id covers two grammars (TypeScript and TSX).
+pub(crate) fn grammar_for<'a>(language: &'a str, path: &Path) -> &'a str {
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if matches!(extension.as_deref(), Some("tsx" | "jsx")) {
+        return "tsx";
+    }
     match language {
-        "shellscript" => "bash",
+        "shell" | "shellscript" => "bash",
+        "less" => "css",
         "typescriptreact" => "tsx",
         "javascriptreact" => "javascript",
         "md" => "markdown",
@@ -139,7 +147,7 @@ impl EditorTab {
         // The editor works on `\n`; a CRLF file gets its CRLF back on write.
         let line_ending = LineEnding::detect(&opened.contents.text);
         let text = LineEnding::normalize(&opened.contents.text);
-        let grammar = grammar_for(&language).to_string();
+        let grammar = grammar_for(&language, path).to_string();
         let tab = cx.entity().downgrade();
         cx.default_global::<OpenDocuments>().0.push(tab);
         let state = cx.new(|cx| {

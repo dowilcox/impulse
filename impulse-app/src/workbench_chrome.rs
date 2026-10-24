@@ -74,6 +74,48 @@ pub(crate) fn progress_ring(
     .flex_none()
 }
 
+/// Swift's `ChromeSegmented`: the frame holding its segments.
+pub(crate) fn segmented(p: &impulse_kit::chrome::ChromePalette) -> gpui_kit::Div {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(2.))
+        .p(px(2.))
+        .rounded(px(metrics::RADIUS_SMALL + 2.))
+        .bg(hsla(p.hover))
+        .border_1()
+        .border_color(hsla(p.hairline))
+}
+
+/// One of `segmented`'s options: semibold on a raised, lightly shadowed
+/// pill when selected.
+pub(crate) fn segment(
+    id: impl Into<gpui_kit::ElementId>,
+    label: impl Into<gpui_kit::SharedString>,
+    selected: bool,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .px(px(10.))
+        .h(px(20.))
+        .rounded(px(metrics::RADIUS_SMALL))
+        .text_size(px(11.5))
+        .font_weight(if selected {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::MEDIUM
+        })
+        .text_color(hsla(if selected { p.text } else { p.text_secondary }))
+        .when(selected, |d| d.bg(hsla(p.raised)).shadow_xs())
+        .cursor_pointer()
+        .whitespace_nowrap()
+        .child(label.into())
+}
+
 /// The macOS spinner (a small `ProgressView` at 0.8): eight rounded spokes
 /// turning clockwise a spoke per `step`, the newest brightest. `color` is
 /// the label color it's drawn in at low strength.
