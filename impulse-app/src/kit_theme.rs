@@ -20,7 +20,13 @@ fn hsla(c: Rgba) -> Hsla {
     .into()
 }
 
-pub fn apply(theme: &ResolvedTheme, p: &ChromePalette, cx: &mut App) {
+/// `settings` gives the editor's font (`font_family`, `font_size`).
+pub fn apply(
+    theme: &ResolvedTheme,
+    p: &ChromePalette,
+    settings: &impulse_kit::settings::Settings,
+    cx: &mut App,
+) {
     let mode = if theme.is_light {
         ThemeMode::Light
     } else {
@@ -31,8 +37,8 @@ pub fn apply(theme: &ResolvedTheme, p: &ChromePalette, cx: &mut App) {
     let k = Theme::global_mut(cx);
     k.font_family = "Inter".into();
     k.font_size = px(13.);
-    k.mono_font_family = "JetBrains Mono".into();
-    k.mono_font_size = px(14.);
+    k.mono_font_family = settings.font_family.clone().into();
+    k.mono_font_size = px(settings.font_size as f32);
     k.radius = px(impulse_kit::chrome::metrics::RADIUS);
     k.radius_lg = px(impulse_kit::chrome::metrics::RADIUS_LARGE);
 

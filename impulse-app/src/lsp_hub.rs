@@ -175,6 +175,7 @@ impl DocumentLink {
         &self,
         text: &Rope,
         tab_size: usize,
+        insert_spaces: bool,
         cx: &App,
     ) -> Task<Result<Vec<lsp_types::TextEdit>, String>> {
         self.sync(text);
@@ -184,7 +185,7 @@ impl DocumentLink {
             },
             options: lsp_types::FormattingOptions {
                 tab_size: tab_size as u32,
-                insert_spaces: true,
+                insert_spaces,
                 trim_trailing_whitespace: Some(true),
                 insert_final_newline: Some(true),
                 ..Default::default()

@@ -21,6 +21,7 @@ use impulse_kit::trust::WorkspaceTrust;
 
 use crate::editor_tab::{ApplyEdit, EditorHooks, EditorTab, EditorTabChanged, ShowDocument};
 use crate::lsp_hub::LspHub;
+use crate::settings_store::SettingsStore;
 use crate::terminal_view::{rgba, TerminalView};
 use crate::Args;
 
@@ -81,6 +82,11 @@ pub struct Workbench {
     /// Language servers, when the folder is trusted.
     lsp: Option<std::rc::Rc<LspHub>>,
     _lsp_events: Option<gpui_kit::Task<()>>,
+    /// `--theme`, which wins over `color_scheme` for this run.
+    theme_override: Option<String>,
+    /// The theme the window shows.
+    theme_id: String,
+    _settings: gpui_kit::Subscription,
 }
 
 /// Not the home folder or the disk: trusting those trusts everything.
@@ -138,10 +144,18 @@ fn git(cwd: &str, args: &[&str]) -> String {
 
 impl Workbench {
     pub fn new(args: Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let theme = impulse_kit::theme::builtin_theme(&args.theme)
-            .unwrap_or_else(|| impulse_kit::theme::builtin_theme("nord").unwrap());
+        let settings = SettingsStore::get(cx).clone();
+        let theme_id = args
+            .theme
+            .clone()
+            .unwrap_or_else(|| settings.color_scheme.clone());
+        let theme = impulse_kit::theme::get_theme(&theme_id);
         let palette = ChromePalette::new(&theme, false);
-        crate::kit_theme::apply(&theme, &palette, cx);
+        crate::kit_theme::apply(&theme, &palette, &settings, cx);
+        let settings_subscription = cx
+            .observe_global_in::<SettingsStore>(window, |workbench, window, cx| {
+                workbench.apply_settings(window, cx)
+            });
         let terminal = cx.new(|cx| {
             TerminalView::new(
                 theme.clone(),
@@ -177,6 +191,9 @@ impl Workbench {
             declined: false,
             lsp: None,
             _lsp_events: None,
+            theme_override: args.theme.clone(),
+            theme_id,
+            _settings: settings_subscription,
         };
         if args.trust {
             workbench.trust.trust(&root.to_string_lossy());
@@ -191,6 +208,29 @@ impl Workbench {
             workbench.request_trust(window, cx)
         });
         workbench
+    }
+
+    /// Settings changed: the theme, the editor's font and options.
+    fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = SettingsStore::get(cx).clone();
+        let theme_id = self
+            .theme_override
+            .clone()
+            .unwrap_or_else(|| settings.color_scheme.clone());
+        let theme = impulse_kit::theme::get_theme(&theme_id);
+        if theme_id != self.theme_id {
+            self.theme_id = theme_id;
+            self.palette = ChromePalette::new(&theme, false);
+        }
+        crate::kit_theme::apply(&theme, &self.palette, &settings, cx);
+        for tab in &self.tabs {
+            if let Tab::Editor(editor) = tab {
+                editor.update(cx, |editor, cx| {
+                    editor.apply_settings(&settings, window, cx)
+                });
+            }
+        }
+        cx.notify();
     }
 
     /// Open `path` in an editor tab, or go to the tab it's already in.
@@ -652,7 +692,15 @@ impl Workbench {
             .bg(self.c(p.chrome))
             .border_b_1()
             .border_color(self.c(p.hairline))
-            .child(self.icon("panel-left", metrics::ICON_LARGE, p.text_secondary))
+            .child(
+                div()
+                    .id("toggle-sidebar")
+                    .cursor_pointer()
+                    .on_click(|_, _, cx| {
+                        SettingsStore::update(cx, |s| s.sidebar_visible = !s.sidebar_visible)
+                    })
+                    .child(self.icon("panel-left", metrics::ICON_LARGE, p.text_secondary)),
+            )
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
@@ -811,7 +859,7 @@ impl Workbench {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(metrics::LEFT_DOCK_DEFAULT_WIDTH))
+            .w(px(SettingsStore::get(cx).sidebar_width as f32))
             .h_full()
             .bg(self.c(p.panel))
             .border_r_1()
@@ -1041,7 +1089,11 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Everything but the terminal's own area, from the layout above.
         let viewport = window.viewport_size();
-        let width = viewport.width - px(metrics::LEFT_DOCK_DEFAULT_WIDTH + 1.);
+        let settings = SettingsStore::get(cx);
+        let sidebar = settings
+            .sidebar_visible
+            .then_some(settings.sidebar_width as f32 + 1.);
+        let width = viewport.width - px(sidebar.unwrap_or(0.));
         let height =
             viewport.height - px(metrics::TITLEBAR_HEIGHT + metrics::STATUS_BAR_HEIGHT + 2. + 98.);
         self.terminal.update(cx, |t, _| t.fit(width, height));
@@ -1068,7 +1120,7 @@ impl Render for Workbench {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .child(self.sidebar(cx))
+                    .when(sidebar.is_some(), |row| row.child(self.sidebar(cx)))
                     .child(match self.active_editor() {
                         Some(editor) => div()
                             .flex_1()

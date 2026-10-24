@@ -58,8 +58,9 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           full-Rust migration (docs/plans/rust-migration.md):
                           glob, close risk, shell parser, themes, file URIs
                           and language ids revived from v0.29.0;
-                          ChromePalette, TextFile, WorkspaceTrust, AppPaths
-                          and Monaco's line commands ported; tested against
+                          ChromePalette, TextFile, WorkspaceTrust, AppPaths,
+                          Settings + SettingsCatalog (settings.json) and
+                          Monaco's line commands ported; tested against
                           the shared golden fixtures
 impulse-lsp/              Rust (rust branch): the language-server client
                           (no UI, any executor), LSPConfig (lsp.json, root
@@ -67,6 +68,7 @@ impulse-lsp/              Rust (rust branch): the language-server client
                           e2e test runs rust-analyzer when installed
 impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           macOS and Linux: workbench chrome, live terminal,
+                          settings.json (SettingsStore, watched and merged),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

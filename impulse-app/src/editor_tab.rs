@@ -44,6 +44,8 @@ pub struct EditorTab {
     pub dirty: bool,
     pub read_only: bool,
     pub tab_size: usize,
+    /// Indent with spaces (`use_spaces`, or the file type's override).
+    pub use_spaces: bool,
     /// A message for the status bar ("changed on disk", a failed save).
     pub notice: Option<String>,
     state: Entity<EditorState>,
@@ -86,18 +88,22 @@ impl EditorTab {
     /// editor can't show).
     pub fn new(path: &Path, opened: Opened, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = language_for_path(path);
-        let tab_size = 4;
+        let settings = crate::settings_store::SettingsStore::get(cx).clone();
+        let (tab_size, use_spaces) = settings.indentation(&path.to_string_lossy());
+        let tab_size = tab_size.max(1) as usize;
         let text = opened.contents.text;
         let grammar = grammar_for(&language).to_string();
         let state = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language(grammar)
-                .line_number(true)
-                .folding(true)
-                .indent_guides(true)
+                .line_number(settings.show_line_numbers)
+                .folding(settings.folding)
+                .indent_guides(settings.indent_guides)
+                .soft_wrap(settings.word_wrap)
+                .show_whitespaces(settings.render_whitespace == "all")
                 .tab_size(TabSize {
                     tab_size,
-                    hard_tabs: false,
+                    hard_tabs: !use_spaces,
                 })
                 .default_value(text);
             if opened.large {
@@ -128,6 +134,7 @@ impl EditorTab {
             dirty: false,
             read_only: opened.large,
             tab_size,
+            use_spaces,
             notice: opened
                 .large
                 .then(|| "Larger than 5 MB: opened read-only.".to_string()),
@@ -143,6 +150,31 @@ impl EditorTab {
             _subscription: subscription,
             _lsp_start: Vec::new(),
         }
+    }
+
+    /// Take changed settings (settings.json edited, or the Settings tab).
+    pub fn apply_settings(
+        &mut self,
+        settings: &impulse_kit::settings::Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (tab_size, use_spaces) = settings.indentation(&self.path.to_string_lossy());
+        self.tab_size = tab_size.max(1) as usize;
+        self.use_spaces = use_spaces;
+        let tab = TabSize {
+            tab_size: self.tab_size,
+            hard_tabs: !use_spaces,
+        };
+        self.state.update(cx, |state, cx| {
+            state.set_line_number(settings.show_line_numbers, window, cx);
+            state.set_folding(settings.folding, window, cx);
+            state.set_indent_guides(settings.indent_guides, window, cx);
+            state.set_soft_wrap(settings.word_wrap, window, cx);
+            state.set_show_whitespaces(settings.render_whitespace == "all", window, cx);
+            state.set_tab_size(tab, cx);
+        });
+        cx.notify();
     }
 
     /// Start (or reuse) the language's servers, then hand the editor the
@@ -503,7 +535,7 @@ impl EditorTab {
             return;
         };
         let text = self.state.read(cx).text().clone();
-        let task = link.format(&text, self.tab_size, cx);
+        let task = link.format(&text, self.tab_size, self.use_spaces, cx);
         let state = self.state.clone();
         let utf32 = link.client.uses_utf32();
         cx.spawn_in(window, async move |tab, cx| match task.await {
@@ -820,6 +852,17 @@ impl Drop for EditorTab {
 
 impl Render for EditorTab {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = crate::settings_store::SettingsStore::get(cx);
+        let (family, size) = (settings.font_family.clone(), settings.font_size as f32);
+        let line_height = settings.editor_line_height;
+        let mut editor = Editor::new(&self.state)
+            .size_full()
+            .font_family(family)
+            .text_size(px(size))
+            .bordered(false);
+        if line_height > 0 {
+            editor = editor.line_height(px(line_height as f32));
+        }
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()
@@ -832,12 +875,6 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::insert_line_below))
             .on_action(cx.listener(Self::insert_line_above))
             .on_action(cx.listener(Self::add_next_occurrence))
-            .child(
-                Editor::new(&self.state)
-                    .size_full()
-                    .font_family("JetBrains Mono")
-                    .text_size(px(14.))
-                    .bordered(false),
-            )
+            .child(editor)
     }
 }

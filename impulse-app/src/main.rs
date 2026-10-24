@@ -9,6 +9,7 @@ mod editor_keys;
 mod editor_tab;
 mod kit_theme;
 mod lsp_hub;
+mod settings_store;
 mod terminal_view;
 mod workbench;
 mod workspace_edits;
@@ -61,7 +62,8 @@ fn bundled_fonts() -> Vec<Cow<'static, [u8]>> {
 }
 
 pub struct Args {
-    pub theme: String,
+    /// A theme for this run, instead of `color_scheme`.
+    pub theme: Option<String>,
     pub cwd: String,
     pub commands: Vec<String>,
     /// Files to open in editor tabs; the last one has the focus.
@@ -75,7 +77,7 @@ pub struct Args {
 
 fn parse_args() -> Args {
     let mut args = Args {
-        theme: "nord".into(),
+        theme: None,
         cwd: std::env::current_dir()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "/".into()),
@@ -93,7 +95,7 @@ fn parse_args() -> Args {
             continue;
         }
         match (flag.as_str(), it.next()) {
-            ("--theme", Some(v)) => args.theme = v,
+            ("--theme", Some(v)) => args.theme = Some(v),
             ("--cwd", Some(v)) => args.cwd = v,
             ("--run", Some(v)) => args.commands.push(v),
             ("--open", Some(v)) => args.open.push(v),
@@ -110,12 +112,15 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
+            settings_store::SettingsStore::init(cx);
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");
-            let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);
+            let settings = settings_store::SettingsStore::get(cx);
+            let (width, height) = (settings.window_width as f32, settings.window_height as f32);
+            let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
             gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
