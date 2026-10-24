@@ -7,6 +7,13 @@
 //! registered again with these tokens on four names no grammar uses, which
 //! Review (highlight.js colors in Swift, not Monaco's) gives the theme's
 //! colors as before.
+//!
+//! Monaco's TypeScript and JavaScript tokenizers also call `this`, `super`,
+//! `true`, `false`, `null`, `undefined` and the primitive types keywords,
+//! where tree-sitter's queries have them as builtins. The editor uses its
+//! own registrations of those grammars (`editor_grammar`) with those
+//! captures as keywords; Review keeps the stock ones, which color them as
+//! highlight.js does.
 
 use gpui_kit::component::highlighter::{GrammarConfig, LanguageRegistry};
 
@@ -38,7 +45,8 @@ pub(crate) fn colors(light: bool) -> [(&'static str, &'static str); 4] {
     }
 }
 
-/// GPUI Kit's JSON query with keys, string values and keywords moved.
+/// GPUI Kit's JSON query with keys, string values and keywords moved,
+/// and the brackets apart from the other punctuation (`kit_theme`).
 const JSON_HIGHLIGHTS: &str = r#"(comment) @comment
 
 (string) @predictive
@@ -57,11 +65,14 @@ const JSON_HIGHLIGHTS: &str = r#"(comment) @comment
 [
   ","
   ":"
+] @punctuation.delimiter
+
+[
   "{"
   "}"
   "["
   "]"
-] @punctuation
+] @punctuation.bracket
 "#;
 
 /// GPUI Kit's HTML query with the angle brackets moved.
@@ -90,8 +101,84 @@ const HTML_INJECTIONS: &str = r#"((script_element
  (#set! injection.language "css"))
 "#;
 
-/// Register JSON and HTML with the queries above, once at launch.
+/// The grammar the editor highlights `grammar` with: Monaco's take on
+/// TypeScript and JavaScript, otherwise the grammar itself.
+pub(crate) fn editor_grammar(grammar: &str) -> &str {
+    match grammar {
+        "typescript" => "monaco-typescript",
+        "tsx" => "monaco-tsx",
+        "javascript" => "monaco-javascript",
+        other => other,
+    }
+}
+
+/// The stock TypeScript/JavaScript captures Monaco's tokenizer calls
+/// keywords.
+const MONACO_KEYWORDS: [(&str, &str); 4] = [
+    ("(this) @variable.builtin", "(this) @keyword"),
+    ("(super) @variable.builtin", "(super) @keyword"),
+    (
+        "  (undefined)\n] @constant.builtin",
+        "  (undefined)\n] @keyword",
+    ),
+    (
+        "(predefined_type) @type.builtin",
+        "(predefined_type) @keyword",
+    ),
+];
+
+/// Register `name` as `base`'s grammar (on `language`'s parser, when given)
+/// with Monaco's keywords, if the result compiles.
+fn register_monaco(name: &str, base: &str, language: Option<&str>) {
+    let registry = LanguageRegistry::singleton();
+    let (Some(stock), Some(parser)) = (
+        registry.language(base),
+        registry.language(language.unwrap_or(base)),
+    ) else {
+        return;
+    };
+    let Some(grammar) = parser.language.clone() else {
+        return;
+    };
+    let mut highlights = stock.highlights.to_string();
+    for (from, to) in MONACO_KEYWORDS {
+        highlights = highlights.replace(from, to);
+    }
+    let compiles =
+        |query: &str| query.is_empty() || tree_sitter::Query::new(&grammar, query).is_ok();
+    if !compiles(&highlights) {
+        log::warn!("{name}: the highlight query doesn't compile; keeping {base}'s");
+        return;
+    }
+    let injections = if compiles(&stock.injections) {
+        stock.injections.clone()
+    } else {
+        Default::default()
+    };
+    let locals = if compiles(&parser.locals) {
+        parser.locals.clone()
+    } else {
+        Default::default()
+    };
+    registry.register(
+        name,
+        &GrammarConfig {
+            name: name.to_string().into(),
+            language: Some(grammar),
+            injection_languages: stock.injection_languages.clone(),
+            highlights: highlights.into(),
+            injections,
+            locals,
+        },
+    );
+}
+
+/// Register JSON, HTML and the editor's TypeScript and JavaScript, once at
+/// launch.
 pub(crate) fn register() {
+    register_monaco("monaco-typescript", "typescript", None);
+    register_monaco("monaco-tsx", "typescript", Some("tsx"));
+    register_monaco("monaco-javascript", "javascript", None);
     let registry = LanguageRegistry::singleton();
     registry.register(
         "json",

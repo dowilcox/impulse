@@ -147,7 +147,7 @@ impl EditorTab {
         // The editor works on `\n`; a CRLF file gets its CRLF back on write.
         let line_ending = LineEnding::detect(&opened.contents.text);
         let text = LineEnding::normalize(&opened.contents.text);
-        let grammar = grammar_for(&language, path).to_string();
+        let grammar = crate::base_rules::editor_grammar(grammar_for(&language, path)).to_string();
         let tab = cx.entity().downgrade();
         cx.default_global::<OpenDocuments>().0.push(tab);
         let state = cx.new(|cx| {

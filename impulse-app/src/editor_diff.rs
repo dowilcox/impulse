@@ -120,7 +120,11 @@ impl EditorTab {
         cx: &mut Context<Self>,
     ) -> Entity<EditorState> {
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
-        let grammar = crate::editor_tab::grammar_for(&self.language, &self.path).to_string();
+        let grammar = crate::base_rules::editor_grammar(crate::editor_tab::grammar_for(
+            &self.language,
+            &self.path,
+        ))
+        .to_string();
         let (tab_size, use_spaces) = (self.tab_size, self.use_spaces);
         cx.new(|cx| {
             let mut state = EditorState::new(window, cx)

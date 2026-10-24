@@ -131,10 +131,10 @@ pub fn apply(
     c.button_secondary_foreground = c.secondary_foreground;
 
     k.tokens = ThemeTokens::from(&k.colors);
-    k.highlight_theme = highlight_theme(theme, false).into();
+    k.highlight_theme = highlight_theme(theme, false, settings.bracket_pair_colorization).into();
     // Review colors code as highlight.js does, function names included.
     cx.set_global(ReviewHighlight(std::sync::Arc::new(highlight_theme(
-        theme, true,
+        theme, true, false,
     ))));
     Theme::sync_base(cx);
     cx.refresh_windows();
@@ -175,8 +175,15 @@ impl gpui_kit::Global for ReviewHighlight {}
 /// Impulse's theme as GPUI Kit's highlight theme (Zed's theme format), with
 /// the scopes `themeToMonaco` colors. Monaco's tokenizers leave function
 /// names plain and color operators as delimiters, so the editor does too;
-/// `functions` colors them, as highlight.js does in Review.
-fn highlight_theme(theme: &ResolvedTheme, functions: bool) -> HighlightTheme {
+/// `functions` colors them, as highlight.js does in Review. With
+/// `colored_brackets` the brackets take no syntax color: their pair colors
+/// are text decorations, and GPUI's `combine_highlights` lets a syntax
+/// color and a decoration's win in no set order where they meet.
+fn highlight_theme(
+    theme: &ResolvedTheme,
+    functions: bool,
+    colored_brackets: bool,
+) -> HighlightTheme {
     let style = |color: &str| json!({ "color": color });
     let italic = |color: &str| json!({ "color": color, "font_style": "italic" });
     let syntax: serde_json::Map<String, serde_json::Value> = [
@@ -216,7 +223,6 @@ fn highlight_theme(theme: &ResolvedTheme, functions: bool) -> HighlightTheme {
         ("variable.special", style(&theme.syntax_keyword)),
         ("label", style(&theme.syntax_attribute)),
         ("punctuation", style(&theme.syntax_delimiter)),
-        ("punctuation.bracket", style(&theme.syntax_delimiter)),
         ("punctuation.delimiter", style(&theme.syntax_delimiter)),
         ("link_uri", style(&theme.syntax_link)),
         ("link_text", style(&theme.syntax_link)),
@@ -242,6 +248,15 @@ fn highlight_theme(theme: &ResolvedTheme, functions: bool) -> HighlightTheme {
             .map(|(scope, color)| (scope, style(color)))
             .to_vec()
     })
+    // An empty style, not none: a missing one falls back to `punctuation`.
+    .chain(std::iter::once((
+        "punctuation.bracket",
+        if colored_brackets {
+            json!({})
+        } else {
+            style(&theme.syntax_delimiter)
+        },
+    )))
     .map(|(scope, style)| (scope.to_string(), style))
     .collect();
     let highlight = json!({
