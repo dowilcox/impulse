@@ -1257,6 +1257,8 @@ fn write_image(window: &Window, path: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+// objc's `msg_send!` asks for a `cargo-clippy` feature it doesn't declare.
+#[allow(unexpected_cfgs)]
 mod mac {
     use objc::runtime::{Object, NO, YES};
     use objc::{msg_send, sel, sel_impl};

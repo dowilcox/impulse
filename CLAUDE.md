@@ -314,7 +314,8 @@ website/                  impulse-terminal.app: homepage + demo, docs page
                           template (built by scripts/build-site.py)
 scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
                           build-site.py, docs/ (screenshot capture),
-                          smoke/ (release smoke checks)
+                          smoke/ (release smoke checks), check-macos.sh
+                          (rust branch: type-check the app for macOS)
 CHANGELOG.md              user-facing changes per release
 ```
 
@@ -358,6 +359,7 @@ cargo test -p impulse-git            # rust branch: git layer vs the Swift git f
 cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
 cargo test -p impulse-protocol -p impulse-cli   # rust branch: control protocol, MCP, CLI
 cargo run -p impulse-app -- --cwd <folder> --open <file>   # rust branch: the GPUI app
+scripts/check-macos.sh               # rust branch: cargo check for macOS from Linux
 cargo fmt && cargo clippy
 
 # One-time / occasional
@@ -402,6 +404,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
 - **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`.
 - **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
+- **scripts/check-macos.sh [cargo check args…]** — (rust branch) type-checks `impulse-app` for `aarch64-apple-darwin` from Linux, so code behind `cfg(target_os = "macos")` compiles before anyone builds on a Mac: stand-in `cc`/`ar` make the files C build scripts expect (nothing is linked) and an empty shader file stands in for GPUI's Mac-only shader step. Needs `rustup target add aarch64-apple-darwin`.
 - **scripts/smoke/run.py [name-prefix…]** — smoke checks for a release, in the same headless mode and demo home: each scenario in `scripts/smoke/scenarios.py` drives the dev build through real use (edits and saves, commands in zsh, bash and fish, the `impulse` CLI, agent hooks, a fresh managed language-server install with trust, tasks from creation to Finish, Agent Integration installing the MCP server, opencode's plugin replacing opencode 1's plugin and MCP entry, its two halves driven by a stand-in opencode (`scripts/smoke/opencode-agent.mjs`, which needs `node`), the MCP server asking for a task and an agent finishing its own, session restore) and checks the state its actions dump (`dump=`) plus the files and git repositories they changed. Build with `build.sh --dev` first; results and window images are left in `target/smoke/<scenario>/`. `IMPULSE_SNAPSHOT_APP` runs the scenarios against the Rust app, as for `capture.py`; the editor and lsp scenarios then drive its editor with `edit=` and `lsp=` instead of `js=` (`edit_action`, `LSP_STEPS_RUST`).
 
 ## History

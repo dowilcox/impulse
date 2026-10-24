@@ -474,7 +474,10 @@ Known issues:
   other cursors), `smooth_scrolling`
   and `terminal_bell` (no sound through GPUI; the attention dot still
   shows).
-- The app hasn't been built on a Mac yet.
+- The app hasn't been built or run on a Mac yet. It type-checks for
+  `aarch64-apple-darwin` from Linux (`scripts/check-macos.sh`), which
+  covers the code behind `cfg(target_os = "macos")`, but linking, the
+  Metal renderer and the look on macOS are untested.
 
 ## Risks
 
