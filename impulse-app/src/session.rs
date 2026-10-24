@@ -22,7 +22,7 @@ const SCROLLBACK_ROWS: usize = 2000;
 
 /// The open windows, for saving the session.
 struct Sessions {
-    windows: Vec<WeakEntity<Workbench>>,
+    windows: Vec<(WeakEntity<Workbench>, gpui_kit::AnyWindowHandle)>,
     /// What the last autosave saw (`SessionState::autosave_key`).
     autosaved: String,
 }
@@ -75,17 +75,31 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-pub fn register(workbench: WeakEntity<Workbench>, cx: &mut App) {
+pub fn register(workbench: WeakEntity<Workbench>, window: gpui_kit::AnyWindowHandle, cx: &mut App) {
     if cx.has_global::<Sessions>() {
-        cx.global_mut::<Sessions>().windows.push(workbench);
+        cx.global_mut::<Sessions>()
+            .windows
+            .push((workbench, window));
     }
+}
+
+/// Every open window's workbench, with its window.
+pub fn workbenches(cx: &App) -> Vec<(gpui_kit::Entity<Workbench>, gpui_kit::AnyWindowHandle)> {
+    if !cx.has_global::<Sessions>() {
+        return Vec::new();
+    }
+    cx.global::<Sessions>()
+        .windows
+        .iter()
+        .filter_map(|(w, handle)| w.upgrade().map(|w| (w, *handle)))
+        .collect()
 }
 
 fn windows(cx: &App, with_scrollback: bool) -> Vec<SessionWindow> {
     cx.global::<Sessions>()
         .windows
         .iter()
-        .filter_map(|w| w.upgrade())
+        .filter_map(|(w, _)| w.upgrade())
         .map(|w| w.read(cx).session_window(with_scrollback, cx))
         .collect()
 }

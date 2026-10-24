@@ -211,6 +211,8 @@ pub struct TerminalView {
     marked: Option<String>,
     blink_on: bool,
     last_input: Instant,
+    /// `IMPULSE_PANE_TOKEN`: how `impulse` in this terminal names it.
+    pub token: String,
     /// The shell's startup files, removed when the terminal closes.
     temp_paths: Vec<std::path::PathBuf>,
     _wake: gpui_kit::Task<()>,
@@ -252,7 +254,8 @@ impl TerminalView {
         let settings = SettingsStore::get(cx).clone();
         let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         let metrics = measure(&font, settings.terminal_font_size as f32, window);
-        let launch = crate::shell_launch::launch(&[]);
+        let token = crate::control_server::new_token();
+        let launch = crate::shell_launch::launch(&crate::control_server::terminal_env(&token));
         let config = TerminalConfig {
             shell_path: launch.shell.clone(),
             shell_args: launch.args.clone(),
@@ -324,6 +327,7 @@ impl TerminalView {
             buffer: Vec::new(),
             title: String::new(),
             temp_paths: launch.temp_paths,
+            token,
             cwd,
             last_duration_ms: None,
             exited: None,
@@ -353,6 +357,11 @@ impl TerminalView {
 
     pub fn write(&self, bytes: &[u8]) {
         self.backend.write(bytes);
+    }
+
+    /// The shell's process id.
+    pub fn shell_pid(&self) -> i32 {
+        self.backend.child_pid() as i32
     }
 
     /// The program in the foreground, if it isn't the shell.

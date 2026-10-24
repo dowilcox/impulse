@@ -67,6 +67,11 @@ pub struct Workbench {
     closed: Vec<Closed>,
     pub(crate) drag: Option<crate::workbench_panes::DividerDrag>,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
+    /// `impulse edit` requests waiting for their editor to close.
+    pub(crate) pending_edits: Vec<(
+        gpui_kit::EntityId,
+        async_channel::Sender<impulse_protocol::control::ControlResponse>,
+    )>,
     /// `--theme`, which wins over `color_scheme` for this run.
     theme_override: Option<String>,
     theme_id: String,
@@ -77,7 +82,7 @@ impl Workbench {
     pub fn new(args: Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let restore = args.session.clone();
         let mut workbench = Self::empty(&args, window, cx);
-        crate::session::register(cx.entity().downgrade(), cx);
+        crate::session::register(cx.entity().downgrade(), window.window_handle(), cx);
         if let Some(state) = restore {
             workbench.restore(state, window, cx);
         }
@@ -125,6 +130,7 @@ impl Workbench {
             closed: Vec::new(),
             drag: None,
             split_bounds: Default::default(),
+            pending_edits: Vec::new(),
             theme_override: args.theme.clone(),
             theme_id,
             _settings: settings_subscription,
@@ -435,6 +441,7 @@ impl Workbench {
     }
 
     fn remember_closed(&mut self, surface: &Surface, cx: &App) {
+        self.editor_closed(surface);
         self.closed.push(match surface {
             Surface::Editor(e) => Closed::File(e.read(cx).path.clone()),
             Surface::Terminal(t) => Closed::Terminal(PathBuf::from(&t.read(cx).cwd)),

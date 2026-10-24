@@ -101,7 +101,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged),
                           session restore (session.rs: autosave every 15 s
-                          when the structure changed, and at quit),
+                          when the structure changed, and at quit), the
+                          control socket for `impulse` (control_server.rs,
+                          control_commands.rs; Linux keeps it in
+                          $XDG_RUNTIME_DIR),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

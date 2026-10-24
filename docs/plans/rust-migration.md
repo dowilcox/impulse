@@ -165,14 +165,14 @@ toolkit with Zed's editor through a fork, not a different toolkit.
 
 ```
 impulse-terminal/   terminal emulation (unchanged; macOS + Linux)
-impulse-kit/        pure logic: themes, chrome palette, parsers, …   [started]
-impulse-git/        git2 reads + git CLI writes
-impulse-lsp/        language-server client                         [started]
-impulse-protocol/   control socket + MCP server
-impulse-cli/        the `impulse` binary
+impulse-kit/        pure logic: themes, chrome palette, parsers, …   [ported]
+impulse-git/        git2 reads + git CLI writes                       [ported]
+impulse-lsp/        language-server client                            [ported]
+impulse-protocol/   control socket + MCP server                       [ported]
+impulse-cli/        the `impulse` binary                              [ported]
 impulse-platform/   the per-OS services above
 impulse-ui/         Impulse's components over GPUI Kit
-impulse-app/        the app                                           [spike]
+impulse-app/        the app                                     [in progress]
 ```
 
 Nothing below `impulse-ui` depends on GPUI. `impulse-ffi`, the Swift package
@@ -193,13 +193,16 @@ The shipped Swift app keeps working through every phase.
    Next: signature help and the other LSP features in the table, Undo for a
    whole cross-file edit, then peek views, the diff view and Vim mode. Exit:
    daily-drivable on a real project, on both platforms.
-2. **Logic crates, with parity.** Port ImpulseKit, ImpulseGit, ImpulseLSP and
+2. **Logic crates, with parity** (done). Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden
    fixtures read in place from `impulse-macos/Tests/*/Fixtures/`, port each
    module's Swift unit tests. All in Linux CI.
-3. **The CLI.** The Rust `impulse` and `impulse mcp` replace the Swift ones in
+3. **The CLI** (ported; replacing the Swift one in the bundle is next). The Rust `impulse` and `impulse mcp` replace the Swift ones in
    today's bundle, proven by the smoke scenarios that use them.
-4. **App shell and terminal.** Window, tabs, panes, workspaces, docks, status
+4. **App shell and terminal** (in progress: window, workspaces, tabs, split
+   panes, commands and keybindings, settings.json, session restore, the
+   control server and the terminal's grid, keys, selection and mouse are in).
+   Window, tabs, panes, workspaces, docks, status
    bar, control server, settings, keybindings, session restore (same files),
    the full terminal (selection, search, links, sticky headers, block toolbar,
    input bar with completion, Kitty keyboard), and the headless snapshot mode
@@ -282,6 +285,32 @@ which inserts the type when picked.*
   with merged diagnostics, hover, completion, go-to-definition, code actions
   and Format Document (⌥⇧F). `--trust` trusts the folder without asking, for
   scripted runs.
+- The rest of the logic is ported, each crate with the Swift tests and
+  golden fixtures of its Swift twin: `impulse-kit` (454 tests: settings and
+  the settings catalog, keybindings, key encoding, layout trees, palette and
+  fuzzy matching, file tree patches, previews, Monaco and Markdown theme
+  colors, shell types, quoting, login shell and integration, completion,
+  command history, kitty keyboard, terminal hints and paths, project
+  config, task registry and environment, agents' state machine, hooks and
+  installers, session state), `impulse-git` (169 tests against the Swift
+  git fixtures, libgit2 1.9.7 vendored without network transports),
+  `impulse-protocol` and `impulse-cli` (64 tests; control lines byte for
+  byte as the Swift app writes them).
+- The app shell: folder workspaces and Scratch, each with its tabs; tabs of
+  split panes laid out by `LayoutTree` with draggable dividers, zoom, and the
+  pane commands; every command as one `RunCommand` action bound from the
+  keybinding table (Mac defaults as today, Linux ones as the v0.29 Linux app
+  had them, with plain Ctrl+letter left to the shell in terminals);
+  settings.json watched and merged as `SettingsStore` does; session restore
+  from the same `session-state.json` and scrollback files; the control
+  socket for `impulse` (`open`, `edit` waiting for the tab, `split`, `tab`,
+  `notify`, `checkpoint`, `unsaved`).
+- The terminal draws its own grid (cell runs, selection and search ranges,
+  the cursor, block washes, stripes, separators and status chips), takes
+  keys through the port of `KeyEncoder` and text through GPUI's input
+  handler (so input methods work), selects by word, line or block, reports
+  the mouse to programs that ask, and starts the login shell with Impulse's
+  integration as `TerminalTab` does.
 - `scripts/spike/linux-shot.sh` screenshots the app under Xvfb with software
   Vulkan, so CI can check the UI without a GPU.
 

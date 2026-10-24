@@ -6,6 +6,8 @@
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
 mod commands;
+mod control_commands;
+mod control_server;
 mod editor_keys;
 mod editor_tab;
 mod kit_theme;
@@ -144,6 +146,12 @@ fn main() {
             let settings = settings_store::SettingsStore::get(cx).clone();
             commands::bind_keys(&settings, cx);
             session::init(cx);
+            control_server::start(cx, control_commands::dispatch);
+            cx.on_app_quit(|_| {
+                control_server::stop();
+                async {}
+            })
+            .detach();
             let saved = (!explicit).then(|| session::saved(cx)).flatten();
             match saved {
                 Some(state) => {

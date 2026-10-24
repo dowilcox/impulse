@@ -23,6 +23,9 @@ impulse-terminal = { path = "../impulse-terminal" }
 impulse-kit = { path = "../impulse-kit" }
 env_logger = "0.11"
 log = { workspace = true }
+impulse-protocol = { path = "../impulse-protocol" }
+impulse-git = { path = "../impulse-git" }
+libc = "0.2"
 impulse-lsp = { path = "../impulse-lsp" }
 lsp-types = { version = "0.97", features = ["proposed"] }
 futures = "0.3"
