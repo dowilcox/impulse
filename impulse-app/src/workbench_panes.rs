@@ -239,10 +239,13 @@ impl Workbench {
     pub(crate) fn drag_divider(
         &mut self,
         event: &MouseMoveEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.drag_sidebar(event, cx) {
+            return;
+        }
+        if self.drag_workspaces(event, window, cx) {
             return;
         }
         let Some(drag) = self.drag.clone() else {
@@ -292,6 +295,7 @@ impl Workbench {
 
     pub(crate) fn end_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.drag = None;
+        self.workspaces_drag = None;
         self.end_sidebar_drag(cx);
     }
 

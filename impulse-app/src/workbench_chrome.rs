@@ -1563,18 +1563,29 @@ impl Workbench {
                     ))
             };
         // Swift's WorkspacesSection: rows 1 pt apart, 6 pt above and below,
-        // scrolling past 280 pt.
+        // scrolling past 280 pt unless its handle set a height.
+        let measured = self.workspaces_measured.clone();
         let mut workspaces = div()
             .id("workspaces")
+            .relative()
             .flex()
             .flex_col()
             .flex_none()
-            .max_h(px(280.))
+            .map(|d| match self.workspaces_height {
+                Some(height) => d.h(px(self.clamped_workspaces_height(height, window))),
+                None => d.max_h(px(280.)),
+            })
             .overflow_y_scroll()
             .py(px(6.))
             .gap(px(1.))
-            .border_b_1()
-            .border_color(hsla(p.hairline));
+            .child(
+                gpui_kit::canvas(
+                    move |bounds, _, _| measured.set(f32::from(bounds.size.height)),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            );
         // A repository's workspaces (its tasks) under its name.
         for (name, group) in self.workspace_groups() {
             let indented = name.is_some();
@@ -1597,6 +1608,7 @@ impl Workbench {
             .border_color(hsla(p.hairline))
             .child(self.sidebar_divider(cx))
             .child(workspaces)
+            .child(self.workspaces_handle(cx))
             .child(
                 div()
                     .flex()
@@ -2194,6 +2206,89 @@ impl Workbench {
         };
         let width = drag.width.round() as i64;
         SettingsStore::update(cx, |s| s.sidebar_width = width);
+        cx.notify();
+        true
+    }
+}
+
+impl Workbench {
+    /// The Workspaces section's height kept between nothing and the dock
+    /// less the Files panel's 120 (Swift's `heightLimit`).
+    fn clamped_workspaces_height(&self, height: f32, window: &Window) -> f32 {
+        let dock = f32::from(window.viewport_size().height)
+            - metrics::TITLEBAR_HEIGHT
+            - metrics::STATUS_BAR_HEIGHT;
+        height.clamp(0., (dock - 120.).max(0.))
+    }
+
+    /// The hairline under the workspaces, with a taller grab band (Swift's
+    /// `SectionResizeHandle`): drag to resize, double-click to fit again;
+    /// accent while hovered or dragged.
+    fn workspaces_handle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &self.palette;
+        let dragging = self.workspaces_drag.is_some();
+        div()
+            .relative()
+            .flex_none()
+            .h(px(1.))
+            .group("workspaces-handle")
+            .bg(hsla(p.hairline))
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-0.5))
+                    .h(px(2.))
+                    .bg(hsla(p.accent.opacity(0.8)))
+                    .when(!dragging, |d| {
+                        d.invisible()
+                            .group_hover("workspaces-handle", |s| s.visible())
+                    }),
+            )
+            .child(
+                div()
+                    .id("workspaces-handle")
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-(DIVIDER_GRIP / 2.)))
+                    .h(px(DIVIDER_GRIP))
+                    .cursor_row_resize()
+                    .on_mouse_down(
+                        gpui_kit::MouseButton::Left,
+                        cx.listener(|w, event: &gpui_kit::MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            if event.click_count == 2 {
+                                w.workspaces_height = None;
+                                w.workspaces_drag = None;
+                            } else {
+                                let height =
+                                    w.workspaces_height.unwrap_or(w.workspaces_measured.get());
+                                w.workspaces_drag = Some((height, f32::from(event.position.y)));
+                            }
+                            cx.notify();
+                        }),
+                    ),
+            )
+    }
+
+    /// The pointer moved while the Workspaces section's handle is held.
+    pub(crate) fn drag_workspaces(
+        &mut self,
+        event: &gpui_kit::MouseMoveEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((height, y)) = self.workspaces_drag else {
+            return false;
+        };
+        if event.pressed_button != Some(gpui_kit::MouseButton::Left) {
+            self.workspaces_drag = None;
+            return true;
+        }
+        let wanted = height + f32::from(event.position.y) - y;
+        self.workspaces_height = Some(self.clamped_workspaces_height(wanted, window));
         cx.notify();
         true
     }

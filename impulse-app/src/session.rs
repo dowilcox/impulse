@@ -322,6 +322,7 @@ impl Workbench {
             sidebar_visible: Some(settings.sidebar_visible),
             sidebar_width: Some(settings.sidebar_width as f64),
             frame: Some(frame_of(self.bounds, cx)),
+            workspaces_height: self.workspaces_height.map(f64::from),
             ..Default::default()
         }
     }
@@ -336,6 +337,7 @@ impl Workbench {
     ) {
         // The sidebar as it was (Swift keeps it per window; here it's the
         // settings' sidebar_visible and sidebar_width).
+        self.workspaces_height = state.workspaces_height.map(|h| h.max(0.) as f32);
         let (visible, width) = (state.sidebar_visible, state.sidebar_width);
         let settings = SettingsStore::get(cx);
         let width = width

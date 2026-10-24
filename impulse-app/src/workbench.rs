@@ -122,6 +122,12 @@ pub struct Workbench {
     pub(crate) drag: Option<crate::workbench_panes::DividerDrag>,
     /// The sidebar's edge being dragged (`workbench_chrome`).
     pub(crate) sidebar_drag: Option<crate::workbench_chrome::SidebarDrag>,
+    /// The Workspaces section's height once its handle moved (`None`: fit
+    /// its rows up to 280), saved with the session; the drag in progress
+    /// (height and pointer at its start); the height last laid out.
+    pub(crate) workspaces_height: Option<f32>,
+    pub(crate) workspaces_drag: Option<(f32, f32)>,
+    pub(crate) workspaces_measured: Rc<std::cell::Cell<f32>>,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
     /// `impulse edit` requests waiting for their editor to close.
     pub(crate) pending_edits: Vec<(
@@ -246,6 +252,9 @@ impl Workbench {
             told_lsp: Default::default(),
             drag: None,
             sidebar_drag: None,
+            workspaces_height: None,
+            workspaces_drag: None,
+            workspaces_measured: Default::default(),
             split_bounds: Default::default(),
             pending_edits: Vec::new(),
             theme_override: args.theme.clone(),
