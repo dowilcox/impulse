@@ -908,7 +908,34 @@ impl Workbench {
                     .map(|notice| div().text_color(hsla(p.warning)).child(notice)),
             )
             .child(div().flex_1())
+            .children(self.update_item(cx))
             .children(right)
+    }
+
+    /// "Update x.y.z" when a newer Impulse is out, opening its page.
+    fn update_item(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let update = cx
+            .try_global::<crate::update_check::AvailableUpdate>()?
+            .0
+            .clone()?;
+        let p = &self.palette;
+        let help = format!("Impulse {} is available", update.version);
+        Some(
+            div()
+                .id("update")
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .cursor_pointer()
+                .text_color(hsla(p.success))
+                .on_click(move |_, _, cx| cx.open_url(&update.url))
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
+                })
+                .child(icon("arrow-down", metrics::ICON_SMALL, p.success))
+                .child(format!("Update {}", update.version))
+                .into_any_element(),
+        )
     }
 }
 

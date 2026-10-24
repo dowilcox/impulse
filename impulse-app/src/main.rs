@@ -64,6 +64,7 @@ mod terminal_find_bar;
 mod terminal_input_bar;
 mod terminal_view;
 mod untitled;
+mod update_check;
 mod workbench;
 mod workbench_chrome;
 mod workbench_panes;
@@ -207,6 +208,8 @@ fn main() {
             menus::init(cx);
             session::init(cx);
             quick_terminal::init(cx);
+            repository_state::start_auto_fetch(cx);
+            update_check::start(cx);
             control_server::start(cx, control_commands::dispatch);
             cx.on_app_quit(|_| {
                 control_server::stop();

@@ -54,6 +54,9 @@ pub struct RepositoryState {
     _watching: Option<Task<()>>,
     /// Operations run one at a time, as on the Swift app's serial queue.
     lock: Arc<Mutex<()>>,
+    /// When the background fetch last started (`git_auto_fetch_minutes`).
+    last_fetch: Option<std::time::Instant>,
+    quiet_fetch_in_flight: bool,
 }
 
 impl EventEmitter<RepositoryEvent> for RepositoryState {}
@@ -74,6 +77,8 @@ impl RepositoryState {
             watcher: None,
             _watching: None,
             lock: Arc::new(Mutex::new(())),
+            last_fetch: None,
+            quiet_fetch_in_flight: false,
         };
         state.refresh(cx);
         state
@@ -330,6 +335,70 @@ impl RepositoryState {
 
 /// One `RepositoryState` per repository root, app-wide (the windows hold
 /// them; a state nothing holds any more goes, with its watcher).
+impl RepositoryState {
+    /// Fetch in the background, without progress or a failure toast (the
+    /// Swift `fetchQuietly`): ahead/behind counts and History's incoming
+    /// commits stay current.
+    pub fn fetch_quietly(&mut self, cx: &mut Context<Self>) {
+        let has_upstream = self.snapshot.as_ref().is_some_and(|s| s.upstream.is_some());
+        if self.activity.is_some() || self.quiet_fetch_in_flight || !has_upstream {
+            return;
+        }
+        self.quiet_fetch_in_flight = true;
+        self.last_fetch = Some(std::time::Instant::now());
+        let root = self.root.clone();
+        let task = cx.background_spawn(async move {
+            impulse_git::operations::fetch(false, None, &root, Duration::from_secs(120), None)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.quiet_fetch_in_flight = false;
+                match result {
+                    Ok(_) => this.refresh(cx),
+                    Err(error) => log::info!("background fetch of {} failed: {error:?}", this.root),
+                }
+            });
+        })
+        .detach();
+    }
+}
+
+/// Fetch every trusted repository open in a window every
+/// `git_auto_fetch_minutes` (off at 0, the default), checking once a
+/// minute (the Swift `AutoFetch`).
+pub fn start_auto_fetch(cx: &mut App) {
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(Duration::from_secs(60))
+            .await;
+        cx.update(|cx| {
+            let minutes = crate::settings_store::SettingsStore::get(cx).git_auto_fetch_minutes;
+            if minutes <= 0 || !cx.has_global::<RepositoryStore>() {
+                return;
+            }
+            let interval = Duration::from_secs(minutes as u64 * 60);
+            let states: Vec<_> = cx
+                .global::<RepositoryStore>()
+                .states
+                .values()
+                .filter_map(WeakEntity::upgrade)
+                .collect();
+            for state in states {
+                state.update(cx, |state, cx| {
+                    // Fetch follows the repository's own configuration
+                    // (ssh commands, credential helpers): trusted only.
+                    let due = state.last_fetch.is_none_or(|t| t.elapsed() >= interval);
+                    if state.trusted && due {
+                        state.fetch_quietly(cx);
+                    }
+                });
+            }
+        });
+    })
+    .detach();
+}
+
 #[derive(Default)]
 pub struct RepositoryStore {
     states: HashMap<String, WeakEntity<RepositoryState>>,

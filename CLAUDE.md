@@ -195,6 +195,12 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Don't Save or Cancel for each unsaved editor,
                           then running terminal work from
                           impulse_kit::close_risk),
+                          update_check.rs (a newer release, once a day,
+                          by impulse_kit::update_checker with curl, as
+                          "Update x.y.z" in the status bar),
+                          background fetch (repository_state.rs:
+                          start_auto_fetch, git_auto_fetch_minutes,
+                          trusted repositories with an upstream),
                           New File and Install Language Servers
                           (untitled.rs: an untitled EditorTab saved with
                           the system's save dialog, or a typed path where
