@@ -2,7 +2,9 @@
 //! version against the buffer. Side by side, the two editors scroll
 //! together through `map_row`; inline, removed lines sit above the lines
 //! that replaced them in one read-only document (`inline`). Both follow
-//! the hunks of `editor_marks::line_hunks`, as the change marks do.
+//! the hunks of `editor_marks::line_hunks`, as the change marks do. Long
+//! runs of unchanged lines in the inline document hide behind one row
+//! (`hide_unchanged`, Monaco's `hideUnchangedRegions`).
 
 use std::ops::Range;
 
@@ -73,8 +75,110 @@ pub struct InlineDiff {
     /// Rows holding removed lines, and rows holding added ones.
     pub removed: Vec<Range<u32>>,
     pub added: Vec<Range<u32>>,
-    /// For each row, the buffer row it shows (`None` for a removed line).
+    /// For each row, the buffer row it shows (`None` for a removed line
+    /// or a hidden run's row).
     pub buffer_rows: Vec<Option<usize>>,
+    /// Runs of unchanged lines shown as one row (`hide_unchanged`).
+    pub hidden: Vec<HiddenLines>,
+}
+
+/// The unchanged lines one row of the inline document stands for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HiddenLines {
+    /// The row standing in for them.
+    pub row: u32,
+    /// The buffer rows (0-based) it hides.
+    pub buffer_rows: Range<usize>,
+}
+
+/// Monaco's `hideUnchangedRegions` as the Swift app sets it: three lines of
+/// context stay beside each change, and a run hides only when at least
+/// three lines would go.
+pub const CONTEXT_LINES: usize = 3;
+pub const MINIMUM_HIDDEN: usize = 3;
+
+/// `diff` with each long run of unchanged lines replaced by one empty row
+/// (`hidden`), except the runs overlapping `revealed` (buffer rows).
+pub fn hide_unchanged(diff: InlineDiff, revealed: &[Range<usize>]) -> InlineDiff {
+    let rows = diff.buffer_rows.len();
+    let changed = |row: usize| {
+        let row = row as u32;
+        diff.removed.iter().chain(&diff.added).any(|r| r.contains(&row))
+    };
+    // The rows to hide, as ranges of the document's rows.
+    let mut hide: Vec<Range<usize>> = Vec::new();
+    let mut row = 0;
+    while row < rows {
+        if changed(row) {
+            row += 1;
+            continue;
+        }
+        let start = row;
+        while row < rows && !changed(row) {
+            row += 1;
+        }
+        let lead = if start == 0 { 0 } else { CONTEXT_LINES };
+        let trail = if row == rows { 0 } else { CONTEXT_LINES };
+        if row - start < lead + trail + MINIMUM_HIDDEN {
+            continue;
+        }
+        let run = start + lead..row - trail;
+        let (Some(Some(first)), Some(Some(last))) =
+            (diff.buffer_rows.get(run.start), diff.buffer_rows.get(run.end - 1))
+        else {
+            continue;
+        };
+        let buffer = *first..*last + 1;
+        if revealed
+            .iter()
+            .any(|r| r.start < buffer.end && buffer.start < r.end)
+        {
+            continue;
+        }
+        hide.push(run);
+    }
+    if hide.is_empty() {
+        return diff;
+    }
+    let lines: Vec<&str> = diff.text.split('\n').collect();
+    let mut out = InlineDiff::default();
+    let mut text: Vec<&str> = Vec::new();
+    // Each old row's new row (hidden rows map to their stand-in).
+    let mut new_row = vec![0u32; rows + 1];
+    let mut hide = hide.into_iter().peekable();
+    let mut row = 0;
+    while row < rows {
+        if let Some(run) = hide.next_if(|r| r.start == row) {
+            let stand_in = text.len() as u32;
+            for r in run.clone() {
+                new_row[r] = stand_in;
+            }
+            out.hidden.push(HiddenLines {
+                row: stand_in,
+                buffer_rows: diff.buffer_rows[run.start].unwrap_or(0)
+                    ..diff.buffer_rows[run.end - 1].unwrap_or(0) + 1,
+            });
+            text.push("");
+            out.buffer_rows.push(None);
+            row = run.end;
+            continue;
+        }
+        new_row[row] = text.len() as u32;
+        text.push(lines.get(row).copied().unwrap_or(""));
+        out.buffer_rows.push(diff.buffer_rows[row]);
+        row += 1;
+    }
+    new_row[rows] = text.len() as u32;
+    let remap = |ranges: &[Range<u32>]| -> Vec<Range<u32>> {
+        ranges
+            .iter()
+            .map(|r| new_row[r.start as usize]..new_row[r.start as usize] + (r.end - r.start))
+            .collect()
+    };
+    out.removed = remap(&diff.removed);
+    out.added = remap(&diff.added);
+    out.text = text.join("\n");
+    out
 }
 
 pub fn inline(current: &str, hunks: &[LineHunk]) -> InlineDiff {
@@ -143,6 +247,47 @@ mod tests {
         assert_eq!(next_change(&hunks, 5, true), Some(1), "wraps");
         assert_eq!(next_change(&hunks, 1, false), Some(5), "wraps back");
         assert_eq!(next_change(&[], 1, true), None);
+    }
+
+    #[test]
+    fn long_unchanged_runs_hide() {
+        // Twenty lines; line 10 changed.
+        let base: String = (1..=20).map(|n| format!("{n}\n")).collect();
+        let new = base.replace("\n10\n", "\nten\n");
+        let hunks = line_hunks(&base, &new);
+        let diff = hide_unchanged(inline(&new, &hunks), &[]);
+        // Lines 1-6 hide (no context needed at the top), 7-9 stay; the
+        // change; 11-13 stay, and 14-20 with the final empty line hide.
+        assert_eq!(
+            diff.hidden,
+            vec![
+                HiddenLines {
+                    row: 0,
+                    buffer_rows: 0..6
+                },
+                HiddenLines {
+                    row: 9,
+                    buffer_rows: 13..21
+                },
+            ]
+        );
+        assert_eq!(diff.text, "\n7\n8\n9\n10\nten\n11\n12\n13\n");
+        assert_eq!(diff.removed, vec![4..5]);
+        assert_eq!(diff.added, vec![5..6]);
+        assert_eq!(diff.buffer_rows[1], Some(6));
+        assert_eq!(diff.buffer_rows[5], Some(9));
+        assert_eq!(diff.buffer_rows[9], None);
+        // A revealed run stays.
+        let shown = hide_unchanged(inline(&new, &hunks), &[2..3]);
+        assert_eq!(shown.hidden.len(), 1);
+        assert_eq!(shown.hidden[0].buffer_rows, 13..21);
+    }
+
+    #[test]
+    fn short_runs_stay() {
+        let hunks = line_hunks(BASE, NEW);
+        let diff = inline(NEW, &hunks);
+        assert_eq!(hide_unchanged(inline(NEW, &hunks), &[]), diff);
     }
 
     #[test]

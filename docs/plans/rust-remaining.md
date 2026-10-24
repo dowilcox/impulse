@@ -38,9 +38,14 @@ The largest unknown, so it goes first.
 
 Work that doesn't depend on anyone else.
 
-- [ ] **Collapse unchanged regions in the Diff View** (`editor_diff.rs`,
+- [x] **Collapse unchanged regions in the Diff View** (`editor_diff.rs`,
   `impulse_kit::git::diff_view`), as Monaco's diff editor folds long runs
-  of unchanged lines.
+  of unchanged lines. Done inline: `diff_view::hide_unchanged` keeps
+  three lines of context beside each change and puts a run of three or
+  more others behind one "18 hidden lines" row, which a click opens
+  (Monaco's `hideUnchangedRegions` as the Swift app sets it; the
+  snapshot's `diff-inline` and `diff-reveal` actions drive it). Side by
+  side still shows every line: that waits on GPUI Kit (below).
 - [x] **Put conflict actions inline.** Done: each conflict's Accept
   Current, Accept Incoming and Accept Both, its labels and, with more
   than one, "1 of 2" with ↑ and ↓ float on its `<<<<<<<` line after the
@@ -104,6 +109,7 @@ on them yet.
 | Auto-closing `always` and `beforeWhitespace` | one global rule, Monaco's `languageDefined` | `editor_auto_closing_brackets` |
 | Snippets in completions | snippet handling is off until it's checked; completions insert plain text | |
 | Padding lines in the Diff View | no view zones, so one side holds still through the other's insertion | |
+| Hidden unchanged lines side by side in the Diff View | folds can be offered (`apply_highlighter_fold_candidates`) but only a gutter click folds one, and the highlighter replaces them on each reparse, so the live buffer can't hide lines from outside | |
 | Announcing agent state to screen readers | GPUI has no live regions | |
 | Smooth scrolling | not supported | `smooth_scrolling` |
 

@@ -374,7 +374,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           under a bar with the summary, ↑ ↓, the layout
                           switch and Done; impulse_kit::git::diff_view;
                           lines and changed words tinted in Monaco's
-                          colors, impulse_git::buffer_diff::changed_words),
+                          colors, impulse_git::buffer_diff::changed_words;
+                          inline, long unchanged runs behind a "hidden
+                          lines" row, diff_view::hide_unchanged),
                           signature help over the caret with
                           impulse_lsp::signature; Vim mode in
                           editor_vim.rs over impulse_kit::vim, its keys

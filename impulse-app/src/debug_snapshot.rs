@@ -1056,6 +1056,18 @@ fn perform_now(action: &str, cx: &mut App) {
             }
             // The Rust app's stand-in for `js=`: `edit=label:script`,
             // EditorTab::debug_edit's commands on the selected editor.
+            // The Diff View's layout, as its Inline / Side by Side button.
+            ("diff-inline" | "diff-side-by-side", None) => match workbench.active_editor().cloned()
+            {
+                Some(editor) => editor.update(cx, |e, cx| {
+                    e.set_diff_inline(name == "diff-inline", window, cx)
+                }),
+                None => fail(format!("{name}: no editor is selected")),
+            },
+            ("diff-reveal", None) => match workbench.active_editor().cloned() {
+                Some(editor) => editor.update(cx, |e, cx| e.reveal_first_hidden(cx)),
+                None => fail(format!("{name}: no editor is selected")),
+            },
             ("edit", Some(spec)) => {
                 let (label, script) = spec.split_once(':').unwrap_or((spec, ""));
                 match workbench.active_editor().cloned() {

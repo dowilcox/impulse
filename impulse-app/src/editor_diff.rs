@@ -6,7 +6,11 @@
 //! change lines up with what it replaced. Inline, the removed lines sit
 //! above the lines that replaced them in one read-only document (GPUI Kit's
 //! editor has no view zones to put them into the editable one). Changed
-//! lines are tinted on both, following edits.
+//! lines are tinted on both, following edits. Inline, long runs of
+//! unchanged lines hide behind a "12 hidden lines" row a click opens
+//! (`diff_view::hide_unchanged`, Monaco's `hideUnchangedRegions`); side by
+//! side shows every line, since GPUI Kit's editor can't fold the buffer
+//! from outside.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -51,6 +55,8 @@ pub(crate) struct DiffView {
     /// The last scroll position the sync set on either side, so a side
     /// that can't scroll that far isn't asked again every frame.
     synced: Rc<Cell<Option<f32>>>,
+    /// Buffer rows whose unchanged runs stay shown inline.
+    revealed: Vec<std::ops::Range<usize>>,
     _refresh: Option<gpui_kit::Task<()>>,
 }
 
@@ -60,6 +66,9 @@ struct InlineView {
     rows: diff_view::InlineDiff,
     /// The text to show at the next render (setting it needs the window).
     pending: Option<String>,
+    /// The document's top left in the window, from the last frame, to
+    /// place the hidden runs' rows.
+    origin: Rc<Cell<Option<gpui_kit::Point<Pixels>>>>,
 }
 
 impl EditorTab {
@@ -94,6 +103,7 @@ impl EditorTab {
             hunks: Vec::new(),
             inline: None,
             synced: Rc::default(),
+            revealed: Vec::new(),
             _refresh: None,
         });
         if self.diff_inline {
@@ -143,7 +153,12 @@ impl EditorTab {
     }
 
     /// Switch between side by side and inline (remembered for the tab).
-    fn set_diff_inline(&mut self, inline: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn set_diff_inline(
+        &mut self,
+        inline: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.diff_inline = inline;
         let Some(diff) = self.diff.as_mut() else {
             return;
@@ -159,10 +174,19 @@ impl EditorTab {
             return;
         }
         let text = self.state.read(cx).value().to_string();
-        let rows = diff_view::inline(&text, &diff.hunks);
-        // The cursor's line, where it now is.
+        let rows = diff_view::hide_unchanged(diff_view::inline(&text, &diff.hunks), &diff.revealed);
+        // The cursor's line, where it now is, or the row hiding it.
         let cursor = self.state.read(cx).cursor_position().line as usize;
-        let at = rows.buffer_rows.iter().position(|r| *r == Some(cursor));
+        let at = rows
+            .buffer_rows
+            .iter()
+            .position(|r| *r == Some(cursor))
+            .or_else(|| {
+                rows.hidden
+                    .iter()
+                    .find(|h| h.buffer_rows.contains(&cursor))
+                    .map(|h| h.row as usize)
+            });
         let shown = rows.text.clone();
         let state = self.read_only_state(shown, window, cx);
         if let Some(diff) = self.diff.as_mut() {
@@ -171,6 +195,7 @@ impl EditorTab {
                 tints: Tints::default(),
                 rows,
                 pending: None,
+                origin: Rc::default(),
             });
         }
         match at {
@@ -188,6 +213,7 @@ impl EditorTab {
         };
         let old = diff.base_text.clone();
         let new = self.state.read(cx).value().to_string();
+        let revealed = diff.revealed.clone();
         diff._refresh = Some(cx.spawn(async move |tab, cx| {
             if !delay.is_zero() {
                 cx.background_executor().timer(delay).await;
@@ -210,7 +236,8 @@ impl EditorTab {
                         .filter(|h| h.new_count > 0)
                         .map(|h| rows(h.new_start, h.new_count))
                         .collect();
-                    let inline = diff_view::inline(&new, &hunks);
+                    let inline =
+                        diff_view::hide_unchanged(diff_view::inline(&new, &hunks), &revealed);
                     let words = impulse_git::buffer_diff::changed_words(
                         &old,
                         &new,
@@ -271,6 +298,93 @@ impl EditorTab {
             view.state
                 .update(cx, |state, cx| state.set_value(text, window, cx));
         }
+    }
+
+    /// Show the unchanged lines the inline row `row` stands for.
+    fn reveal_hidden(&mut self, row: u32, cx: &mut Context<Self>) {
+        let Some(diff) = self.diff.as_mut() else {
+            return;
+        };
+        let Some(hidden) = diff
+            .inline
+            .as_ref()
+            .and_then(|v| v.rows.hidden.iter().find(|h| h.row == row))
+        else {
+            return;
+        };
+        diff.revealed.push(hidden.buffer_rows.clone());
+        self.refresh_diff(Duration::ZERO, cx);
+    }
+
+    /// Show the first hidden run (the snapshot's `diff-reveal`).
+    pub(crate) fn reveal_first_hidden(&mut self, cx: &mut Context<Self>) {
+        let first = self
+            .diff
+            .as_ref()
+            .and_then(|d| d.inline.as_ref())
+            .and_then(|v| v.rows.hidden.first())
+            .map(|h| h.row);
+        if let Some(row) = first {
+            self.reveal_hidden(row, cx);
+        }
+    }
+
+    /// The inline document's "12 hidden lines" rows, over the empty rows
+    /// standing in for them (Monaco's unchanged region widget).
+    fn hidden_rows(&self, view: &InlineView, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(origin) = view.origin.get() else {
+            return Vec::new();
+        };
+        let state = view.state.read(cx);
+        let Some(visible) = state.visible_row_range() else {
+            return Vec::new();
+        };
+        let text = state.text();
+        let theme = cx.theme();
+        let widget = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(theme.secondary, |b| b.widget);
+        let (muted, hover) = (theme.muted_foreground, theme.foreground);
+        view.rows
+            .hidden
+            .iter()
+            .filter(|h| visible.contains(&(h.row as usize)) && (h.row as usize) < text.lines_len())
+            .filter_map(|h| {
+                let offset = text.line_start_offset(h.row as usize);
+                let line = state.range_to_bounds(&(offset..offset))?;
+                let count = h.buffer_rows.len();
+                let row = h.row;
+                Some(
+                    div()
+                        .id(("diff-hidden", row as usize))
+                        .absolute()
+                        .top(line.top() - origin.y)
+                        .left(line.left() - origin.x - px(4.))
+                        .right_0()
+                        .h(line.size.height)
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .px(px(8.))
+                        .bg(widget)
+                        .text_size(px(12.))
+                        .font_family(crate::workbench::UI_FONT)
+                        .text_color(muted)
+                        .cursor_pointer()
+                        .hover(move |d| d.text_color(hover))
+                        .child(
+                            gpui_kit::svg()
+                                .path("icons/chevrons-up-down.svg")
+                                .size(px(12.))
+                                .flex_none()
+                                .text_color(muted),
+                        )
+                        .child(format!("{count} hidden lines"))
+                        .on_click(cx.listener(move |tab, _, _, cx| tab.reveal_hidden(row, cx)))
+                        .into_any_element(),
+                )
+            })
+            .collect()
     }
 
     /// ↑ ↓: the previous or next change, wrapping around.
@@ -347,17 +461,32 @@ impl EditorTab {
             .map(|b| b.background)
             .unwrap_or(cx.theme().background);
         let body = match &diff.inline {
-            Some(view) => div()
-                .flex_1()
-                .min_h_0()
-                .child(tinted(
-                    styled(&view.state),
-                    &view.state,
-                    &view.tints,
-                    background,
-                    &signs,
-                ))
-                .into_any_element(),
+            Some(view) => {
+                let origin = view.origin.clone();
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(tinted(
+                        styled(&view.state),
+                        &view.state,
+                        &view.tints,
+                        background,
+                        &signs,
+                    ))
+                    .child(
+                        canvas(
+                            move |bounds, _, _| origin.set(Some(bounds.origin)),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+                    .children(self.hidden_rows(view, cx))
+                    .into_any_element()
+            }
             None => {
                 let sync = scroll_sync(
                     self.state.clone(),
