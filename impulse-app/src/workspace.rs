@@ -68,7 +68,7 @@ impl Surface {
 
     pub fn icon(&self) -> &'static str {
         match self {
-            Surface::Terminal(_) => "square-terminal",
+            Surface::Terminal(_) => "terminal",
             Surface::Editor(_) => "file-code",
             Surface::Review(_) => "file-diff",
             Surface::History(_) => "history",
@@ -79,6 +79,17 @@ impl Surface {
             Surface::Problems(_) => "triangle-alert",
             Surface::ProjectSetup(_) => "sliders-horizontal",
         }
+    }
+
+    /// The file's own icon (material, by name) for editors and images.
+    pub fn file_icon(&self, cx: &App) -> Option<String> {
+        let path = match self {
+            Surface::Editor(e) => e.read(cx).path.clone(),
+            Surface::Image(i) => i.read(cx).path.clone(),
+            _ => return None,
+        };
+        let name = path.file_name()?.to_string_lossy().into_owned();
+        Some(crate::file_icons::icon_path(&name, false, false))
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
@@ -283,6 +294,8 @@ pub struct Workspace {
     pub declined: bool,
     /// Its repository, whether it's a task, and the task's states.
     pub task: crate::tasks::TaskInfo,
+    /// TCP ports its terminals' processes listen on (`port_scan`).
+    pub ports: Vec<impulse_kit::listening_ports::ListeningPort>,
 }
 
 impl Workspace {
@@ -307,6 +320,7 @@ impl Workspace {
             lsp_events: None,
             declined: false,
             task,
+            ports: Vec::new(),
         };
         workspace.refresh_branch();
         workspace.reload_tree(false);

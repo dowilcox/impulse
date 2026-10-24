@@ -611,6 +611,53 @@ fn perform_now(action: &str, cx: &mut App) {
                 cx.notify();
             }
             ("settings", Some(query)) => workbench.open_settings(Some(query), window, cx),
+            ("preview", Some(path)) => {
+                // What a single click in the file tree does.
+                let path = workbench.workspace().root.join(path);
+                workbench.open_file_as(&path, true, window, cx)
+            }
+            ("workspace-edit", Some(other)) => {
+                // An edit to the open file plus one on disk, as a rename makes.
+                let Some(editor) = workbench.active_editor().cloned() else {
+                    fail(format!("{action}: no editor is selected"));
+                    return None;
+                };
+                let own = editor.read(cx).path.clone();
+                let root = workbench.workspace().root.clone();
+                let other = root.join(other);
+                let edit = |path: &std::path::Path, text: &str| {
+                    Some(impulse_lsp::workspace_edit::Operation::Edit {
+                        uri: impulse_lsp::path_uri(path)?,
+                        edits: vec![lsp_types::TextEdit {
+                            range: lsp_types::Range::default(),
+                            new_text: text.to_string(),
+                        }],
+                    })
+                };
+                let operations = [edit(&own, "// edited\n"), edit(&other, "edited ")]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                workbench.apply_workspace_edit(
+                    crate::workspace_edits::PendingEdit {
+                        edit: impulse_lsp::workspace_edit::WorkspaceEdit {
+                            operations,
+                            versions: Default::default(),
+                        },
+                        utf32: false,
+                        origin: own,
+                        server_root: root,
+                        title: "Rename".into(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+            ("search", Some(text)) => {
+                workbench.run_command("project_search", window, cx);
+                let search = workbench.search.clone();
+                search.update(cx, |s, cx| s.search_for(text, window, cx));
+            }
             ("expand-workspaces", None) => {
                 for workspace in &mut workbench.workspaces {
                     workspace.expanded = true;

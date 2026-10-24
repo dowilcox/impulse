@@ -56,6 +56,7 @@ pub(super) struct Editing {
 /// first and last line there, and those lines' text (context included), so
 /// it reads as outdated once line `first + k` no longer reads like snippet
 /// line k.
+#[cfg(test)]
 pub(super) fn anchor(lines: &[DiffLine], target: usize) -> (CommentSide, usize, usize, String) {
     anchor_range(lines, &[target], target)
 }

@@ -236,8 +236,24 @@ impl Workbench {
         color: KitRgba,
         cx: &App,
     ) -> AnyElement {
-        match Self::tab_agent(tab, cx) {
-            Some((_, state)) => agent_glyph(state, size, &self.palette),
+        if let Some((_, state)) = Self::tab_agent(tab, cx) {
+            return agent_glyph(state, size, &self.palette);
+        }
+        let surface = tab.focused_surface();
+        // A terminal a program drives directly gets the filled glyph.
+        if let Some(terminal) = surface.terminal() {
+            let name = if terminal.read(cx).direct {
+                "square-terminal"
+            } else {
+                "terminal"
+            };
+            return icon(name, size, color).into_any_element();
+        }
+        match surface.file_icon(cx) {
+            Some(path) => gpui_kit::img(path)
+                .size(px(size + 1.))
+                .flex_none()
+                .into_any_element(),
             None => icon(name, size, color).into_any_element(),
         }
     }

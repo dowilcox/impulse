@@ -28,6 +28,62 @@ pub(crate) fn icon(name: &str, size: f32, color: KitRgba) -> impl IntoElement {
 }
 
 /// `~/…` for paths in the home folder.
+/// "+41 −9" in the git colors (the Swift `DiffStat`).
+pub(crate) fn diff_stat(
+    added: usize,
+    removed: usize,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .gap(px(4.))
+        .font_family("JetBrains Mono")
+        .text_size(px(11.))
+        .when(added > 0 || removed == 0, |d| {
+            d.child(
+                div()
+                    .text_color(hsla(p.git_added))
+                    .child(format!("+{added}")),
+            )
+        })
+        .when(removed > 0, |d| {
+            d.child(
+                div()
+                    .text_color(hsla(p.git_deleted))
+                    .child(format!("\u{2212}{removed}")),
+            )
+        })
+}
+
+/// One status-bar entry (the Swift `StatusItem`): an icon and a label,
+/// highlighted on hover when it does something.
+pub(crate) fn status_item(
+    id: impl Into<gpui_kit::ElementId>,
+    icon_name: Option<&str>,
+    help: &str,
+    tint: Option<KitRgba>,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let color = tint.unwrap_or(p.text_secondary);
+    let help: gpui_kit::SharedString = help.to_string().into();
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(4.))
+        .h(px(20.))
+        .px(px(6.))
+        .rounded(px(metrics::RADIUS_SMALL))
+        .whitespace_nowrap()
+        .text_color(hsla(color))
+        .hover(|s| s.bg(hsla(p.hover)))
+        .tooltip(move |window, cx| {
+            gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
+        })
+        .children(icon_name.map(|name| icon(name, 11.5, color)))
+}
+
 pub(crate) fn abbreviate_home(path: &str) -> String {
     let home = crate::workspace::home().to_string_lossy().into_owned();
     match path.strip_prefix(&home) {
@@ -225,9 +281,8 @@ impl Workbench {
                 .items_center()
                 .gap(px(6.))
                 .h(px(metrics::TAB_HEIGHT))
-                .pl(px(if compact { 8. } else { 12. }))
-                .pr(px(8.))
-                .max_w(px(220.))
+                .pl(px(if compact { 8. } else { 9. }))
+                .pr(px(if compact { 8. } else { 5. }))
                 .rounded(px(metrics::RADIUS))
                 .text_color(hsla(color))
                 .hover(|s| s.bg(hsla(p.hover)))
@@ -257,25 +312,47 @@ impl Workbench {
                 })
                 .child(self.tab_icon(
                     tab,
-                    if tab.is_split() {
-                        "columns-2"
-                    } else {
-                        surface.icon()
-                    },
+                    surface.icon(),
                     metrics::ICON,
-                    color,
+                    if active { p.text } else { p.text_tertiary },
                     cx,
                 ));
             if !compact {
+                let panes = tab.panes.len();
                 t = t
                     .child(
                         div()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
+                            .max_w(px(180.))
+                            .truncate()
+                            .text_size(px(12.))
+                            .when(active, |d| d.font_weight(gpui_kit::FontWeight::MEDIUM))
                             .when(tab.preview, |d| d.italic())
                             .child(title),
                     )
+                    .when(panes > 1, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(2.))
+                                .child(icon(
+                                    if tab.zoomed.is_some() {
+                                        "maximize-2"
+                                    } else {
+                                        "columns-2"
+                                    },
+                                    10.,
+                                    p.text_tertiary,
+                                ))
+                                .child(
+                                    div()
+                                        .font_family("JetBrains Mono")
+                                        .text_size(px(10.))
+                                        .text_color(hsla(p.text_tertiary))
+                                        .child(panes.to_string()),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .id(("close", tab.id))
@@ -290,128 +367,243 @@ impl Workbench {
                                 cx.stop_propagation();
                                 w.close_tab_at(index, window, cx)
                             }))
-                            .child(if attention {
-                                crate::agent_views::status_dot(7., p.attention)
-                            } else if dirty {
-                                div()
-                                    .w(px(8.))
-                                    .h(px(8.))
-                                    .rounded_full()
-                                    .bg(hsla(p.text_secondary))
-                                    .into_any_element()
-                            } else {
+                            // The close button on hover; otherwise a dot for
+                            // attention or unsaved changes, as in Swift.
+                            .child(
                                 div()
                                     .invisible()
                                     .group_hover("tab", |s| s.visible())
-                                    .when(active, |d| d.visible())
-                                    .child(icon("x", metrics::ICON_SMALL, p.text_tertiary))
-                                    .into_any_element()
+                                    .absolute()
+                                    .child(icon("x", metrics::ICON_SMALL, p.text_secondary)),
+                            )
+                            .when(attention || dirty, |d| {
+                                d.child(div().group_hover("tab", |s| s.invisible()).child(
+                                    crate::agent_views::status_dot(
+                                        7.,
+                                        if attention {
+                                            p.attention
+                                        } else {
+                                            p.text_secondary
+                                        },
+                                    ),
+                                ))
                             }),
                     );
             }
             if active {
-                t = t
-                    .bg(hsla(p.raised))
-                    .border_b_2()
-                    .border_color(hsla(p.accent));
+                t = t.bg(hsla(p.raised)).relative().child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left(px(8.))
+                        .right(px(8.))
+                        .h(px(2.))
+                        .rounded_full()
+                        .bg(hsla(p.accent)),
+                );
             }
             let t = t.context_menu(self.tab_menu(self.active, index, cx));
             tabs = tabs.child(t);
         }
         let tabs_in_sidebar = self.tabs_in_sidebar(cx);
+        let (sidebar_visible, sidebar_width) = {
+            let settings = SettingsStore::get(cx);
+            (settings.sidebar_visible, settings.sidebar_width)
+        };
+        // Over the sidebar the leading part fills its width, so tabs start
+        // where the content column starts; without it, it hugs its content.
+        let leading_width = sidebar_visible.then(|| (sidebar_width as f32).max(220.));
+        let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
+        let leading_part =
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(6.))
+                .h_full()
+                .pl(px(leading))
+                .pr(px(8.))
+                .overflow_hidden()
+                .when_some(leading_width, |d, width| d.w(px(width)))
+                .children(crate::menus::menu_button(cx))
+                .child(
+                    div()
+                        .id("toggle-sidebar")
+                        .flex_none()
+                        .p(px(3.))
+                        .rounded(px(metrics::RADIUS_SMALL))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(hsla(p.hover)))
+                        .on_click(cx.listener(|w, _, window, cx| {
+                            w.run_command("toggle_sidebar", window, cx)
+                        }))
+                        .child(icon(
+                            "panel-left",
+                            metrics::ICON_LARGE,
+                            if sidebar_visible {
+                                p.text
+                            } else {
+                                p.text_secondary
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .id("titlebar-workspace")
+                        .flex_shrink(1.)
+                        .min_w(px(30.))
+                        .truncate()
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(hsla(p.text))
+                        .cursor_pointer()
+                        .on_click(cx.listener(|w, _, window, cx| {
+                            w.run_command("switch_workspace", window, cx)
+                        }))
+                        .child(workspace.name()),
+                )
+                .when(!workspace.branch.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .id("titlebar-branch")
+                            .flex()
+                            // The branch truncates before the workspace's name.
+                            .flex_shrink(10.)
+                            .min_w_0()
+                            .items_center()
+                            .gap(px(4.))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|w, _, window, cx| {
+                                w.run_command("switch_branch", window, cx)
+                            }))
+                            .child(icon("git-branch", 11., p.text_tertiary))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(11.5))
+                                    .text_color(hsla(p.text_secondary))
+                                    .child(workspace.branch.clone()),
+                            )
+                            .children(self.branch_sync_text(cx).map(|sync| {
+                                div()
+                                    .flex_none()
+                                    .font_family("JetBrains Mono")
+                                    .text_size(px(10.5))
+                                    .text_color(hsla(p.text_tertiary))
+                                    .child(sync)
+                            })),
+                    )
+                });
         div()
             .flex()
             .items_center()
             .h(px(metrics::TITLEBAR_HEIGHT))
-            .pl(px(leading))
-            .pr(px(10.))
-            .gap(px(10.))
+            .pr(px(8.))
             .bg(hsla(p.chrome))
             .border_b_1()
             .border_color(hsla(p.hairline))
-            .children(crate::menus::menu_button(cx))
-            .child(
-                div()
-                    .id("toggle-sidebar")
-                    .cursor_pointer()
-                    .on_click(
-                        cx.listener(|w, _, window, cx| w.run_command("toggle_sidebar", window, cx)),
-                    )
-                    .child(icon("panel-left", metrics::ICON_LARGE, p.text_secondary)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(workspace.name()),
-            )
-            .when(!workspace.branch.is_empty(), |d| {
-                d.child(
-                    div()
-                        .id("titlebar-branch")
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(4.))
-                        .text_color(hsla(p.text_secondary))
-                        .cursor_pointer()
-                        .on_click(cx.listener(|w, _, window, cx| {
-                            w.run_command("switch_branch", window, cx)
-                        }))
-                        .child(icon("git-branch", metrics::ICON_SMALL, p.text_secondary))
-                        .child(workspace.branch.clone())
-                        .children(self.branch_sync_text(cx).map(|sync| {
-                            div()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(10.5))
-                                .text_color(hsla(p.text_tertiary))
-                                .child(sync)
-                        })),
-                )
-            })
-            .child(div().w(px(8.)).flex_none())
+            .child(leading_part)
             // With `sidebar_tabs`, the sidebar lists the tabs while it's open.
             .when(!tabs_in_sidebar, |d| {
-                d.child(tabs).child(
-                    div()
-                        .id("new-tab")
-                        .flex_none()
-                        .p(px(4.))
-                        .rounded(px(metrics::RADIUS_SMALL))
-                        .hover(|s| s.bg(hsla(p.hover)))
-                        .on_click(
-                            cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)),
-                        )
-                        .child(icon("plus", metrics::ICON, p.text_secondary)),
+                d.child(
+                    tabs.child(
+                        div()
+                            .id("new-tab")
+                            .flex_none()
+                            .ml(px(4.))
+                            .p(px(4.))
+                            .rounded(px(metrics::RADIUS_SMALL))
+                            .hover(|s| s.bg(hsla(p.hover)))
+                            .on_click(
+                                cx.listener(|w, _, window, cx| {
+                                    w.run_command("new_tab", window, cx)
+                                }),
+                            )
+                            .child(icon("plus", metrics::ICON, p.text_secondary)),
+                    ),
                 )
             })
             .child(div().flex_1())
-            .children(self.agent_inbox_button(cx))
             .child(
                 div()
-                    .id("search-field")
                     .flex()
                     .flex_none()
                     .items_center()
-                    .gap(px(6.))
-                    .w(px(300.))
-                    .h(px(26.))
-                    .px(px(8.))
-                    .rounded(px(metrics::RADIUS))
-                    .bg(hsla(p.overlay))
-                    .border_1()
-                    .border_color(hsla(p.hairline))
-                    .text_color(hsla(p.text_tertiary))
-                    .cursor_pointer()
-                    .on_click(
-                        cx.listener(|w, _, window, cx| {
-                            w.run_command("command_palette", window, cx)
-                        }),
+                    .gap(px(4.))
+                    .children(self.agent_inbox_button(cx))
+                    .child(
+                        div()
+                            .id("search-field")
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap(px(6.))
+                            .h(px(24.))
+                            .pl(px(8.))
+                            .pr(px(4.))
+                            .rounded(px(metrics::RADIUS))
+                            .bg(hsla(p.raised))
+                            .hover(|s| s.bg(hsla(p.pressed)))
+                            .text_size(px(11.5))
+                            .text_color(hsla(p.text_tertiary))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|w, _, window, cx| {
+                                w.run_command("command_palette", window, cx)
+                            }))
+                            .child(icon("search", 12., p.text_tertiary))
+                            .child("Search or run a command")
+                            .child(
+                                // The Swift `KeyHint`.
+                                div()
+                                    .h(px(16.))
+                                    .px(px(4.))
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .border_color(hsla(p.hairline_strong))
+                                    .text_size(px(10.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(shortcut),
+                            ),
                     )
-                    .child(icon("search", metrics::ICON_SMALL, p.text_tertiary))
-                    .child("Search or run a command")
-                    .child(div().flex_1())
-                    .child(shortcut),
+                    .children(repo.filter(|r| r.changed > 0).map(|r| {
+                        let help: gpui_kit::SharedString = format!(
+                            "Review {} changed file{}",
+                            r.changed,
+                            if r.changed == 1 { "" } else { "s" }
+                        )
+                        .into();
+                        div()
+                            .id("diff-pill")
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap(px(6.))
+                            .h(px(24.))
+                            .px(px(8.))
+                            .rounded(px(metrics::RADIUS))
+                            .bg(hsla(p.raised))
+                            .hover(|s| s.bg(hsla(p.pressed)))
+                            .cursor_pointer()
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(help.clone())
+                                    .build(window, cx)
+                            })
+                            .on_click(cx.listener(|w, _, window, cx| {
+                                w.run_command("review_changes", window, cx)
+                            }))
+                            .child(icon("file-diff", 12., p.text_secondary))
+                            .child(
+                                div()
+                                    .font_family("JetBrains Mono")
+                                    .text_size(px(11.))
+                                    .text_color(hsla(p.text_secondary))
+                                    .child(r.changed.to_string()),
+                            )
+                            .child(diff_stat(r.added, r.removed, p))
+                    })),
             )
     }
 
@@ -424,6 +616,12 @@ impl Workbench {
         // Listed tabs stay open for the active workspace.
         let expanded = workspace.expanded || tabs_in_sidebar && selected;
         let drop_color = hsla(p.selection);
+        let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
+        let attention = workspace
+            .tabs
+            .iter()
+            .filter(|tab| Self::tab_needs_attention(tab, cx))
+            .count();
         let mut column = div().flex().flex_col();
         let row = div()
             .id(("workspace", id))
@@ -431,13 +629,29 @@ impl Workbench {
             .flex()
             .items_center()
             .gap(px(6.))
-            .h(px(metrics::ROW_HEIGHT + 4.))
-            .pl(px(if indented { 14. } else { 6. }))
-            .pr(px(8.))
+            .h(px(26.))
+            .pl(px(if indented { 16. } else { 8. }))
+            .pr(px(6.))
             .mx(px(6.))
             .rounded(px(metrics::RADIUS))
-            .when(selected, |d| d.bg(hsla(p.selection)))
-            .when(!selected, |d| d.hover(|s| s.bg(hsla(p.hover))))
+            // When its tabs are listed, the selected tab carries the highlight.
+            .when(selected && !expanded, |d| d.bg(hsla(p.selection)))
+            .when(!(selected && !expanded), |d| {
+                d.hover(|s| s.bg(hsla(p.hover)))
+            })
+            .relative()
+            .when(selected, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(3.))
+                        .top(px(6.))
+                        .w(px(2.))
+                        .h(px(14.))
+                        .rounded_full()
+                        .bg(hsla(p.accent)),
+                )
+            })
             .on_click(cx.listener(move |w, _, window, cx| w.activate_workspace(index, window, cx)))
             .on_drag(
                 crate::task_sidebar::DraggedWorkspace {
@@ -460,6 +674,12 @@ impl Workbench {
                 div()
                     .id(("expand", id))
                     .w(px(12.))
+                    .flex_none()
+                    // Shown on hover or while the tabs are listed, as Swift's.
+                    .when(!expanded, |d| {
+                        d.invisible().group_hover("workspace", |s| s.visible())
+                    })
+                    .when(tabs_in_sidebar && selected, |d| d.invisible())
                     .on_click(cx.listener(move |w, _, _, cx| {
                         cx.stop_propagation();
                         if let Some(ws) = w.workspaces.get_mut(index) {
@@ -473,25 +693,26 @@ impl Workbench {
                         } else {
                             "chevron-right"
                         },
-                        metrics::ICON_SMALL,
+                        10.,
                         p.text_tertiary,
                     )),
             )
             .child(icon(
-                match workspace.kind {
-                    Kind::Folder => "folder-git-2",
-                    Kind::Scratch => "square-terminal",
+                match (workspace.kind, repo.is_some()) {
+                    (Kind::Scratch, _) => "square-terminal",
+                    (Kind::Folder, true) => "folder-git-2",
+                    (Kind::Folder, false) => "folder",
                 },
-                metrics::ICON,
-                p.text_secondary,
+                13.,
+                if selected { p.accent } else { p.text_tertiary },
             ))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
+                    .flex_none()
+                    .max_w(px(150.))
+                    .truncate()
                     .text_size(px(12.))
+                    .text_color(hsla(if selected { p.text } else { p.text_secondary }))
                     .font_weight(if selected {
                         FontWeight::SEMIBOLD
                     } else {
@@ -504,6 +725,8 @@ impl Workbench {
                 |d| {
                     d.child(
                         div()
+                            .min_w_0()
+                            .truncate()
                             .font_family("JetBrains Mono")
                             .text_size(px(10.5))
                             .text_color(hsla(p.text_tertiary))
@@ -514,26 +737,110 @@ impl Workbench {
             .when(workspace.kind == Kind::Scratch, |d| {
                 d.child(
                     div()
+                        .min_w_0()
+                        .truncate()
                         .text_size(px(10.5))
                         .text_color(hsla(p.text_tertiary))
                         .child("follows tab"),
                 )
             })
-            .children(self.workspace_agent_counts(index, cx))
-            .children(self.task_chips(index, cx))
+            .child(div().flex_1().min_w(px(4.)))
+            // The badges keep their size; the name and branch truncate.
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(6.))
+                    .children(self.task_chips(index, cx))
+                    .children(
+                        impulse_kit::listening_ports::chip(&workspace.ports).map(|chip| {
+                            let help = workspace
+                                .ports
+                                .iter()
+                                .map(|p| format!(":{} {}", p.port, p.process))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            div()
+                                .id(("ports", id))
+                                .font_family("JetBrains Mono")
+                                .text_size(px(10.))
+                                .text_color(hsla(p.text_tertiary))
+                                .tooltip(move |window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(help.clone())
+                                        .build(window, cx)
+                                })
+                                .child(chip)
+                        }),
+                    )
+                    .children(self.workspace_agent_counts(index, cx))
+                    .children(repo.as_ref().filter(|r| r.behind > 0).map(|r| {
+                        let behind = r.behind;
+                        let upstream = r.upstream.clone().unwrap_or_default();
+                        let root = r.root.clone();
+                        div()
+                            .id(("behind", id))
+                            .font_family("JetBrains Mono")
+                            .text_size(px(10.))
+                            .text_color(hsla(p.text_tertiary))
+                            .cursor_pointer()
+                            .tooltip(move |window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new(format!(
+                                    "{behind} commit{} behind {upstream}: click to pull",
+                                    if behind == 1 { "" } else { "s" }
+                                ))
+                                .build(window, cx)
+                            })
+                            .on_click(cx.listener(move |w, _, window, cx| {
+                                cx.stop_propagation();
+                                let repo =
+                                    crate::repository_state::RepositoryStore::state(&root, cx);
+                                w.git_pull(&repo, None, window, cx);
+                            }))
+                            .child(format!("\u{2193}{behind}"))
+                    }))
+                    .children(
+                        repo.as_ref()
+                            .filter(|r| r.changed > 0)
+                            .map(|r| crate::workbench_chrome::diff_stat(r.added, r.removed, p)),
+                    )
+                    .when(attention > 0, |d| {
+                        // The Swift `Badge`: the count on the attention color.
+                        d.child(
+                            div()
+                                .min_w(px(16.))
+                                .h(px(15.))
+                                .px(px(5.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .bg(hsla(p.attention))
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(hsla(p.text_on_accent))
+                                .child(attention.to_string()),
+                        )
+                    })
+                    .when(
+                        attention == 0 && !expanded && workspace.tabs.len() > 1,
+                        |d| {
+                            d.child(
+                                div()
+                                    .font_family("JetBrains Mono")
+                                    .text_size(px(10.))
+                                    .text_color(hsla(p.text_tertiary))
+                                    .child(workspace.tabs.len().to_string()),
+                            )
+                        },
+                    ),
+            )
             .tooltip({
                 let help = self.workspace_help(index);
                 move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
                 }
-            })
-            .child(
-                div()
-                    .font_family("JetBrains Mono")
-                    .text_size(px(10.))
-                    .text_color(hsla(p.text_tertiary))
-                    .child(workspace.tabs.len().to_string()),
-            );
+            });
         column = column.child(row.context_menu(self.workspace_menu(index, cx)));
         if expanded {
             for (t, tab) in workspace.tabs.iter().enumerate() {
@@ -585,7 +892,7 @@ impl Workbench {
                                 .then(|| crate::agent_views::status_dot(6., p.attention)),
                         )
                         .children(tab.pinned.then(|| icon("pin", 10., p.text_tertiary)))
-                        .when(active_tab && tabs_in_sidebar, |d| d.bg(hsla(p.selection)))
+                        .when(active_tab, |d| d.bg(hsla(p.selection)))
                         .context_menu(menu),
                 );
             }
@@ -856,115 +1163,200 @@ impl Workbench {
     }
 
     pub(crate) fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = &self.palette;
-        let item = |name: &str, text: String| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .child(icon(name, metrics::ICON_SMALL, p.text_secondary))
-                .child(text)
-        };
+        let p = self.palette.clone();
         let workspace = self.workspace();
-        let right: Vec<AnyElement> = match self.focused_surface() {
+        let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
+        let mut left: Vec<AnyElement> = Vec::new();
+        let mut right: Vec<AnyElement> = Vec::new();
+        if self.is_restricted() {
+            left.push(
+                status_item(
+                    "restricted",
+                    Some("shield-alert"),
+                    "Restricted: language servers, formatters on save and background fetch are off in this folder. Click to trust it.",
+                    Some(p.warning),
+                    &p,
+                )
+                .on_click(cx.listener(|w, _, window, cx| w.run_command("trust_folder", window, cx)))
+                .child("Restricted")
+                .into_any_element(),
+            );
+        }
+        if !workspace.branch.is_empty() {
+            left.push(
+                status_item(
+                    "status-branch",
+                    Some("git-branch"),
+                    "Switch branch",
+                    None,
+                    &p,
+                )
+                .on_click(
+                    cx.listener(|w, _, window, cx| w.run_command("switch_branch", window, cx)),
+                )
+                .child(workspace.branch.clone())
+                .into_any_element(),
+            );
+        }
+        if let Some(repo) = repo.filter(|r| r.changed > 0) {
+            left.push(
+                status_item(
+                    "status-changes",
+                    Some("file-diff"),
+                    "Review changes",
+                    None,
+                    &p,
+                )
+                .on_click(
+                    cx.listener(|w, _, window, cx| w.run_command("review_changes", window, cx)),
+                )
+                .child(repo.changed.to_string())
+                .child(diff_stat(repo.added, repo.removed, &p))
+                .into_any_element(),
+            );
+        }
+        left.extend(self.problems_status(cx));
+        for port in workspace.ports.iter().take(3) {
+            let number = port.port;
+            left.push(
+                status_item(
+                    ("status-port", number as usize),
+                    Some("globe"),
+                    &format!(
+                        "{} is listening on {number}: open in the browser",
+                        port.process
+                    ),
+                    None,
+                    &p,
+                )
+                .on_click(move |_, _, cx| cx.open_url(&format!("http://localhost:{number}")))
+                .child(format!(":{number}"))
+                .into_any_element(),
+            );
+        }
+        if workspace.ports.len() > 3 {
+            let help = workspace.ports[3..]
+                .iter()
+                .map(|p| format!(":{} {}", p.port, p.process))
+                .collect::<Vec<_>>()
+                .join("\n");
+            left.push(
+                status_item("status-more-ports", None, &help, None, &p)
+                    .child(format!("+{}", workspace.ports.len() - 3))
+                    .into_any_element(),
+            );
+        }
+        match self.focused_surface() {
             Some(Surface::Editor(editor)) => {
                 let editor = editor.read(cx);
                 let (line, column) = editor.cursor(cx);
-                [
-                    editor.vim_status(cx).map(|status| {
+                if let Some(status) = editor.vim_status(cx) {
+                    right.push(
                         div()
                             .font_family("JetBrains Mono")
                             .child(status)
-                            .into_any_element()
-                    }),
-                    editor.notice.clone().map(|n| {
+                            .into_any_element(),
+                    );
+                }
+                if let Some(notice) = editor.notice.clone() {
+                    right.push(
                         div()
                             .text_color(hsla(p.warning))
-                            .child(n)
-                            .into_any_element()
-                    }),
-                    Some(
-                        div()
-                            .child(format!("Ln {line}, Col {column}"))
+                            .child(notice)
                             .into_any_element(),
-                    ),
-                    Some(
-                        div()
-                            .child(if editor.use_spaces {
-                                format!("Spaces: {}", editor.tab_size)
+                    );
+                }
+                right.push(
+                    status_item("status-line", None, "Go to Line", None, &p)
+                        .on_click(
+                            cx.listener(|w, _, window, cx| w.run_command("go_to_line", window, cx)),
+                        )
+                        .child(format!("Ln {line}, Col {column}"))
+                        .into_any_element(),
+                );
+                let indent = if editor.use_spaces {
+                    format!("Spaces: {}", editor.tab_size)
+                } else {
+                    format!("Tab Size: {}", editor.tab_size)
+                };
+                right.push(
+                    status_item("status-indent", None, "Indentation", None, &p)
+                        .child(indent)
+                        .into_any_element(),
+                );
+                right.push(
+                    status_item("status-encoding", None, "Encoding", None, &p)
+                        .child("UTF-8")
+                        .into_any_element(),
+                );
+                right.push(
+                    status_item("status-language", Some("code"), "Language", None, &p)
+                        .child(editor.language.clone())
+                        .into_any_element(),
+                );
+                if impulse_kit::markdown_preview::is_previewable_file(
+                    &editor.path.to_string_lossy(),
+                ) {
+                    let previewing = editor.preview.is_some();
+                    right.push(
+                        status_item(
+                            "status-preview",
+                            Some(if previewing { "eye-off" } else { "eye" }),
+                            if previewing {
+                                "Hide preview"
                             } else {
-                                format!("Tab Size: {}", editor.tab_size)
-                            })
-                            .into_any_element(),
-                    ),
-                    Some(div().child("UTF-8").into_any_element()),
-                    Some(div().child(editor.language.clone()).into_any_element()),
-                    Some(editor.server_names())
-                        .filter(|names| !names.is_empty())
-                        .map(|names| {
-                            div()
-                                .text_color(hsla(p.text_tertiary))
-                                .child(names.join(", "))
-                                .into_any_element()
-                        }),
-                ]
-                .into_iter()
-                .flatten()
-                .collect()
+                                "Show preview"
+                            },
+                            previewing.then_some(p.accent),
+                            &p,
+                        )
+                        .on_click(cx.listener(|w, _, window, cx| {
+                            w.run_command("toggle_markdown_preview", window, cx)
+                        }))
+                        .child("Preview")
+                        .into_any_element(),
+                    );
+                }
             }
-            Some(Surface::Review(_)) | Some(Surface::History(_)) => Vec::new(),
             Some(Surface::Terminal(terminal)) => {
-                let terminal = terminal.read(cx);
-                vec![
-                    item("folder", abbreviate_home(&terminal.cwd)).into_any_element(),
-                    item("square-terminal", crate::workspace::shell_name()).into_any_element(),
-                ]
+                let cwd = terminal.read(cx).cwd.clone();
+                if !cwd.is_empty() {
+                    left.push(
+                        status_item("status-cwd", Some("folder"), &cwd, None, &p)
+                            .child(abbreviate_home(&cwd))
+                            .into_any_element(),
+                    );
+                }
+                right.push(
+                    status_item("status-shell", Some("terminal"), "Shell", None, &p)
+                        .child(crate::workspace::shell_name())
+                        .into_any_element(),
+                );
             }
-            _ => Vec::new(),
-        };
+            _ => {}
+        }
+        if let Some(notice) = self.notice.clone() {
+            left.push(
+                div()
+                    .px(px(6.))
+                    .text_color(hsla(p.warning))
+                    .child(notice)
+                    .into_any_element(),
+            );
+        }
         div()
             .flex()
             .items_center()
-            .gap(px(16.))
+            .gap(px(2.))
             .h(px(metrics::STATUS_BAR_HEIGHT))
-            .px(px(12.))
+            .px(px(6.))
             .bg(hsla(p.chrome))
             .border_t_1()
             .border_color(hsla(p.hairline))
-            .text_size(px(12.))
+            .text_size(px(11.))
             .text_color(hsla(p.text_secondary))
-            .when(!workspace.branch.is_empty(), |d| {
-                d.child(
-                    div()
-                        .id("status-branch")
-                        .cursor_pointer()
-                        .on_click(cx.listener(|w, _, window, cx| {
-                            w.run_command("switch_branch", window, cx)
-                        }))
-                        .child(item("git-branch", workspace.branch.clone())),
-                )
-            })
-            .children(self.is_restricted().then(|| {
-                div()
-                    .id("restricted")
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .text_color(hsla(p.warning))
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.run_command("trust_folder", window, cx)
-                    }))
-                    .child(icon("shield-alert", metrics::ICON_SMALL, p.warning))
-                    .child("Restricted")
-            }))
-            .children(self.problems_status(cx))
-            .children(
-                self.notice
-                    .clone()
-                    .map(|notice| div().text_color(hsla(p.warning)).child(notice)),
-            )
-            .child(div().flex_1())
+            .children(left)
+            .child(div().flex_1().min_w(px(8.)))
             .children(self.update_item(cx))
             .children(right)
     }

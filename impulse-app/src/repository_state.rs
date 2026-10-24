@@ -399,6 +399,16 @@ pub fn start_auto_fetch(cx: &mut App) {
     .detach();
 }
 
+/// A repository as a workspace's sidebar row shows it.
+pub struct RepoSummary {
+    pub root: String,
+    pub upstream: Option<String>,
+    pub behind: usize,
+    pub changed: usize,
+    pub added: usize,
+    pub removed: usize,
+}
+
 #[derive(Default)]
 pub struct RepositoryStore {
     states: HashMap<String, WeakEntity<RepositoryState>>,
@@ -426,6 +436,26 @@ impl RepositoryStore {
         }
         store.roots.insert(dir.to_path_buf(), root.clone());
         root
+    }
+
+    /// What a workspace's sidebar row shows of the repository `dir` is in,
+    /// if its state has been read.
+    pub fn summary(dir: &Path, cx: &mut App) -> Option<RepoSummary> {
+        let root = Self::root_for(dir, cx)?;
+        let state = cx
+            .global::<RepositoryStore>()
+            .states
+            .get(&root)?
+            .upgrade()?;
+        let snapshot = state.read(cx).snapshot.as_ref()?;
+        Some(RepoSummary {
+            root,
+            upstream: snapshot.upstream.clone(),
+            behind: snapshot.behind,
+            changed: snapshot.changed_file_count(),
+            added: snapshot.total_added(),
+            removed: snapshot.total_removed(),
+        })
     }
 
     /// The state for a repository root, created on first use.

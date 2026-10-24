@@ -104,7 +104,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           in the file tree, pinned tabs, tabs dragged to
                           reorder, the tab context menu), commands as one RunCommand
                           action bound from impulse_kit::keybindings,
-                          workbench chrome, the terminal (the login shell
+                          workbench chrome (Swift's titlebar, workspace rows
+                          with their chips, the status bar's items:
+                          status_item), listening ports (port_scan.rs over
+                          impulse_kit::listening_ports: /proc on Linux,
+                          lsof on macOS), the terminal (the login shell
                           with integration, shell_launch.rs),
                           its own painted grid, keys (the kitty keyboard
                           protocol once a program pushes its flags,

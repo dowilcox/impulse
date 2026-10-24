@@ -49,6 +49,7 @@ mod kit_theme;
 mod lsp_hub;
 mod menus;
 mod palette;
+mod port_scan;
 mod problems_view;
 mod project_actions;
 mod project_setup;

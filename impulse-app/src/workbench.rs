@@ -139,6 +139,7 @@ impl Workbench {
             workbench.request_trust(workbench.active, window, cx)
         });
         workbench.start_task_monitor(window, cx);
+        workbench.start_port_scan(window, cx);
         workbench.start_editor_watch(window, cx);
         workbench.start_tree_watch(window, cx);
         // Workspaces list their folders before settings are at hand.
@@ -498,7 +499,7 @@ impl Workbench {
         self.open_file_as(path, preview, window, cx);
     }
 
-    fn open_file_as(
+    pub(crate) fn open_file_as(
         &mut self,
         path: &Path,
         preview: bool,

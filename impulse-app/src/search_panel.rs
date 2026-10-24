@@ -95,6 +95,14 @@ impl SearchPanel {
         }
     }
 
+    /// Search for `text` now (the snapshot's `search=` action).
+    pub fn search_for(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query.update(cx, |input, cx| {
+            input.set_value(text.to_string(), window, cx)
+        });
+        self.schedule(Duration::ZERO, cx);
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.update(cx, |q, cx| q.focus(window, cx));
     }
