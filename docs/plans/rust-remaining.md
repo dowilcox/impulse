@@ -123,7 +123,15 @@ on them yet.
   the Mac.
 - [ ] **Hover popover overlap.** GPUI Kit's hover popover draws a code
   block's language label on top of the code
-  ([screenshot](images/rust-editor-hover.png)).
+  ([screenshot](images/rust-editor-hover.png)). The cause, in GPUI Kit
+  0.8.0: a code block puts its language label 7 px from the top and pads
+  its top by 28 px to clear it (`gpui-base`'s `text/node.rs`), but the
+  editor popovers style code blocks with `p_0()`
+  (`gpui-component`'s `input/popovers/mod.rs`, `render_markdown`), which
+  cancels that padding. The fix belongs there (hide the label in
+  popovers, as Monaco shows none, or keep the top padding). Working
+  around it here would mean dropping the fence's language, and with it
+  the hover's syntax colors.
 
 ## Not differences
 
