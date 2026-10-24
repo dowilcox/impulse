@@ -82,7 +82,8 @@ pub struct EditorTab {
     /// Other places the symbol at the cursor appears, and other matches of
     /// the selection (Monaco's occurrence and selection highlights).
     marks: Option<RangeDecorationCollection>,
-    /// Diff View: the file at HEAD beside the editor, changed lines tinted.
+    /// Diff View: the file's index version beside the editor, changed lines
+    /// tinted.
     diff: Option<DiffView>,
     /// The call's signature over the cursor (Monaco's parameter hints).
     signature: Option<lsp_types::SignatureHelp>,
@@ -1763,7 +1764,7 @@ impl EditorTab {
         self.diff.is_some()
     }
 
-    /// Toggle Diff View: the file at HEAD, read-only, beside the editor,
+    /// Toggle Diff View: the file's index version, read-only, beside the editor,
     /// with removed lines tinted on the left and added ones on the right,
     /// following edits (Monaco's side-by-side diff editor in the Swift app).
     /// An error message when the file isn't in a repository.
@@ -1777,7 +1778,10 @@ impl EditorTab {
             cx.notify();
             return Ok(());
         }
-        let base_text = impulse_git::buffer_diff::head_text(&self.path)
+        // The file's git base, as the change marks have it: its index
+        // version (what's staged, else HEAD's).
+        let base_text = impulse_git::base_content(&self.path.to_string_lossy())
+            .map(|b| LineEnding::normalize(&b))
             .ok_or_else(|| "This file isn't in a git repository.".to_string())?;
         if self.preview == Some(false) {
             self.preview = None;
