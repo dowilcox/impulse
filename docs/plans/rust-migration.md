@@ -311,7 +311,8 @@ which inserts the type when picked.*
   settings.json watched and merged as `SettingsStore` does; session restore
   from the same `session-state.json` and scrollback files; the control
   socket for `impulse` (`open`, `edit` waiting for the tab, `split`, `tab`,
-  `notify`, `checkpoint`, `unsaved`).
+  `notify`, `checkpoint`, `unsaved`, `review`, `comments` with `resolve`,
+  `problems`).
 - Tasks: New Task (the sheet, the worktree beside the repository, copies,
   the task list and its slot, the task's own values and setup script once
   the project settings are trusted, the main checkout's changes moved in
@@ -322,6 +323,26 @@ which inserts the type when picked.*
   overlap chips. A task's terminals get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT`
   and `IMPULSE_REPO_ROOT`. Agents' parts (an agent's request, its brief,
   waiting for its turn) come with the agents.
+- Problems and review comments, as the Swift app has them: every language
+  server's diagnostics kept per file (open or not) for the Problems tab
+  (`show_problems`, Ctrl+Alt+M on Linux: by file, files with errors first,
+  severity toggles, a filter, click to open at the problem, Copy as
+  Prompt) and the status bar's error and warning counts; Review's comments
+  written from a line's +, a hunk's Comment or c, shown under the last line
+  they cover, floating to the top once their lines read differently,
+  edited and deleted in place, and an agent's resolution (`impulse comments
+  resolve`) shown with Accept and Reopen; saved in the same
+  `review/<digest>.json` as the Swift app and read again when it changes.
+  Sending problems or comments to an agent's terminal waits for the Rust
+  app to know its agents; `impulse review --last-turn` for its turns.
+
+| Problems | Review comments |
+|---|---|
+| ![Problems](images/rust-problems.png) | ![Review comments](images/rust-review-comments.png) |
+
+*Right: a comment whose line changed since it was written floats to the
+top of the file's card; one on a removed line and one written with c on
+the focused hunk sit under their lines.*
 - The terminal draws its own grid (cell runs, selection and search ranges,
   the cursor, block washes, stripes, separators and status chips), takes
   keys through the port of `KeyEncoder` and text through GPUI's input

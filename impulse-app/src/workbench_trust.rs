@@ -302,6 +302,7 @@ impl Workbench {
     ) {
         match event {
             impulse_lsp::ServerEvent::Diagnostics(server, params) => {
+                self.record_problems(&server, &params, cx);
                 let Some(workspace) = self.workspaces.iter().find(|w| w.id == workspace_id) else {
                     return;
                 };

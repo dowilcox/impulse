@@ -109,8 +109,19 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           $XDG_RUNTIME_DIR), Review (review_view.rs:
                           scopes, navigator, unified and split diffs with
                           word-level changes, stage/unstage/revert of files
-                          and hunks, viewed marks, the j/k/n/p/s/u/x/v/o
-                          keys), History (history_view.rs: the lane graph,
+                          and hunks, viewed marks, the j/k/n/p/s/u/x/v/c/o
+                          keys; review comments in review_view/comments.rs:
+                          the composer from a line's +, a hunk's Comment or
+                          c, comments under their lines and outdated ones
+                          on top, edit, delete, an agent's resolution with
+                          Accept and Reopen, Copy as Prompt, kept by
+                          impulse_kit::review_comments::CommentStore in the
+                          data directory's review/<digest>.json), Problems
+                          (problems_view.rs: ProblemStore with every
+                          server's diagnostics, the tab by file with
+                          severity toggles and a filter, the status bar's
+                          counts), `impulse review|comments|problems`
+                          (control_review.rs), History (history_view.rs: the lane graph,
                           ref chips, paging, the commit's details over its
                           Review list), command palette and quick open
                           (palette.rs: the Swift PaletteModel/PaletteView

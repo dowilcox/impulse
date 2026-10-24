@@ -16,6 +16,7 @@ use crate::history_view::HistoryView;
 use crate::image_view::ImageView;
 use crate::keybindings_view::KeybindingsView;
 use crate::lsp_hub::LspHub;
+use crate::problems_view::ProblemsView;
 use crate::review_view::ReviewView;
 use crate::settings_view::SettingsView;
 use crate::terminal_view::TerminalView;
@@ -35,6 +36,8 @@ pub enum Surface {
     Keybindings(Entity<KeybindingsView>),
     /// A task's Finish tab (`task_finish`).
     TaskFinish(Entity<crate::task_finish::TaskFinishView>),
+    /// The window's language-server diagnostics (one per workspace).
+    Problems(Entity<ProblemsView>),
 }
 
 impl Surface {
@@ -56,6 +59,7 @@ impl Surface {
             Surface::Settings(_) => "Settings".into(),
             Surface::Keybindings(_) => "Keyboard Shortcuts".into(),
             Surface::TaskFinish(f) => f.read(cx).title(),
+            Surface::Problems(_) => "Problems".into(),
         }
     }
 
@@ -69,6 +73,7 @@ impl Surface {
             Surface::Settings(_) => "settings",
             Surface::Keybindings(_) => "keyboard",
             Surface::TaskFinish(_) => "git-merge",
+            Surface::Problems(_) => "triangle-alert",
         }
     }
 
@@ -89,6 +94,7 @@ impl Surface {
             Surface::Settings(s) => s.read(cx).focus.clone(),
             Surface::Keybindings(k) => k.read(cx).focus.clone(),
             Surface::TaskFinish(f) => f.read(cx).focus_handle().clone(),
+            Surface::Problems(p) => p.read(cx).focus.clone(),
         }
     }
 
@@ -115,6 +121,7 @@ impl Surface {
                 let handle = f.read(cx).focus_handle().clone();
                 window.focus(&handle, cx);
             }
+            Surface::Problems(p) => p.update(cx, |p, cx| p.focus(window, cx)),
         }
     }
 
@@ -131,7 +138,7 @@ impl Surface {
             Surface::TaskFinish(f) => Some(PathBuf::from(&f.read(cx).root)),
             Surface::History(h) => Some(PathBuf::from(&h.read(cx).root)),
             Surface::Image(i) => i.read(cx).path.parent().map(Path::to_path_buf),
-            Surface::Settings(_) | Surface::Keybindings(_) => None,
+            Surface::Settings(_) | Surface::Keybindings(_) | Surface::Problems(_) => None,
         }
     }
 
