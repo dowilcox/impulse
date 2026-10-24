@@ -442,6 +442,9 @@ The Swift ports were verified against fixtures generated from the original Rust 
 ./impulse-macos/build.sh --dev       # "Impulse Dev.app" (separate bundle ID, runs side-by-side)
 ./impulse-macos/build.sh --dmg       # + disk image
 ./impulse-macos/build.sh --sign --notarize --dmg   # full release build
+#   On Linux (rust branch) build.sh builds the Rust app instead: --dev is
+#   `cargo build -p impulse-app -p impulse-cli` (target/debug/impulse-app),
+#   no flags runs scripts/package-linux.sh; --dmg/--sign/--notarize refuse.
 
 # Swift package directly — use the wrapper, which adds the flags the active
 # toolchain needs (CLT Swift 6.4 lacks the SwiftUI macro plugin and puts
@@ -502,7 +505,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for Markdown preview and review/history syntax colors; pinned version and checksum).
 - **scripts/vendor-lucide.sh** — regenerates `LucideIcons.swift` from the pinned lucide-static icons (add a name to its list for a new icon).
 - **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `FileIcons.swift`) from upstream material-icon-theme.
-- **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
+- **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg). On Linux (rust branch) it builds the Rust app instead: `--dev` the debug `impulse-app` and `impulse` CLI that capture.py and the smoke checks run, no flags `scripts/package-linux.sh`.
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
 - **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`, and cropping to dialogs, the palette, the agents inbox and toasts from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the Rust app draws them inside its window.
 - **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.

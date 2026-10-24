@@ -21,7 +21,7 @@ Impulse is a Mac-first terminal IDE written in Swift (AppKit + SwiftUI), with th
 
 Use the scripts; don't replicate their steps by hand.
 
-- `./impulse-macos/build.sh --dev` — build `dist/Impulse Dev.app` (runs alongside the release app).
+- `./impulse-macos/build.sh --dev` — build `dist/Impulse Dev.app` (runs alongside the release app). On Linux (rust branch) it builds the Rust app and CLI in debug mode instead (`target/debug/impulse-app`), and without `--dev` runs `scripts/package-linux.sh`.
 - `impulse-macos/swiftw build` / `impulse-macos/swiftw test` — build or test the Swift package with the flags the local toolchain needs.
 - `cargo test -p impulse-terminal`, `cargo test -p impulse-kit`, `cargo test -p impulse-git`, `cargo test -p impulse-lsp`, `cargo test -p impulse-protocol -p impulse-cli`, `cargo fmt`, `cargo clippy` — Rust core.
 - `python3 scripts/smoke/run.py` — smoke checks of the dev build (editor, shells, CLI, agents, language servers, tasks, session restore), headless; run before a release. The opencode scenario needs `node`. `IMPULSE_SNAPSHOT_APP=target/debug/impulse-app` (the default on Linux, under Xvfb) runs them, and `scripts/docs/capture.py`, against the Rust app.

@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Build script for the Impulse macOS frontend.
 #
-# This script must be run on macOS from the workspace root (the directory
+# This script must be run on macOS (on Linux it builds the Rust app
+# instead; see below) from the workspace root (the directory
 # containing the top-level Cargo.toml and the impulse-macos/ directory).
 #
 # Steps:
@@ -23,6 +24,10 @@ set -euo pipefail
 #   ./impulse-macos/build.sh --sign --notarize --dmg   # build + sign + notarize + .dmg
 #   ./impulse-macos/build.sh --dev                     # build dev variant (separate bundle ID)
 #   ./impulse-macos/build.sh --release                 # same as default (release build)
+#
+# On Linux (rust branch):
+#   ./impulse-macos/build.sh --dev                     # debug build: target/debug/impulse-app
+#   ./impulse-macos/build.sh                           # release packages (scripts/package-linux.sh)
 #
 # Environment variables for signing:
 #   IMPULSE_SIGN_IDENTITY  — codesign identity, e.g. "Developer ID Application: Name (TEAM_ID)"
@@ -49,10 +54,36 @@ done
 
 cd "${WORKSPACE_ROOT}"
 
+# ── Linux: the Rust app ───────────────────────────────────────────────
+#
+# On Linux there is no Swift app; the GPUI app (rust branch) is built
+# instead. --dev is the debug build that scripts/docs/capture.py and
+# scripts/smoke/run.py run by default (target/debug/impulse-app); a plain
+# build is the release packages from scripts/package-linux.sh.
+
+if [[ "$(uname)" == "Linux" ]]; then
+    if [[ ! -d impulse-app ]]; then
+        echo "ERROR: impulse-app not found. The Linux app is on the rust branch." >&2
+        exit 1
+    fi
+    if [[ "${CREATE_DMG}" == true || "${SIGN}" == true ]]; then
+        echo "ERROR: --dmg, --sign and --notarize are macOS only." >&2
+        exit 1
+    fi
+    if [[ "${DEV_BUILD}" == true ]]; then
+        cargo build -p impulse-app -p impulse-cli
+        echo ""
+        echo "Run it with:"
+        echo "  ${WORKSPACE_ROOT}/target/debug/impulse-app [--cwd <folder>] [--open <file>]"
+        exit 0
+    fi
+    exec "${WORKSPACE_ROOT}/scripts/package-linux.sh"
+fi
+
 # ── Preflight ─────────────────────────────────────────────────────────
 
 if [[ "$(uname)" != "Darwin" ]]; then
-    echo "ERROR: This script must be run on macOS." >&2
+    echo "ERROR: This script must be run on macOS or Linux." >&2
     exit 1
 fi
 

@@ -123,6 +123,8 @@ The build script runs every step: the vendored libgit2, the Rust terminal FFI li
 
 The `--dev` flag builds with bundle ID `dev.impulse.Impulse.Devel`, so the dev build runs side-by-side with an installed release.
 
+On Linux (the `rust` branch), the same script builds the Rust app instead: `--dev` makes a debug build you run as `target/debug/impulse-app`, and no flags makes the release tarball and `.deb` in `dist/` (`scripts/package-linux.sh`).
+
 To run the built app:
 
 ```bash
