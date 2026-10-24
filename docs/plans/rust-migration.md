@@ -509,6 +509,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   a user theme that doesn't parse says so in a toast with Open File. The
   chrome follows Increase Contrast: macOS's display option, or on Linux
   GNOME's high-contrast setting, read with `gsettings`.
+  The sidebar resizes by its edge as Swift's `DockDivider` does (180 to
+  520, double-click for 260, the accent line while hovered or dragged),
+  and a repository group's header offers Archive Merged Tasks… on a
+  right-click.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

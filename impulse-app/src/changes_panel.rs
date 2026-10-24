@@ -918,7 +918,7 @@ impl Workbench {
                 let repo = repo.clone();
                 // The label when the sidebar has room for it (as Swift's
                 // ViewThatFits), else only the icon so Abort stays in view.
-                let wide = crate::settings_store::SettingsStore::get(cx).sidebar_width >= 320;
+                let wide = self.sidebar_width(cx) >= 320.;
                 d.child(
                     Button::new("op-ask-agent")
                         .ghost()

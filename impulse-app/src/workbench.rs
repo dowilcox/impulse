@@ -103,6 +103,8 @@ pub struct Workbench {
     /// Language-server problems already told (each is said once).
     pub(crate) told_lsp: std::collections::HashSet<String>,
     pub(crate) drag: Option<crate::workbench_panes::DividerDrag>,
+    /// The sidebar's edge being dragged (`workbench_chrome`).
+    pub(crate) sidebar_drag: Option<crate::workbench_chrome::SidebarDrag>,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
     /// `impulse edit` requests waiting for their editor to close.
     pub(crate) pending_edits: Vec<(
@@ -217,6 +219,7 @@ impl Workbench {
             lsp_progress: Vec::new(),
             told_lsp: Default::default(),
             drag: None,
+            sidebar_drag: None,
             split_bounds: Default::default(),
             pending_edits: Vec::new(),
             theme_override: args.theme.clone(),

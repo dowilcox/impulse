@@ -788,13 +788,10 @@ impl Workbench {
             tabs = tabs.child(t);
         }
         let tabs_in_sidebar = self.tabs_in_sidebar(cx);
-        let (sidebar_visible, sidebar_width) = {
-            let settings = SettingsStore::get(cx);
-            (settings.sidebar_visible, settings.sidebar_width)
-        };
+        let sidebar_visible = SettingsStore::get(cx).sidebar_visible;
         // Over the sidebar the leading part fills its width, so tabs start
         // where the content column starts; without it, it hugs its content.
-        let leading_width = sidebar_visible.then(|| (sidebar_width as f32).max(220.));
+        let leading_width = sidebar_visible.then(|| self.sidebar_width(cx).max(220.));
         let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
         let leading_part =
             div()
@@ -1577,21 +1574,23 @@ impl Workbench {
         for (name, group) in self.workspace_groups() {
             let indented = name.is_some();
             if let Some(name) = name {
-                workspaces = workspaces.child(self.repository_header(name));
+                workspaces = workspaces.child(self.repository_header(name, group[0], cx));
             }
             for index in group {
                 workspaces = workspaces.child(self.workspace_row(index, indented, cx));
             }
         }
         div()
+            .relative()
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(settings.sidebar_width as f32))
+            .w(px(self.sidebar_width(cx)))
             .h_full()
             .bg(hsla(p.panel))
             .border_r_1()
             .border_color(hsla(p.hairline))
+            .child(self.sidebar_divider(cx))
             .child(workspaces)
             .child(
                 div()
@@ -2043,6 +2042,111 @@ pub(crate) fn chrome_button(
         })
         .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
         .child(div().whitespace_nowrap().child(title.into()))
+}
+
+/// The sidebar's width while dragging its edge, and the limits Swift's
+/// `WorkbenchView.leftDockRange` keeps it to.
+const SIDEBAR_WIDTHS: std::ops::RangeInclusive<f32> = 180.0..=520.0;
+/// Swift's `DockDivider.hitThickness`.
+const DIVIDER_GRIP: f32 = 7.;
+
+impl Workbench {
+    /// The sidebar's width: the one being dragged, else the setting.
+    pub(crate) fn sidebar_width(&self, cx: &gpui_kit::App) -> f32 {
+        let width = self
+            .sidebar_drag
+            .map(|d| d.width)
+            .unwrap_or(SettingsStore::get(cx).sidebar_width as f32);
+        width.clamp(*SIDEBAR_WIDTHS.start(), *SIDEBAR_WIDTHS.end())
+    }
+
+    /// The sidebar's edge (Swift's `DockDivider`): drag to resize, double-
+    /// click for the default width; the accent line while hovered or
+    /// dragged. Over the content's edge too, so it's drawn last.
+    fn sidebar_divider(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &self.palette;
+        let dragging = self.sidebar_drag.is_some();
+        let line = |d: gpui_kit::Div| {
+            d.absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(DIVIDER_GRIP / 2. - 1.))
+                .w(px(2.))
+                .bg(hsla(p.accent.opacity(0.8)))
+        };
+        gpui_kit::deferred(
+            div()
+                .id("sidebar-divider")
+                .group("sidebar-divider")
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(-DIVIDER_GRIP / 2. - 0.5))
+                .w(px(DIVIDER_GRIP))
+                .cursor_col_resize()
+                .on_mouse_down(
+                    gpui_kit::MouseButton::Left,
+                    cx.listener(|w, event: &gpui_kit::MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        if event.click_count == 2 {
+                            w.sidebar_drag = None;
+                            SettingsStore::update(cx, |s| {
+                                s.sidebar_width = metrics::LEFT_DOCK_DEFAULT_WIDTH as i64
+                            });
+                            return;
+                        }
+                        w.sidebar_drag = Some(SidebarDrag {
+                            width: w.sidebar_width(cx),
+                            start_width: w.sidebar_width(cx),
+                            start_x: f32::from(event.position.x),
+                        });
+                        cx.notify();
+                    }),
+                )
+                .child(line(div()).when(!dragging, |d| {
+                    d.invisible()
+                        .group_hover("sidebar-divider", |s| s.visible())
+                })),
+        )
+        .with_priority(1)
+    }
+
+    /// The pointer moved while the sidebar's edge is held.
+    pub(crate) fn drag_sidebar(
+        &mut self,
+        event: &gpui_kit::MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(drag) = self.sidebar_drag.as_mut() else {
+            return false;
+        };
+        if event.pressed_button != Some(gpui_kit::MouseButton::Left) {
+            return self.end_sidebar_drag(cx);
+        }
+        drag.width = (drag.start_width + f32::from(event.position.x) - drag.start_x)
+            .clamp(*SIDEBAR_WIDTHS.start(), *SIDEBAR_WIDTHS.end());
+        cx.notify();
+        true
+    }
+
+    /// Let go of the sidebar's edge: its width becomes the setting.
+    pub(crate) fn end_sidebar_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(drag) = self.sidebar_drag.take() else {
+            return false;
+        };
+        let width = drag.width.round() as i64;
+        SettingsStore::update(cx, |s| s.sidebar_width = width);
+        cx.notify();
+        true
+    }
+}
+
+/// The sidebar's edge being dragged.
+#[derive(Clone, Copy)]
+pub(crate) struct SidebarDrag {
+    width: f32,
+    start_width: f32,
+    start_x: f32,
 }
 
 /// Swift's `ChromeIconButton`: a 24-point square, the icon in the

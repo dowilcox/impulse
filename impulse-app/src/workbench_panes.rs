@@ -242,6 +242,9 @@ impl Workbench {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.drag_sidebar(event, cx) {
+            return;
+        }
         let Some(drag) = self.drag.clone() else {
             return;
         };
@@ -287,8 +290,9 @@ impl Workbench {
         }
     }
 
-    pub(crate) fn end_drag(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
+    pub(crate) fn end_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.drag = None;
+        self.end_sidebar_drag(cx);
     }
 
     /// Double-click on a divider: every child of that split the same size.

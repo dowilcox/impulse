@@ -112,7 +112,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           action bound from impulse_kit::keybindings,
                           workbench chrome (Swift's titlebar, workspace rows
                           with their chips, the status bar's items:
-                          status_item), listening ports (port_scan.rs over
+                          status_item, the sidebar's edge dragged:
+                          SidebarDrag), listening ports (port_scan.rs over
                           impulse_kit::listening_ports: /proc on Linux,
                           lsof on macOS), the terminal (the login shell
                           with integration, shell_launch.rs),

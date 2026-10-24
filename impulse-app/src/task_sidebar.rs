@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, Window};
 use impulse_kit::chrome::{metrics, ChromePalette};
@@ -130,9 +130,17 @@ impl Workbench {
     }
 
     /// A repository's header over its workspaces.
-    pub(crate) fn repository_header(&self, name: String) -> AnyElement {
+    /// `first` is the group's first workspace: a right-click offers Archive
+    /// Merged Tasks… while the repository has some, as Swift's header does.
+    pub(crate) fn repository_header(
+        &self,
+        name: String,
+        first: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = &self.palette;
-        div()
+        let header = div()
+            .id(gpui_kit::SharedString::from(format!("repository-{name}")))
             .flex()
             .items_center()
             .gap(px(5.))
@@ -147,7 +155,28 @@ impl Workbench {
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .child(name),
-            )
+            );
+        let Some(workspace) = self
+            .workspaces
+            .get(first)
+            .filter(|w| w.task.repository_has_merged_tasks)
+        else {
+            return header.into_any_element();
+        };
+        let (id, workbench) = (workspace.id, cx.entity().downgrade());
+        header
+            .context_menu(move |menu, _, _| {
+                let workbench = workbench.clone();
+                menu.item(PopupMenuItem::new("Archive Merged Tasks…").on_click(
+                    move |_, window, cx| {
+                        let _ = workbench.update(cx, |w, cx| {
+                            if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
+                                w.present_archive_merged_tasks(index, window, cx)
+                            }
+                        });
+                    },
+                ))
+            })
             .into_any_element()
     }
 
