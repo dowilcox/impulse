@@ -59,6 +59,7 @@ mod terminal_blocks;
 mod terminal_find_bar;
 mod terminal_input_bar;
 mod terminal_view;
+mod untitled;
 mod workbench;
 mod workbench_chrome;
 mod workbench_panes;

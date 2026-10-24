@@ -180,10 +180,15 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           `impulse edit` by control_server::terminal_env),
                           the file tree's context menu
                           (file_tree_actions.rs: new file and folder, open
-                          to the side, history, reveal, copy paths, git
-                          actions, rename, Trash with Undo on Linux; drag
+                          to the side, mention in an agent, history,
+                          reveal, copy paths, git actions, rename, Trash
+                          with Undo on Linux; drag
                           and drop moving project items and copying ones
                           from outside, Workbench::tree_drop),
+                          New File and Install Language Servers
+                          (untitled.rs: an untitled EditorTab saved with
+                          the system's save dialog, or a typed path where
+                          Linux has no portal),
                           menus (menus.rs from impulse_kit::menus: the
                           macOS menu bar, the Linux titlebar menu button,
                           the fixed items' actions and keys),

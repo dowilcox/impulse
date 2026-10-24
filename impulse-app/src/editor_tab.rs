@@ -42,6 +42,9 @@ pub struct EditorTabChanged;
 
 pub struct EditorTab {
     pub path: PathBuf,
+    /// A new file not saved yet (New File): the folder Save As starts in.
+    /// `path` is empty meanwhile.
+    pub untitled: Option<PathBuf>,
     pub title: String,
     /// Impulse's language id (`language_from_uri`), shown in the status bar.
     pub language: String,
@@ -175,6 +178,7 @@ impl EditorTab {
             tab_size,
             use_spaces,
             preview: None,
+            untitled: None,
             reloading: false,
             notice: opened
                 .large
@@ -987,8 +991,24 @@ impl EditorTab {
         true
     }
 
+    /// An empty editor for a file not saved yet; Save asks where it goes.
+    pub fn untitled(dir: &Path, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let opened = Opened {
+            contents: text_file::Contents {
+                text: String::new(),
+                bom: false,
+            },
+            stamp: None,
+            large: false,
+        };
+        let mut tab = Self::new(Path::new("Untitled"), opened, window, cx);
+        tab.path = PathBuf::new();
+        tab.untitled = Some(dir.to_path_buf());
+        tab
+    }
+
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        if self.read_only {
+        if self.read_only || self.untitled.is_some() {
             return;
         }
         // Something else rewrote the file since it was loaded: say so, and

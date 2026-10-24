@@ -175,6 +175,11 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
             subpath: h.read(cx).path.clone(),
             ..Default::default()
         },
+        // A file never saved isn't either.
+        Surface::Editor(e) if e.read(cx).untitled.is_some() => SessionSurface {
+            kind: "tool".into(),
+            ..Default::default()
+        },
         Surface::Editor(e) => {
             let e = e.read(cx);
             let (line, column) = e.cursor(cx);

@@ -73,6 +73,15 @@ impl Workbench {
                     "Open to the Side",
                     Rc::new(move |w, window, cx| w.open_beside(&file, window, cx)),
                 );
+                let file = p.clone();
+                push(
+                    &mut items,
+                    "Mention in Agent",
+                    Rc::new(move |w, window, cx| {
+                        let path = w.relative_to_workspace(&file.to_string_lossy());
+                        w.send_to_best_agent(&format!("@{path} "), None, window, cx)
+                    }),
+                );
             }
             items.push(None);
             let file = p.clone();

@@ -889,9 +889,16 @@ impl Workbench {
             "move_pane_to_tab" => self.move_pane_to_tab(window, cx),
             "save" => {
                 if let Some(editor) = self.active_editor().cloned() {
-                    editor.update(cx, |editor, cx| editor.save(cx));
+                    if editor.read(cx).untitled.is_some() {
+                        self.save_untitled(editor, window, cx);
+                    } else {
+                        editor.update(cx, |editor, cx| editor.save(cx));
+                    }
                 }
             }
+            "new_file" => self.new_untitled(window, cx),
+            "install_lsp" => self.install_language_servers(window, cx),
+            "paste" => window.dispatch_action(Box::new(crate::menus::MenuPaste), cx),
             "import_shell_history" => self.import_shell_history(window, cx),
             "clear_command_history" => self.clear_command_history(window, cx),
             "toggle_sidebar" => {
