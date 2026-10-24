@@ -222,6 +222,20 @@ impl Workbench {
     ) {
         let action: Then = Rc::new(action);
         let workbench = cx.entity().downgrade();
+        #[cfg(debug_assertions)]
+        {
+            let (action, workbench) = (action.clone(), workbench.clone());
+            let press: crate::debug_snapshot::Press = Rc::new(move |window, cx| {
+                let action = action.clone();
+                let _ = workbench.update(cx, |workbench, cx| action(workbench, window, cx));
+            });
+            crate::debug_snapshot::note_toast(
+                "success",
+                &message,
+                detail.as_deref(),
+                Some((action_title, press)),
+            );
+        }
         let note = match detail {
             Some(detail) => Notification::success(detail).title(message),
             None => Notification::success(message),

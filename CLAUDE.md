@@ -261,7 +261,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           taken ahead of GPUI Kit's in the VimNormal
                           context, the mode in the status bar), workspace trust, language
                           servers (code actions, formatting, rename and
-                          references with edits across files);
+                          references with edits across files), the
+                          headless snapshot mode of debug builds
+                          (debug_snapshot.rs: the Swift DebugSnapshot's
+                          --impulse-snapshot flags, actions and dump=
+                          format; window images by ImageMagick's import on
+                          X11, screencapture on macOS) that scripts/smoke
+                          and scripts/docs drive, --install-lsp-servers;
                           scripts/spike/linux-shot.sh screenshots it on Linux
 vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide
                           (committed; refreshed by scripts/vendor-*.sh)
@@ -360,9 +366,9 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `FileIcons.swift`) from upstream material-icon-theme.
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
-- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first.
+- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`.
 - **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
-- **scripts/smoke/run.py [name-prefix…]** — smoke checks for a release, in the same headless mode and demo home: each scenario in `scripts/smoke/scenarios.py` drives the dev build through real use (edits and saves, commands in zsh, bash and fish, the `impulse` CLI, agent hooks, a fresh managed language-server install with trust, tasks from creation to Finish, Agent Integration installing the MCP server, opencode's plugin replacing opencode 1's plugin and MCP entry, its two halves driven by a stand-in opencode (`scripts/smoke/opencode-agent.mjs`, which needs `node`), the MCP server asking for a task and an agent finishing its own, session restore) and checks the state its actions dump (`dump=`) plus the files and git repositories they changed. Build with `build.sh --dev` first; results and window images are left in `target/smoke/<scenario>/`.
+- **scripts/smoke/run.py [name-prefix…]** — smoke checks for a release, in the same headless mode and demo home: each scenario in `scripts/smoke/scenarios.py` drives the dev build through real use (edits and saves, commands in zsh, bash and fish, the `impulse` CLI, agent hooks, a fresh managed language-server install with trust, tasks from creation to Finish, Agent Integration installing the MCP server, opencode's plugin replacing opencode 1's plugin and MCP entry, its two halves driven by a stand-in opencode (`scripts/smoke/opencode-agent.mjs`, which needs `node`), the MCP server asking for a task and an agent finishing its own, session restore) and checks the state its actions dump (`dump=`) plus the files and git repositories they changed. Build with `build.sh --dev` first; results and window images are left in `target/smoke/<scenario>/`. `IMPULSE_SNAPSHOT_APP` runs the scenarios against the Rust app, as for `capture.py`.
 
 ## History
 

@@ -670,16 +670,29 @@ impl AgentIntegration {
         let was_installed = self.model.installed;
         let (agent, what) = (self.model.agent.name(), self.model.what());
         let path = abbreviate_home(&self.model.path);
-        let done = move |outcome: Outcome| match outcome {
-            Outcome::Failed(failure) => Some(Some(format!("Couldn't update {path}: {failure}"))),
-            // The sheet stays open on the new preview.
-            Outcome::Changed => None,
-            Outcome::Written if was_installed => {
-                Some(Some(format!("Removed Impulse's {agent} {what}.")))
+        let done = move |outcome: Outcome| {
+            #[cfg(debug_assertions)]
+            crate::debug_snapshot::note_result(
+                "agent-sheet",
+                match &outcome {
+                    Outcome::Written => "written".into(),
+                    Outcome::Changed => "changed".into(),
+                    Outcome::Failed(failure) => format!("failed({failure})"),
+                },
+            );
+            match outcome {
+                Outcome::Failed(failure) => {
+                    Some(Some(format!("Couldn't update {path}: {failure}")))
+                }
+                // The sheet stays open on the new preview.
+                Outcome::Changed => None,
+                Outcome::Written if was_installed => {
+                    Some(Some(format!("Removed Impulse's {agent} {what}.")))
+                }
+                Outcome::Written => Some(Some(format!(
+                    "Installed the {agent} {what}. Restart running agents to pick it up."
+                ))),
             }
-            Outcome::Written => Some(Some(format!(
-                "Installed the {agent} {what}. Restart running agents to pick it up."
-            ))),
         };
         match self.model.claude_run() {
             None => {
@@ -1032,9 +1045,56 @@ impl Workbench {
             workbench,
             busy: false,
         });
+        #[cfg(debug_assertions)]
+        crate::debug_snapshot::note_agent_sheet(&sheet);
         window.open_dialog(cx, move |dialog, _, _| {
             dialog.w(px(660.)).close_button(false).child(sheet.clone())
         });
+    }
+}
+
+/// For the headless snapshots (`debug_snapshot`): choose, press Install or
+/// Remove, and say what the sheet shows.
+#[cfg(debug_assertions)]
+impl AgentIntegration {
+    /// Agents by the start of their name, lowercased (`mcp`, `claude`).
+    pub(crate) fn debug_choose(
+        &mut self,
+        part: Option<&str>,
+        agent: Option<&str>,
+        project: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(part) = part {
+            self.model.set_part(if part == "mcp" {
+                Part::Mcp
+            } else {
+                Part::Hooks
+            });
+        }
+        if let Some(agent) = agent {
+            let found = Agent::ALL
+                .into_iter()
+                .find(|a| a.name().to_lowercase().starts_with(agent));
+            self.model.set_agent(found.unwrap_or(Agent::Claude));
+        }
+        if project {
+            self.model.set_scope(Scope::Project);
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn debug_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.primary(window, cx);
+    }
+
+    pub(crate) fn debug_state(&self) -> serde_json::Value {
+        let m = &self.model;
+        serde_json::json!({
+            "part": match m.part { Part::Hooks => "Hooks", Part::Mcp => "MCP Server" },
+            "agent": m.agent.name(), "installed": m.installed, "outdated": m.outdated,
+            "path": m.path, "diff": m.diff(), "error": m.error, "notice": m.notice,
+        })
     }
 }
 

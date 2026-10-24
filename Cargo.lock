@@ -3404,6 +3404,8 @@ dependencies = [
  "log",
  "lsp-types",
  "notify",
+ "objc",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sha2 0.10.9",

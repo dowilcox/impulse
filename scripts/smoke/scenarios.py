@@ -401,7 +401,7 @@ const end: Point = { lat: 47.6, lon: -121.8 };
 const lat = start.lat;
 console.log(distanceKm(start, end), lat);
 """
-MANAGED = HOME / "Library" / "Application Support" / "impulse" / "lsp"
+MANAGED = make_demo.data_dir("impulse") / "lsp"
 PENDING = {"Hover": "pendingHovers", "Completion": "pendingCompletions", "Definition": "pendingDefinitions",
            "Rename": "pendingRename"}
 SHAPES = {
@@ -448,8 +448,9 @@ def setup_lsp() -> None:
         shutil.copytree(cache, MANAGED, symlinks=True)
         (HOME / "lsp-install.log").write_text("(from target/smoke/lsp-cache)\n")
     else:
-        env = dict(os.environ, HOME=str(HOME), CFFIXED_USER_HOME=str(HOME))
-        app = Path(capture.APP) / "Contents" / "MacOS" / "Impulse Dev"
+        env = dict(os.environ, HOME=str(HOME), CFFIXED_USER_HOME=str(HOME),
+                   XDG_DATA_HOME=str(HOME / ".local" / "share"))
+        app = capture.APP if capture.RUST else Path(capture.APP) / "Contents" / "MacOS" / "Impulse Dev"
         result = subprocess.run([str(app), "--install-lsp-servers"], env=env, capture_output=True, text=True,
                                 timeout=900)
         (HOME / "lsp-install.log").write_text(result.stdout + result.stderr)
@@ -677,7 +678,8 @@ def check_agent_integration(run) -> None:
                config)
     run.expect('env_vars = ["IMPULSE_SOCKET", "IMPULSE_PANE_TOKEN", "IMPULSE_CLI"]' in config,
                "it forwards the pane's variables (Codex clears the environment)", config)
-    run.expect("/Contents/Resources/bin/impulse" in config, "it falls back to the app's own impulse", config)
+    own = str(capture.CLI) if capture.RUST else "/Contents/Resources/bin/impulse"
+    run.expect(own in config, "it falls back to the app's own impulse", config)
     installed = run.dump("codex-installed").get("agentSheet") or {}
     run.expect(installed.get("installed") is True, "reopened, the sheet says it's installed", installed)
 

@@ -90,6 +90,8 @@ pub struct Workbench {
     pub(crate) editor_watch: crate::editor_watch::EditorWatch,
     /// Closing the window was asked about and confirmed (`close_flow`).
     pub(crate) close_confirmed: bool,
+    /// Folders whose files were said to have language servers off.
+    pub(crate) restricted_noted: std::collections::HashSet<String>,
 }
 
 impl Workbench {
@@ -166,6 +168,7 @@ impl Workbench {
             problems: cx.new(|_| Default::default()),
             editor_watch: crate::editor_watch::EditorWatch::new(),
             close_confirmed: false,
+            restricted_noted: Default::default(),
         }
     }
 
@@ -420,6 +423,22 @@ impl Workbench {
         if index >= self.workspaces.len() {
             return;
         }
+        self.show_workspace(index, window, cx);
+        self.request_trust(index, window, cx);
+    }
+
+    /// `activate_workspace` without asking about trust: while the window
+    /// is being made (a restored session) a dialog can't open yet, and
+    /// `Workbench::new` asks once it can.
+    pub(crate) fn show_workspace(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.workspaces.len() {
+            return;
+        }
         self.active = index;
         self.workspaces[index].refresh_branch();
         if self.workspaces[index].tabs.is_empty() {
@@ -428,7 +447,6 @@ impl Workbench {
             self.add_tab(index, terminal, window, cx);
         }
         self.focus_active(window, cx);
-        self.request_trust(index, window, cx);
         cx.notify();
     }
 
@@ -506,7 +524,43 @@ impl Workbench {
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                self.set_notice(refusal.message(&name), cx);
+                if refusal != impulse_kit::text_file::OpenRefusal::TooLarge {
+                    return crate::tasks::toast(
+                        window,
+                        cx,
+                        crate::tasks::ToastKind::Warning,
+                        refusal.message(&name),
+                        None,
+                        None,
+                    );
+                }
+                // Offer to page through it in a terminal instead.
+                let (dir, file) = (
+                    path.parent().map(Path::to_path_buf).unwrap_or_default(),
+                    path.to_path_buf(),
+                );
+                let workbench = cx.entity().downgrade();
+                let view: crate::tasks::Run = Rc::new(move |window, cx| {
+                    let (dir, file) = (dir.clone(), file.clone());
+                    let _ = workbench.update(cx, |w, cx| {
+                        let shell = impulse_kit::shell::login::default_shell_type();
+                        let command = format!(
+                            "less -- {}",
+                            impulse_kit::shell::quoting::quoted(&file.to_string_lossy(), shell)
+                        );
+                        let terminal = w.new_terminal(dir, vec![command], window, cx);
+                        let active = w.active;
+                        w.add_tab(active, terminal, window, cx);
+                    });
+                });
+                crate::tasks::toast(
+                    window,
+                    cx,
+                    crate::tasks::ToastKind::Info,
+                    format!("{name} is too large for the editor (over 10 MB)."),
+                    None,
+                    Some(("View in Terminal", view)),
+                );
             }
         }
     }
@@ -806,6 +860,8 @@ impl Workbench {
 
     /// A message in the status bar.
     pub(crate) fn set_notice(&mut self, notice: String, cx: &mut Context<Self>) {
+        #[cfg(debug_assertions)]
+        crate::debug_snapshot::note_toast("notice", &notice, None, None);
         self.notice = Some(notice);
         cx.notify();
     }

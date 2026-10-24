@@ -136,7 +136,7 @@ impl Workbench {
             };
             let failure = format!("Command on save “{label}” failed on {}.", file_name(path));
             let args = save_command::expand_arguments(&command.args, &file);
-            let saved = command.reload_file.then(|| editor.read(cx).text(cx));
+            let saved = command.reload_file.then(|| editor.read(cx).disk_text(cx));
             if saved.is_some() {
                 editor.update(cx, |e, _| e.begin_rewrite());
             }
@@ -222,6 +222,9 @@ fn run(
     Ok(())
 }
 
+const DISK_CHANGED: &str = "It was changed outside this editor (by an agent, git or another app) \
+                            since you opened it. Saving replaces those changes with your version.";
+
 #[derive(Clone, Copy)]
 enum Answer {
     Save,
@@ -241,6 +244,26 @@ fn changed_on_disk_dialog(
 ) {
     let answered: Answered = Rc::new(RefCell::new(Some(Box::new(answer))));
     let title = format!("“{name}” changed on disk");
+    #[cfg(debug_assertions)]
+    {
+        let press = |answer: Answer| -> crate::debug_snapshot::Press {
+            let answered = answered.clone();
+            Rc::new(move |window, cx| {
+                window.close_dialog(cx);
+                if let Some(answered) = answered.borrow_mut().take() {
+                    answered(answer, window, cx)
+                }
+            })
+        };
+        crate::debug_snapshot::note_sheet(
+            vec![title.clone(), DISK_CHANGED.into()],
+            vec![
+                ("Cancel", press(Answer::Cancel)),
+                ("Reload from Disk", press(Answer::Reload)),
+                ("Save Anyway", press(Answer::Save)),
+            ],
+        );
+    }
     window.open_dialog(cx, move |dialog, _, _| {
         let reply = |answer: Answer| {
             let answered = answered.clone();
@@ -264,10 +287,7 @@ fn changed_on_disk_dialog(
                 }
                 false
             })
-            .child(div().whitespace_normal().child(
-                "It was changed outside this editor (by an agent, git or another app) \
-                 since you opened it. Saving replaces those changes with your version.",
-            ))
+            .child(div().whitespace_normal().child(DISK_CHANGED))
             .footer(
                 div()
                     .flex()

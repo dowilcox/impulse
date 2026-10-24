@@ -498,6 +498,40 @@ impl TaskSheet {
         });
     }
 
+    /// For the headless snapshots (`debug_snapshot`): fill in the title
+    /// and From, as typing does.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_fill(
+        &mut self,
+        title: &str,
+        base: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = title.to_string();
+        self.title
+            .update(cx, |input, cx| input.set_value(title, window, cx));
+        if let Some(base) = base.filter(|b| !b.is_empty()) {
+            let base = base.to_string();
+            self.default_base = None;
+            self.base
+                .update(cx, |input, cx| input.set_value(base, window, cx));
+        }
+        cx.notify();
+    }
+
+    /// What the sheet holds, as the snapshots' dumps show it.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_state(&self, cx: &gpui_kit::App) -> serde_json::Value {
+        serde_json::json!({
+            "title": self.title_text(cx), "base": self.base_text(cx),
+            "command": self.agent.as_ref().and_then(|a| a.read(cx).selected_value().cloned()),
+            "brief": self.brief_text(cx),
+            "requestedBy": self.agent_request.as_ref().map(|r| r.requested_by.clone()),
+            "branch": self.branch(cx), "error": self.error,
+        })
+    }
+
     fn field(&self, label: &'static str, content: impl IntoElement) -> impl IntoElement {
         let p = &self.palette;
         div()
@@ -925,6 +959,8 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(debug_assertions)]
+        crate::debug_snapshot::note_task_sheet(&sheet);
         window.open_dialog(cx, move |dialog, window, cx| {
             if sheet.update(cx, |s, _| std::mem::replace(&mut s.initial_focus, false)) {
                 let title = sheet.read(cx).title.clone();

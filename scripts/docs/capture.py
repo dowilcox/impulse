@@ -12,6 +12,12 @@ usage: capture.py [--list] [--keep] [--recompose] [NAME_OR_PREFIX ...]
                (after changing a crop)
 
 Build the app first: ./impulse-macos/build.sh --dev
+
+The Rust app (impulse-app) runs the same snapshots: set IMPULSE_SNAPSHOT_APP
+to its binary (target/debug/impulse-app, the default on Linux, where the
+Swift app doesn't exist; `cargo build -p impulse-app -p impulse-cli` first).
+On Linux it needs an X server in DISPLAY (Xvfb), and the shots are composed
+by imagetool.py (Pillow) instead of imagetool.swift.
 """
 
 from __future__ import annotations
@@ -32,7 +38,13 @@ REPO = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 import make_demo  # noqa: E402
 
-APP = REPO / "dist" / "Impulse Dev.app"
+MAC = sys.platform == "darwin"
+# The Swift dev build, or the Rust app's binary.
+APP = Path(os.environ.get("IMPULSE_SNAPSHOT_APP")
+           or (REPO / "dist" / "Impulse Dev.app" if MAC else REPO / "target" / "debug" / "impulse-app"))
+RUST = APP.suffix != ".app"
+# The `impulse` the app's terminals get, and the MCP entries fall back to.
+CLI = APP.parent / "impulse" if RUST else APP / "Contents" / "Resources" / "bin" / "impulse"
 OUT = REPO / "docs" / "images"
 WORK = REPO / "target" / "docs-shots"
 TOOL = WORK / "imagetool"
@@ -60,6 +72,9 @@ FRAME = re.compile(
 
 
 def read_preferences() -> dict:
+    if RUST:
+        # The Rust app keeps these in files in the demo home's data folder.
+        return {}
     out = subprocess.run(["defaults", "export", BUNDLE_ID, "-"], capture_output=True).stdout
     return plistlib.loads(out) if out else {}
 
@@ -67,6 +82,8 @@ def read_preferences() -> dict:
 def restore_preferences(saved: dict) -> None:
     """Put the pinned keys back as they were and drop keys about the demo.
     (`defaults import` only adds keys, so removals are explicit.)"""
+    if RUST:
+        return
     demo = str(make_demo.DEMO)
     for key in read_preferences():
         if demo in key or (key in PINNED and key not in saved):
@@ -89,11 +106,68 @@ def argument(value) -> str:
 
 
 def build_tool() -> None:
+    if not MAC:
+        return
     source = HERE / "imagetool.swift"
     if TOOL.exists() and TOOL.stat().st_mtime > source.stat().st_mtime:
         return
     WORK.mkdir(parents=True, exist_ok=True)
     subprocess.run(["swiftc", "-O", "-o", str(TOOL), str(source)], check=True)
+
+
+def compose_image(spec_file: Path) -> None:
+    """imagetool.swift on the Mac, its Pillow port elsewhere."""
+    if MAC:
+        subprocess.run([str(TOOL), str(spec_file)], check=True)
+    else:
+        subprocess.run([sys.executable, str(HERE / "imagetool.py"), str(spec_file)], check=True)
+
+
+def environment(shell: str = "/bin/zsh") -> dict:
+    """The stand-in home's environment, for a binary run directly."""
+    home = make_demo.HOME
+    runtime = make_demo.DEMO / "runtime"
+    runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    env = {
+        "HOME": str(home), "USER": "impulse-docs", "SHELL": shell,
+        "XDG_CONFIG_HOME": str(home / ".config"), "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_CACHE_HOME": str(home / ".cache"), "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "XDG_RUNTIME_DIR": str(runtime),
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" + ("" if MAC else ":/usr/local/bin"),
+        "RUST_LOG": os.environ.get("RUST_LOG", "warn"),
+    }
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "TMPDIR", "RUST_BACKTRACE"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def launch_command(args: list[str], env: dict, pinned: list[str]) -> tuple[list[str], dict | None]:
+    """How to start the app with `args` in the demo home: the Swift app
+    through `open` (hidden, its preferences pinned), the Rust app directly."""
+    if RUST:
+        return [str(APP), *args], env
+    command = ["open", "-g", "-n", "-W", "-a", str(APP), "--env", f"CFFIXED_USER_HOME={make_demo.HOME}"]
+    for key in ("HOME", "USER", "SHELL", "XDG_CONFIG_HOME", "PATH"):
+        if key in env:
+            command += ["--env", f"{key}={env[key]}"]
+    return [*command, "--args", *pinned, *args], None
+
+
+def run_app(args: list[str], env: dict, pinned: list[str], timeout: float) -> bool:
+    """Runs the app until it quits. False if it had to be stopped."""
+    command, environ = launch_command(args, env, pinned)
+    process = subprocess.Popen(command, env=environ)
+    try:
+        process.wait(timeout=timeout)
+        return True
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        if not RUST:
+            # `open` has stopped; the app it started is named by the run's folder.
+            subprocess.run(["pkill", "-9", "-f", args[args.index("--impulse-snapshot") + 1]], capture_output=True)
+        return False
 
 
 def cleanup() -> None:
@@ -113,7 +187,7 @@ def cleanup() -> None:
 def prepare(shot: dict, folder: Path) -> None:
     """The demo world plus the shot's settings and input files."""
     make_demo.main(shot.get("variant"))
-    settings_dir = make_demo.HOME / "Library" / "Application Support" / "impulse-dev"
+    settings_dir = make_demo.data_dir("impulse-dev")
     if "settings_text" in shot:
         (settings_dir / "settings.json").write_text(shot["settings_text"])
     elif "settings" in shot:
@@ -147,14 +221,12 @@ def snapshot(shot: dict, folder: Path) -> list[dict]:
     for key, value in shot.get("defaults", {}).items():
         overrides[key] = [str(v).replace("~", str(make_demo.HOME), 1) for v in value]
     pinned = [part for key, value in overrides.items() for part in ("-" + key, argument(value))]
+    if RUST and "recentWorkspaceFolders" in overrides:
+        recents = make_demo.data_dir("impulse-dev") / "recent-workspaces.json"
+        recents.write_text(json.dumps(overrides["recentWorkspaceFolders"], indent=2))
+    # Not yours: tools found on PATH show up in Settings.
+    env = environment(shutil.which("zsh") or "/bin/zsh")
     args = [
-        "open", "-g", "-n", "-W", "-a", str(APP),
-        "--env", f"CFFIXED_USER_HOME={make_demo.HOME}", "--env", f"HOME={make_demo.HOME}",
-        "--env", "USER=impulse-docs", "--env", "SHELL=/bin/zsh",
-        # Not yours: tools found on PATH show up in Settings.
-        "--env", "PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
-        "--args",
-        *pinned,
         "--impulse-snapshot", str(folder),
         "--impulse-snapshot-no-lsp",
         "--impulse-snapshot-delay", str(shot.get("delay", 8)),
@@ -163,7 +235,8 @@ def snapshot(shot: dict, folder: Path) -> list[dict]:
     ]
     if actions:
         args += ["--impulse-snapshot-actions", actions]
-    subprocess.run(args, check=True, timeout=240)
+    if not run_app(args, env, pinned, 240):
+        sys.exit(f"{shot['name']}: the app didn't finish in 240 s")
     log = folder / "snapshot.log"
     for _ in range(50):
         if log.exists():
@@ -178,11 +251,11 @@ def output(name: str) -> Path:
 
 
 def combine(shot: dict) -> None:
-    spec = {"scale": 2, "beside": [str(output(n)) for n in shot["combine"]], "gap": shot.get("gap", 0),
+    spec = {"scale": 2 if MAC else 1, "beside": [str(output(n)) for n in shot["combine"]], "gap": shot.get("gap", 0),
             "out": str(output(shot["name"]))}
     spec_file = WORK / f"{shot['name']}-combine.json"
     spec_file.write_text(json.dumps(spec))
-    subprocess.run([str(TOOL), str(spec_file)], check=True)
+    compose_image(spec_file)
 
 
 def compose(shot: dict, windows: list[dict], folder: Path) -> None:
@@ -217,8 +290,11 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
         pad = shot.get("pad", 24)
         crop = (o["x"] - pad, o["y"] - pad, o["w"] + 2 * pad, o["h"] + 2 * pad)
     style = shot.get("style", "window" if crop is None else "crop")
+    # Pixels per point, as the window was captured (2 on a Retina Mac).
+    with open(main["path"], "rb") as png:
+        pixels = int.from_bytes(png.read(24)[16:20], "big")
     spec = {
-        "scale": 2,
+        "scale": round(pixels / width) or 1,
         "base": main["path"],
         "overlays": [{k: v for k, v in o.items() if k not in ("w", "h")} for o in overlays],
         "radius": {"window": 16, "crop": 10}.get(style, 10),
@@ -232,7 +308,7 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
         spec["crop"] = {"x": x, "y": y, "w": min(w, width - x), "h": min(h, height - y)}
     spec_file = folder / "spec.json"
     spec_file.write_text(json.dumps(spec, indent=2))
-    subprocess.run([str(TOOL), str(spec_file)], check=True)
+    compose_image(spec_file)
 
 
 def main() -> None:
@@ -248,7 +324,8 @@ def main() -> None:
             print(shot["name"])
         return
     if not APP.exists():
-        sys.exit(f"{APP} is missing: run ./impulse-macos/build.sh --dev first")
+        sys.exit(f"{APP} is missing: run " + ("cargo build -p impulse-app -p impulse-cli" if RUST
+                                                else "./impulse-macos/build.sh --dev") + " first")
     selected = [s for s in SHOTS if not args or any(s["name"].startswith(a) for a in args)]
     if not selected:
         sys.exit("no shots match")

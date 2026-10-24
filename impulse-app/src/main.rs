@@ -4,6 +4,8 @@
 //! terminal from `impulse-terminal`.
 //!
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
+//! (`--install-lsp-servers` installs the managed language servers and
+//! quits; debug builds take `debug_snapshot`'s `--impulse-snapshot` flags)
 
 mod agent_checkpoints;
 mod agent_composer;
@@ -26,6 +28,8 @@ mod commands;
 mod control_commands;
 mod control_review;
 mod control_server;
+#[cfg(debug_assertions)]
+mod debug_snapshot;
 mod dependency_prompts;
 mod editor_keys;
 mod editor_tab;
@@ -165,6 +169,10 @@ fn parse_args() -> (Args, bool) {
             args.trust = true;
             continue;
         }
+        // The snapshot flags without a value (`debug_snapshot`).
+        if flag == "--impulse-snapshot-no-lsp" || flag == "--impulse-snapshot-persist" {
+            continue;
+        }
         match (flag.as_str(), it.next()) {
             ("--theme", Some(v)) => args.theme = Some(v),
             ("--cwd", Some(v)) => {
@@ -187,7 +195,31 @@ fn parse_args() -> (Args, bool) {
 
 fn main() {
     env_logger::init();
-    let (args, explicit) = parse_args();
+    // Install the managed language servers and quit (the smoke checks;
+    // the Swift app's flag).
+    if std::env::args().any(|a| a == "--install-lsp-servers") {
+        match impulse_lsp::managed::install() {
+            Ok(bin) => println!("Installed the language servers in {}", bin.display()),
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    #[cfg(debug_assertions)]
+    debug_snapshot::configure();
+    #[allow(unused_mut)]
+    let (mut args, explicit) = parse_args();
+    #[cfg(debug_assertions)]
+    if let Some(config) = debug_snapshot::config() {
+        if let Some(cwd) = config.cwd.clone() {
+            args.cwd = cwd;
+        }
+        // Folders aren't asked about in snapshots unless an action wants it
+        // (`trust-on`).
+        args.trust_store.set_enabled(false);
+    }
     gpui_kit::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
@@ -217,6 +249,12 @@ fn main() {
             })
             .detach();
             let saved = (!explicit).then(|| session::saved(cx)).flatten();
+            // A snapshot opens its own session file, or the default window.
+            #[cfg(debug_assertions)]
+            let saved = match debug_snapshot::is_active() {
+                true => debug_snapshot::session(cx),
+                false => saved,
+            };
             match saved {
                 Some(state) => {
                     for window in state.windows {
@@ -236,6 +274,11 @@ fn main() {
                 }
                 None => open_main_window(args, cx),
             }
+            #[cfg(debug_assertions)]
+            if debug_snapshot::is_active() {
+                // Never the active app: keys meant for another stay there.
+                return debug_snapshot::run(cx);
+            }
             cx.activate(true);
         });
 }
@@ -244,7 +287,16 @@ fn main() {
 pub fn open_main_window(args: Args, cx: &mut App) {
     let settings = settings_store::SettingsStore::get(cx);
     let (width, height) = (settings.window_width as f32, settings.window_height as f32);
-    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    #[allow(unused_mut)]
+    let mut bounds = Bounds::centered(None, size(px(width), px(height)), cx);
+    // Snapshots are the same size run to run, at the screen's top left.
+    #[cfg(debug_assertions)]
+    if let Some(config) = debug_snapshot::config() {
+        bounds = Bounds::new(
+            gpui_kit::point(px(0.), px(0.)),
+            size(px(config.size.0), px(config.size.1)),
+        );
+    }
     let opened = gpui_kit::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),

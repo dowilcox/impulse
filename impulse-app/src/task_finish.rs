@@ -1835,6 +1835,37 @@ fn save_landing(landing: Landing, root: &str, cx: &mut Context<Workbench>) {
         .detach();
 }
 
+#[cfg(debug_assertions)]
+impl Workbench {
+    /// For the headless snapshots (`debug_snapshot`): press Finish (or
+    /// Continue) on every Finish tab, `merge` or `review` answering the
+    /// landing question first.
+    pub(crate) fn debug_finish(
+        &mut self,
+        landing: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let views: Vec<Entity<TaskFinishView>> = self
+            .workspaces
+            .iter()
+            .flat_map(|w| w.all_surfaces())
+            .filter_map(|s| match s {
+                Surface::TaskFinish(view) => Some(view.clone()),
+                _ => None,
+            })
+            .collect();
+        for view in views {
+            match landing {
+                Some("merge") => view.update(cx, |v, _| v.chosen_landing = Landing::Merge),
+                Some("review") => view.update(cx, |v, _| v.chosen_landing = Landing::Review),
+                _ => {}
+            }
+            self.start_finish(view, window, cx);
+        }
+    }
+}
+
 /// Making the view (kept apart so `open_finish_task` reads simply).
 trait NewFinishView {
     fn new_view_finish(

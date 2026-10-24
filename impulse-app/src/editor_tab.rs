@@ -15,7 +15,7 @@ use gpui_kit::{
     prelude::*, px, App, Context, Entity, EntityInputHandler, EventEmitter, Subscription, Window,
 };
 use impulse_kit::save_command::RewriteOutcome;
-use impulse_kit::text_file::{self, Opened, Stamp};
+use impulse_kit::text_file::{self, LineEnding, Opened, Stamp};
 use impulse_kit::uri::language_for_path;
 
 use crate::lsp_hub::{DocumentLink, LspHub};
@@ -62,6 +62,8 @@ pub struct EditorTab {
     pub notice: Option<String>,
     state: Entity<EditorState>,
     bom: bool,
+    /// The file's line ending, put back on write.
+    pub line_ending: LineEnding,
     stamp: Option<Stamp>,
     /// Formatters and commands on save rewriting the file now.
     rewriting: u32,
@@ -117,7 +119,9 @@ impl EditorTab {
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
         let (tab_size, use_spaces) = settings.indentation(&path.to_string_lossy());
         let tab_size = tab_size.max(1) as usize;
-        let text = opened.contents.text;
+        // The editor works on `\n`; a CRLF file gets its CRLF back on write.
+        let line_ending = LineEnding::detect(&opened.contents.text);
+        let text = LineEnding::normalize(&opened.contents.text);
         let grammar = grammar_for(&language).to_string();
         let state = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
@@ -189,6 +193,7 @@ impl EditorTab {
                 .then(|| "Larger than 5 MB: opened read-only.".to_string()),
             state,
             bom: opened.contents.bom,
+            line_ending,
             stamp: opened.stamp,
             rewriting: 0,
             links: Vec::new(),
@@ -984,11 +989,13 @@ impl EditorTab {
         let Some(file) = text_file::read(&self.path) else {
             return;
         };
+        self.line_ending = LineEnding::detect(&file.text);
+        let disk = LineEnding::normalize(&file.text);
         let state = self.state.clone();
         self.reloading = true;
         state.update(cx, |state, cx| {
             let old = state.value().to_string();
-            let (range, replacement) = impulse_lsp::edits::changed_span(&old, &file.text);
+            let (range, replacement) = impulse_lsp::edits::changed_span(&old, &disk);
             if range.is_empty() && replacement.is_empty() {
                 return;
             }
@@ -1007,9 +1014,14 @@ impl EditorTab {
         cx.notify();
     }
 
-    /// The buffer's text.
+    /// The buffer's text (`\n` line ends).
     pub fn text(&self, cx: &gpui_kit::App) -> String {
         self.state.read(cx).value().to_string()
+    }
+
+    /// The buffer's text as the file holds it: with its line ending.
+    pub fn disk_text(&self, cx: &gpui_kit::App) -> String {
+        self.line_ending.apply(&self.text(cx))
     }
 
     /// Put `text` back as one undoable edit, if the buffer still reads
@@ -1066,7 +1078,7 @@ impl EditorTab {
         if self.read_only || self.untitled.is_some() {
             return None;
         }
-        let text = self.state.read(cx).value().to_string();
+        let text = self.disk_text(cx);
         let written = match text_file::write(&text, self.bom, &self.path) {
             Ok(()) => {
                 for (_, link) in &self.links {
@@ -1107,10 +1119,11 @@ impl EditorTab {
         let Some(disk) = text_file::read(&self.path) else {
             return;
         };
-        let buffer = self.text(cx);
+        let buffer = self.disk_text(cx);
         match impulse_kit::save_command::rewrite_outcome(saved, &disk.text, &buffer, succeeded) {
             RewriteOutcome::Adopt => {
-                self.replace_buffer(&disk.text, window, cx);
+                self.line_ending = LineEnding::detect(&disk.text);
+                self.replace_buffer(&LineEnding::normalize(&disk.text), window, cx);
                 self.dirty = false;
                 self.stamp = text_file::stamp(&self.path);
             }

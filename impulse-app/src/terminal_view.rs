@@ -311,7 +311,7 @@ pub struct TerminalView {
     pub(crate) command_running: bool,
     /// The shell reports its prompts, so `command_running` false means it
     /// waits at one.
-    tracks_prompts: bool,
+    pub(crate) tracks_prompts: bool,
     /// The program reads a password (echo off): the bar masks input.
     pub(crate) password: bool,
     pub(crate) last_exit: Option<i32>,

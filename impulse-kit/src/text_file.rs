@@ -3,6 +3,9 @@
 //! - strictly UTF-8: a file in another encoding isn't opened, rather than
 //!   opening empty and being overwritten on save;
 //! - a UTF-8 byte-order mark is remembered and written back;
+//! - CRLF files stay CRLF: the editor works on `\n` and the file's line
+//!   ending is put back on write (`LineEnding`, as Monaco keeps a model's
+//!   EOL);
 //! - writes go through a symlink to its target instead of replacing the
 //!   link, and keep the file's permissions.
 
@@ -22,6 +25,51 @@ const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
 pub struct Contents {
     pub text: String,
     pub bom: bool,
+}
+
+/// A file's line ending, as Monaco picks a model's EOL: CRLF when more
+/// lines end in `\r\n` than in a bare `\n`, else LF.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LineEnding {
+    #[default]
+    Lf,
+    Crlf,
+}
+
+impl LineEnding {
+    pub fn detect(text: &str) -> LineEnding {
+        let crlf = text.matches("\r\n").count();
+        let lf = text.matches('\n').count() - crlf;
+        if crlf > lf {
+            LineEnding::Crlf
+        } else {
+            LineEnding::Lf
+        }
+    }
+
+    /// The text with `\n` line ends, as the editor holds it.
+    pub fn normalize(text: &str) -> String {
+        if text.contains('\r') {
+            text.replace("\r\n", "\n")
+        } else {
+            text.to_string()
+        }
+    }
+
+    /// Editor text (`\n` line ends) with this line ending, for the file.
+    pub fn apply(self, text: &str) -> String {
+        match self {
+            LineEnding::Lf => text.to_string(),
+            LineEnding::Crlf => LineEnding::normalize(text).replace('\n', "\r\n"),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LineEnding::Lf => "LF",
+            LineEnding::Crlf => "CRLF",
+        }
+    }
 }
 
 /// Identity of what's on disk; changes whenever anything rewrites it.
@@ -186,6 +234,23 @@ pub fn write(text: &str, bom: bool, path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn line_endings_round_trip() {
+        let crlf = "one\r\ntwo\r\nthree\n";
+        assert_eq!(LineEnding::detect(crlf), LineEnding::Crlf);
+        assert_eq!(LineEnding::detect("a\nb\r\nc\n"), LineEnding::Lf);
+        assert_eq!(LineEnding::detect("no line end"), LineEnding::Lf);
+        let editor = LineEnding::normalize(crlf);
+        assert_eq!(editor, "one\ntwo\nthree\n");
+        assert_eq!(
+            LineEnding::Crlf.apply(&format!("{editor}typed\n")),
+            "one\r\ntwo\r\nthree\r\ntyped\r\n"
+        );
+        assert_eq!(LineEnding::Lf.apply("a\nb"), "a\nb");
+        // A stray \r\n pasted into a CRLF file doesn't double.
+        assert_eq!(LineEnding::Crlf.apply("a\r\nb"), "a\r\nb");
+    }
 
     #[test]
     fn refuses_text_that_is_not_utf8() {

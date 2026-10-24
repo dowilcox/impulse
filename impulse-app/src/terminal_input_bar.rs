@@ -244,7 +244,7 @@ impl TerminalView {
     }
 
     /// Run a command typed in the bar: the shell echoes it into the block.
-    fn run_command(&mut self, command: &str) {
+    pub(crate) fn run_command(&mut self, command: &str) {
         // The shells leave a command typed with a leading space out of their
         // history; so does Impulse.
         self.hidden_pending = command.starts_with(' ');

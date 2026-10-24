@@ -330,6 +330,26 @@ fn choice_dialog(
     answer: impl FnOnce(Choice, &mut Window, &mut App) + 'static,
 ) {
     let chosen: Chosen = Rc::new(RefCell::new(Some(Box::new(answer))));
+    #[cfg(debug_assertions)]
+    {
+        let press = |choice: Choice| -> crate::debug_snapshot::Press {
+            let chosen = chosen.clone();
+            Rc::new(move |window, cx| {
+                window.close_dialog(cx);
+                if let Some(chosen) = chosen.borrow_mut().take() {
+                    chosen(choice, window, cx)
+                }
+            })
+        };
+        crate::debug_snapshot::note_sheet(
+            vec![title.clone(), message.clone()],
+            vec![
+                ("Don't Save", press(Choice::DontSave)),
+                ("Cancel", press(Choice::Cancel)),
+                ("Save", press(Choice::Save)),
+            ],
+        );
+    }
     window.open_dialog(cx, move |dialog, _, _| {
         let reply = |choice: Choice| {
             let chosen = chosen.clone();

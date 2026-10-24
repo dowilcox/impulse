@@ -216,7 +216,8 @@ The shipped Swift app keeps working through every phase.
    today's bundle, proven by the smoke scenarios that use them.
 4. **App shell and terminal** (in progress: window, workspaces, tabs, split
    panes, commands and keybindings, settings.json, session restore, the
-   control server and the terminal's grid, keys, selection and mouse are in).
+   control server, the terminal's grid, keys, selection and mouse, and the
+   headless snapshot mode are in).
    Window, tabs, panes, workspaces, docks, status
    bar, control server, settings, keybindings, session restore (same files),
    the full terminal (selection, search, links, sticky headers, block toolbar,
@@ -434,6 +435,25 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   integration as `TerminalTab` does.
 - `scripts/spike/linux-shot.sh` screenshots the app under Xvfb with software
   Vulkan, so CI can check the UI without a GPU.
+- The headless snapshot mode (`debug_snapshot.rs`, debug builds only, as
+  the Swift `DebugSnapshot`): the same `--impulse-snapshot*` flags, the
+  actions run one after another, `until=` conditions and the `dump=` JSON
+  the smoke checks read; window images by ImageMagick's `import` on X11
+  (Xvfb included) and `screencapture -l` on macOS (not yet tried on a
+  Mac). `scripts/smoke/run.py` and `scripts/docs/capture.py` run the Rust
+  app when `IMPULSE_SNAPSHOT_APP` names its binary (the default on Linux),
+  in the same demo home (its data folder `~/.local/share/impulse-dev` on
+  Linux), composing shots with `scripts/docs/imagetool.py` where there's
+  no Swift. On Linux under Xvfb: terminal-zsh, -bash and -fish, tasks,
+  agent-integration and session pass; editor and lsp drive Monaco with
+  `js=`, which the Rust editor has no page for (they need actions of
+  their own). Shots cropped to a floating window
+  (`crop: "overlay"`) need the in-window dialog's bounds in
+  `snapshot.log`.
+
+![A docs shot of the Rust app](images/rust-snapshot-window-tour.png)
+
+*`capture.py getting-started-window-tour` from the Rust app on Linux.*
 
 Known issues:
 
@@ -445,9 +465,6 @@ Known issues:
   the code ([screenshot](images/rust-editor-hover.png)).
 - Completions insert plain text: snippet support is off until GPUI Kit's
   snippet handling is checked.
-- A cross-file edit (rename, a code action) can't be undone as a whole
-  yet: each open tab undoes its own part, files changed on disk don't. The
-  Swift app offers Undo for the whole edit.
 - The app hasn't been built on a Mac yet.
 
 ## Risks

@@ -1478,6 +1478,17 @@ pub(crate) fn toast(
     detail: Option<String>,
     action: Option<ToastAction>,
 ) {
+    #[cfg(debug_assertions)]
+    crate::debug_snapshot::note_toast(
+        match kind {
+            ToastKind::Info => "info",
+            ToastKind::Success => "success",
+            ToastKind::Warning => "warning",
+        },
+        &message,
+        detail.as_deref(),
+        action.as_ref().map(|(label, run)| (*label, run.clone())),
+    );
     let mut note = match kind {
         ToastKind::Info => Notification::info(""),
         ToastKind::Success => Notification::success(""),
@@ -1531,6 +1542,22 @@ pub(crate) fn confirm(
     answer: impl FnOnce(bool, &mut Window, &mut App) + 'static,
 ) {
     let answer: Answer = Rc::new(RefCell::new(Some(Box::new(answer))));
+    #[cfg(debug_assertions)]
+    {
+        let press = |yes: bool| -> Run {
+            let answer = answer.clone();
+            Rc::new(move |window, cx| {
+                window.close_dialog(cx);
+                if let Some(answer) = answer.borrow_mut().take() {
+                    answer(yes, window, cx)
+                }
+            })
+        };
+        crate::debug_snapshot::note_sheet(
+            vec![title.clone(), message.clone()],
+            vec![(cancel, press(false)), (ok, press(true))],
+        );
+    }
     window.open_dialog(cx, move |dialog, _, _| {
         let (no, yes) = (answer.clone(), answer.clone());
         let (enter, escape) = (answer.clone(), answer.clone());

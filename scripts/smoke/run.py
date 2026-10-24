@@ -17,6 +17,11 @@ usage: run.py [--list] [NAME_OR_PREFIX ...]
 Build the app first: ./impulse-macos/build.sh --dev
 Each scenario's actions, dumps and final window images are left in
 target/smoke/<name>/.
+
+For the Rust app, set IMPULSE_SNAPSHOT_APP to its binary (the default on
+Linux: target/debug/impulse-app, after `cargo build -p impulse-app -p
+impulse-cli`); on Linux it runs on the X server in DISPLAY (Xvfb), and the
+scenarios' shells are found on PATH when they aren't where a Mac has them.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ import make_demo  # noqa: E402
 from scenarios import SCENARIOS  # noqa: E402
 
 WORK = REPO / "target" / "smoke"
-DATA = make_demo.HOME / "Library" / "Application Support" / "impulse-dev"
+DATA = make_demo.data_dir("impulse-dev")
 
 
 class Run:
@@ -104,15 +109,14 @@ def launch(scenario: dict, out: Path, actions: list[str], session_file: Path) ->
     # Always end with the state, so waits that timed out are reported.
     (out / "actions.json").write_text(json.dumps([*actions, "dump=final"], indent=1, ensure_ascii=False))
     pinned = [part for key, value in capture.PINNED.items() for part in ("-" + key, capture.argument(value))]
+    shell = scenario.get("shell", "/bin/zsh")
+    if not Path(shell).exists():
+        # Where this system has it (Linux has no /opt/homebrew).
+        shell = shutil.which(Path(shell).name) or shell
+    # XDG_CONFIG_HOME: where Agent Integration finds opencode's config, the
+    # demo home's.
+    env = capture.environment(shell)
     args = [
-        "open", "-g", "-n", "-W", "-a", str(capture.APP),
-        "--env", f"CFFIXED_USER_HOME={make_demo.HOME}", "--env", f"HOME={make_demo.HOME}",
-        "--env", "USER=impulse-docs", "--env", f"SHELL={scenario.get('shell', '/bin/zsh')}",
-        # Where Agent Integration finds opencode's config: the demo home's.
-        "--env", f"XDG_CONFIG_HOME={make_demo.HOME / '.config'}",
-        "--env", "PATH=/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
-        "--args",
-        *pinned,
         "--impulse-snapshot", str(out),
         "--impulse-snapshot-delay", "2",
         "--impulse-snapshot-session", str(session_file),
@@ -122,12 +126,7 @@ def launch(scenario: dict, out: Path, actions: list[str], session_file: Path) ->
         args.append("--impulse-snapshot-no-lsp")
     if scenario.get("persist"):
         args.append("--impulse-snapshot-persist")
-    try:
-        subprocess.run(args, check=True, timeout=scenario.get("timeout", 240))
-        return True
-    except subprocess.TimeoutExpired:
-        subprocess.run(["pkill", "-9", "-f", str(out)], capture_output=True)
-        return False
+    return capture.run_app(args, env, pinned, scenario.get("timeout", 240))
 
 
 def prepare(scenario: dict) -> None:
@@ -176,7 +175,8 @@ def main() -> None:
             print(f"{scenario['name']:<16} {scenario['about']}")
         return
     if not capture.APP.exists():
-        sys.exit(f"{capture.APP} is missing: run ./impulse-macos/build.sh --dev first")
+        sys.exit(f"{capture.APP} is missing: run " + ("cargo build -p impulse-app -p impulse-cli" if capture.RUST
+                                                        else "./impulse-macos/build.sh --dev") + " first")
     selected = [s for s in SCENARIOS if not args or any(s["name"].startswith(a) for a in args)]
     if not selected:
         sys.exit("no scenarios match")
