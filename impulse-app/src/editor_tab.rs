@@ -46,6 +46,8 @@ pub struct EditorTab {
     pub tab_size: usize,
     /// Indent with spaces (`use_spaces`, or the file type's override).
     pub use_spaces: bool,
+    /// A Markdown preview: instead of the editor (false) or beside it (true).
+    pub preview: Option<bool>,
     /// A message for the status bar ("changed on disk", a failed save).
     pub notice: Option<String>,
     state: Entity<EditorState>,
@@ -115,6 +117,10 @@ impl EditorTab {
             if !matches!(event, InputEvent::Change) {
                 return;
             }
+            // A preview beside the editor follows every edit.
+            if tab.preview.is_some() {
+                cx.notify();
+            }
             for (_, link) in &tab.links {
                 link.sync(state.read(cx).text());
             }
@@ -135,6 +141,7 @@ impl EditorTab {
             read_only: opened.large,
             tab_size,
             use_spaces,
+            preview: None,
             notice: opened
                 .large
                 .then(|| "Larger than 5 MB: opened read-only.".to_string()),
@@ -797,6 +804,36 @@ impl EditorTab {
         });
     }
 
+    /// Show or hide the Markdown preview (`beside`: next to the editor).
+    /// An error message for files that can't be previewed.
+    pub fn toggle_preview(&mut self, beside: bool, cx: &mut Context<Self>) -> Result<(), String> {
+        let path = self.path.to_string_lossy();
+        if !impulse_kit::markdown_preview::is_markdown_file(&path) {
+            return Err("Open a Markdown file to preview it.".into());
+        }
+        self.preview = match self.preview {
+            Some(current) if current == beside => None,
+            _ => Some(beside),
+        };
+        cx.notify();
+        Ok(())
+    }
+
+    fn preview_element(&self, cx: &gpui_kit::App) -> impl IntoElement {
+        let text = self.state.read(cx).text().to_string();
+        gpui_kit::div()
+            .id("markdown-preview")
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .overflow_y_scroll()
+            .px(px(28.))
+            .py(px(20.))
+            .child(gpui_kit::div().max_w(px(860.)).child(
+                gpui_kit::component::text::TextView::markdown("markdown", text).selectable(true),
+            ))
+    }
+
     pub fn focus_handle(&self, cx: &gpui_kit::App) -> gpui_kit::FocusHandle {
         use gpui_kit::Focusable as _;
         self.state.read(cx).focus_handle(cx)
@@ -880,6 +917,19 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::insert_line_below))
             .on_action(cx.listener(Self::insert_line_above))
             .on_action(cx.listener(Self::add_next_occurrence))
-            .child(editor)
+            .map(|d| match self.preview {
+                None => d.child(editor),
+                Some(false) => d.child(self.preview_element(cx)),
+                Some(true) => d
+                    .flex()
+                    .child(gpui_kit::div().flex_1().min_w_0().h_full().child(editor))
+                    .child(
+                        gpui_kit::div()
+                            .w(px(1.))
+                            .h_full()
+                            .bg(gpui_kit::component::ActiveTheme::theme(&**cx).border),
+                    )
+                    .child(self.preview_element(cx)),
+            })
     }
 }

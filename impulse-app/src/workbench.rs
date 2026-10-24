@@ -636,6 +636,15 @@ impl Workbench {
             "fullscreen" => window.toggle_fullscreen(),
             "review_changes" => self.open_review(None, window, cx),
             "git_history" => self.open_history(false, window, cx),
+            "toggle_markdown_preview" | "preview_beside" => {
+                let Some(editor) = self.active_editor().cloned() else {
+                    return self.set_notice("Open a Markdown file to preview it.".into(), cx);
+                };
+                let beside = id == "preview_beside";
+                if let Err(message) = editor.update(cx, |e, cx| e.toggle_preview(beside, cx)) {
+                    self.set_notice(message, cx);
+                }
+            }
             "file_history" => self.open_history(true, window, cx),
             "trust_folder" => {
                 let index = self.active;
