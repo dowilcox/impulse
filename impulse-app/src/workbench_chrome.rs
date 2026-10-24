@@ -180,6 +180,13 @@ impl Workbench {
         }
     }
 
+    /// `sidebar_tabs`: the sidebar lists the tabs (while it's shown) and the
+    /// titlebar doesn't.
+    fn tabs_in_sidebar(&self, cx: &gpui_kit::App) -> bool {
+        let settings = SettingsStore::get(cx);
+        settings.sidebar_tabs && settings.sidebar_visible
+    }
+
     pub(crate) fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         // macOS draws its traffic lights in this inset; on Linux the window
@@ -311,6 +318,7 @@ impl Workbench {
             let t = t.context_menu(self.tab_menu(self.active, index, cx));
             tabs = tabs.child(t);
         }
+        let tabs_in_sidebar = self.tabs_in_sidebar(cx);
         div()
             .flex()
             .items_center()
@@ -362,17 +370,21 @@ impl Workbench {
                 )
             })
             .child(div().w(px(8.)).flex_none())
-            .child(tabs)
-            .child(
-                div()
-                    .id("new-tab")
-                    .flex_none()
-                    .p(px(4.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .on_click(cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)))
-                    .child(icon("plus", metrics::ICON, p.text_secondary)),
-            )
+            // With `sidebar_tabs`, the sidebar lists the tabs while it's open.
+            .when(!tabs_in_sidebar, |d| {
+                d.child(tabs).child(
+                    div()
+                        .id("new-tab")
+                        .flex_none()
+                        .p(px(4.))
+                        .rounded(px(metrics::RADIUS_SMALL))
+                        .hover(|s| s.bg(hsla(p.hover)))
+                        .on_click(
+                            cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)),
+                        )
+                        .child(icon("plus", metrics::ICON, p.text_secondary)),
+                )
+            })
             .child(div().flex_1())
             .children(self.agent_inbox_button(cx))
             .child(
@@ -408,7 +420,9 @@ impl Workbench {
         let workspace = &self.workspaces[index];
         let selected = index == self.active;
         let id = workspace.id;
-        let expanded = workspace.expanded;
+        let tabs_in_sidebar = self.tabs_in_sidebar(cx);
+        // Listed tabs stay open for the active workspace.
+        let expanded = workspace.expanded || tabs_in_sidebar && selected;
         let drop_color = hsla(p.selection);
         let mut column = div().flex().flex_col();
         let row = div()
@@ -560,6 +574,9 @@ impl Workbench {
                             div()
                                 .flex_1()
                                 .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
                                 .when(tab.preview, |d| d.italic())
                                 .child(surface.title(cx)),
                         )
@@ -568,7 +585,29 @@ impl Workbench {
                                 .then(|| crate::agent_views::status_dot(6., p.attention)),
                         )
                         .children(tab.pinned.then(|| icon("pin", 10., p.text_tertiary)))
+                        .when(active_tab && tabs_in_sidebar, |d| d.bg(hsla(p.selection)))
                         .context_menu(menu),
+                );
+            }
+            if tabs_in_sidebar && selected {
+                column = column.child(
+                    div()
+                        .id(("workspace-new-tab", id))
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .h(px(metrics::ROW_HEIGHT))
+                        .pl(px(36.))
+                        .mx(px(6.))
+                        .rounded(px(metrics::RADIUS))
+                        .text_size(px(11.5))
+                        .text_color(hsla(p.text_tertiary))
+                        .hover(|s| s.bg(hsla(p.hover)))
+                        .on_click(
+                            cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)),
+                        )
+                        .child(icon("plus", metrics::ICON_SMALL, p.text_tertiary))
+                        .child("New Tab"),
                 );
             }
         }
