@@ -30,6 +30,13 @@ pub fn typed_prefix(text: &str, offset: usize) -> &str {
 /// (ignoring case), nearest to the cursor first, without the one being
 /// typed. Nothing for an empty prefix.
 pub fn suggestions(text: &str, offset: usize) -> Vec<String> {
+    suggestions_with(text, offset, &[])
+}
+
+/// `suggestions`, then the words in `others` (other open documents, for
+/// Monaco's `matchingDocuments` and `allDocuments`) in the order they
+/// appear.
+pub fn suggestions_with(text: &str, offset: usize, others: &[&str]) -> Vec<String> {
     let offset = offset.min(text.len());
     let prefix = typed_prefix(text, offset);
     if prefix.is_empty() {
@@ -57,10 +64,16 @@ pub fn suggestions(text: &str, offset: usize) -> Vec<String> {
     }
     let distance = |at: usize| at.abs_diff(offset);
     words.sort_by_key(|(at, _)| distance(*at));
+    let elsewhere = others.iter().flat_map(|other| {
+        other
+            .split(|c: char| !is_word_char(c))
+            .filter(|word| !word.is_empty())
+    });
     let mut seen = HashSet::new();
     words
         .into_iter()
         .map(|(_, word)| word)
+        .chain(elsewhere)
         .filter(|word| {
             word.len() > prefix.len()
                 && word.to_lowercase().starts_with(&lower)
@@ -87,6 +100,11 @@ mod tests {
         assert_eq!(suggestions(text, 13), vec!["value", "Value"]);
         assert_eq!(suggestions("Value valid va", 14), vec!["valid", "Value"]);
         assert!(suggestions("abc ", 4).is_empty(), "nothing typed");
+        // Other documents' words come after this one's, once each.
+        assert_eq!(
+            suggestions_with("count co", 8, &["copy count", "cobalt"]),
+            vec!["count", "copy", "cobalt"]
+        );
         assert_eq!(typed_prefix("café_ré", 9), "café_ré");
     }
 }

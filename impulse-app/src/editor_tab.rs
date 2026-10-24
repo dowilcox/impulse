@@ -126,6 +126,8 @@ impl EditorTab {
         let line_ending = LineEnding::detect(&opened.contents.text);
         let text = LineEnding::normalize(&opened.contents.text);
         let grammar = grammar_for(&language).to_string();
+        let tab = cx.entity().downgrade();
+        cx.default_global::<OpenDocuments>().0.push(tab);
         let state = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
                 .language(grammar)
@@ -270,10 +272,13 @@ impl EditorTab {
         // Without a language server, the document's own words.
         if self.primary_link().is_none() {
             let words = settings.editor_word_based_suggestions != "off";
+            let provider = WordCompletions {
+                tab: cx.entity().downgrade(),
+                language: self.language.clone(),
+            };
             self.state.update(cx, |state, _| {
-                state.lsp_mut().completion_provider = words.then(|| {
-                    std::rc::Rc::new(WordCompletions) as std::rc::Rc<dyn CompletionProvider>
-                });
+                state.lsp_mut().completion_provider = words
+                    .then(|| std::rc::Rc::new(provider) as std::rc::Rc<dyn CompletionProvider>);
             });
         }
         crate::editor_vim::Attached::update(
@@ -2010,8 +2015,45 @@ impl EditorTab {
 
 /// Word-based suggestions (Monaco's `wordBasedSuggestions`) for an editor
 /// no language server completes: the document's words that start like
-/// the one being typed (`impulse_kit::word_completions`).
-struct WordCompletions;
+/// the one being typed (`impulse_kit::word_completions`), then other open
+/// files' when the setting says so.
+struct WordCompletions {
+    tab: gpui_kit::WeakEntity<EditorTab>,
+    language: String,
+}
+
+/// Every editor tab opened, for word suggestions from other files.
+#[derive(Default)]
+struct OpenDocuments(Vec<gpui_kit::WeakEntity<EditorTab>>);
+
+impl gpui_kit::Global for OpenDocuments {}
+
+/// Very large documents aren't scanned on every keystroke.
+const MAX_WORD_SCAN: usize = 2 * 1024 * 1024;
+
+impl WordCompletions {
+    /// The other open files' text the setting takes words from.
+    fn others(&self, cx: &mut gpui_kit::App) -> Vec<String> {
+        let scope = crate::settings_store::SettingsStore::get(cx)
+            .editor_word_based_suggestions
+            .clone();
+        if scope != "matchingDocuments" && scope != "allDocuments" {
+            return Vec::new();
+        }
+        let own = self.tab.entity_id();
+        let docs = cx.default_global::<OpenDocuments>();
+        docs.0.retain(|tab| tab.upgrade().is_some());
+        let tabs = docs.0.clone();
+        tabs.iter()
+            .filter(|tab| tab.entity_id() != own)
+            .filter_map(|tab| tab.upgrade())
+            .filter(|tab| scope == "allDocuments" || tab.read(cx).language == self.language)
+            .map(|tab| tab.read(cx).state.read(cx).value().clone())
+            .filter(|text| text.len() <= MAX_WORD_SCAN)
+            .map(|text| text.to_string())
+            .collect()
+    }
+}
 
 impl CompletionProvider for WordCompletions {
     fn completions(
@@ -2020,13 +2062,14 @@ impl CompletionProvider for WordCompletions {
         offset: usize,
         _: lsp_types::CompletionContext,
         _: &mut Window,
-        _: &mut gpui_kit::App,
+        cx: &mut gpui_kit::App,
     ) -> gpui_kit::Task<gpui_kit::Result<lsp_types::CompletionResponse>> {
-        // Very large documents aren't scanned on every keystroke.
-        let items = if text.len() > 2 * 1024 * 1024 {
+        let items = if text.len() > MAX_WORD_SCAN {
             Vec::new()
         } else {
-            impulse_kit::word_completions::suggestions(&text.to_string(), offset)
+            let others = self.others(cx);
+            let others: Vec<&str> = others.iter().map(String::as_str).collect();
+            impulse_kit::word_completions::suggestions_with(&text.to_string(), offset, &others)
                 .into_iter()
                 .map(|word| lsp_types::CompletionItem {
                     label: word,

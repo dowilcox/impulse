@@ -775,6 +775,15 @@ impl TerminalView {
         if !matches!(self.backend.take_damage(), Some(rows) if rows.is_empty()) {
             changed = true;
             self.agent_output(cx);
+            // Output brings the view to the bottom unless the user is
+            // reading back past where the prompt was tucked away.
+            let offset = self.backend.display_offset();
+            if offset > 0
+                && self.tuck.floor.is_some_and(|floor| offset <= floor)
+                && SettingsStore::get(cx).terminal_scroll_on_output
+            {
+                self.backend.scroll_to_bottom();
+            }
         }
         if changed {
             cx.notify();
