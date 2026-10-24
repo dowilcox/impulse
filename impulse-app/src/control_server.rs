@@ -265,20 +265,18 @@ pub(crate) fn parent_of(pid: i32) -> Option<i32> {
     }
     #[cfg(target_os = "macos")]
     {
-        let mut info: libc::kinfo_proc = unsafe { std::mem::zeroed() };
-        let mut size = std::mem::size_of::<libc::kinfo_proc>();
-        let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
-        let ok = unsafe {
-            libc::sysctl(
-                mib.as_mut_ptr(),
-                mib.len() as u32,
-                &mut info as *mut _ as *mut libc::c_void,
-                &mut size,
-                std::ptr::null_mut(),
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let filled = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
                 0,
+                &mut info as *mut _ as *mut libc::c_void,
+                size,
             )
-        } == 0;
-        (ok && size > 0).then_some(info.kp_eproc.e_ppid)
+        };
+        (filled == size).then_some(info.pbi_ppid as i32)
     }
 }
 
