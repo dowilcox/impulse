@@ -81,13 +81,22 @@ pub fn colorize(text: &str, language: &str) -> Vec<(Range<usize>, Color)> {
     let mut open: Vec<(usize, u8)> = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        let rest = &text[i..];
-        if let Some(marker) = syntax.line_comment.filter(|m| rest.starts_with(m)) {
+        // Bytes, not `&str`: `i` steps a byte at a time, through the middle
+        // of multi-byte characters. Markers are ASCII, so a match starts
+        // and ends on character boundaries.
+        let rest = &bytes[i..];
+        if let Some(marker) = syntax
+            .line_comment
+            .filter(|m| rest.starts_with(m.as_bytes()))
+        {
             i += marker.len();
             i += text[i..].find('\n').unwrap_or(text.len() - i);
             continue;
         }
-        if let Some((start, end)) = syntax.block_comment.filter(|(s, _)| rest.starts_with(s)) {
+        if let Some((start, end)) = syntax
+            .block_comment
+            .filter(|(s, _)| rest.starts_with(s.as_bytes()))
+        {
             i += start.len();
             i += text[i..]
                 .find(end)
@@ -183,6 +192,10 @@ mod tests {
         assert_eq!(levels(python, "python").len(), 2);
         let escaped = r#"s = "\"(" + (a)"#;
         assert_eq!(levels(escaped, "javascript").len(), 2);
+        // Multi-byte text around brackets and markers.
+        let unicode = "let s = \"é(\"; // ü)\nf(ä, \"→\") /* ö */";
+        assert_eq!(levels(unicode, "rust").len(), 2);
+        assert_eq!(levels("é(ü)→", "plaintext").len(), 2);
         // Markdown has no strings: a quote doesn't hide anything.
         assert_eq!(levels("\"(\" text)", "markdown").len(), 2);
     }
