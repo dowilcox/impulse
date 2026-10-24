@@ -18,7 +18,7 @@ pub struct ThemeFile {
     pub terminal: Option<TerminalPalette>,
 }
 
-/// The core color palette — 10 required hues plus 4 optional derived shades.
+/// The core color palette: 10 required hues plus 4 optional derived shades.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemePalette {
     pub bg: String,
@@ -31,21 +31,21 @@ pub struct ThemePalette {
     pub cyan: String,
     pub blue: String,
     pub magenta: String,
-    /// Darker surface shade — derived from `bg` if omitted.
+    /// Darker surface shade, derived from `bg` if omitted.
     #[serde(default)]
     pub surface: Option<String>,
-    /// Lighter overlay shade — derived from `bg` if omitted.
+    /// Lighter overlay shade, derived from `bg` if omitted.
     #[serde(default)]
     pub overlay: Option<String>,
-    /// Muted foreground — derived from `fg` if omitted.
+    /// Muted foreground, derived from `fg` if omitted.
     #[serde(default)]
     pub muted: Option<String>,
-    /// Subtle foreground (comments) — derived from `fg` if omitted.
+    /// Subtle foreground (comments), derived from `fg` if omitted.
     #[serde(default)]
     pub subtle: Option<String>,
 }
 
-/// Semantic UI color overrides. All fields optional — derived from palette.
+/// Semantic UI color overrides. All fields optional, derived from palette.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SemanticUI {
@@ -69,7 +69,7 @@ pub struct SemanticUI {
     pub surface_style: Option<String>,
 }
 
-/// Semantic syntax color overrides. All fields optional — derived from palette.
+/// Semantic syntax color overrides. All fields optional, derived from palette.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SemanticSyntax {
@@ -112,7 +112,7 @@ pub struct TerminalPalette {
 }
 
 // ---------------------------------------------------------------------------
-// Resolved theme (what consumers use — no Options, all fields populated)
+// Resolved theme (what consumers use: no Options, all fields populated)
 // ---------------------------------------------------------------------------
 
 /// Fully resolved theme with every field populated. This is the type that
@@ -170,7 +170,7 @@ pub struct ResolvedTheme {
     pub terminal_fg: String,
     pub terminal_bg: String,
     pub terminal_palette: [String; 16],
-    /// `"flat"` or `"card"` — see [`SemanticUI::surface_style`].
+    /// `"flat"` or `"card"`: see [`SemanticUI::surface_style`].
     #[serde(default = "default_surface_style")]
     pub surface_style: String,
 }
@@ -892,7 +892,7 @@ mod tests {
 
     #[test]
     fn surface_style_default_and_json_compat() {
-        // Older serialized themes have no surface_style key — must default to flat.
+        // Older serialized themes have no surface_style key: must default to flat.
         let theme = get_theme("kanagawa");
         let mut json: serde_json::Value = serde_json::from_str(&theme_to_json(&theme)).unwrap();
         json.as_object_mut().unwrap().remove("surface_style");

@@ -361,7 +361,12 @@ impl EditorTab {
     pub(crate) fn wrap_git(&self, editor: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.try_global::<GitColors>().copied();
         let state = self.state.clone();
-        let hunks = self.git.hunks.clone();
+        // The Diff View marks the changes its own way.
+        let hunks = if self.diff.is_some() {
+            Vec::new()
+        } else {
+            self.git.hunks.clone()
+        };
         let line_fills = self.git.line_fills.clone();
         let origin = self.git.origin.clone();
         let blame = self.git.blame_line.and_then(|line| {
@@ -477,7 +482,8 @@ impl EditorTab {
                     let (Some(first), Some(last)) = (first, last) else {
                         continue;
                     };
-                    let x = first.origin.x - px(7.);
+                    // In Monaco's decorations lane, left of the folding one.
+                    let x = first.origin.x - px(18.);
                     let bar = if hunk.kind() == MarkKind::Deleted {
                         // A small wedge where the lines were, under the line.
                         Bounds::new(
@@ -492,6 +498,30 @@ impl EditorTab {
                     };
                     window.paint_quad(fill(bar, color));
                     bars.push((bar, hunk.new_start));
+                }
+                // The same marks in the overview ruler's left lane, where the
+                // whole file fits the editor's height (Monaco's ruler).
+                let total = text.lines_len().max(1) as f32;
+                let height = bounds.size.height;
+                for hunk in &hunks {
+                    let color = match hunk.kind() {
+                        MarkKind::Added => colors.added,
+                        MarkKind::Modified => colors.modified,
+                        MarkKind::Deleted => colors.deleted,
+                    };
+                    let lines = hunk.marked_lines();
+                    let (Some(first), Some(last)) = (lines.clone().next(), lines.last()) else {
+                        continue;
+                    };
+                    let top = bounds.top() + height * ((first - 1) as f32 / total);
+                    let bottom = (bounds.top() + height * (last as f32 / total)).max(top + px(3.));
+                    window.paint_quad(fill(
+                        Bounds::from_corners(
+                            point(bounds.right() - px(10.), top),
+                            point(bounds.right() - px(5.), bottom),
+                        ),
+                        color,
+                    ));
                 }
                 if let Some((line, label)) = &blame {
                     if let Some(end) = line_offset(*line).map(|o| {
@@ -769,6 +799,9 @@ impl EditorTab {
         let (edge, removed) = colors
             .map(|c| (c.modified, c.deleted.opacity(0.12)))
             .unwrap_or((theme.border, theme.secondary));
+        let widget = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(theme.secondary, |b| b.widget);
         Some(
             div()
                 .flex()
@@ -777,7 +810,7 @@ impl EditorTab {
                 .border_t_1()
                 .border_b_1()
                 .border_color(edge)
-                .bg(theme.secondary)
+                .bg(widget)
                 .shadow_md()
                 .child(
                     div()

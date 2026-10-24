@@ -953,7 +953,7 @@ impl Workbench {
                     .text_size(px(10.5))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(hsla(p.text_tertiary))
-                    .child(title.to_uppercase()),
+                    .child(crate::workbench_chrome::tracked(&title.to_uppercase())),
             )
             .children(count.map(|count| {
                 div()
@@ -1586,7 +1586,14 @@ impl Workbench {
                     .border_1()
                     .border_color(hsla(p.hairline_strong))
                     .text_size(px(12.))
-                    .child(Textarea::new(&self.git.message).appearance(false))
+                    .child(
+                        // The Swift TextEditor's insets and minimum height.
+                        Textarea::new(&self.git.message)
+                            .appearance(false)
+                            .px(px(5.))
+                            .py(px(1.))
+                            .min_h(px(40.)),
+                    )
                     .when(subject > 0, |d| {
                         d.child(
                             div()

@@ -27,6 +27,122 @@ pub(crate) fn icon(name: &str, size: f32, color: KitRgba) -> impl IntoElement {
         .text_color(hsla(color))
 }
 
+/// Swift's `ProgressRing`: a faint circle and an arc for `progress`, or a
+/// 28% arc turned by `turn` (0 to 1) while it's unknown.
+pub(crate) fn progress_ring(
+    progress: Option<f32>,
+    color: KitRgba,
+    size: f32,
+    line_width: f32,
+    turn: f32,
+) -> impl IntoElement {
+    use std::f32::consts::PI;
+    gpui_kit::canvas(
+        |_, _, _| {},
+        move |bounds: gpui_kit::Bounds<gpui_kit::Pixels>, _, window, _| {
+            let width = px(line_width);
+            let radius = bounds.size.width / 2. - width / 2.;
+            let center = bounds.center();
+            let arc = |from: f32, to: f32| {
+                let mut path = gpui_kit::PathBuilder::stroke(width);
+                let steps = 32;
+                for step in 0..=steps {
+                    let angle = from + (to - from) * step as f32 / steps as f32;
+                    let at = gpui_kit::point(
+                        center.x + radius * angle.cos(),
+                        center.y + radius * angle.sin(),
+                    );
+                    if step == 0 {
+                        path.move_to(at);
+                    } else {
+                        path.line_to(at);
+                    }
+                }
+                path.build().ok()
+            };
+            if let Some(path) = arc(0., 2. * PI) {
+                window.paint_path(path, hsla(color.opacity(0.25)));
+            }
+            let start = -PI / 2. + turn * 2. * PI;
+            let sweep = progress.unwrap_or(0.28).clamp(0.02, 1.) * 2. * PI;
+            if let Some(path) = arc(start, start + sweep) {
+                window.paint_path(path, hsla(color));
+            }
+        },
+    )
+    .size(px(size))
+    .flex_none()
+}
+
+/// Text set with Swift's `.tracking(0.6)` (its uppercase section headers):
+/// GPUI has no letter spacing, so each character is laid out on its own,
+/// 0.6 apart.
+pub(crate) fn tracked(text: &str) -> gpui_kit::Div {
+    div().flex().gap(px(0.6)).children(
+        text.chars()
+            .map(|c| if c == ' ' { '\u{a0}' } else { c }.to_string()),
+    )
+}
+
+/// A sidebar row's highlight, inset 6 from the row's edges (Swift's
+/// `rowBackground`): the selection, else the hover while `group` is hovered.
+/// The row is `relative` and takes this as its first child.
+pub(crate) fn row_background(
+    selected: bool,
+    group: &'static str,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Div {
+    let hover = hsla(p.hover);
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(px(6.))
+        .right(px(6.))
+        .rounded(px(metrics::RADIUS_SMALL + 1.))
+        .when(selected, |d| d.bg(hsla(p.selection)))
+        .when(!selected, |d| d.group_hover(group, move |s| s.bg(hover)))
+}
+
+/// A filter field as Swift's `ChromeTextField`: 24 high, the icon inside,
+/// the content color with a hairline that turns into the focus ring.
+pub(crate) fn chrome_text_field(
+    state: &gpui_kit::Entity<gpui_kit::component::input::InputState>,
+    icon_name: &str,
+    p: &impulse_kit::chrome::ChromePalette,
+    window: &Window,
+    cx: &gpui_kit::App,
+) -> gpui_kit::Div {
+    use gpui_kit::component::input::Input;
+    use gpui_kit::component::Sizable as _;
+    use gpui_kit::Focusable as _;
+    let focused = state.read(cx).focus_handle(cx).is_focused(window);
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .h(px(24.))
+        .px(px(8.))
+        .rounded(px(metrics::RADIUS_SMALL + 1.))
+        .bg(hsla(p.content))
+        .border_1()
+        .border_color(hsla(if focused {
+            p.focus_ring
+        } else {
+            p.hairline_strong
+        }))
+        .child(icon(icon_name, 12., p.text_tertiary))
+        .child(
+            div().flex_1().min_w_0().child(
+                Input::new(state)
+                    .small()
+                    .cleanable(true)
+                    .appearance(false)
+                    .px_0(),
+            ),
+        )
+}
+
 /// `~/…` for paths in the home folder.
 /// "+41 −9" in the git colors (the Swift `DiffStat`).
 pub(crate) fn diff_stat(
@@ -481,7 +597,9 @@ impl Workbench {
                             .child(
                                 div()
                                     .min_w_0()
-                                    .truncate()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis_middle()
                                     .text_size(px(11.5))
                                     .text_color(hsla(p.text_secondary))
                                     .child(workspace.branch.clone()),
@@ -633,14 +751,9 @@ impl Workbench {
             .h(px(26.))
             .pl(px(if indented { 16. } else { 8. }))
             .pr(px(6.))
-            .mx(px(6.))
-            .rounded(px(metrics::RADIUS))
-            // When its tabs are listed, the selected tab carries the highlight.
-            .when(selected && !expanded, |d| d.bg(hsla(p.selection)))
-            .when(!(selected && !expanded), |d| {
-                d.hover(|s| s.bg(hsla(p.hover)))
-            })
             .relative()
+            // When its tabs are listed, the selected tab carries the highlight.
+            .child(row_background(selected && !expanded, "workspace", p))
             .when(selected, |d| {
                 d.child(
                     div()
@@ -711,7 +824,9 @@ impl Workbench {
                 div()
                     .flex_none()
                     .max_w(px(150.))
-                    .truncate()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_middle()
                     .text_size(px(12.))
                     .text_color(hsla(if selected { p.text } else { p.text_secondary }))
                     .font_weight(if selected {
@@ -727,7 +842,9 @@ impl Workbench {
                     d.child(
                         div()
                             .min_w_0()
-                            .truncate()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
                             .font_family("JetBrains Mono")
                             .text_size(px(10.5))
                             .text_color(hsla(p.text_tertiary))
@@ -851,17 +968,17 @@ impl Workbench {
                 column = column.child(
                     div()
                         .id(("workspace-tab", tab.id))
+                        .group("workspace-tab")
+                        .relative()
                         .flex()
                         .items_center()
                         .gap(px(6.))
                         .h(px(24.))
                         .pl(px(40.))
                         .pr(px(8.))
-                        .mx(px(6.))
-                        .rounded(px(metrics::RADIUS))
                         .text_size(px(11.5))
                         .text_color(hsla(if active_tab { p.text } else { p.text_secondary }))
-                        .hover(|s| s.bg(hsla(p.hover)))
+                        .child(row_background(active_tab, "workspace-tab", p))
                         .on_click(cx.listener(
                             move |w, event: &gpui_kit::ClickEvent, window, cx| {
                                 w.active = index;
@@ -884,7 +1001,7 @@ impl Workbench {
                                 .min_w_0()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .text_ellipsis()
+                                .text_ellipsis_middle()
                                 .when(tab.preview, |d| d.italic())
                                 .child(surface.title(cx)),
                         )
@@ -893,7 +1010,6 @@ impl Workbench {
                                 .then(|| crate::agent_views::status_dot(6., p.attention)),
                         )
                         .children(tab.pinned.then(|| icon("pin", 10., p.text_tertiary)))
-                        .when(active_tab, |d| d.bg(hsla(p.selection)))
                         .context_menu(menu),
                 );
             }
@@ -901,16 +1017,16 @@ impl Workbench {
                 column = column.child(
                     div()
                         .id(("workspace-new-tab", id))
+                        .group("workspace-new-tab")
+                        .relative()
                         .flex()
                         .items_center()
                         .gap(px(6.))
                         .h(px(metrics::ROW_HEIGHT))
-                        .pl(px(36.))
-                        .mx(px(6.))
-                        .rounded(px(metrics::RADIUS))
+                        .pl(px(40.))
                         .text_size(px(11.5))
                         .text_color(hsla(p.text_tertiary))
-                        .hover(|s| s.bg(hsla(p.hover)))
+                        .child(row_background(false, "workspace-new-tab", p))
                         .on_click(
                             cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)),
                         )

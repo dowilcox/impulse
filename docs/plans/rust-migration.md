@@ -370,8 +370,13 @@ the focused hunk sit under their lines.*
 
 - The editor's Diff View (Toggle Diff View): the file at HEAD, read-only,
   beside the editable buffer, removed lines tinted on the left and added
-  ones on the right as you type (`impulse_git::buffer_diff`). Unlike
-  Monaco's diff editor the two sides aren't padded to line up yet. Also
+  ones on the right as you type (`impulse_git::buffer_diff`), in Monaco's
+  diff colors, with the changed words of replaced lines tinted again
+  (`buffer_diff::changed_words`) and + and − beside the line numbers.
+  Unlike Monaco's diff editor the two sides aren't padded to line up and
+  unchanged regions don't fold yet. The editor's gutter keeps Monaco's
+  room for five-digit line numbers, and git changes also mark the
+  overview ruler's left lane. Also
   Monaco's context menu, Go to Type Definition, Implementations and
   Declaration, Change All Occurrences, and occurrence and selection
   highlights.

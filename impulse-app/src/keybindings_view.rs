@@ -655,7 +655,7 @@ impl KeybindingsView {
                         .text_size(px(10.5))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(hsla(p.text_tertiary))
-                        .child("RUN IN TERMINAL"),
+                        .child(crate::workbench_chrome::tracked("RUN IN TERMINAL")),
                 )
                 .child(add_button("add-custom", &p).on_click(|_, _, cx| {
                     SettingsStore::update(cx, |s| {
@@ -763,7 +763,7 @@ impl Render for KeybindingsView {
                     .text_size(px(10.5))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(hsla(p.text_tertiary))
-                    .child(category.to_uppercase()),
+                    .child(crate::workbench_chrome::tracked(&category.to_uppercase())),
             );
             for (index, binding) in items {
                 list = list

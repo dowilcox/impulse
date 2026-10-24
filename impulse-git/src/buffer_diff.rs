@@ -7,6 +7,8 @@ use std::path::Path;
 
 use git2::{DiffOptions, Patch, Repository};
 
+use crate::word_diff::word_spans;
+
 /// Lines (0-based, end exclusive) that differ on each side.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LineChanges {
@@ -82,6 +84,89 @@ pub fn line_byte_ranges(text: &str, lines: &[Range<u32>]) -> Vec<Range<usize>> {
         .collect()
 }
 
+/// The words that differ within lines a hunk replaced (Monaco's character
+/// changes, tinted over its line tints): byte ranges in `old` and in `new`.
+/// `hunks` are the lines (0-based, end exclusive) each hunk replaced and
+/// what it put there. A hunk's lines pair up in order; lines left over
+/// changed whole. Hunks that only add or only remove lines have none.
+pub fn changed_words(
+    old: &str,
+    new: &str,
+    hunks: impl IntoIterator<Item = (Range<usize>, Range<usize>)>,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let (old_lines, new_lines) = (line_spans(old), line_spans(new));
+    let (mut removed, mut added) = (Vec::new(), Vec::new());
+    for (old_rows, new_rows) in hunks {
+        if old_rows.is_empty() || new_rows.is_empty() {
+            continue;
+        }
+        let olds = old_lines.get(old_rows).unwrap_or_default();
+        let news = new_lines.get(new_rows).unwrap_or_default();
+        for k in 0..olds.len().max(news.len()) {
+            match (olds.get(k), news.get(k)) {
+                (Some(o), Some(n)) => {
+                    let (o_text, n_text) = (&old[o.clone()], &new[n.clone()]);
+                    let (o_spans, n_spans) = word_spans(o_text, n_text);
+                    removed.extend(joined(
+                        old,
+                        o_spans.iter().map(|s| bytes(o_text, o.start, s)),
+                    ));
+                    added.extend(joined(
+                        new,
+                        n_spans.iter().map(|s| bytes(n_text, n.start, s)),
+                    ));
+                }
+                (Some(o), None) => removed.push(o.clone()),
+                (None, Some(n)) => added.push(n.clone()),
+                (None, None) => {}
+            }
+        }
+    }
+    removed.retain(|r| !r.is_empty());
+    added.retain(|r| !r.is_empty());
+    (removed, added)
+}
+
+/// `ranges` of `text` with the ones only whitespace apart joined, so a run
+/// of changed words reads as one change.
+fn joined(text: &str, ranges: impl Iterator<Item = Range<usize>>) -> Vec<Range<usize>> {
+    let mut out: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match out.last_mut() {
+            Some(last) if text[last.end..range.start].trim().is_empty() => last.end = range.end,
+            _ => out.push(range),
+        }
+    }
+    out
+}
+
+/// Each line's byte range, without its line break.
+fn line_spans(text: &str) -> Vec<Range<usize>> {
+    let mut start = 0;
+    let mut lines = Vec::new();
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches('\n').trim_end_matches('\r');
+        lines.push(start..start + content.len());
+        start += line.len();
+    }
+    lines
+}
+
+/// A UTF-16 word span of `line` (which starts at byte `at`) in bytes.
+fn bytes(line: &str, at: usize, span: &crate::hunks::WordSpan) -> Range<usize> {
+    let byte = |unit: u32| {
+        let mut units = 0;
+        for (index, c) in line.char_indices() {
+            if units >= unit as usize {
+                return index;
+            }
+            units += c.len_utf16();
+        }
+        line.len()
+    };
+    at + byte(span.start)..at + byte(span.end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +181,23 @@ mod tests {
         assert_eq!(line_changes("x\ny\n", "y\n").removed, vec![0..1]);
         assert!(line_changes("x\ny\n", "y\n").added.is_empty());
         assert_eq!(line_changes(old, old), LineChanges::default());
+    }
+
+    #[test]
+    fn finds_the_changed_words_of_replaced_lines() {
+        let old = "a\nlet x = cache.get(id);\nz\n";
+        let new = "a\nlet x = forecastCache.get(id);\nnew line\nz\nadded\n";
+        let (_, joined) = changed_words("a b c d\n", "a X Y d\n", [(0..1, 0..1)]);
+        assert_eq!(joined, vec![2..5]);
+        let (removed, added) = changed_words(old, new, [(1..2, 1..3), (3..3, 4..5)]);
+        assert_eq!(
+            removed.iter().map(|r| &old[r.clone()]).collect::<Vec<_>>(),
+            vec!["cache.get(id);"]
+        );
+        assert_eq!(
+            added.iter().map(|r| &new[r.clone()]).collect::<Vec<_>>(),
+            vec!["forecastCache.get(id);", "new line"]
+        );
     }
 
     #[test]

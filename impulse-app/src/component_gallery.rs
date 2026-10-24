@@ -4,11 +4,9 @@
 //! change at a glance. "Component Gallery" in the palette, and the
 //! snapshot's `gallery`, `gallery=dark`, `gallery=light+contrast` actions.
 
-use std::f32::consts::PI;
-
 use gpui_kit::{
-    canvas, div, point, prelude::*, px, size, uniform_list, App, Bounds, Context, PathBuilder,
-    Pixels, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, size, uniform_list, App, Bounds, Context, Window, WindowBounds,
+    WindowOptions,
 };
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba};
 use impulse_kit::theme;
@@ -338,7 +336,7 @@ fn card(name: &str, increase_contrast: bool) -> impl IntoElement {
                 .text_size(px(10.5))
                 .font_weight(gpui_kit::FontWeight::SEMIBOLD)
                 .text_color(hsla(p.text_tertiary))
-                .child("CHANGES")
+                .child(crate::workbench_chrome::tracked("CHANGES"))
                 .child("3"),
         )
         .child(row("cache.swift", "M", p.git_modified, false, false, false))
@@ -570,42 +568,6 @@ fn card(name: &str, increase_contrast: bool) -> impl IntoElement {
         .child(status)
 }
 
-/// `ProgressRing`: a faint circle and an arc for `progress` (a quarter
-/// when unknown).
 fn ring(progress: Option<f32>, color: Rgba) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds: Bounds<Pixels>, _, window, _| {
-            let width = px(2.);
-            let radius = bounds.size.width / 2. - width / 2.;
-            let center = bounds.center();
-            let arc = |from: f32, to: f32| {
-                let mut path = PathBuilder::stroke(width);
-                let steps = 32;
-                for step in 0..=steps {
-                    let angle = from + (to - from) * step as f32 / steps as f32;
-                    let at = point(
-                        center.x + radius * angle.cos(),
-                        center.y + radius * angle.sin(),
-                    );
-                    if step == 0 {
-                        path.move_to(at);
-                    } else {
-                        path.line_to(at);
-                    }
-                }
-                path.build().ok()
-            };
-            if let Some(path) = arc(0., 2. * PI) {
-                window.paint_path(path, hsla(color.opacity(0.25)));
-            }
-            let start = -PI / 2.;
-            let sweep = progress.unwrap_or(0.28).clamp(0.02, 1.) * 2. * PI;
-            if let Some(path) = arc(start, start + sweep) {
-                window.paint_path(path, hsla(color));
-            }
-        },
-    )
-    .size(px(14.))
-    .flex_none()
+    crate::workbench_chrome::progress_ring(progress, color, 14., 2., 0.)
 }

@@ -138,6 +138,7 @@ pub fn apply(
         current_line: settings
             .highlight_current_line
             .then(|| hsla(Rgba::from_hex(&theme.bg_highlight))),
+        widget: hsla(Rgba::from_hex(&theme.bg_dark)),
     });
     cx.set_global(crate::editor_git::GitColors {
         added: hsla(p.git_added),
@@ -152,6 +153,9 @@ pub fn apply(
 pub(crate) struct EditorBackdrop {
     pub background: gpui_kit::Hsla,
     pub current_line: Option<gpui_kit::Hsla>,
+    /// Monaco's `editorWidget.background`: the git peek's and the Diff
+    /// View bar's.
+    pub widget: gpui_kit::Hsla,
 }
 
 impl gpui_kit::Global for EditorBackdrop {}

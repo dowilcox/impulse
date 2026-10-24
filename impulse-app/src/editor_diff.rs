@@ -12,7 +12,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{Editor, EditorState, Position, TabSize};
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
@@ -29,7 +29,15 @@ use crate::editor_tab::EditorTab;
 pub(crate) const DIFF_DELAY: Duration = Duration::from_millis(200);
 
 /// Rows (0-based, end exclusive) tinted across the editor, and the tint.
-type Tints = Vec<(std::ops::Range<u32>, Hsla)>;
+/// What a side paints over its text: whole lines, and on top the words
+/// that changed within them (Monaco's line and character changes).
+#[derive(Clone, Default)]
+struct Tints {
+    /// The rows, their color and the sign beside their numbers.
+    rows: Vec<(std::ops::Range<u32>, Hsla, &'static str)>,
+    /// Byte ranges in the side's text.
+    words: Vec<(std::ops::Range<usize>, Hsla)>,
+}
 
 /// The Diff View's other editor and its marks.
 pub(crate) struct DiffView {
@@ -81,8 +89,8 @@ impl EditorTab {
         self.diff = Some(DiffView {
             base,
             base_text,
-            base_tints: Vec::new(),
-            own_tints: Vec::new(),
+            base_tints: Tints::default(),
+            own_tints: Tints::default(),
             hunks: Vec::new(),
             inline: None,
             synced: Rc::default(),
@@ -156,7 +164,7 @@ impl EditorTab {
         if let Some(diff) = self.diff.as_mut() {
             diff.inline = Some(InlineView {
                 state: state.clone(),
-                tints: Vec::new(),
+                tints: Tints::default(),
                 rows,
                 pending: None,
             });
@@ -180,7 +188,7 @@ impl EditorTab {
             if !delay.is_zero() {
                 cx.background_executor().timer(delay).await;
             }
-            let (hunks, removed, added, inline) = cx
+            let (hunks, removed, added, inline, (removed_words, added_words)) = cx
                 .background_executor()
                 .spawn(async move {
                     let hunks = line_hunks(&old, &new);
@@ -199,24 +207,49 @@ impl EditorTab {
                         .map(|h| rows(h.new_start, h.new_count))
                         .collect();
                     let inline = diff_view::inline(&new, &hunks);
-                    (hunks, removed, added, inline)
+                    let words = impulse_git::buffer_diff::changed_words(
+                        &old,
+                        &new,
+                        hunks.iter().map(|h| {
+                            let (o, n) = (
+                                rows(h.old_start, h.old_lines.len()),
+                                rows(h.new_start, h.new_count),
+                            );
+                            (
+                                o.start as usize..o.end as usize,
+                                n.start as usize..n.end as usize,
+                            )
+                        }),
+                    );
+                    (hunks, removed, added, inline, words)
                 })
                 .await;
             let _ = tab.update(cx, |tab, cx| {
                 let Some(diff) = tab.diff.as_mut() else {
                     return;
                 };
-                let theme = cx.theme();
-                let (red, green) = (theme.danger.opacity(0.22), theme.success.opacity(0.18));
+                let red: Hsla = gpui_kit::rgba(0xff000033).into();
+                let green: Hsla = gpui_kit::rgba(0x9bb95533).into();
                 diff.hunks = hunks;
-                diff.base_tints = tints(removed, red);
-                diff.own_tints = tints(added, green);
+                // Monaco's diff editor colors (its defaults, which the Swift
+                // app's themes leave alone).
+                let red_word: Hsla = gpui_kit::rgba(0xff000033).into();
+                let green_word: Hsla = gpui_kit::rgba(0x9ccc2c33).into();
+                diff.base_tints = Tints {
+                    words: removed_words.into_iter().map(|r| (r, red_word)).collect(),
+                    ..tints(removed, red, "−")
+                };
+                diff.own_tints = Tints {
+                    words: added_words.into_iter().map(|r| (r, green_word)).collect(),
+                    ..tints(added, green, "+")
+                };
                 if let Some(view) = diff.inline.as_mut() {
                     if view.rows.text != inline.text {
                         view.pending = Some(inline.text.clone());
                     }
-                    let mut all = tints(inline.removed.clone(), red);
-                    all.extend(tints(inline.added.clone(), green));
+                    let mut all = tints(inline.removed.clone(), red, "−");
+                    all.rows
+                        .extend(tints(inline.added.clone(), green, "+").rows);
                     view.tints = all;
                     view.rows = inline;
                 }
@@ -284,6 +317,11 @@ impl EditorTab {
                 .size_full()
                 .font_family(settings.font_family.clone())
                 .text_size(px(settings.font_size as f32))
+                .pl(crate::editor_tab::gutter_inset(
+                    state,
+                    settings.font_size as f32,
+                    cx,
+                ))
                 .bordered(false);
             if settings.editor_line_height > 0 {
                 editor = editor.line_height(px(settings.editor_line_height as f32));
@@ -295,6 +333,11 @@ impl EditorTab {
             })
         };
         let border = cx.theme().border;
+        let signs = Signs {
+            font: gpui_kit::font(settings.font_family.clone()),
+            size: px(settings.font_size as f32),
+            color: cx.theme().muted_foreground,
+        };
         let background = cx
             .try_global::<crate::kit_theme::EditorBackdrop>()
             .map(|b| b.background)
@@ -308,6 +351,7 @@ impl EditorTab {
                     &view.state,
                     &view.tints,
                     background,
+                    &signs,
                 ))
                 .into_any_element(),
             None => {
@@ -327,6 +371,7 @@ impl EditorTab {
                         &diff.base,
                         &diff.base_tints,
                         background,
+                        &signs,
                     )))
                     .child(div().w(px(1.)).h_full().bg(border))
                     .child(div().flex_1().min_w_0().h_full().child(tinted(
@@ -334,6 +379,7 @@ impl EditorTab {
                         &self.state,
                         &diff.own_tints,
                         background,
+                        &signs,
                     )))
                     .child(sync)
                     .into_any_element()
@@ -350,7 +396,12 @@ impl EditorTab {
 
     fn diff_bar(&self, hunks: &[LineHunk], inline: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let button = |id: &'static str, label: &'static str| Button::new(id).label(label).xsmall();
+        // The web page's .git-peek-button: transparent with a faint border.
+        let button =
+            |id: &'static str, label: &'static str| Button::new(id).label(label).small().outline();
+        let widget = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(theme.secondary, |b| b.widget);
         let name = self
             .path
             .file_name()
@@ -364,7 +415,7 @@ impl EditorTab {
             .px(px(10.))
             .py(px(4.))
             .text_size(px(12.))
-            .bg(theme.secondary)
+            .bg(widget)
             .border_b_1()
             .border_color(theme.border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
@@ -383,13 +434,11 @@ impl EditorTab {
             )
             .child(
                 button("diff-previous", "↑")
-                    .ghost()
                     .tooltip("Previous change")
                     .on_click(cx.listener(|tab, _, window, cx| tab.diff_go(false, window, cx))),
             )
             .child(
                 button("diff-next", "↓")
-                    .ghost()
                     .tooltip("Next change")
                     .on_click(cx.listener(|tab, _, window, cx| tab.diff_go(true, window, cx))),
             )
@@ -431,22 +480,36 @@ pub(crate) fn center(
     });
 }
 
-fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla) -> Tints {
-    rows.into_iter()
-        .filter(|r| !r.is_empty())
-        .map(|r| (r, color))
-        .collect()
+fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla, sign: &'static str) -> Tints {
+    Tints {
+        rows: rows
+            .into_iter()
+            .filter(|r| !r.is_empty())
+            .map(|r| (r, color, sign))
+            .collect(),
+        words: Vec::new(),
+    }
 }
 
 /// `editor` with `tints` painted over its rows across its whole width, as
 /// Monaco's whole-line decorations are (a range decoration stops at the
 /// end of the text).
+/// How the + and − beside the line numbers look.
+#[derive(Clone)]
+struct Signs {
+    font: gpui_kit::Font,
+    size: Pixels,
+    color: Hsla,
+}
+
 fn tinted(
     editor: impl IntoElement,
     state: &Entity<EditorState>,
     tints: &Tints,
     background: Hsla,
+    signs: &Signs,
 ) -> AnyElement {
+    let signs = signs.clone();
     let (state, tints) = (state.clone(), tints.clone());
     div()
         .relative()
@@ -468,7 +531,7 @@ fn tinted(
                             .then(|| text.line_start_offset(row))
                             .and_then(|o| state.range_to_bounds(&(o..o)))
                     };
-                    for (rows, color) in &tints {
+                    for (rows, color, _) in &tints.rows {
                         let first = (rows.start as usize).max(visible.start);
                         let last = (rows.end as usize).min(visible.end);
                         if first >= last {
@@ -483,6 +546,56 @@ fn tinted(
                                 *color,
                             ));
                         }
+                    }
+                    // Monaco's diff indicators, in the folding lane (painted
+                    // last: painting text needs the app, which `state` holds).
+                    let mut spots = Vec::new();
+                    for (rows, _, sign) in &tints.rows {
+                        for row in (rows.start as usize).max(visible.start)
+                            ..(rows.end as usize).min(visible.end)
+                        {
+                            if let Some(line) = at(row) {
+                                spots.push((line, *sign));
+                            }
+                        }
+                    }
+                    let offset = |row: usize| {
+                        if row < text.lines_len() {
+                            text.line_start_offset(row)
+                        } else {
+                            text.len()
+                        }
+                    };
+                    let shown = offset(visible.start)..offset(visible.end);
+                    for (range, color) in &tints.words {
+                        if range.end <= shown.start || range.start >= shown.end {
+                            continue;
+                        }
+                        if let Some(word) = state.range_to_bounds(range) {
+                            window.paint_quad(fill(word, *color));
+                        }
+                    }
+                    for (line, sign) in spots {
+                        let run = gpui_kit::TextRun {
+                            len: sign.len(),
+                            font: signs.font.clone(),
+                            color: signs.color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        };
+                        let shaped =
+                            window
+                                .text_system()
+                                .shape_line(sign.into(), signs.size, &[run], None);
+                        let _ = shaped.paint(
+                            point(line.origin.x - px(14.), line.origin.y),
+                            line.size.height,
+                            gpui_kit::TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
                     }
                 },
             )

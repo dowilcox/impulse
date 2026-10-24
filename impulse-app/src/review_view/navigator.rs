@@ -4,8 +4,7 @@
 //! viewed checkbox, status, name, a dot when it changed since viewed, its
 //! comment count and line stats. The focused file is highlighted.
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{IconName, Sizable as _};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{div, prelude::*, px, Context, FontWeight, Window};
 
 use super::{icon, stat, status_letter, ReviewView, NAVIGATOR_WIDTH};
@@ -140,13 +139,13 @@ impl ReviewView {
                             .flex()
                             .items_center()
                             .justify_center()
+                            .border_1()
                             .when(is_viewed, |d| {
-                                d.bg(hsla(p.accent))
-                                    .child(icon("check", 10., p.text_on_accent))
+                                d.bg(hsla(p.success))
+                                    .border_color(hsla(p.success))
+                                    .child(icon("check", 9., p.text_on_accent))
                             })
-                            .when(!is_viewed, |d| {
-                                d.border_1().border_color(hsla(p.hairline_strong))
-                            })
+                            .when(!is_viewed, |d| d.border_color(hsla(p.text_tertiary)))
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 cx.stop_propagation();
                                 view.set_viewed(index, !is_viewed, cx);
@@ -179,11 +178,11 @@ impl ReviewView {
             .border_r_1()
             .border_color(hsla(p.hairline))
             .child(
-                div().p(px(8.)).child(
-                    Input::new(&filter)
-                        .small()
-                        .prefix(gpui_kit::component::Icon::new(IconName::Search).small()),
-                ),
+                div()
+                    .p(px(8.))
+                    .child(crate::workbench_chrome::chrome_text_field(
+                        &filter, "search", &p, window, cx,
+                    )),
             )
             .child(
                 div()

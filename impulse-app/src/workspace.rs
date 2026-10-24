@@ -70,7 +70,7 @@ impl Surface {
         match self {
             Surface::Terminal(_) => "terminal",
             Surface::Editor(_) => "file-code",
-            Surface::Review(_) => "file-diff",
+            Surface::Review(_) => "split",
             Surface::History(_) => "history",
             Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",

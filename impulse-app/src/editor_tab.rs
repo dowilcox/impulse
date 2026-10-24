@@ -1364,6 +1364,25 @@ impl Drop for EditorTab {
     }
 }
 
+/// Monaco keeps room for five-digit line numbers where GPUI Kit's editor
+/// keeps three, growing with the file: the difference, so the numbers and
+/// the code sit where the Swift app's do.
+pub(crate) fn gutter_inset(
+    state: &Entity<EditorState>,
+    font_size: f32,
+    cx: &App,
+) -> gpui_kit::Pixels {
+    let digits = state
+        .read(cx)
+        .text()
+        .lines_len()
+        .max(1)
+        .to_string()
+        .len()
+        .max(3);
+    px((font_size * 6. / 7. - font_size * 0.6 * (digits - 3) as f32).max(0.))
+}
+
 impl Render for EditorTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_inline_text(window, cx);
@@ -1375,6 +1394,7 @@ impl Render for EditorTab {
             .size_full()
             .font_family(family)
             .text_size(px(size))
+            .pl(gutter_inset(&self.state, size, cx))
             .bordered(false);
         // Set either way: the chrome around it turns ligatures off.
         editor = editor.font_features(if settings.font_ligatures {

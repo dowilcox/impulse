@@ -1396,14 +1396,15 @@ impl ReviewView {
                         .rounded(px(metrics::RADIUS_SMALL))
                         .text_size(px(11.))
                         .cursor_pointer()
+                        // Swift's ChromeButton: secondary (raised, bordered) for
+                        // the main action, ghost for the others.
+                        .text_color(hsla(p.text))
                         .when(primary, |d| {
-                            d.bg(hsla(p.accent)).text_color(hsla(p.text_on_accent))
-                        })
-                        .when(!primary, |d| {
-                            d.border_1()
+                            d.bg(hsla(p.raised))
+                                .border_1()
                                 .border_color(hsla(p.hairline_strong))
-                                .text_color(hsla(p.text_secondary))
                         })
+                        .when(!primary, |d| d.hover(|s| s.bg(hsla(p.hover))))
                         .child(label)
                 };
                 if !busy {
@@ -1545,14 +1546,15 @@ impl ReviewView {
                 .rounded(px(metrics::RADIUS_SMALL))
                 .text_size(px(11.5))
                 .cursor_pointer()
+                // Swift's ChromeButton: secondary for the main action, ghost
+                // for the others.
+                .text_color(hsla(p.text))
                 .when(primary, |d| {
-                    d.bg(hsla(p.accent)).text_color(hsla(p.text_on_accent))
-                })
-                .when(!primary, |d| {
-                    d.border_1()
+                    d.bg(hsla(p.raised))
+                        .border_1()
                         .border_color(hsla(p.hairline_strong))
-                        .text_color(hsla(p.text_secondary))
                 })
+                .when(!primary, |d| d.hover(|s| s.bg(hsla(p.hover))))
                 .child(label)
         };
         div()
@@ -1744,13 +1746,18 @@ impl ReviewView {
             return div().into_any_element();
         };
         let line_height = (self.font_size * 1.6).max(19.).ceil();
-        let gutter_width = (self.font_size * 0.62 * 5.0 + 12.0).ceil().max(46.);
-        let marker_width = (self.font_size * 0.62 + 8.0).ceil().max(18.);
+        // Five of the gutter font's digits and a margin, and the +/− column
+        // (`ReviewMetrics`; a monospace digit is 0.6 em).
+        let gutter_width = ((self.font_size - 1.) * 0.6 * 5.0 + 12.0).ceil().max(46.);
+        let marker_width = (self.font_size * 0.6 + 8.0).ceil().max(18.);
         let focused = self.focused == Some((f, h));
         let busy = self.files[f].busy;
+        // Long lines wrap (Swift's character-wrapped rows): a row is as tall
+        // as its longest side.
         let mut row = div()
             .w_full()
-            .h(px(line_height))
+            .min_h(px(line_height))
+            .line_height(px(line_height))
             .flex()
             .border_l_1()
             .border_r_1()
@@ -1767,7 +1774,7 @@ impl ReviewView {
                     Side::New => line.kind != DiffLineKind::Removed,
                     Side::Single => true,
                 });
-            let mut column = div().flex().flex_1().min_w_0().h_full().overflow_hidden();
+            let mut column = div().flex().flex_1().min_w_0().overflow_hidden();
             if i > 0 {
                 column = column.border_l_1().border_color(hsla(colors.border));
             }
@@ -1798,12 +1805,13 @@ impl ReviewView {
             // The gutter: numbers and marker. A click there selects a
             // changed line (Shift: extends); elsewhere it focuses the hunk.
             let selectable = line.kind != DiffLineKind::Context && !busy;
-            let mut gutter = div().id(("gutter", i)).flex_none().flex().h_full();
+            let mut gutter = div().id(("gutter", i)).flex_none().flex();
             for number in numbers {
                 gutter = gutter.child(
                     div()
                         .flex_none()
                         .w(px(gutter_width))
+                        .h(px(line_height))
                         .pr(px(8.))
                         .flex()
                         .justify_end()
@@ -1817,6 +1825,7 @@ impl ReviewView {
                 div()
                     .flex_none()
                     .w(px(marker_width))
+                    .h(px(line_height))
                     .flex()
                     .justify_center()
                     .items_center()
@@ -1842,22 +1851,15 @@ impl ReviewView {
                 );
             }
             column = column.child(gutter).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .min_w_0()
-                    .whitespace_nowrap()
-                    .child(code_text(
-                        line,
-                        colors.text,
-                        word,
-                        index
-                            .and_then(|l| {
-                                self.files[f].syntax.as_ref()?.hunks.get(h)?.get(l).cloned()
-                            })
-                            .unwrap_or_default()
-                            .as_slice(),
-                    )),
+                div().flex_1().min_w_0().child(code_text(
+                    line,
+                    colors.text,
+                    word,
+                    index
+                        .and_then(|l| self.files[f].syntax.as_ref()?.hunks.get(h)?.get(l).cloned())
+                        .unwrap_or_default()
+                        .as_slice(),
+                )),
             );
             if let (Some(l), false) = (index, busy) {
                 column = column

@@ -9,10 +9,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, ClipboardItem, Context, Entity, EventEmitter,
     FocusHandle, FontWeight, SharedString, Subscription, Window,
@@ -232,6 +231,7 @@ impl ProblemsView {
         &self,
         visible: &[Problem],
         counts: ProblemCounts,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = &self.palette;
@@ -265,12 +265,14 @@ impl ProblemsView {
             .child(div().flex_1())
             .child(
                 // The icon inside the field, as Swift's ChromeTextField.
-                div().w(px(196.)).child(
-                    Input::new(&self.filter)
-                        .small()
-                        .cleanable(true)
-                        .prefix(icon("list-filter", 12., p.text_tertiary)),
-                ),
+                crate::workbench_chrome::chrome_text_field(
+                    &self.filter,
+                    "list-filter",
+                    p,
+                    window,
+                    cx,
+                )
+                .w(px(196.)),
             )
             .child(
                 Button::new("fix-with-agent")
@@ -466,7 +468,7 @@ impl ProblemsView {
 }
 
 impl Render for ProblemsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all = self.store.read(cx).all();
         let counts = problems::counts(&all);
         let visible = self.visible(&all, cx);
@@ -501,7 +503,7 @@ impl Render for ProblemsView {
             .flex_col()
             .size_full()
             .bg(hsla(self.palette.content))
-            .child(self.header(&visible, counts, cx))
+            .child(self.header(&visible, counts, window, cx))
             .child(body)
     }
 }

@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Sizable as _;
+use gpui_kit::AnimationExt as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, Entity, EntityId, FontWeight, SharedString,
     Window,
@@ -74,18 +74,30 @@ fn ago(since: Instant) -> String {
 /// mark says it finished.
 pub fn agent_glyph(state: AgentState, size: f32, p: &ChromePalette) -> AnyElement {
     match state {
-        AgentState::Working => div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(size))
-            .flex_none()
-            .child(
-                Spinner::new()
-                    .color(hsla(p.working))
-                    .with_size(px(size - 1.)),
-            )
-            .into_any_element(),
+        // Swift's ProgressRing with no progress, turning every 0.9 s.
+        AgentState::Working => {
+            let color = p.working;
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(size))
+                .flex_none()
+                .with_animation(
+                    "agent-working",
+                    gpui_kit::Animation::new(std::time::Duration::from_millis(900)).repeat(),
+                    move |d, delta| {
+                        d.child(crate::workbench_chrome::progress_ring(
+                            None,
+                            color,
+                            size - 1.,
+                            1.6,
+                            delta,
+                        ))
+                    },
+                )
+                .into_any_element()
+        }
         AgentState::NeedsInput | AgentState::Done => {
             let badge = if state == AgentState::NeedsInput {
                 div()
@@ -227,7 +239,8 @@ impl Workbench {
             .any(|t| t.read(cx).agent.needs_attention)
     }
 
-    /// A tab's icon: its agent's glyph, else `name` in `color`.
+    /// A tab's icon: its agent's glyph, a terminal's in `color`, a file's
+    /// own, else `name` in the text color (the Swift tab's symbol image).
     pub(crate) fn tab_icon(
         &self,
         tab: &Tab,
@@ -254,7 +267,7 @@ impl Workbench {
                 .size(px(size + 1.))
                 .flex_none()
                 .into_any_element(),
-            None => icon(name, size, color).into_any_element(),
+            None => icon(name, size + 1., self.palette.text).into_any_element(),
         }
     }
 

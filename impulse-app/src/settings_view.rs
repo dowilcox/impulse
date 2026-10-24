@@ -13,14 +13,13 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, NumberInputEvent, StepAction};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
-use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _};
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, ElementId, Entity, FocusHandle, Focusable as _,
     FontWeight, SharedString, Subscription, Window,
 };
-use impulse_kit::chrome::{metrics, ChromePalette};
+use impulse_kit::chrome::{metrics, ChromePalette, Rgba};
 use impulse_kit::settings::{
     catalog, Category, CommandOnSave, Control, FileTypeOverride, FormatOnSave, SettingItem,
     Settings,
@@ -817,13 +816,13 @@ impl SettingsView {
             .text_size(px(10.5))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(hsla(self.palette.text_tertiary))
-            .child(title.to_uppercase())
+            .child(crate::workbench_chrome::tracked(&title.to_uppercase()))
     }
 
     fn settings_list(
         &self,
         mut page: gpui_kit::Div,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui_kit::Div {
         let p = &self.palette;
@@ -859,7 +858,7 @@ impl SettingsView {
                 last_section = section;
             }
             page = page
-                .child(self.setting_row(item, cx))
+                .child(self.setting_row(item, window, cx))
                 .child(div().h(px(1.)).bg(hsla(p.hairline)));
         }
         page
@@ -867,7 +866,12 @@ impl SettingsView {
 
     /// One setting: title, key and description, its control, and a reset
     /// when it differs from the default.
-    fn setting_row(&self, item: &SettingItem, cx: &mut Context<Self>) -> impl IntoElement {
+    fn setting_row(
+        &self,
+        item: &SettingItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let p = &self.palette;
         let modified = item.is_modified(SettingsStore::get(cx));
         let key = item.key;
@@ -921,7 +925,7 @@ impl SettingsView {
                             .child(detail)
                     })),
             )
-            .child(div().flex_none().child(self.control(item, cx)))
+            .child(div().flex_none().child(self.control(item, window, cx)))
             .child(
                 icon_button(named("reset", key), "rotate-ccw", "Reset to default", p)
                     .when(!modified, |d| d.invisible())
@@ -955,16 +959,69 @@ impl SettingsView {
         div()
             .flex()
             .flex_col()
-            .w(px(14.))
+            .w(px(16.))
             .h(px(22.))
-            .rounded(px(4.))
+            .rounded(px(5.))
+            .bg(hsla(if p.is_light {
+                Rgba::BLACK.opacity(0.06)
+            } else {
+                Rgba::WHITE.opacity(0.075)
+            }))
             .overflow_hidden()
             .child(half("step-up", "chevron-up", StepAction::Increment))
             .child(half("step-down", "chevron-down", StepAction::Decrement))
             .into_any_element()
     }
 
-    fn control(&self, item: &SettingItem, cx: &mut Context<Self>) -> AnyElement {
+    /// An on/off switch the size and colors of Swift's small `NSSwitch`:
+    /// a 44×20 track and a pill knob, the accent when on.
+    fn switch(&self, key: &'static str, on: bool) -> AnyElement {
+        let p = &self.palette;
+        let track = if on {
+            p.accent
+        } else if p.is_light {
+            Rgba::BLACK.opacity(0.09)
+        } else {
+            Rgba::WHITE.opacity(0.12)
+        };
+        let knob = if on || p.is_light {
+            Rgba::WHITE
+        } else {
+            Rgba::new(0.886, 0.89, 0.894, 1.0)
+        };
+        div()
+            .id(named("switch", key))
+            .flex_none()
+            .w(px(44.))
+            .h(px(20.))
+            .p(px(2.))
+            .flex()
+            .when(on, |d| d.justify_end())
+            .rounded_full()
+            .bg(hsla(track))
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                SettingsStore::update(cx, |s| {
+                    s.set(key, &json!(!on));
+                })
+            })
+            .child(
+                div()
+                    .w(px(26.))
+                    .h_full()
+                    .rounded_full()
+                    .bg(hsla(knob))
+                    .shadow_xs(),
+            )
+            .into_any_element()
+    }
+
+    fn control(
+        &self,
+        item: &SettingItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let key = item.key;
         let field = self.fields.get(key);
         match (&item.control, field) {
@@ -973,16 +1030,7 @@ impl SettingsView {
                     .get(key)
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                Switch::new(key)
-                    .checked(on)
-                    .small()
-                    .accessibility_label(item.title)
-                    .on_click(|checked, _, cx| {
-                        SettingsStore::update(cx, |s| {
-                            s.set(key, &json!(*checked));
-                        })
-                    })
-                    .into_any_element()
+                self.switch(key, on)
             }
             // A field and an up/down stepper beside it, as Swift's
             // TextField and Stepper.
@@ -991,7 +1039,33 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(div().w(px(84.)).child(Input::new(state).small()))
+                    // A rounded-border NSTextField: the text field color,
+                    // digits on the right in the mono font.
+                    .child(
+                        div()
+                            .w(px(84.))
+                            .h(px(22.))
+                            .flex()
+                            .items_center()
+                            .px(px(6.))
+                            .rounded(px(5.))
+                            .border_1()
+                            .border_color(hsla(self.palette.hairline_strong))
+                            .bg(hsla(if self.palette.is_light {
+                                Rgba::WHITE
+                            } else {
+                                Rgba::new(0.09, 0.09, 0.09, 1.0)
+                            }))
+                            .child(
+                                Input::new(state)
+                                    .small()
+                                    .appearance(false)
+                                    .px_0()
+                                    .text_right()
+                                    .font_family(MONO_FONT)
+                                    .text_size(px(12.)),
+                            ),
+                    )
                     .child(self.stepper(key, cx))
                     .into_any_element()
             }
@@ -1011,12 +1085,59 @@ impl SettingsView {
                         .on_click(cx.listener(move |view, _, _, cx| view.choose_folder(key, cx))),
                 )
                 .into_any_element(),
-            (_, Some(Field::Choice(state))) => Select::new(state)
-                .small()
-                .w(px(210.))
-                .menu_width(px(240.))
-                .accessibility_label(item.title)
-                .into_any_element(),
+            // A pop-up button as wide as its title, centered where Swift's
+            // 210-wide Picker frame is.
+            (_, Some(Field::Choice(state))) => {
+                let p = &self.palette;
+                let current = SettingsStore::get(cx)
+                    .get(key)
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default();
+                let title = choice_title(item, &current);
+                let run = gpui_kit::TextRun {
+                    len: title.len(),
+                    font: gpui_kit::font(crate::workbench::UI_FONT),
+                    color: hsla(p.text),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let width = window
+                    .text_system()
+                    .shape_line(title.into(), px(12.), &[run], None)
+                    .width;
+                div()
+                    .w(px(210.))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w(width + px(40.))
+                            .max_w(px(210.))
+                            .h(px(22.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(5.))
+                            .bg(hsla(if p.is_light {
+                                Rgba::BLACK.opacity(0.06)
+                            } else {
+                                Rgba::WHITE.opacity(0.075)
+                            }))
+                            .child(
+                                Select::new(state)
+                                    .small()
+                                    .appearance(false)
+                                    .icon(
+                                        gpui_kit::component::Icon::empty()
+                                            .path("icons/chevrons-up-down.svg"),
+                                    )
+                                    .w_full()
+                                    .menu_width(px(240.))
+                                    .accessibility_label(item.title),
+                            ),
+                    )
+                    .into_any_element()
+            }
             _ => div().into_any_element(),
         }
     }
@@ -1536,6 +1657,19 @@ fn field_text(item: &SettingItem, settings: &Settings) -> String {
 /// A select's options and the value to select: the catalog's choices, the
 /// themes, or the monospaced fonts, plus the current value when it's none
 /// of them (an unknown value from settings.json stays selectable).
+/// What a choice's pop-up shows for `current`.
+fn choice_title(item: &SettingItem, current: &str) -> String {
+    match &item.control {
+        Control::Choice(options) => options
+            .iter()
+            .find(|(value, _)| *value == current)
+            .map_or(current, |(_, label)| *label)
+            .to_string(),
+        Control::Theme => impulse_kit::theme::theme_display_name(current),
+        _ => current.to_string(),
+    }
+}
+
 fn choices_for(item: &SettingItem, current: &str, cx: &App) -> (Vec<Choice>, String) {
     let (mut choices, selected) = match &item.control {
         Control::Choice(options) => (

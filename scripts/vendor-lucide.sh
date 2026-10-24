@@ -28,7 +28,7 @@ ICONS=(
   refresh-cw rotate-ccw rows-2 search settings sliders-horizontal square-terminal tag
   terminal trash-2 triangle-alert undo-2 upload user x zap
   space list-collapse wrap-text message-square-plus square-check square menu
-  shield-alert shield-check flag palette repeat-2
+  shield-alert shield-check flag palette repeat-2 split
 )
 
 mkdir -p "${OUT_DIR}/icons" "$(dirname "${SWIFT_OUT}")"
