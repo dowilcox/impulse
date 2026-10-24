@@ -608,9 +608,11 @@ impl KeybindingsView {
                     .gap(px(1.))
                     .flex_1()
                     .min_w_0()
+                    // SF Pro's and SF Mono's lines at these sizes.
                     .child(
                         div()
                             .text_size(px(12.5))
+                            .line_height(px(15.))
                             .text_color(hsla(p.text))
                             .child(binding.description),
                     )
@@ -618,6 +620,7 @@ impl KeybindingsView {
                         div()
                             .font_family(MONO_FONT)
                             .text_size(px(10.))
+                            .line_height(px(13.))
                             .text_color(hsla(p.text_tertiary))
                             .child(binding.id),
                     ),

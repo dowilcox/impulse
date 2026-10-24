@@ -245,7 +245,8 @@ fn card(name: &str, increase_contrast: bool) -> impl IntoElement {
         .items_center()
         .gap(px(8.))
         .px(px(10.))
-        .h(px(36.))
+        // 36 and the hairline under it.
+        .h(px(37.))
         .bg(hsla(p.chrome))
         .border_b_1()
         .border_color(hsla(p.hairline))
