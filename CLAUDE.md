@@ -120,7 +120,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           lsof on macOS), the terminal (the login shell
                           with integration, shell_launch.rs),
                           its own painted grid (box-drawing and block
-                          characters drawn as shapes, terminal_glyphs.rs),
+                          characters drawn as shapes, terminal_glyphs.rs;
+                          the shell's blank padding between blocks collapsed
+                          to a gap by RowLayout),
                           keys (the kitty keyboard
                           protocol once a program pushes its flags,
                           impulse_kit::kitty_keyboard), input methods,

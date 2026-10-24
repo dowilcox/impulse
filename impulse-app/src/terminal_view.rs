@@ -395,6 +395,9 @@ pub struct TerminalView {
     pub(crate) last_content_row: Option<usize>,
     /// How far the rows are pushed down so the last one meets the bar.
     y_offset: Pixels,
+    /// Where each row is drawn, with the prompt padding between blocks
+    /// collapsed.
+    row_layout: RowLayout,
     /// Rows drawn this frame.
     draw_rows: usize,
     /// The agent running in it, and its attention mark (`agent_tracker`).
@@ -626,6 +629,7 @@ impl TerminalView {
             tuck: Tuck::default(),
             last_content_row: None,
             y_offset: px(0.),
+            row_layout: RowLayout::default(),
             draw_rows: usize::MAX,
             agent: Default::default(),
             _wake: wake,
@@ -1039,9 +1043,9 @@ impl TerminalView {
     /// The cell under `position` (window coordinates), clamped to the grid.
     fn cell_at(&self, position: Point<Pixels>, bounds: Bounds<Pixels>) -> (usize, usize) {
         let x = f32::from(position.x - bounds.origin.x) - PADDING;
-        let y = f32::from(position.y - bounds.origin.y - self.y_offset) - PADDING;
+        let y = position.y - bounds.origin.y - self.y_offset - px(PADDING);
         let col = (x / f32::from(self.metrics.width)).floor().max(0.0) as usize;
-        let row = (y / f32::from(self.metrics.height)).floor().max(0.0) as usize;
+        let row = self.row_layout.row_at(y.max(px(0.)));
         (
             col.min(self.size.0.saturating_sub(1) as usize),
             row.min(self.size.1.saturating_sub(1) as usize),
@@ -1611,6 +1615,156 @@ pub(crate) fn format_block_duration(ms: u64) -> String {
     format!("{}h {}m", minutes / 60, minutes % 60)
 }
 
+/// The gap a collapsed row leaves between two blocks (Swift's
+/// `blockPadPixels`), and how many blank rows between blocks count as the
+/// shell's prompt padding.
+const BLOCK_GAP: f32 = 6.;
+const MAX_PADDING_ROWS: i32 = 3;
+
+/// Where each row is drawn, below the padding: the blank lines a shell
+/// prints around its prompt, between two blocks, shrink to one `BLOCK_GAP`
+/// (the Swift renderer's `collapsedRows`), and a block's separator sits in
+/// the middle of that gap, so every block has the same room above and
+/// below. Swift only collapses rows between a block's end mark and the
+/// next prompt mark; blank rows ending the block above (a shell printing
+/// its spacer before Impulse's marks) or starting the block below (a
+/// prompt that begins with a newline) count too, so the spacing is even
+/// whichever way the shell prints it.
+#[derive(Clone, Default)]
+pub(crate) struct RowLayout {
+    /// Each row's top, and the content's bottom edge last.
+    tops: Vec<Pixels>,
+    collapsed: Vec<bool>,
+    height: Pixels,
+}
+
+impl RowLayout {
+    fn new(height: Pixels, collapsed: Vec<bool>) -> Self {
+        let mut tops = Vec::with_capacity(collapsed.len() + 1);
+        let mut y = px(0.);
+        let mut previous = false;
+        for &gap in &collapsed {
+            tops.push(y);
+            // A run of collapsed rows takes one gap in all.
+            y += match (gap, previous) {
+                (false, _) => height,
+                (true, false) => px(BLOCK_GAP),
+                (true, true) => px(0.),
+            };
+            previous = gap;
+        }
+        tops.push(y);
+        Self {
+            tops,
+            collapsed,
+            height,
+        }
+    }
+
+    /// The blank padding rows between blocks that collapse, among those
+    /// up to `last`: the blank rows ending the block above, the rows
+    /// between the two and the blank rows starting the block below, when
+    /// there are at most `MAX_PADDING_ROWS` of them.
+    fn collapsed_rows(grid: &Grid, overlay: &BlockOverlay, last: i32) -> Vec<bool> {
+        let mut collapsed = vec![false; grid.rows];
+        if last < 0 {
+            return collapsed;
+        }
+        let rows = grid.rows as i32;
+        let blank = |row: i32| row >= 0 && row < rows && grid.is_blank_row(row as usize);
+        for pair in overlay.blocks.windows(2) {
+            let (above, below) = (&pair[0], &pair[1]);
+            // Each block keeps its first and last row.
+            let mut from = above.end_row + 1;
+            while from - 1 > above.start_row && blank(from - 1) {
+                from -= 1;
+            }
+            let mut to = below.start_row;
+            while to < below.end_row && blank(to) {
+                to += 1;
+            }
+            if to <= from || to - from > MAX_PADDING_ROWS {
+                continue;
+            }
+            for row in from.max(0)..to.min(last + 1) {
+                if blank(row) {
+                    collapsed[row as usize] = true;
+                }
+            }
+        }
+        collapsed
+    }
+
+    fn is_collapsed(&self, row: usize) -> bool {
+        self.collapsed.get(row).copied().unwrap_or(false)
+    }
+
+    /// A block's first and last rows that are drawn, from its rows
+    /// `start..=end` (its blank padding may be collapsed).
+    fn first_shown(&self, start: usize, end: usize) -> usize {
+        (start..=end)
+            .find(|row| !self.is_collapsed(*row))
+            .unwrap_or(start)
+    }
+
+    fn last_shown(&self, start: usize, end: usize) -> usize {
+        (start..=end)
+            .rev()
+            .find(|row| !self.is_collapsed(*row))
+            .unwrap_or(end)
+    }
+
+    /// Row `row`'s top.
+    fn top(&self, row: usize) -> Pixels {
+        match self.tops.len() {
+            0 => self.height * row as f32,
+            n if row < n => self.tops[row],
+            n => self.tops[n - 1] + self.height * (row + 1 - n) as f32,
+        }
+    }
+
+    /// A block's top edge, where its separator goes: in the middle of the
+    /// collapsed gap above it, if there is one.
+    fn border(&self, row: usize) -> Pixels {
+        if row > 0 && self.is_collapsed(row - 1) {
+            self.top(row) - px(BLOCK_GAP / 2.)
+        } else {
+            self.top(row)
+        }
+    }
+
+    /// A block's bottom edge, when its last row is `row`: down to the
+    /// middle of the collapsed gap below it, so its wash meets the next
+    /// block's separator.
+    fn bottom(&self, row: usize) -> Pixels {
+        let bottom = self.top(row) + self.height;
+        if self.is_collapsed(row + 1) {
+            bottom + px(BLOCK_GAP / 2.)
+        } else {
+            bottom
+        }
+    }
+
+    /// The row drawn at `y`; a collapsed gap counts as the row below it.
+    fn row_at(&self, y: Pixels) -> usize {
+        let rows = self.tops.len().saturating_sub(1);
+        if rows == 0 {
+            return (f32::from(y) / f32::from(self.height)).floor().max(0.) as usize;
+        }
+        let row = self.tops[..rows]
+            .partition_point(|top| *top <= y)
+            .saturating_sub(1);
+        if self.is_collapsed(row) {
+            (row..rows).find(|r| !self.is_collapsed(*r)).unwrap_or(row)
+        } else if row + 1 == rows && y >= self.tops[rows] {
+            // Below the content, rows keep their height.
+            row + 1 + (f32::from(y - self.tops[rows]) / f32::from(self.height)).floor() as usize
+        } else {
+            row
+        }
+    }
+}
+
 /// Everything a frame paints, worked out before painting.
 struct Frame {
     grid: Option<Grid>,
@@ -1631,6 +1785,7 @@ struct Frame {
     /// Rows drawn: those above the prompt the input bar stands in for.
     draw_rows: usize,
     y_offset: Pixels,
+    layout: RowLayout,
     /// Blocks moved to or selected (accent wash and stripe).
     emphasized: HashSet<u64>,
     bookmarks: HashSet<u64>,
@@ -1738,12 +1893,15 @@ impl Frame {
         let rows = self.draw_rows.min(grid.rows);
         let m = self.metrics;
         let origin = bounds.origin + point(px(PADDING), px(PADDING) + self.y_offset);
+        let layout = &self.layout;
         let cell_origin =
-            |row: usize, col: usize| origin + point(m.width * col as f32, m.height * row as f32);
-        let row_bounds = |row: usize| {
+            |row: usize, col: usize| origin + point(m.width * col as f32, layout.top(row));
+        // A block's whole height, separator to separator.
+        let block_bounds = |start: usize, end: usize| {
+            let top = origin.y + layout.border(start);
             Bounds::new(
-                point(bounds.origin.x, origin.y + m.height * row as f32),
-                size(bounds.size.width, m.height),
+                point(bounds.origin.x, top),
+                size(bounds.size.width, origin.y + layout.bottom(end) - top),
             )
         };
         let muted = KitRgba::from_hex(&self.theme.fg_muted);
@@ -1773,15 +1931,20 @@ impl Frame {
                     continue;
                 };
                 if let Some(range) = block_rows(block.start_row, block.end_row) {
-                    for row in range {
-                        window.paint_quad(fill(row_bounds(row), rgba(color)));
-                    }
+                    let (start, end) = (*range.start(), *range.end());
+                    window.paint_quad(fill(
+                        block_bounds(
+                            layout.first_shown(start, end),
+                            layout.last_shown(start, end),
+                        ),
+                        rgba(color),
+                    ));
                 }
             }
         }
 
         // Cell backgrounds, in runs.
-        for row in 0..rows {
+        for row in (0..rows).filter(|r| !layout.is_collapsed(*r)) {
             let mut col = 0;
             while col < grid.cols {
                 let cell = grid.cell(row, col);
@@ -1825,7 +1988,10 @@ impl Frame {
 
         // Search matches, then the selection.
         let paint_spans = |spans: &[Span], color: Hsla, window: &mut Window| {
-            for span in spans.iter().filter(|s| s.row < rows) {
+            for span in spans
+                .iter()
+                .filter(|s| s.row < rows && !layout.is_collapsed(s.row))
+            {
                 let end = span.end.min(grid.cols.saturating_sub(1));
                 if end < span.start {
                     continue;
@@ -1846,8 +2012,12 @@ impl Frame {
         // Block separators, stripes and bookmark ribbons.
         if decorate {
             for block in &self.overlay.blocks {
-                if block.start_row > 0 && (block.start_row as usize) < rows {
-                    let y = origin.y + m.height * block.start_row as f32;
+                if let Some(range) =
+                    block_rows(block.start_row, block.end_row).filter(|_| block.start_row > 0)
+                {
+                    // A hairline just above the block's top edge.
+                    let row = layout.first_shown(*range.start(), *range.end());
+                    let y = px(f32::from(origin.y + layout.border(row)).round()) - px(1.);
                     window.paint_quad(fill(
                         Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, px(1.))),
                         rgba(muted.opacity(0.28)),
@@ -1857,11 +2027,14 @@ impl Frame {
                 if block.failed || block.is_running || emphasized {
                     let color = if block.failed { red } else { self.accent };
                     if let Some(range) = block_rows(block.start_row, block.end_row) {
-                        let (start, end) = (*range.start(), *range.end());
+                        let (start, end) = (
+                            layout.first_shown(*range.start(), *range.end()),
+                            layout.last_shown(*range.start(), *range.end()),
+                        );
                         window.paint_quad(fill(
                             Bounds::new(
-                                point(bounds.origin.x + px(3.), origin.y + m.height * start as f32),
-                                size(px(3.), m.height * (end - start + 1) as f32),
+                                point(bounds.origin.x + px(3.), origin.y + layout.top(start)),
+                                size(px(3.), layout.top(end) + m.height - layout.top(start)),
                             ),
                             rgba(color),
                         ));
@@ -1873,7 +2046,9 @@ impl Frame {
                 {
                     // A ribbon hanging from the block's top edge in the
                     // right margin.
-                    let top = origin.y + m.height * block.start_row as f32;
+                    let end = (block.end_row.max(0) as usize).min(rows.saturating_sub(1));
+                    let row = layout.first_shown(block.start_row as usize, end);
+                    let top = origin.y + layout.border(row);
                     let width = px(7.0f32.min((PADDING - 2.).max(4.)));
                     let left = bounds.origin.x + bounds.size.width - (px(PADDING) + width) / 2.;
                     let mut ribbon = gpui_kit::PathBuilder::fill();
@@ -1892,7 +2067,7 @@ impl Frame {
 
         // Text: runs of cells sharing a style, each at its first cell's x so
         // every glyph keeps to the grid.
-        for row in 0..rows {
+        for row in (0..rows).filter(|r| !layout.is_collapsed(*r)) {
             let mut col = 0;
             while col < grid.cols {
                 let start = col;
@@ -2090,7 +2265,8 @@ impl Frame {
                     .text_system()
                     .shape_line(text, chip_size, &[run], None);
                 let span = (f32::from(line.width) / f32::from(m.width)).ceil() as usize + 2;
-                let row = block.start_row as usize;
+                let end = (block.end_row.max(0) as usize).min(rows.saturating_sub(1));
+                let row = layout.first_shown(block.start_row as usize, end);
                 if span >= grid.cols / 2
                     || (grid.cols - span..grid.cols).any(|col| {
                         let ch = grid.cell(row, col).ch;
@@ -2100,7 +2276,7 @@ impl Frame {
                     continue;
                 }
                 let x = bounds.origin.x + bounds.size.width - px(PADDING) - line.width;
-                let y = origin.y + m.height * row as f32;
+                let y = origin.y + layout.top(row);
                 let _ = line.paint(point(x, y), m.height, TextAlign::Left, None, window, cx);
             }
         }
@@ -2127,7 +2303,7 @@ impl Frame {
             if *row >= rows {
                 continue;
             }
-            let top = origin.y + m.height * *row as f32;
+            let top = origin.y + layout.top(*row);
             let x = origin.x + m.width * *start as f32;
             window.paint_quad(fill(
                 Bounds::new(
@@ -2316,7 +2492,7 @@ impl EntityInputHandler for TerminalView {
             element_bounds.origin
                 + point(
                     px(PADDING) + m.width * col as f32,
-                    px(PADDING) + m.height * row as f32,
+                    px(PADDING) + self.y_offset + self.row_layout.top(row as usize),
                 ),
             size(m.width, m.height),
         ))
@@ -2343,6 +2519,7 @@ impl TerminalView {
         grid: &Grid,
         overlay: &BlockOverlay,
         suppress: bool,
+        decorate: bool,
         cx: &mut Context<Self>,
     ) {
         let rows = grid.rows as i32;
@@ -2397,8 +2574,17 @@ impl TerminalView {
         let last = last.clamp(-1, rows - 1);
         self.last_content_row = (last < rows - 1).then_some(last.max(0) as usize);
         let draw_rows = (last + 1) as usize;
-        self.y_offset = if anchor && last >= 0 {
-            self.metrics.height * (rows - 1 - last) as f32
+        let collapsed = if decorate && !overlay.alt_screen && !self.direct {
+            RowLayout::collapsed_rows(grid, overlay, last)
+        } else {
+            vec![false; grid.rows]
+        };
+        let collapsing = collapsed.contains(&true);
+        let ch = self.metrics.height;
+        self.row_layout = RowLayout::new(ch, collapsed);
+        // The last row meets the bar; collapsed rows free space at the top.
+        self.y_offset = if (anchor || collapsing) && last >= 0 {
+            (ch * rows as f32 - (self.row_layout.top(last as usize) + ch)).max(px(0.))
         } else {
             px(0.)
         };
@@ -2417,6 +2603,8 @@ impl TerminalView {
         if row >= self.draw_rows {
             return None;
         }
+        let end = (block.end_row.max(0) as usize).min(self.draw_rows - 1);
+        let row = self.row_layout.first_shown(row, end.max(row));
         let ch = self.metrics.height;
         let muted = KitRgba::from_hex(&self.theme.fg_muted);
         let bg = KitRgba::from_hex(&self.theme.terminal_bg);
@@ -2426,7 +2614,7 @@ impl TerminalView {
         }
         buttons.push((ToolbarButton::SendToAgent, "bot", "Send to agent"));
         buttons.push((ToolbarButton::Menu, "ellipsis", "More"));
-        let top = px(PADDING) + self.y_offset + ch * row as f32 + ch * 0.55;
+        let top = px(PADDING) + self.y_offset + self.row_layout.top(row) + ch * 0.55;
         Some(
             div()
                 .absolute()
@@ -2605,7 +2793,8 @@ impl Render for TerminalView {
                                 let settings = SettingsStore::get(cx).clone();
                                 let suppress = settings.terminal_context_bar && !view.no_bar;
                                 if let Some(grid) = &grid {
-                                    view.layout_rows(grid, &overlay, suppress, cx);
+                                    let decorate = settings.terminal_blocks && !view.direct;
+                                    view.layout_rows(grid, &overlay, suppress, decorate, cx);
                                 }
                                 let mut emphasized: HashSet<u64> =
                                     view.blocks.selection.iter().copied().collect();
@@ -2632,6 +2821,7 @@ impl Render for TerminalView {
                                         .then(|| colors(&view.theme).palette),
                                     draw_rows: view.draw_rows,
                                     y_offset: view.y_offset,
+                                    layout: view.row_layout.clone(),
                                     emphasized,
                                     bookmarks: view.blocks.bookmarks.clone(),
                                     hovered: view.blocks.hovered,

@@ -136,15 +136,22 @@ impl AssetSource for Assets {
 
 /// The same bundled fonts on every platform, so text looks the same
 /// everywhere: Inter for the chrome (SF Pro can't ship on Linux) and
-/// JetBrains Mono, the default terminal font.
+/// JetBrains Mono, the default terminal font. Each comes with its italic
+/// faces: GPUI doesn't slant a face itself, so without them italic text
+/// (preview tabs, a terminal's italic cells) would draw upright.
 fn bundled_fonts() -> Vec<Cow<'static, [u8]>> {
     let fonts = &resources::get().fonts;
     [
         "inter/Inter-Regular.ttf",
+        "inter/Inter-Italic.ttf",
         "inter/Inter-Medium.ttf",
+        "inter/Inter-MediumItalic.ttf",
         "inter/Inter-SemiBold.ttf",
+        "inter/Inter-SemiBoldItalic.ttf",
         "jetbrains-mono/JetBrainsMono-Regular.ttf",
+        "jetbrains-mono/JetBrainsMono-Italic.ttf",
         "jetbrains-mono/JetBrainsMono-Bold.ttf",
+        "jetbrains-mono/JetBrainsMono-BoldItalic.ttf",
     ]
     .iter()
     .filter_map(|name| std::fs::read(fonts.join(name)).ok().map(Cow::Owned))

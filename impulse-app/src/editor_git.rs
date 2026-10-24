@@ -424,7 +424,12 @@ impl EditorTab {
                 .show_right_margin
                 .then_some(settings.right_margin_position.max(1) as usize)
         };
-        let margin_color = cx.theme().border;
+        // Monaco's `editorRuler.foreground`, which Swift's themes don't set.
+        let margin_color: gpui_kit::Hsla = if cx.theme().mode.is_dark() {
+            gpui_kit::rgb(0x5a5a5a).into()
+        } else {
+            gpui_kit::rgb(0xd3d3d3).into()
+        };
         let font = self.font_for_blame(cx);
         let tab = cx.entity().downgrade();
         let sticky = {
