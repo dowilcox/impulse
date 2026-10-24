@@ -35,6 +35,7 @@ mod editor_diff;
 mod editor_git;
 mod editor_keys;
 mod editor_minimap;
+mod editor_peek;
 mod editor_tab;
 mod editor_vim;
 mod editor_watch;

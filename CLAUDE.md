@@ -277,7 +277,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           highlights or impulse_kit::occurrences, Monaco's
                           context menu, Go to Type Definition,
                           Implementations and Declaration through
-                          DocumentLink::navigate, Change All Occurrences,
+                          DocumentLink::navigate, Peek Definition and
+                          the places Go to References and the Go to
+                          commands find in a peek docked under the
+                          editor (editor_peek.rs), Change All Occurrences,
                           the Diff View (editor_diff.rs: the index
                           version read-only beside the buffer, scrolling
                           with it, or inline in one read-only document,

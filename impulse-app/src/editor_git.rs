@@ -59,7 +59,7 @@ pub(crate) struct GitLayer {
     /// The file's index version (`\n` line ends); `None`: no marks.
     base: Option<String>,
     /// The repository root, once known, and whether it's trusted.
-    root: Option<String>,
+    pub(crate) root: Option<String>,
     trusted: bool,
     hunks: Vec<LineHunk>,
     /// Who last changed each line of the saved file, and that file's text

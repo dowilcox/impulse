@@ -87,6 +87,9 @@ pub struct EditorTab {
     pub(crate) diff: Option<crate::editor_diff::DiffView>,
     /// Diff View's last layout: inline rather than side by side.
     pub(crate) diff_inline: bool,
+    /// Places a Go to or Peek command found, under the editor
+    /// (`editor_peek`).
+    pub(crate) peek: Option<crate::editor_peek::Peek>,
     /// The call's signature over the cursor (Monaco's parameter hints).
     signature: Option<lsp_types::SignatureHelp>,
     _signature_request: Option<gpui_kit::Task<()>>,
@@ -225,6 +228,7 @@ impl EditorTab {
             _signature_request: None,
             marked_at: None,
             vim,
+            peek: None,
             diff_inline: false,
             git: Default::default(),
             minimap: Default::default(),
@@ -384,7 +388,7 @@ impl EditorTab {
         Some(self.primary_link()?.workspace_symbols(query, cx))
     }
 
-    fn say(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
+    pub(crate) fn say(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
         self.notice = Some(notice.into());
         cx.notify();
     }
@@ -570,98 +574,14 @@ impl EditorTab {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_kit::component::WindowExt as _;
-
-        // Each location's file, line number and line of code.
-        // By URI (as text: `Uri` caches its parse internally).
-        let mut texts: std::collections::HashMap<String, Option<String>> = Default::default();
-        let rows: Vec<(String, String, lsp_types::Location)> = locations
-            .into_iter()
-            .map(|location| {
-                let text = texts
-                    .entry(location.uri.as_str().to_string())
-                    .or_insert_with(|| {
-                        if &location.uri == own_uri {
-                            Some(own_text.to_string())
-                        } else {
-                            impulse_kit::text_file::read(&impulse_lsp::workspace_edit::uri_path(
-                                &location.uri,
-                            ))
-                            .map(|c| c.text)
-                        }
-                    });
-                let line = location.range.start.line as usize;
-                let code = text
-                    .as_deref()
-                    .and_then(|t| t.lines().nth(line))
-                    .unwrap_or_default()
-                    .trim()
-                    .to_string();
-                let path = impulse_lsp::workspace_edit::uri_path(&location.uri);
-                let shown = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                (format!("{shown}:{}", line + 1), code, location)
-            })
-            .collect();
-        let count = rows.len();
-        let state = self.state.clone();
-        let own_uri = own_uri.clone();
-        window.open_dialog(cx, move |dialog, _, _| {
-            let rows = rows.clone();
-            let (hooks, state, own_uri) = (hooks.clone(), state.clone(), own_uri.clone());
-            dialog
-                .title(format!("{count} references"))
-                .w(px(640.))
-                .child(
-                    gpui_kit::div()
-                        .id("references")
-                        .flex()
-                        .flex_col()
-                        .max_h(px(420.))
-                        .overflow_y_scroll()
-                        .children(rows.into_iter().enumerate().map(
-                            move |(index, (place, code, location))| {
-                                let (hooks, state, own_uri) =
-                                    (hooks.clone(), state.clone(), own_uri.clone());
-                                gpui_kit::div()
-                                    .id(("reference", index))
-                                    .flex()
-                                    .gap(px(12.))
-                                    .px(px(8.))
-                                    .py(px(4.))
-                                    .rounded(px(4.))
-                                    .cursor_pointer()
-                                    .hover(|style| style.bg(gpui_kit::black().opacity(0.15)))
-                                    .font_family("JetBrains Mono")
-                                    .text_size(px(12.))
-                                    .child(gpui_kit::div().flex_none().w(px(160.)).child(place))
-                                    .child(gpui_kit::div().truncate().child(code))
-                                    .on_click(move |_, window, cx| {
-                                        window.close_dialog(cx);
-                                        if location.uri == own_uri {
-                                            state.update(cx, |state, cx| {
-                                                state.set_cursor_position(
-                                                    location.range.start,
-                                                    window,
-                                                    cx,
-                                                )
-                                            });
-                                        } else {
-                                            let params = lsp_types::ShowDocumentParams {
-                                                uri: location.uri.clone(),
-                                                external: Some(false),
-                                                take_focus: Some(true),
-                                                selection: Some(location.range),
-                                            };
-                                            (hooks.show_document)(&params, window, cx);
-                                        }
-                                    })
-                            },
-                        )),
-                )
-        });
+        self.show_peek(
+            "References",
+            locations,
+            (own_uri, own_text),
+            hooks,
+            window,
+            cx,
+        );
     }
 
     /// Format Document: the primary server's formatting, as one edit.
@@ -1457,6 +1377,16 @@ impl Render for EditorTab {
                 .into_any_element(),
             None => editor,
         };
+        let editor = match self.peek_element(cx) {
+            Some(peek) => gpui_kit::div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(gpui_kit::div().flex_1().min_h_0().child(editor))
+                .child(peek)
+                .into_any_element(),
+            None => editor,
+        };
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()
@@ -1470,11 +1400,15 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::insert_line_above))
             .on_action(cx.listener(Self::add_next_occurrence))
             .on_action(cx.listener(Self::change_all_occurrences))
-            .on_key_down(cx.listener(|tab, event: &gpui_kit::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && tab.signature.is_some() {
-                    tab.hide_signature(cx);
-                }
-            }))
+            .on_key_down(
+                cx.listener(|tab, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "escape" && tab.signature.is_some() {
+                        tab.hide_signature(cx);
+                    } else if event.keystroke.key == "escape" && tab.peek.is_some() {
+                        tab.close_peek(window, cx);
+                    }
+                }),
+            )
             .children(signature)
             .on_action(
                 cx.listener(|tab, _: &crate::editor_keys::ShowLineCommit, _, cx| {
@@ -1491,6 +1425,11 @@ impl Render for EditorTab {
                     tab.go_to_conflict(-1, window, cx)
                 },
             ))
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::PeekDefinition, window, cx| {
+                    tab.find_places(crate::lsp_hub::Navigation::Definition, true, window, cx)
+                }),
+            )
             .on_action(cx.listener(
                 |tab, _: &crate::editor_keys::GoToTypeDefinition, window, cx| {
                     tab.navigate(crate::lsp_hub::Navigation::TypeDefinition, window, cx)
@@ -1627,7 +1566,7 @@ impl EditorTab {
     ) -> impl Fn(NativeMenu, &mut Window, &mut gpui_kit::App) -> NativeMenu + 'static {
         use crate::editor_keys::{
             ChangeAllOccurrences, GoToDeclaration, GoToImplementations, GoToTypeDefinition,
-            ShowLineCommit,
+            PeekDefinition, ShowLineCommit,
         };
         use crate::workbench::{FindReferences, FormatDocument, RenameSymbol};
         use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, ToggleCodeActions};
@@ -1637,6 +1576,7 @@ impl EditorTab {
                 .menu_with_disabled("Go to Implementations", !lsp, Box::new(GoToImplementations))
                 .menu_with_disabled("Go to Declaration", !lsp, Box::new(GoToDeclaration))
                 .menu_with_disabled("Go to References", !lsp, Box::new(FindReferences))
+                .menu_with_disabled("Peek Definition", !lsp, Box::new(PeekDefinition))
                 .separator()
                 .menu_with_disabled("Rename Symbol", !(lsp && editable), Box::new(RenameSymbol))
                 .menu_with_disabled(
@@ -1711,6 +1651,18 @@ impl EditorTab {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.find_places(kind, false, window, cx);
+    }
+
+    /// Ask the primary server where `kind` leads: one place is gone to
+    /// (unless `peek`), several are shown in a peek.
+    pub(crate) fn find_places(
+        &mut self,
+        kind: crate::lsp_hub::Navigation,
+        peek: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(link), Some(hooks)) = (self.primary_link(), self.hooks.clone()) else {
             return self.say("No language server for this file.", cx);
         };
@@ -1720,15 +1672,20 @@ impl EditorTab {
         };
         let task = link.navigate(kind, &text, offset, cx);
         let (own_text, own_uri) = (text.to_string(), link.uri.clone());
-        let nothing = match kind {
-            crate::lsp_hub::Navigation::TypeDefinition => "No type definition found.",
-            crate::lsp_hub::Navigation::Implementation => "No implementation found.",
-            crate::lsp_hub::Navigation::Declaration => "No declaration found.",
+        use crate::lsp_hub::Navigation;
+        let (nothing, title) = match kind {
+            Navigation::Definition => ("No definition found.", "Definition"),
+            Navigation::TypeDefinition => ("No type definition found.", "Type Definition"),
+            Navigation::Implementation => ("No implementation found.", "Implementations"),
+            Navigation::Declaration => ("No declaration found.", "Declaration"),
         };
         cx.spawn_in(window, async move |tab, cx| {
             let locations = task.await.unwrap_or_default();
             let _ = tab.update_in(cx, |tab, window, cx| match locations.as_slice() {
                 [] => tab.say(nothing, cx),
+                _ if peek => {
+                    tab.show_peek(title, locations, (&own_uri, &own_text), hooks, window, cx)
+                }
                 [location] if location.uri == own_uri => {
                     let start = location.range.start;
                     tab.state
@@ -1741,9 +1698,14 @@ impl EditorTab {
                         take_focus: Some(true),
                         selection: Some(location.range),
                     };
-                    (hooks.show_document)(&params, window, cx);
+                    // The workbench reads every editor tab, this one
+                    // included.
+                    let show = hooks.show_document.clone();
+                    window.defer(cx, move |window, cx| {
+                        show(&params, window, cx);
+                    });
                 }
-                _ => tab.show_references(locations, &own_uri, &own_text, hooks, window, cx),
+                _ => tab.show_peek(title, locations, (&own_uri, &own_text), hooks, window, cx),
             });
         })
         .detach();

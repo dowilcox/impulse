@@ -415,7 +415,12 @@ impl EditorTab {
 
 /// The cursor to the start of `row`, scrolled to the middle of the view
 /// (Monaco's `revealPositionInCenter`).
-fn center(state: &Entity<EditorState>, row: usize, window: &mut Window, cx: &mut gpui_kit::App) {
+pub(crate) fn center(
+    state: &Entity<EditorState>,
+    row: usize,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+) {
     state.update(cx, |state, cx| {
         state.set_cursor_position(Position::new(row as u32, 0), window, cx);
         let (Some(rows), Some(lh)) = (state.visible_row_range(), state.line_height()) else {

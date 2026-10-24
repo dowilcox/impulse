@@ -128,6 +128,7 @@ impl LspHub {
 /// What Go to Type Definition, Implementations and Declaration ask for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Navigation {
+    Definition,
     TypeDefinition,
     Implementation,
     Declaration,
@@ -299,7 +300,9 @@ impl DocumentLink {
         offset: usize,
         cx: &App,
     ) -> Task<Result<Vec<lsp_types::Location>, String>> {
-        use lsp_types::request::{GotoDeclaration, GotoImplementation, GotoTypeDefinition};
+        use lsp_types::request::{
+            GotoDeclaration, GotoDefinition, GotoImplementation, GotoTypeDefinition,
+        };
         let params = GotoDefinitionParams {
             text_document_position_params: self.at(text, offset),
             work_done_progress_params: Default::default(),
@@ -308,6 +311,7 @@ impl DocumentLink {
         let client = self.client.clone();
         cx.background_executor().spawn(async move {
             let response = match kind {
+                Navigation::Definition => client.request::<GotoDefinition>(params).await?,
                 Navigation::TypeDefinition => client.request::<GotoTypeDefinition>(params).await?,
                 Navigation::Implementation => client.request::<GotoImplementation>(params).await?,
                 Navigation::Declaration => client.request::<GotoDeclaration>(params).await?,
