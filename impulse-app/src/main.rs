@@ -10,6 +10,7 @@ mod editor_keys;
 mod editor_tab;
 mod kit_theme;
 mod lsp_hub;
+mod palette;
 mod settings_store;
 mod shell_launch;
 mod terminal_view;
@@ -122,6 +123,7 @@ fn main() {
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);
             terminal_view::bind_keys(cx);
+            palette::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");
