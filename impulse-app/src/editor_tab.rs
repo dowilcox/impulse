@@ -1568,6 +1568,26 @@ impl Render for EditorTab {
                     tab.navigate(crate::lsp_hub::Navigation::Declaration, window, cx)
                 }),
             )
+            // Files dropped from the file manager or the tree each open in a
+            // tab (Swift's editor web view opens them).
+            .on_drop(cx.listener(|_, paths: &gpui_kit::ExternalPaths, _, cx| {
+                for path in paths.paths().iter().filter(|p| p.is_file()) {
+                    cx.emit(crate::editor_git::EditorGitAction {
+                        action: format!("open:{}", path.display()),
+                        line: 0,
+                    });
+                }
+            }))
+            .on_drop(cx.listener(
+                |_, dragged: &crate::file_tree_actions::DraggedPath, _, cx| {
+                    if dragged.0.is_file() {
+                        cx.emit(crate::editor_git::EditorGitAction {
+                            action: format!("open:{}", dragged.0.display()),
+                            line: 0,
+                        });
+                    }
+                },
+            ))
             .map(|d| match (self.preview, &self.diff) {
                 (None, Some(_)) => d.child(self.diff_element(editor, cx)),
                 (None, None) => d.child(editor),

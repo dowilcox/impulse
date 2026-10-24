@@ -563,6 +563,9 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   gets "<task> was merged." with Clean Up… (Finish), once, in the window
   that has it; a workspace row's + on hover offers New Task from <repo>…
   and Open Folder as Workspace….
+  A file tree row dropped on a terminal types its quoted path, as a file
+  from the file manager does, and files dropped on an editor each open in
+  a tab.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

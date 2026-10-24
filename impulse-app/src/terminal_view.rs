@@ -1477,6 +1477,19 @@ impl TerminalView {
         self.focus(window, cx);
     }
 
+    /// A file tree row dropped here: its path, quoted, as a file from the
+    /// file manager would be (Swift's tree drags a file URL).
+    fn drop_tree_path(
+        &mut self,
+        dragged: &crate::file_tree_actions::DraggedPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let payload = self.quoted_paths(std::slice::from_ref(&dragged.0));
+        self.paste_payload(&payload, window, cx);
+        self.focus(window, cx);
+    }
+
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.backend.select_all();
         cx.notify();
@@ -2653,6 +2666,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste))
             .on_drop(cx.listener(Self::drop_paths))
+            .on_drop(cx.listener(Self::drop_tree_path))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear))
             .on_action(cx.listener(Self::page_up))
