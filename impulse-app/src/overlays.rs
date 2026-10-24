@@ -5,15 +5,18 @@
 
 use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{AnyElement, App, IntoElement as _, ParentElement as _, Window};
+use gpui_kit::{AnyElement, App, IntoElement as _, ParentElement as _, Styled as _, Window};
 
-/// GPUI Kit's `open_dialog`, with the probe in the dialog's body.
+/// GPUI Kit's `open_dialog`, with the probe in the dialog's body and the
+/// UI font's line height (the sheets' SwiftUI text, not GPUI's 1.6).
 pub(crate) fn open_dialog<F>(window: &mut Window, cx: &mut App, build: F)
 where
     F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
 {
     window.open_dialog(cx, move |dialog, window, cx| {
-        build(dialog, window, cx).child(probe())
+        build(dialog, window, cx)
+            .line_height(gpui_kit::relative(crate::workbench::UI_LINE_HEIGHT))
+            .child(probe())
     });
 }
 

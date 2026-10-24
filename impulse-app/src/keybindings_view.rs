@@ -5,7 +5,6 @@
 //! change is saved into `keybinding_overrides` (or `custom_keybindings`),
 //! and `commands::rebind_on_change` binds it right away.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::Sizable as _;
@@ -20,7 +19,7 @@ use impulse_kit::settings::CustomKeybinding;
 use crate::settings_store::SettingsStore;
 use crate::settings_view::{add_button, icon_button, mono_field, set_unless_editing, MONO_FONT};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
 use crate::workspace::Surface;
 
 /// What the next key press is recorded for.
@@ -463,16 +462,22 @@ impl KeybindingsView {
                             view.start_recording(SEARCH.into(), window, cx);
                         }),
                     )
-                    .child(
-                        Button::new("search-by-keys-button")
-                            .label(if recording_search {
-                                "Press keys\u{2026}"
-                            } else {
-                                "Search by keys"
-                            })
-                            .small()
-                            .when(recording_search, |b| b.primary()),
-                    ),
+                    .child(chrome_button(
+                        "search-by-keys-button",
+                        if recording_search {
+                            "Press keys\u{2026}"
+                        } else {
+                            "Search by keys"
+                        },
+                        None,
+                        if recording_search {
+                            ButtonKind::Primary
+                        } else {
+                            ButtonKind::Secondary
+                        },
+                        false,
+                        &self.palette,
+                    )),
             )
     }
 

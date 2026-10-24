@@ -12,7 +12,6 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::{Disableable as _, WindowExt as _};
 use gpui_kit::{div, prelude::*, px, Context, FontWeight, Window};
@@ -24,7 +23,7 @@ use impulse_kit::trust::WorkspaceTrust;
 
 use crate::tasks::{self, confirm, toast, Run, Then, ToastAction, ToastKind};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, hsla};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, ButtonKind};
 
 /// A task whose folder was removed, with what Undo needs.
 #[derive(Clone)]
@@ -674,6 +673,7 @@ impl Workbench {
                 .filter(|r| r.is_on && r.can_archive())
                 .count();
             let (on_click, on_enter) = (archive.clone(), archive.clone());
+            let p = sheet.read(cx).palette.clone();
             dialog
                 .w(px(460.))
                 .close_button(false)
@@ -688,21 +688,32 @@ impl Workbench {
                         .justify_end()
                         .gap(px(8.))
                         .child(
-                            Button::new("merged-cancel")
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                            chrome_button(
+                                "merged-cancel",
+                                "Cancel",
+                                None,
+                                ButtonKind::Secondary,
+                                false,
+                                &p,
+                            )
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
-                            Button::new("merged-archive")
-                                .primary()
-                                .icon(gpui_kit::component::Icon::empty().path("icons/archive.svg"))
-                                .label(if count == 1 {
+                            chrome_button(
+                                "merged-archive",
+                                if count == 1 {
                                     "Archive 1 Task".to_string()
                                 } else {
                                     format!("Archive {count} Tasks")
-                                })
-                                .disabled(count == 0)
-                                .on_click(move |_, window, cx| on_click(window, cx)),
+                                },
+                                Some("archive"),
+                                ButtonKind::Primary,
+                                count == 0,
+                                &p,
+                            )
+                            .when(count > 0, |b| {
+                                b.on_click(move |_, window, cx| on_click(window, cx))
+                            }),
                         ),
                 )
         });

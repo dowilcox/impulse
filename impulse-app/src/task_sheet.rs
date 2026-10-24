@@ -12,10 +12,9 @@ use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _};
+use gpui_kit::component::{Disableable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
 };
@@ -672,10 +671,15 @@ impl Render for TaskSheet {
                 !self.is_fetching && !self.fetches_on_its_own && self.remote.is_some(),
                 |d| {
                     d.child(
-                        Button::new("task-fetch")
-                            .label("Fetch")
-                            .small()
-                            .on_click(cx.listener(|sheet, _, window, cx| sheet.fetch(window, cx))),
+                        chrome_button(
+                            "task-fetch",
+                            "Fetch",
+                            None,
+                            ButtonKind::Secondary,
+                            false,
+                            &p,
+                        )
+                        .on_click(cx.listener(|sheet, _, window, cx| sheet.fetch(window, cx))),
                     )
                 },
             );
@@ -942,11 +946,15 @@ impl Render for TaskSheet {
                                 }),
                         )
                         .child(
-                            Button::new("task-set-up")
-                                .ghost()
-                                .xsmall()
-                                .label("Set Up This Project for Tasks…")
-                                .on_click(move |_, window, cx| {
+                            chrome_button(
+                                "task-set-up",
+                                "Set Up This Project for Tasks…",
+                                None,
+                                ButtonKind::Ghost,
+                                false,
+                                &p,
+                            )
+                            .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
                                     let root = root.clone();
                                     let _ = workbench.update(cx, |w, cx| {

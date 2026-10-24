@@ -21,7 +21,7 @@ use impulse_kit::chrome::{ChromePalette, Rgba};
 
 use crate::repository_state::RepositoryState;
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
 
 /// After this long without a commit a branch is stale.
 const STALE: Duration = Duration::from_secs(30 * 24 * 3600);
@@ -326,10 +326,15 @@ impl BranchManager {
             )
             .when(!is_current, |d| {
                 d.child(
-                    Button::new(("switch", index))
-                        .small()
-                        .label("Switch")
-                        .on_click(move |_, window, cx| switch(window, cx)),
+                    chrome_button(
+                        ("switch", index),
+                        "Switch",
+                        None,
+                        ButtonKind::Secondary,
+                        false,
+                        p,
+                    )
+                    .on_click(move |_, window, cx| switch(window, cx)),
                 )
             })
             .child(
@@ -419,10 +424,15 @@ impl Render for BranchManager {
                     })
                     .child(div().flex_1())
                     .child(
-                        Button::new("branches-done")
-                            .primary()
-                            .label("Done")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                        chrome_button(
+                            "branches-done",
+                            "Done",
+                            None,
+                            ButtonKind::Primary,
+                            false,
+                            &p,
+                        )
+                        .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
             )
     }

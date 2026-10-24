@@ -471,6 +471,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   has Swift's padding; GPUI's text runs can't take its 0.9em size.
   Occurrence and selection marks show only while the editor's text has
   the keyboard, as Monaco's word highlighter does.
+- Text buttons where Swift has a `ChromeButton` (Project Setup, Manage
+  Branches, Agent Integration, Archive Merged Tasks, the overlap list,
+  Keyboard Shortcuts' Search by keys, Install All) are drawn by
+  `chrome_button`, and every dialog takes the UI font's line height.
 - `scripts/spike/linux-shot.sh` screenshots the app under Xvfb with software
   Vulkan, so CI can check the UI without a GPU.
 - The headless snapshot mode (`debug_snapshot.rs`, debug builds only, as

@@ -14,7 +14,7 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, NumberInputEvent, StepAction};
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _};
+use gpui_kit::component::{IndexPath, Sizable as _};
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, ElementId, Entity, FocusHandle, Focusable as _,
     FontWeight, SharedString, Subscription, Window,
@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 use crate::commands::RunCommand;
 use crate::settings_store::SettingsStore;
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, hsla, icon};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, icon, ButtonKind};
 use crate::workspace::Surface;
 
 pub(crate) const MONO_FONT: &str = "JetBrains Mono";
@@ -1480,13 +1480,19 @@ impl SettingsView {
                                 .build(window, cx)
                             })
                             .child(
-                                Button::new("install-all")
-                                    .label("Install All")
-                                    .small()
-                                    .disabled(!npm || self.installing)
-                                    .on_click(
+                                chrome_button(
+                                    "install-all",
+                                    "Install All",
+                                    None,
+                                    ButtonKind::Secondary,
+                                    !npm || self.installing,
+                                    p,
+                                )
+                                .when(npm && !self.installing, |b| {
+                                    b.on_click(
                                         cx.listener(|view, _, _, cx| view.install_servers(cx)),
-                                    ),
+                                    )
+                                }),
                             ),
                     ),
             )

@@ -7,7 +7,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, ClipboardItem, Context, FontWeight, Window};
 use impulse_kit::agents::hook_installer::{self as hooks, InstallError, OpencodePlugin, Status};
@@ -17,7 +16,7 @@ use impulse_kit::shell::quoting::quoted;
 use impulse_kit::shell::ShellType;
 
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, hsla, icon};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, icon, ButtonKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agent {
@@ -879,13 +878,15 @@ impl Render for AgentIntegration {
                 },
             ));
         }
-        let primary: Option<Button> = if m.agent == Agent::Other {
-            Some(
-                Button::new("agent-copy")
-                    .primary()
-                    .icon(gpui_kit::component::Icon::empty().path("icons/copy.svg"))
-                    .label("Copy"),
-            )
+        let primary = if m.agent == Agent::Other {
+            Some(chrome_button(
+                "agent-copy",
+                "Copy",
+                Some("copy"),
+                ButtonKind::Primary,
+                false,
+                &p,
+            ))
         } else if m.after.is_some() {
             let label = format!(
                 "{} {}",
@@ -896,19 +897,18 @@ impl Render for AgentIntegration {
                     "MCP Server"
                 }
             );
-            let button = Button::new("agent-apply")
-                .icon(gpui_kit::component::Icon::empty().path(if m.installed {
-                    "icons/trash-2.svg"
+            Some(chrome_button(
+                "agent-apply",
+                label,
+                Some(if m.installed { "trash-2" } else { "check" }),
+                if m.installed {
+                    ButtonKind::Secondary
                 } else {
-                    "icons/check.svg"
-                }))
-                .label(label)
-                .loading(self.busy);
-            Some(if m.installed {
-                button
-            } else {
-                button.primary()
-            })
+                    ButtonKind::Primary
+                },
+                false,
+                &p,
+            ))
         } else {
             None
         };
@@ -1001,8 +1001,7 @@ impl Render for AgentIntegration {
                     .justify_end()
                     .gap(px(8.))
                     .child(
-                        Button::new("agent-close")
-                            .label("Close")
+                        chrome_button("agent-close", "Close", None, ButtonKind::Secondary, false, &p)
                             .on_click(cx.listener(|sheet, _, window, cx| sheet.close(None, window, cx))),
                     )
                     .children(primary.map(|button| {

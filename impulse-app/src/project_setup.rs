@@ -15,13 +15,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::{Disableable as _, Icon, Sizable as _, WindowExt as _};
+use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, ClickEvent, Context, Entity, FocusHandle, FontWeight,
-    ScrollHandle, Subscription, WeakEntity, Window,
+    ScrollHandle, SharedString, Subscription, WeakEntity, Window,
 };
 use impulse_git::{branches, ignored};
 use impulse_kit::chrome::ChromePalette;
@@ -34,7 +33,7 @@ use crate::project_setup_model::{
 use crate::settings_view::{icon_button, mono_field, MONO_FONT};
 use crate::tasks::{self, toast, Then, ToastKind};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
 use crate::workspace::{Kind, Surface};
 
 /// The local file, as the notes name it.
@@ -286,12 +285,83 @@ impl ProjectSetupView {
 
 // MARK: Drawing
 
-/// One of the screen's buttons, as `ChromeButton`'s kinds.
-fn button(id: impl Into<gpui_kit::ElementId>, label: impl Into<String>) -> Button {
-    Button::new(id).small().label(label.into())
+/// One of the screen's buttons: Swift's `ChromeButton`, secondary unless
+/// made `ghost` or `primary`, drawn by `on_click`.
+struct SetupButton {
+    id: gpui_kit::ElementId,
+    label: SharedString,
+    icon: Option<&'static str>,
+    kind: ButtonKind,
+    disabled: bool,
+    tooltip: Option<SharedString>,
+    palette: ChromePalette,
+}
+
+impl SetupButton {
+    fn ghost(mut self) -> Self {
+        self.kind = ButtonKind::Ghost;
+        self
+    }
+
+    fn primary(mut self) -> Self {
+        self.kind = ButtonKind::Primary;
+        self
+    }
+
+    fn icon(mut self, name: &'static str) -> Self {
+        self.icon = Some(name);
+        self
+    }
+
+    fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
+        self
+    }
+
+    fn on_click(
+        self,
+        handler: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
+        let disabled = self.disabled;
+        chrome_button(
+            self.id,
+            self.label,
+            self.icon,
+            self.kind,
+            disabled,
+            &self.palette,
+        )
+        .when_some(self.tooltip, |b, text| {
+            b.tooltip(move |window, cx| {
+                gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+            })
+        })
+        .when(!disabled, |b| b.on_click(handler))
+    }
 }
 
 impl ProjectSetupView {
+    fn button(
+        &self,
+        id: impl Into<gpui_kit::ElementId>,
+        label: impl Into<SharedString>,
+    ) -> SetupButton {
+        SetupButton {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            kind: ButtonKind::Secondary,
+            disabled: false,
+            tooltip: None,
+            palette: self.palette.clone(),
+        }
+    }
+
     fn caption(&self, text: impl Into<String>) -> gpui_kit::Div {
         div()
             .text_size(px(11.))
@@ -412,7 +482,7 @@ impl ProjectSetupView {
                     .text_color(hsla(p.text_secondary))
                     .child(text),
             )
-            .child(button(id, label).ghost().on_click(apply))
+            .child(self.button(id, label).ghost().on_click(apply))
             .into_any_element()
     }
 
@@ -488,7 +558,7 @@ impl ProjectSetupView {
                     ),
             )
             .child(
-                button("setup-open-file", "Open File")
+                self.button("setup-open-file", "Open File")
                     .ghost()
                     .tooltip(format!("Open {RELATIVE_PATH} in the editor"))
                     .on_click(self.act(|w, view, window, cx| {
@@ -509,12 +579,12 @@ impl ProjectSetupView {
                 )
             })
             .child(
-                button(
+                self.button(
                     "setup-save",
                     if m.is_saving { "Saving…" } else { "Save" },
                 )
                 .primary()
-                .icon(Icon::empty().path("icons/check.svg"))
+                .icon("check")
                 .disabled(m.is_loading || m.is_saving || m.load_error.is_some() || problems > 0)
                 .on_click(self.act(|w, view, window, cx| {
                     w.save_project_setup(view, false, None, window, cx)
@@ -560,13 +630,13 @@ impl ProjectSetupView {
                 div()
                     .flex()
                     .gap(px(10.))
-                    .child(button("setup-unreadable-open", "Open File").primary().on_click(
+                    .child(self.button("setup-unreadable-open", "Open File").primary().on_click(
                         self.act(|w, view, window, cx| {
                             let root = view.read(cx).model.root.clone();
                             w.open_project_settings_file(&root, window, cx)
                         }),
                     ))
-                    .child(button("setup-reload", "Reload").on_click(self.act(
+                    .child(self.button("setup-reload", "Reload").on_click(self.act(
                         |w, view, window, cx| {
                             let root = view.read(cx).model.root.clone();
                             w.load_project_setup(view, root, None, window, cx)
@@ -579,7 +649,7 @@ impl ProjectSetupView {
     fn notes(&self) -> AnyElement {
         let mut notes: Vec<AnyElement> = Vec::new();
         let open_local = || {
-            button("setup-open-local", "Open")
+            self.button("setup-open-local", "Open")
                 .ghost()
                 .on_click(self.act(|w, view, window, cx| {
                     let root = view.read(cx).model.root.clone();
@@ -849,9 +919,9 @@ impl ProjectSetupView {
             div()
                 .flex()
                 .child(
-                    button("add-copy", "Add File")
+                    self.button("add-copy", "Add File")
                         .ghost()
-                        .icon(Icon::empty().path("icons/plus.svg"))
+                        .icon("plus")
                         .on_click(self.change(|m| {
                             let row = m.custom_row("");
                             m.copies.push(row);
@@ -882,9 +952,9 @@ impl ProjectSetupView {
             div()
                 .flex()
                 .child(
-                    button("add-clone", "Add Folder")
+                    self.button("add-clone", "Add Folder")
                         .ghost()
-                        .icon(Icon::empty().path("icons/plus.svg"))
+                        .icon("plus")
                         .on_click(self.change(|m| {
                             let row = m.custom_row("");
                             m.clones.push(row);
@@ -1122,9 +1192,9 @@ impl ProjectSetupView {
                 .items_center()
                 .gap(px(8.))
                 .child(
-                    button("add-port", "Add Port")
+                    self.button("add-port", "Add Port")
                         .ghost()
-                        .icon(Icon::empty().path("icons/plus.svg"))
+                        .icon("plus")
                         .on_click(self.change(|m| {
                             let pair = m.pair("", "");
                             m.ports.push(pair);
@@ -1224,7 +1294,7 @@ impl ProjectSetupView {
                         .on_change(self.act_bool(|m, on| m.compose_override = on)),
                 )
                 .child(
-                    button("show-compose", "Show File")
+                    self.button("show-compose", "Show File")
                         .ghost()
                         .on_click(self.act(|w, view, window, cx| {
                             let m = &view.read(cx).model;
@@ -1290,9 +1360,9 @@ impl ProjectSetupView {
             div()
                 .flex()
                 .child(
-                    button("add-value", "Add Value")
+                    self.button("add-value", "Add Value")
                         .ghost()
-                        .icon(Icon::empty().path("icons/plus.svg"))
+                        .icon("plus")
                         .on_click(self.change(|m| {
                             let pair = m.pair("", "");
                             m.values.push(pair);
@@ -1398,9 +1468,9 @@ impl ProjectSetupView {
             div()
                 .flex()
                 .child(
-                    button("add-rule", "Add Rule")
+                    self.button("add-rule", "Add Rule")
                         .ghost()
-                        .icon(Icon::empty().path("icons/plus.svg"))
+                        .icon("plus")
                         .on_click(self.change(|m| {
                             let pair = m.pair("", "");
                             m.rules.push(pair);
@@ -1464,9 +1534,9 @@ impl ProjectSetupView {
             div()
                 .flex()
                 .child(
-                    button("add-action", "Add Action")
+                    self.button("add-action", "Add Action")
                         .ghost()
-                        .icon(Icon::empty().path("icons/plus.svg"))
+                        .icon("plus")
                         .on_click(self.change(|m| {
                             let id = m.new_id();
                             m.actions.push(crate::project_setup_model::ActionRow {
@@ -1508,13 +1578,13 @@ impl ProjectSetupView {
                     .flex()
                     .gap(px(10.))
                     .child(
-                        button("setup-try", "Try in a New Task")
-                            .icon(Icon::empty().path("icons/git-branch-plus.svg"))
+                        self.button("setup-try", "Try in a New Task")
+                            .icon("git-branch-plus")
                             .on_click(self.act(|w, view, window, cx| w.try_project_setup(view, window, cx))),
                     )
                     .when(count > 0, |d| {
                         d.child(
-                            button(
+                            self.button(
                                 "setup-reapply",
                                 format!(
                                     "Re-apply Values to {count} Task{}",

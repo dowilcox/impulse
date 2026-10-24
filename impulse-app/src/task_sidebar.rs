@@ -8,9 +8,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::{Sizable as _, WindowExt as _};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, Window};
 use impulse_kit::chrome::{metrics, ChromePalette};
 use impulse_kit::git::task_overlap::Pair;
@@ -18,7 +17,7 @@ use impulse_kit::git::task_registry;
 
 use crate::tasks;
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
 use crate::workspace::{Kind, Workspace};
 
 /// A context menu entry: a title and what it does to the workspace (by id),
@@ -490,34 +489,38 @@ impl Render for OverlapList {
                         .child(format!("…and {} more", pair.files.len() - 20)),
                 );
             }
-            let status: AnyElement =
-                match found {
-                    None => Button::new(("overlap-check", n))
-                        .small()
-                        .label("Check for Conflicts")
-                        .on_click(cx.listener(move |list, _, window, cx| {
-                            list.check(pair.clone(), window, cx)
-                        }))
-                        .into_any_element(),
-                    Some(None) => div()
-                        .text_size(px(11.))
-                        .text_color(hsla(p.text_tertiary))
-                        .child("Checking…")
-                        .into_any_element(),
-                    Some(Some(files)) => div()
-                        .text_size(px(11.))
-                        .text_color(hsla(if files.is_empty() {
-                            p.success
-                        } else {
-                            p.danger
-                        }))
-                        .child(if files.is_empty() {
-                            "These would merge without conflicts.".to_string()
-                        } else {
-                            format!("{} would conflict.", files.len())
-                        })
-                        .into_any_element(),
-                };
+            let status: AnyElement = match found {
+                None => chrome_button(
+                    ("overlap-check", n),
+                    "Check for Conflicts",
+                    None,
+                    ButtonKind::Secondary,
+                    false,
+                    &p,
+                )
+                .on_click(
+                    cx.listener(move |list, _, window, cx| list.check(pair.clone(), window, cx)),
+                )
+                .into_any_element(),
+                Some(None) => div()
+                    .text_size(px(11.))
+                    .text_color(hsla(p.text_tertiary))
+                    .child("Checking…")
+                    .into_any_element(),
+                Some(Some(files)) => div()
+                    .text_size(px(11.))
+                    .text_color(hsla(if files.is_empty() {
+                        p.success
+                    } else {
+                        p.danger
+                    }))
+                    .child(if files.is_empty() {
+                        "These would merge without conflicts.".to_string()
+                    } else {
+                        format!("{} would conflict.", files.len())
+                    })
+                    .into_any_element(),
+            };
             let offers_move = other.path == self.main || self.path == self.main;
             let (workbench, id) = (self.workbench.clone(), self.workspace_id);
             column = column.child(
@@ -536,18 +539,21 @@ impl Render for OverlapList {
                         offers_move,
                         |d| {
                             d.child(
-                                Button::new(("overlap-move", n))
-                                    .ghost()
-                                    .small()
-                                    .label("Move to New Task…")
-                                    .on_click(move |_, window, cx| {
-                                        window.close_dialog(cx);
-                                        let _ = workbench.update(cx, |w, cx| {
-                                            let index =
-                                                w.workspaces.iter().position(|ws| ws.id == id);
-                                            w.present_new_task(index, true, window, cx)
-                                        });
-                                    }),
+                                chrome_button(
+                                    ("overlap-move", n),
+                                    "Move to New Task…",
+                                    None,
+                                    ButtonKind::Ghost,
+                                    false,
+                                    &p,
+                                )
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = workbench.update(cx, |w, cx| {
+                                        let index = w.workspaces.iter().position(|ws| ws.id == id);
+                                        w.present_new_task(index, true, window, cx)
+                                    });
+                                }),
                             )
                         },
                     )),
