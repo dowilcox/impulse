@@ -54,6 +54,10 @@ impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
                           1337 attention, 21337 status), command blocks,
                           history
 impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
+impulse-kit/              Rust: start of the full-Rust migration (rust branch,
+                          docs/plans/rust-migration.md): ImpulseKit logic
+                          revived from v0.29.0, tested against the shared
+                          golden fixtures; not linked into the app yet
 vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide
                           (committed; refreshed by scripts/vendor-*.sh)
 assets/                   file icons + icon-mapping.json (copied into the
@@ -69,7 +73,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` only, and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, which nothing links yet), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 
@@ -104,6 +108,7 @@ impulse-macos/swiftw test [--filter Name]
 # Rust terminal core
 cargo build -p impulse-ffi           # staticlib the Swift app links
 cargo test -p impulse-terminal       # block/OSC/history tests
+cargo test -p impulse-kit            # rust branch: ported logic vs the golden fixtures
 cargo fmt && cargo clippy
 
 # One-time / occasional

@@ -158,6 +158,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "impulse-kit"
+version = "0.36.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "impulse-terminal"
 version = "0.36.0"
 dependencies = [
