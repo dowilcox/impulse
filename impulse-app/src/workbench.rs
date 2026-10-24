@@ -763,6 +763,7 @@ impl Workbench {
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "quick_terminal" => crate::quick_terminal::toggle(cx),
+            "manage_branches" => self.show_branch_manager(window, cx),
             "rename_workspace" => self.rename_workspace(self.active, window, cx),
             "clear_recent_workspaces" => self.clear_recent_workspaces(window, cx),
             "new_window" => {

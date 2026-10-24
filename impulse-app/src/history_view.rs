@@ -30,6 +30,8 @@ pub struct HistoryView {
     pub root: String,
     /// The file or folder it follows (repository-relative), if any.
     pub path: Option<String>,
+    /// A local branch's history instead of HEAD's.
+    pub branch: Option<String>,
     entries: Vec<LogEntry>,
     rows: Vec<GraphRow>,
     graph: GraphLayout,
@@ -80,6 +82,7 @@ impl HistoryView {
     pub fn new(
         root: String,
         path: Option<String>,
+        branch: Option<String>,
         theme: &ResolvedTheme,
         palette: &ChromePalette,
         cx: &mut Context<Self>,
@@ -100,6 +103,7 @@ impl HistoryView {
             remotes: remotes(&root),
             root,
             path,
+            branch,
             entries: Vec::new(),
             rows: Vec::new(),
             graph: GraphLayout::default(),
@@ -156,10 +160,14 @@ impl HistoryView {
         }
         self.loading = true;
         let (root, path, skip) = (self.root.clone(), self.path.clone(), self.entries.len());
+        let scope = match &self.branch {
+            Some(branch) => LogScope::Branch(branch.clone()),
+            None => LogScope::Head,
+        };
         let task = cx.background_spawn(async move {
             impulse_git::log::entries(
                 &root,
-                &LogScope::Head,
+                &scope,
                 path.as_deref(),
                 &Default::default(),
                 skip,

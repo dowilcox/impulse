@@ -5,6 +5,7 @@
 //!
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
+mod branch_manager;
 mod branch_switcher;
 mod changes_panel;
 mod command_editor;

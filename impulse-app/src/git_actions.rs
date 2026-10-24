@@ -132,7 +132,7 @@ impl Workbench {
         });
     }
 
-    fn report(
+    pub(crate) fn report(
         &mut self,
         result: GitResult<()>,
         title: &str,
@@ -256,7 +256,7 @@ impl Workbench {
     /// Run `operation` on `repo`'s queue; `done` gets its result on the
     /// main thread once the repository is refreshed.
     #[allow(clippy::too_many_arguments)]
-    fn git_run<T: Send + 'static>(
+    pub(crate) fn git_run<T: Send + 'static>(
         &mut self,
         repo: &Entity<RepositoryState>,
         label: Option<String>,
@@ -1173,7 +1173,7 @@ impl Workbench {
     /// and restores the working tree from the safety snapshot (without
     /// one, `reset --keep`, which keeps uncommitted work).
     #[allow(clippy::too_many_arguments)]
-    fn offer_head_undo(
+    pub(crate) fn offer_head_undo(
         &mut self,
         repo: &Entity<RepositoryState>,
         message: String,

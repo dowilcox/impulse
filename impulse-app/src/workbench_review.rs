@@ -130,7 +130,7 @@ impl Workbench {
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned())
         });
-        let surface = self.make_history(root, path, window, cx);
+        let surface = self.make_history(root, path, None, window, cx);
         let active = self.active;
         self.add_tab(active, surface, window, cx);
     }
@@ -139,11 +139,12 @@ impl Workbench {
         &mut self,
         root: String,
         path: Option<String>,
+        branch: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Surface {
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
-        let history = cx.new(|cx| HistoryView::new(root, path, &theme, &palette, cx));
+        let history = cx.new(|cx| HistoryView::new(root, path, branch, &theme, &palette, cx));
         cx.observe(&history, |_, _, cx| cx.notify()).detach();
         let review = history.read(cx).review().clone();
         cx.subscribe_in(

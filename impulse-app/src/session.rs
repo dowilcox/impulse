@@ -331,7 +331,7 @@ impl Workbench {
                     .path
                     .clone()
                     .filter(|p| std::path::Path::new(p).is_dir())
-                    .map(|root| self.make_history(root, surface.subpath.clone(), window, cx)),
+                    .map(|root| self.make_history(root, surface.subpath.clone(), None, window, cx)),
                 "file" => surface
                     .path
                     .as_deref()

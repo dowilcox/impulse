@@ -129,7 +129,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           in untrusted folders; changes_panel.rs: the Changes
                           panel and commit composer, rows opening Review;
                           git_actions.rs: GitActions/GitPrompts and the git
-                          commands; branch_switcher.rs; file_icons.rs:
+                          commands; branch_switcher.rs; branch_manager.rs:
+                          Manage Branches, with merge, rebase, delete
+                          (Undo), rename and publish; file_icons.rs:
                           material icons from icon-mapping.json, served as
                           material/<file>.svg), the terminal input bar
                           (terminal_input_bar.rs over command_editor.rs:
