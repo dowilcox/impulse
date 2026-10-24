@@ -101,7 +101,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           action bound from impulse_kit::keybindings,
                           workbench chrome, the terminal (the login shell
                           with integration, shell_launch.rs),
-                          its own painted grid, keys, input methods,
+                          its own painted grid, keys (the kitty keyboard
+                          protocol once a program pushes its flags,
+                          impulse_kit::kitty_keyboard), input methods,
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged),
                           session restore (session.rs: autosave every 15 s

@@ -28,6 +28,7 @@ use gpui_kit::{
 };
 use impulse_kit::chrome::{ChromePalette, Rgba as KitRgba};
 use impulse_kit::key_encoder::{self, KeyPress};
+use impulse_kit::kitty_keyboard;
 use impulse_kit::shell::lookup::CommandLookup;
 use impulse_kit::shell::ShellType;
 use impulse_kit::terminal_find::TerminalFindQuery;
@@ -836,6 +837,25 @@ impl TerminalView {
         let settings = SettingsStore::get(cx);
         let meta =
             key_encoder::alt_is_meta(&settings.terminal_option_as_meta, cfg!(target_os = "macos"));
+        // A program that asked for the kitty keyboard protocol gets keys it
+        // can tell apart (Ctrl-I vs Tab, Esc vs Alt); plain typing still goes
+        // through text input.
+        let event_kind = if event.is_held {
+            kitty_keyboard::Event::Repeat
+        } else {
+            kitty_keyboard::Event::Press
+        };
+        if let Some(bytes) = self.kitty_bytes(k, event_kind, meta) {
+            if !bytes.is_empty() {
+                self.backend.clear_selection();
+                self.backend.write(&bytes);
+                self.typed();
+                self.agent_key(k.key == "enter", cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
         let press = KeyPress {
             key: &k.key,
             text: k.key_char.as_deref(),
@@ -852,6 +872,57 @@ impl TerminalView {
             self.agent_key(k.key == "enter", cx);
             cx.stop_propagation();
             cx.notify();
+        }
+    }
+
+    /// The kitty keyboard protocol's bytes for a key, when the program asked
+    /// for the protocol and the key isn't text for an input method or the
+    /// legacy path; empty when nothing is sent.
+    fn kitty_bytes(
+        &self,
+        k: &gpui_kit::Keystroke,
+        event: kitty_keyboard::Event,
+        alt_is_meta: bool,
+    ) -> Option<Vec<u8>> {
+        let m = &k.modifiers;
+        // Cmd (Super on Linux) shortcuts stay the app's and the desktop's.
+        if m.platform || self.marked.as_ref().is_some_and(|t| !t.is_empty()) {
+            return None;
+        }
+        let flags = kitty_keyboard::Flags(((self.backend.mode().bits() >> 11) & 0x1F) as u8);
+        if flags.0 == 0 {
+            return None;
+        }
+        let mut modifiers = kitty_keyboard::Modifiers::NONE;
+        for (held, bit) in [
+            (m.shift, kitty_keyboard::Modifiers::SHIFT),
+            (m.alt, kitty_keyboard::Modifiers::ALT),
+            (m.control, kitty_keyboard::Modifiers::CONTROL),
+        ] {
+            if held {
+                modifiers = modifiers | bit;
+            }
+        }
+        let (key, text) =
+            kitty_keyboard::key_for(&k.key, k.key_char.as_deref(), modifiers, alt_is_meta)?;
+        kitty_keyboard::encode(key, modifiers, event, text, flags)
+    }
+
+    /// Releases, for programs that asked for kitty event types.
+    fn key_up(&mut self, event: &gpui_kit::KeyUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.typing_goes_to_bar(cx) {
+            return;
+        }
+        let meta = key_encoder::alt_is_meta(
+            &SettingsStore::get(cx).terminal_option_as_meta,
+            cfg!(target_os = "macos"),
+        );
+        if let Some(bytes) =
+            self.kitty_bytes(&event.keystroke, kitty_keyboard::Event::Release, meta)
+        {
+            if !bytes.is_empty() {
+                self.backend.write(&bytes);
+            }
         }
     }
 
@@ -2227,6 +2298,7 @@ impl Render for TerminalView {
             .when(link_cursor, |d| d.cursor_pointer())
             .when(!link_cursor, |d| d.cursor(gpui_kit::CursorStyle::IBeam))
             .on_key_down(cx.listener(Self::key_down))
+            .on_key_up(cx.listener(Self::key_up))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |view, e: &MouseDownEvent, window, cx| {

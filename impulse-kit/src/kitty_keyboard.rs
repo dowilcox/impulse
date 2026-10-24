@@ -252,9 +252,132 @@ pub fn encode(
     }
 }
 
+/// A key as GPUI names it ("escape", "f5", "a", "space") with the text it
+/// types (`key_char`), as the protocol's key and the text to report (the
+/// Swift `KeyEncoder.kittyKey`). `None` for keys the protocol doesn't
+/// describe and for Alt that isn't Meta and types a character on its own
+/// (å, or @ on a German layout): those keep the legacy path, which sends
+/// the text.
+pub fn key_for<'a>(
+    name: &str,
+    text: Option<&'a str>,
+    modifiers: Modifiers,
+    alt_is_meta: bool,
+) -> Option<(Key, Option<&'a str>)> {
+    let functional = match name {
+        "escape" => Some(Key::Escape),
+        "enter" => Some(Key::Enter),
+        "tab" => Some(Key::Tab),
+        "backspace" => Some(Key::Backspace),
+        "insert" => Some(Key::Insert),
+        "delete" => Some(Key::Delete),
+        "pageup" => Some(Key::PageUp),
+        "pagedown" => Some(Key::PageDown),
+        "up" => Some(Key::Up),
+        "down" => Some(Key::Down),
+        "right" => Some(Key::Right),
+        "left" => Some(Key::Left),
+        "home" => Some(Key::Home),
+        "end" => Some(Key::End),
+        f if f.len() > 1 && f.starts_with('f') => f[1..]
+            .parse::<u8>()
+            .ok()
+            .filter(|n| (1..=12).contains(n))
+            .map(Key::Function),
+        _ => None,
+    };
+    if let Some(key) = functional {
+        return Some((key, None));
+    }
+    let alt = modifiers.contains(Modifiers::ALT);
+    let command = modifiers.0 & (Modifiers::CONTROL.0 | Modifiers::SUPER.0) != 0;
+    if alt && !alt_is_meta && !command {
+        return None;
+    }
+    let name = if name == "space" { " " } else { name };
+    let mut chars = name.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    if (c as u32) < 0x20 || c as u32 == 0x7F {
+        return None;
+    }
+    let base = c.to_lowercase().next().unwrap_or(c);
+    let shifted = if modifiers.contains(Modifiers::SHIFT) {
+        text.and_then(|t| {
+            let mut chars = t.chars();
+            match (chars.next(), chars.next()) {
+                (Some(s), None) => Some(s),
+                _ => None,
+            }
+        })
+    } else {
+        None
+    };
+    // What Alt makes of the key isn't text it types.
+    Some((Key::Text { base, shifted }, if alt { None } else { text }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpui_keys_map_to_protocol_keys() {
+        let none = Modifiers::NONE;
+        assert_eq!(
+            key_for("escape", None, none, true),
+            Some((Key::Escape, None))
+        );
+        assert_eq!(
+            key_for("f12", None, none, true),
+            Some((Key::Function(12), None))
+        );
+        assert_eq!(key_for("f13", None, none, true), None);
+        assert_eq!(
+            key_for("space", Some(" "), none, true),
+            Some((
+                Key::Text {
+                    base: ' ',
+                    shifted: None
+                },
+                Some(" ")
+            ))
+        );
+        assert_eq!(
+            key_for("a", Some("A"), Modifiers::SHIFT, true),
+            Some((
+                Key::Text {
+                    base: 'a',
+                    shifted: Some('A')
+                },
+                Some("A")
+            ))
+        );
+        // Alt that isn't Meta types its character the legacy way, unless
+        // Control or Super is held too.
+        assert_eq!(key_for("e", Some("é"), Modifiers::ALT, false), None);
+        assert_eq!(
+            key_for("f", None, Modifiers::ALT | Modifiers::CONTROL, false),
+            Some((
+                Key::Text {
+                    base: 'f',
+                    shifted: None
+                },
+                None
+            ))
+        );
+        assert_eq!(
+            key_for("f", Some("ƒ"), Modifiers::ALT, true),
+            Some((
+                Key::Text {
+                    base: 'f',
+                    shifted: None
+                },
+                None
+            ))
+        );
+    }
 
     const A: Key = Key::Text {
         base: 'a',

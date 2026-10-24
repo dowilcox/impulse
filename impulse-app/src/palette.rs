@@ -82,6 +82,7 @@ pub fn prefix_for(id: &str) -> Option<&'static str> {
         "go_to_symbol" => "@",
         "go_to_project_symbol" => "#",
         "command_history" => "h:",
+        "project_actions" => "a:",
         _ => return None,
     })
 }
