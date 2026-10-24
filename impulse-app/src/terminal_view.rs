@@ -1291,6 +1291,93 @@ struct Frame {
 }
 
 impl Frame {
+    /// The sticky header: "❯ command" (cut to fit) and the block's status
+    /// on a bar over the top row, with the failed or running stripe.
+    fn paint_sticky_header(
+        &self,
+        block: &impulse_terminal::BlockOverlayRegion,
+        command: &str,
+        bounds: Bounds<Pixels>,
+        (muted, red): (KitRgba, KitRgba),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let m = self.metrics;
+        let bar_height = m.height + px(6.);
+        let top = bounds.origin.y;
+        window.paint_quad(fill(
+            Bounds::new(bounds.origin, size(bounds.size.width, bar_height)),
+            cell_hsla(rgb_color(&self.theme.terminal_bg)),
+        ));
+        window.paint_quad(fill(
+            Bounds::new(
+                point(bounds.origin.x, top + bar_height - px(1.)),
+                size(bounds.size.width, px(1.)),
+            ),
+            rgba(muted.opacity(0.28)),
+        ));
+        if block.failed || block.is_running {
+            let color = if block.failed { red } else { self.accent };
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(bounds.origin.x + px(3.), top),
+                    size(px(3.), bar_height),
+                ),
+                rgba(color),
+            ));
+        }
+        let shape = |text: String, size_scale: f32, color: Hsla, window: &mut Window| {
+            let text: SharedString = text.into();
+            let run = TextRun {
+                len: text.len(),
+                font: self.font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window
+                .text_system()
+                .shape_line(text, m.font_size * size_scale, &[run], None)
+        };
+        let mut status_width = px(0.);
+        if let Some(status) = block_chip_text(block.exit_code, block.duration_ms) {
+            let color: Hsla = if block.failed {
+                rgba(red).into()
+            } else {
+                rgba(muted).into()
+            };
+            let line = shape(status, 0.85, color, window);
+            status_width = line.width;
+            let x = bounds.origin.x + bounds.size.width - px(PADDING) - line.width;
+            let _ = line.paint(
+                point(x, top + px(3.)),
+                m.height,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        }
+        let room = bounds.size.width - px(PADDING * 2.) - status_width - px(16.);
+        let full = format!("\u{276F} {command}");
+        let mut chars: Vec<char> = full.chars().collect();
+        let mut line = shape(full.clone(), 1.0, rgba(muted).into(), window);
+        while line.width > room && chars.len() > 3 {
+            chars.pop();
+            let cut: String = chars.iter().collect::<String>() + "\u{2026}";
+            line = shape(cut, 1.0, rgba(muted).into(), window);
+        }
+        let _ = line.paint(
+            point(bounds.origin.x + px(PADDING), top + px(3.)),
+            m.height,
+            TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
+    }
+
     fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
         let bg = rgb_color(&self.theme.terminal_bg);
         window.paint_quad(fill(bounds, cell_hsla(bg)));
@@ -1651,6 +1738,23 @@ impl Frame {
                 let x = bounds.origin.x + bounds.size.width - px(PADDING) - line.width;
                 let y = origin.y + m.height * row as f32;
                 let _ = line.paint(point(x, y), m.height, TextAlign::Left, None, window, cx);
+            }
+        }
+
+        // Warp-style sticky header: when a block starts above the viewport,
+        // its command stays along the top edge so you know whose output
+        // you're reading.
+        if decorate && rows > 1 {
+            let pinned = self
+                .overlay
+                .blocks
+                .iter()
+                .find(|b| b.start_row < 0 && b.end_row >= 1);
+            if let Some((block, command)) = pinned.and_then(|b| {
+                let command = b.command.as_deref().filter(|c| !c.is_empty())?;
+                Some((b, command))
+            }) {
+                self.paint_sticky_header(block, command, bounds, (muted, red), window, cx);
             }
         }
 

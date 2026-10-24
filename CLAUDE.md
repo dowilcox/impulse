@@ -153,7 +153,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           History), find (terminal_find_bar.rs), and
                           block commands, hints and links
                           (terminal_blocks.rs, reached through
-                          TerminalView::perform_block_command), the Search panel
+                          TerminalView::perform_block_command), the sticky
+                          block header (Frame::paint_sticky_header), the
+                          Search panel
                           (search_panel.rs; workbench_search.rs opens
                           results and runs Replace All with Undo, reloading
                           clean editors with EditorTab::reload_from_disk),
