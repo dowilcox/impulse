@@ -5,6 +5,8 @@
 //!
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
+mod command_editor;
+mod command_history;
 mod commands;
 mod editor_keys;
 mod editor_tab;
@@ -12,6 +14,9 @@ mod kit_theme;
 mod lsp_hub;
 mod settings_store;
 mod shell_launch;
+mod terminal_blocks;
+mod terminal_find_bar;
+mod terminal_input_bar;
 mod terminal_view;
 mod workbench;
 mod workbench_chrome;
@@ -122,6 +127,7 @@ fn main() {
             workbench::bind_keys(cx);
             editor_keys::bind_keys(cx);
             terminal_view::bind_keys(cx);
+            command_editor::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");

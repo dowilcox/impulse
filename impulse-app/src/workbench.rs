@@ -221,12 +221,25 @@ impl Workbench {
         cx.subscribe_in(
             &terminal,
             window,
-            |workbench, terminal, event, window, cx| {
-                if let TerminalViewEvent::Exited(_) = event {
+            |workbench, terminal, event, window, cx| match event {
+                TerminalViewEvent::Exited(_) => {
                     // The shell exited: close its pane, as Terminal.app does.
                     let surface = Surface::Terminal(terminal.clone());
                     workbench.close_surface(&surface, window, cx);
                 }
+                TerminalViewEvent::OpenFile { path, line, column } => {
+                    workbench.open_file(path, window, cx);
+                    if let (Some(line), Some(editor)) = (line, workbench.active_editor().cloned()) {
+                        let position = gpui_kit::component::input::Position::new(
+                            line.saturating_sub(1) as u32,
+                            column.unwrap_or(1).saturating_sub(1) as u32,
+                        );
+                        editor.update(cx, |e, cx| e.go_to(position, window, cx));
+                    }
+                }
+                TerminalViewEvent::RunCommand(id) => workbench.run_command(id, window, cx),
+                TerminalViewEvent::Notice(notice) => workbench.set_notice(notice.clone(), cx),
+                _ => {}
             },
         )
         .detach();
@@ -630,6 +643,17 @@ impl Workbench {
                     trust_store: self.trust.clone(),
                 };
                 crate::open_main_window(args, cx);
+            }
+            // Find, block commands and hints in the focused terminal.
+            "find" if self.active_terminal().is_some() => {
+                if let Some(terminal) = self.active_terminal().cloned() {
+                    terminal.update(cx, |t, cx| t.toggle_find(window, cx));
+                }
+            }
+            block if crate::terminal_blocks::BLOCK_COMMANDS.contains(&block) => {
+                if let Some(terminal) = self.active_terminal().cloned() {
+                    terminal.update(cx, |t, cx| t.perform_block_command(block, window, cx));
+                }
             }
             custom if custom.starts_with("custom_") => {
                 self.run_custom(&custom["custom_".len()..], window, cx)

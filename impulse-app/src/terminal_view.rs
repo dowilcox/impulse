@@ -7,26 +7,42 @@
 //! block's first row). Keys go through `impulse_kit::key_encoder`; typed
 //! text and input methods through GPUI's text input; the mouse selects,
 //! scrolls history, or reports to programs that ask for it.
+//!
+//! Around the grid: the input bar (`terminal_input_bar`), which stands in
+//! for the shell's own prompt, so the prompt isn't drawn and the last
+//! output sits against the bar; find (`terminal_find_bar`); and command
+//! blocks, hints and links (`terminal_blocks`).
 
+use std::collections::HashSet;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
-    actions, canvas, div, fill, point, prelude::*, px, size, App, Bounds, ClipboardItem, Context,
-    ElementInputHandler, EntityInputHandler, FocusHandle, Font, FontStyle, FontWeight, Hsla,
-    KeyBinding, KeyDownEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollDelta, ScrollWheelEvent, SharedString, StrikethroughStyle,
-    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window,
+    actions, canvas, div, fill, point, prelude::*, px, size, AnyElement, App, Bounds,
+    ClipboardItem, Context, ElementInputHandler, Entity, EntityId, EntityInputHandler, FocusHandle,
+    Font, FontStyle, FontWeight, Hsla, KeyBinding, KeyDownEvent, Modifiers, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, ScrollDelta,
+    ScrollWheelEvent, SharedString, StrikethroughStyle, TextAlign, TextRun, UTF16Selection,
+    UnderlineStyle, Window,
 };
 use impulse_kit::chrome::{ChromePalette, Rgba as KitRgba};
 use impulse_kit::key_encoder::{self, KeyPress};
+use impulse_kit::shell::lookup::CommandLookup;
+use impulse_kit::shell::ShellType;
+use impulse_kit::terminal_find::TerminalFindQuery;
 use impulse_kit::theme::ResolvedTheme;
 use impulse_terminal::{
     BlockOverlay, CellFlags, RgbColor, SelectionKind, TerminalBackend, TerminalColors,
     TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 
+use crate::command_editor::{CommandEditor, EditorColors};
+use crate::command_history::CommandHistory;
 use crate::settings_store::SettingsStore;
+use crate::terminal_blocks::{Blocks, FileChecks, Hints, HoverLink, RowText, ToolbarButton};
+use crate::terminal_find_bar::FindBar;
+use crate::terminal_input_bar::InputBar;
 
 /// Same inset as the Swift renderer's `padding`.
 const PADDING: f32 = 12.0;
@@ -55,6 +71,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("shift-pagedown", ScrollPageDown, c),
         KeyBinding::new("shift-home", ScrollToTop, c),
         KeyBinding::new("shift-end", ScrollToBottom, c),
+        // Tab is the shell's (the window would move focus with it).
+        KeyBinding::new("tab", gpui_kit::NoAction, c),
+        KeyBinding::new("shift-tab", gpui_kit::NoAction, c),
     ];
     if cfg!(target_os = "macos") {
         bindings.extend([
@@ -104,7 +123,7 @@ fn rgb_color(hex: &str) -> RgbColor {
 
 /// One visible cell, decoded from the grid snapshot.
 #[derive(Clone, Copy)]
-struct Cell {
+pub(crate) struct Cell {
     ch: char,
     fg: RgbColor,
     bg: RgbColor,
@@ -121,9 +140,9 @@ struct Span {
 
 /// The grid snapshot `write_grid_to_buffer` fills (the same bytes the Swift
 /// `GridBufferReader` parses).
-struct Grid {
-    cols: usize,
-    rows: usize,
+pub(crate) struct Grid {
+    pub cols: usize,
+    pub rows: usize,
     cursor: Option<(usize, usize, u8)>,
     selection: Vec<Span>,
     matches: Vec<Span>,
@@ -179,6 +198,50 @@ impl Grid {
     fn cell(&self, row: usize, col: usize) -> &Cell {
         &self.cells[row * self.cols + col]
     }
+
+    /// No visible glyph on `row` (only spaces and NULs).
+    fn is_blank_row(&self, row: usize) -> bool {
+        (0..self.cols).all(|col| {
+            let cell = self.cell(row, col);
+            cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) || cell.ch == ' ' || cell.ch == '\0'
+        })
+    }
+
+    /// The last row at or above `up_to` with a glyph on it.
+    fn last_non_blank_row(&self, up_to: i32) -> i32 {
+        let mut row = up_to.min(self.rows as i32 - 1);
+        while row >= 0 && self.is_blank_row(row as usize) {
+            row -= 1;
+        }
+        row
+    }
+
+    /// Row `row` as text (NUL reads as a space; wide-character spacers
+    /// are skipped).
+    pub fn row_text(&self, row: usize) -> RowText {
+        let mut text = String::new();
+        let mut col_for_byte = Vec::new();
+        let mut byte_for_col = Vec::new();
+        let mut hyperlink = Vec::new();
+        for col in 0..self.cols {
+            let cell = self.cell(row, col);
+            hyperlink.push(cell.flags.contains(CellFlags::HYPERLINK));
+            if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                byte_for_col.push(None);
+                continue;
+            }
+            byte_for_col.push(Some(text.len()));
+            let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
+            text.push(ch);
+            col_for_byte.extend(std::iter::repeat_n(col, ch.len_utf8()));
+        }
+        RowText {
+            text,
+            col_for_byte,
+            byte_for_col,
+            hyperlink,
+        }
+    }
 }
 
 /// Cell size and where text sits in a cell.
@@ -189,11 +252,29 @@ struct Metrics {
     font_size: Pixels,
 }
 
+/// Hiding the shell's prompt below the last output once a command ends
+/// (the Swift renderer's prompt tuck): with a screenful of output the grid
+/// scrolls up until the last output meets the input bar, and scrolling
+/// back down stops there.
+#[derive(Default)]
+struct Tuck {
+    /// Armed when a command finishes; done once the prompt is out of view.
+    armed: bool,
+    pending: bool,
+    scrolled: bool,
+    /// The display offset scrolling down stops at, at an idle prompt.
+    floor: Option<usize>,
+}
+
 pub struct TerminalView {
-    backend: TerminalBackend,
-    focus: FocusHandle,
-    theme: ResolvedTheme,
-    palette: ChromePalette,
+    pub(crate) backend: TerminalBackend,
+    /// The grid's keyboard focus.
+    pub(crate) focus: FocusHandle,
+    /// The whole pane's: the grid, the input bar and the find bar.
+    root_focus: FocusHandle,
+    pub(crate) entity_id: EntityId,
+    pub(crate) theme: ResolvedTheme,
+    pub(crate) palette: ChromePalette,
     font: Font,
     metrics: Metrics,
     size: (u16, u16),
@@ -213,6 +294,59 @@ pub struct TerminalView {
     last_input: Instant,
     /// The shell's startup files, removed when the terminal closes.
     temp_paths: Vec<std::path::PathBuf>,
+
+    // The input bar.
+    pub(crate) editor: Entity<CommandEditor>,
+    pub(crate) bar: InputBar,
+    /// How the shell quotes (completions, inserted paths).
+    pub(crate) shell: ShellType,
+    pub(crate) shell_name: String,
+    /// What the shell can run, from its integration.
+    pub(crate) lookup: CommandLookup,
+    pub(crate) branch: Option<String>,
+    /// Between a command block's start and end (OSC 133).
+    pub(crate) command_running: bool,
+    /// The shell reports its prompts, so `command_running` false means it
+    /// waits at one.
+    tracks_prompts: bool,
+    /// The program reads a password (echo off): the bar masks input.
+    pub(crate) password: bool,
+    pub(crate) last_exit: Option<i32>,
+    /// A full-screen program, or a running command that asked for raw
+    /// input (bracketed paste, the mouse), owns the grid: the bar hides and
+    /// keys go straight to it.
+    pub(crate) direct: bool,
+    /// The command sent from the bar began with a space (kept out of the
+    /// history).
+    pub(crate) hidden_pending: bool,
+    current_hidden: bool,
+    current_command: Option<String>,
+    /// Blocks whose command was typed with a leading space.
+    pub(crate) hidden_blocks: HashSet<u64>,
+    session_id: String,
+    /// Give the bar the keyboard at the next frame (a command finished).
+    focus_bar_pending: bool,
+
+    // Blocks, hints and links.
+    pub(crate) blocks: Blocks,
+    pub(crate) hints: Option<Hints>,
+    hover_link: Option<HoverLink>,
+    hover_cell: Option<(usize, usize)>,
+    pub(crate) file_checks: FileChecks,
+
+    // Find.
+    pub(crate) find: Option<FindBar>,
+    pub(crate) last_find: Option<TerminalFindQuery>,
+
+    // The prompt the bar stands in for.
+    tuck: Tuck,
+    /// The last row drawn (`None`: every row). Rows below it are the
+    /// shell's prompt, which the bar replaces.
+    pub(crate) last_content_row: Option<usize>,
+    /// How far the rows are pushed down so the last one meets the bar.
+    y_offset: Pixels,
+    /// Rows drawn this frame.
+    draw_rows: usize,
     _wake: gpui_kit::Task<()>,
     _blink: gpui_kit::Task<()>,
 }
@@ -222,6 +356,17 @@ pub enum TerminalViewEvent {
     TitleChanged,
     Exited(i32),
     Bell,
+    /// Open a file in an editor tab (a link or hint), at a 1-based line and
+    /// column.
+    OpenFile {
+        path: PathBuf,
+        line: Option<usize>,
+        column: Option<usize>,
+    },
+    /// Run a window command (Command History from the bar).
+    RunCommand(String),
+    /// A message for the status bar.
+    Notice(String),
 }
 
 impl gpui_kit::EventEmitter<TerminalViewEvent> for TerminalView {}
@@ -296,9 +441,31 @@ impl TerminalView {
             }
         });
 
-        Self {
+        let shell_path = impulse_kit::shell::login::default_shell_path();
+        let lookup = CommandLookup::new();
+        let editor = cx.new(|cx| {
+            let mut editor = CommandEditor::new(false, &theme, cx);
+            editor.font = font.clone();
+            editor.font_size = px((settings.terminal_font_size - 1).max(6) as f32);
+            editor.placeholder = "Run a command…".into();
+            editor.lookup = Some((lookup.clone(), Some(cwd.clone())));
+            editor
+        });
+        cx.subscribe_in(&editor, window, Self::on_editor_event)
+            .detach();
+        let session_id = format!(
+            "{:x}-{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos()),
+            cx.entity_id().as_u64()
+        );
+
+        let mut view = Self {
             backend,
             focus: cx.focus_handle(),
+            root_focus: cx.focus_handle(),
+            entity_id: cx.entity_id(),
             theme,
             palette,
             font,
@@ -315,17 +482,89 @@ impl TerminalView {
             marked: None,
             blink_on: true,
             last_input: Instant::now(),
+            editor,
+            bar: InputBar::default(),
+            shell: ShellType::detect(&shell_path),
+            shell_name: impulse_kit::shell::login::default_shell_name(),
+            lookup,
+            branch: None,
+            command_running: false,
+            tracks_prompts: false,
+            password: false,
+            last_exit: None,
+            direct: false,
+            hidden_pending: false,
+            current_hidden: false,
+            current_command: None,
+            hidden_blocks: HashSet::new(),
+            session_id,
+            focus_bar_pending: false,
+            blocks: Blocks::default(),
+            hints: None,
+            hover_link: None,
+            hover_cell: None,
+            file_checks: FileChecks::default(),
+            find: None,
+            last_find: None,
+            tuck: Tuck::default(),
+            last_content_row: None,
+            y_offset: px(0.),
+            draw_rows: usize::MAX,
             _wake: wake,
             _blink: blink,
+        };
+        view.refresh_branch(cx);
+        CommandHistory::preload(cx);
+        view
+    }
+
+    /// The pane's focus (it contains the grid's and the input bar's).
+    pub fn focus_handle(&self) -> &FocusHandle {
+        &self.root_focus
+    }
+
+    /// Give the terminal the keyboard: the input bar when it's showing,
+    /// otherwise the grid.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.note_active();
+        let grid = self.hints.is_some() || !self.blocks.selection.is_empty() || !self.bar_shown(cx);
+        if grid {
+            window.focus(&self.focus, cx);
+        } else {
+            let editor = self.editor.read(cx).focus_handle().clone();
+            window.focus(&editor, cx);
         }
     }
 
-    pub fn focus_handle(&self) -> &FocusHandle {
-        &self.focus
+    /// At a prompt with the bar showing, typing in the grid belongs in the
+    /// bar: in the shell's own line it would sit unseen and run with the
+    /// next command.
+    fn typing_goes_to_bar(&self, cx: &App) -> bool {
+        self.bar_shown(cx) && !self.command_running && self.tracks_prompts
     }
 
-    pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        window.focus(&self.focus, cx);
+    /// The git branch of the terminal's folder, looked up in the background.
+    fn refresh_branch(&mut self, cx: &mut Context<Self>) {
+        let dir = self.cwd.clone();
+        let task = cx.background_spawn(async move {
+            let branch = crate::workspace::git_branch(std::path::Path::new(&dir));
+            (!branch.is_empty()).then_some(branch)
+        });
+        cx.spawn(async move |this, cx| {
+            let branch = task.await;
+            let _ = this.update(cx, |view, cx| {
+                if view.branch != branch {
+                    view.branch = branch;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// A fresh grid snapshot (rows for links and hints).
+    pub(crate) fn grid_now(&mut self) -> Option<Grid> {
+        self.snapshot().0
     }
 
     pub fn write(&self, bytes: &[u8]) {
@@ -357,6 +596,12 @@ impl TerminalView {
         self.backend.set_colors(&config);
         self.font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         self.metrics = measure(&self.font, settings.terminal_font_size as f32, window);
+        let colors = EditorColors::new(&theme);
+        self.editor
+            .update(cx, |editor, _| editor.colors = colors.clone());
+        if let Some(find) = &self.find {
+            find.set_colors(colors, cx);
+        }
         self.theme = theme;
         self.palette = palette;
         cx.notify();
@@ -368,7 +613,34 @@ impl TerminalView {
         for event in self.backend.poll_events() {
             changed = true;
             match event {
-                TerminalEvent::CwdChanged(path) => self.cwd = path,
+                TerminalEvent::CwdChanged(path) => {
+                    if path != self.cwd {
+                        self.cwd = path;
+                        self.refresh_branch(cx);
+                    }
+                }
+                TerminalEvent::PromptStart => {
+                    // A prompt means nothing runs, even if a command's end
+                    // mark was lost (the bar would otherwise stay hidden at
+                    // a bare prompt), and nothing reads a password.
+                    self.command_running = false;
+                    self.tracks_prompts = true;
+                    self.password = false;
+                }
+                TerminalEvent::CommandBlockStarted(block) => {
+                    self.command_running = true;
+                    self.current_command = block.command.clone();
+                    self.current_hidden = std::mem::take(&mut self.hidden_pending);
+                    if self.current_hidden {
+                        self.hidden_blocks.insert(block.id.0);
+                    }
+                    self.blocks.highlighted = None;
+                    self.blocks.selection.clear();
+                    self.close_menu(cx);
+                }
+                TerminalEvent::PasswordInputChanged(active) => self.password = active,
+                TerminalEvent::ShellNames(names) => self.lookup.set_names(names),
+                TerminalEvent::ShellPath(path) => self.lookup.set_path(&path),
                 TerminalEvent::TitleChanged(title) => {
                     self.title = title;
                     cx.emit(TerminalViewEvent::TitleChanged);
@@ -378,9 +650,38 @@ impl TerminalView {
                     cx.emit(TerminalViewEvent::TitleChanged);
                 }
                 TerminalEvent::CommandBlockEnded(block) => {
+                    self.command_running = false;
+                    self.password = false;
+                    self.bar.session_revision += 1;
+                    self.last_exit = block.exit_code;
                     self.last_duration_ms = block
                         .ended_at_ms
                         .map(|end| end.saturating_sub(block.started_at_ms));
+                    if let Some(command) = block.command.clone().or(self.current_command.clone()) {
+                        if !self.current_hidden {
+                            let cwd = block
+                                .cwd
+                                .clone()
+                                .or_else(|| (!self.cwd.is_empty()).then(|| self.cwd.clone()));
+                            CommandHistory::record(
+                                &command,
+                                cwd,
+                                block.exit_code,
+                                self.last_duration_ms.map(|d| d as i64),
+                                Some(self.session_id.clone()),
+                                cx,
+                            );
+                        }
+                    }
+                    self.blocks.highlighted = None;
+                    // Tuck the prompt away once, when it appears after this
+                    // command; the shell is back for the next command.
+                    self.tuck = Tuck {
+                        armed: true,
+                        ..Tuck::default()
+                    };
+                    self.focus_bar_pending = true;
+                    self.refresh_branch(cx);
                 }
                 TerminalEvent::ClipboardStore(text) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -451,9 +752,38 @@ impl TerminalView {
         }
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         let m = &k.modifiers;
+        if self.hints.is_some() {
+            self.hint_key(event, window, cx);
+            return cx.stop_propagation();
+        }
+        if !self.blocks.selection.is_empty() && self.block_selection_key(event, window, cx) {
+            return cx.stop_propagation();
+        }
+        let secondary = if cfg!(target_os = "macos") {
+            m.platform
+        } else {
+            m.control
+        };
+        // Cmd+Up selects blocks from the grid too, as it does in the bar.
+        if !self.direct && k.key == "up" && secondary && !m.shift && !m.alt {
+            self.begin_block_selection(window, cx);
+            return cx.stop_propagation();
+        }
+        if self.typing_goes_to_bar(cx) {
+            // Return and Escape go back to the bar; text goes in through
+            // the input handler (`replace_text_in_range`); other keys mean
+            // nothing here and mustn't reach the shell's line.
+            if matches!(k.key.as_str(), "enter" | "escape") {
+                self.focus(window, cx);
+                cx.stop_propagation();
+            } else if m.control || m.platform || k.key_char.is_none() {
+                cx.stop_propagation();
+            }
+            return;
+        }
         let settings = SettingsStore::get(cx);
         let meta =
             key_encoder::alt_is_meta(&settings.terminal_option_as_meta, cfg!(target_os = "macos"));
@@ -478,7 +808,7 @@ impl TerminalView {
     /// The cell under `position` (window coordinates), clamped to the grid.
     fn cell_at(&self, position: Point<Pixels>, bounds: Bounds<Pixels>) -> (usize, usize) {
         let x = f32::from(position.x - bounds.origin.x) - PADDING;
-        let y = f32::from(position.y - bounds.origin.y) - PADDING / 2.0;
+        let y = f32::from(position.y - bounds.origin.y - self.y_offset) - PADDING / 2.0;
         let col = (x / f32::from(self.metrics.width)).floor().max(0.0) as usize;
         let row = (y / f32::from(self.metrics.height)).floor().max(0.0) as usize;
         (
@@ -528,8 +858,43 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.blocks.menu.take().is_some() {
+            cx.notify();
+        }
+        if self.hints.is_some() {
+            self.hints = None;
+            cx.notify();
+        }
+        // A plain click leaves a block selection.
+        let opens = if cfg!(target_os = "macos") {
+            event.modifiers.platform
+        } else {
+            event.modifiers.control
+        };
+        if !opens && !self.blocks.selection.is_empty() {
+            self.end_block_selection(false, window, cx);
+        }
+        // The grid at a prompt is read-only: the bar keeps the keyboard,
+        // and the mouse still selects.
         self.focus(window, cx);
         let (col, row) = self.cell_at(event.position, bounds);
+        if opens && event.button == MouseButton::Left {
+            // Cmd-click (Ctrl-click on Linux) opens a link; elsewhere on a
+            // block it adds the block to the selection or drops it.
+            if SettingsStore::get(cx).terminal_allow_hyperlink {
+                if let Some(link) = self.link_at(col, row) {
+                    self.open_link(link.target, cx);
+                    return;
+                }
+            }
+            if let Some(id) = self.block_at_row(row, cx) {
+                self.toggle_block_selection(id, cx);
+                if !self.blocks.selection.is_empty() {
+                    window.focus(&self.focus, cx);
+                }
+                return;
+            }
+        }
         if self.reports_mouse(&event.modifiers) {
             let button = match event.button {
                 MouseButton::Left => 0,
@@ -542,18 +907,6 @@ impl TerminalView {
         }
         if event.button != MouseButton::Left {
             return;
-        }
-        // ⌘-click (Ctrl-click on Linux) opens a link.
-        let opens = if cfg!(target_os = "macos") {
-            event.modifiers.platform
-        } else {
-            event.modifiers.control
-        };
-        if opens && SettingsStore::get(cx).terminal_allow_hyperlink {
-            if let Some(url) = self.backend.hyperlink_at(col, row) {
-                cx.open_url(&url);
-                return;
-            }
         }
         let kind = match event.click_count {
             2 => SelectionKind::Semantic,
@@ -576,6 +929,9 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let (col, row) = self.cell_at(event.position, bounds);
+        if event.pressed_button.is_none() {
+            self.update_hover(col, row, cx);
+        }
         if event.pressed_button.is_some() && self.reports_mouse(&event.modifiers) {
             if self
                 .backend
@@ -620,6 +976,56 @@ impl TerminalView {
         }
     }
 
+    /// The command block on viewport row `row` (not the live prompt).
+    pub(crate) fn block_at_row(&self, row: usize, cx: &App) -> Option<u64> {
+        if self.direct || !SettingsStore::get(cx).terminal_blocks {
+            return None;
+        }
+        let overlay = self.backend.block_overlay();
+        if overlay.alt_screen {
+            return None;
+        }
+        let row = row as i32;
+        if overlay.prompt_row.is_some_and(|p| row >= p) {
+            return None;
+        }
+        overlay
+            .blocks
+            .iter()
+            .find(|b| row >= b.start_row && row <= b.end_row)
+            .map(|b| b.id)
+    }
+
+    /// The pointer moved to a cell: the block under it (hover wash and
+    /// toolbar) and the link under it (underline, Cmd-click).
+    fn update_hover(&mut self, col: usize, row: usize, cx: &mut Context<Self>) {
+        let hovered = self.block_at_row(row, cx);
+        if hovered != self.blocks.hovered {
+            self.blocks.hovered = hovered;
+            cx.notify();
+        }
+        if self.hover_cell == Some((col, row)) {
+            return;
+        }
+        self.hover_cell = Some((col, row));
+        let link = if SettingsStore::get(cx).terminal_allow_hyperlink {
+            self.link_at(col, row)
+        } else {
+            None
+        };
+        if link != self.hover_link {
+            self.hover_link = link;
+            cx.notify();
+        }
+    }
+
+    fn mouse_left(&mut self, cx: &mut Context<Self>) {
+        self.hover_cell = None;
+        if self.blocks.hovered.take().is_some() | self.hover_link.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn scroll_wheel(
         &mut self,
         event: &ScrollWheelEvent,
@@ -654,12 +1060,25 @@ impl TerminalView {
                 self.backend.write(arrow);
             }
         } else {
-            self.backend.scroll(whole as i32);
+            let mut delta = whole as i32;
+            // Scrolling down stops where the tucked-away prompt begins.
+            if let (true, Some(floor), false) = (delta < 0, self.tuck.floor, self.command_running) {
+                let offset = self.backend.display_offset() as i32;
+                delta = delta.max(floor as i32 - offset).min(0);
+            }
+            if delta != 0 {
+                self.backend.scroll(delta);
+            }
         }
+        self.hover_cell = None;
         cx.notify();
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        // Selected blocks: each command and its output.
+        if !self.blocks.selection.is_empty() {
+            return self.copy_selected_blocks(cx);
+        }
         match self.backend.selected_text().filter(|t| !t.is_empty()) {
             Some(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
             // ⌘C with nothing selected interrupts, as Ctrl+C would.
@@ -668,8 +1087,13 @@ impl TerminalView {
         }
     }
 
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+            // The bar owns input: what's pasted belongs in it. In the
+            // shell's line it would sit unseen and run with the next command.
+            if self.bar_shown(cx) {
+                return self.insert_into_bar(&text, window, cx);
+            }
             let bracketed = self.backend.mode().contains(TerminalMode::BRACKETED_PASTE);
             self.backend
                 .write(&key_encoder::paste_bytes(&text, bracketed));
@@ -773,7 +1197,7 @@ fn block_chip_text(exit_code: Option<i32>, duration_ms: Option<u64>) -> Option<S
 }
 
 /// `TerminalRenderer.formatBlockDuration`.
-fn format_block_duration(ms: u64) -> String {
+pub(crate) fn format_block_duration(ms: u64) -> String {
     if ms < 1000 {
         return format!("{ms}ms");
     }
@@ -802,6 +1226,18 @@ struct Frame {
     blink_on: bool,
     cursor_shape: String,
     marked: Option<String>,
+    /// Block decorations are on and no program owns the grid.
+    decorate: bool,
+    /// Rows drawn: those above the prompt the input bar stands in for.
+    draw_rows: usize,
+    y_offset: Pixels,
+    /// Blocks moved to or selected (accent wash and stripe).
+    emphasized: HashSet<u64>,
+    bookmarks: HashSet<u64>,
+    hovered: Option<u64>,
+    hover_link: Option<HoverLink>,
+    /// Hint targets: row, columns, label, and whether it fits what's typed.
+    hints: Vec<(usize, usize, usize, String, bool)>,
 }
 
 impl Frame {
@@ -809,8 +1245,9 @@ impl Frame {
         let bg = rgb_color(&self.theme.terminal_bg);
         window.paint_quad(fill(bounds, cell_hsla(bg)));
         let Some(grid) = &self.grid else { return };
+        let rows = self.draw_rows.min(grid.rows);
         let m = self.metrics;
-        let origin = bounds.origin + point(px(PADDING), px(PADDING / 2.0));
+        let origin = bounds.origin + point(px(PADDING), px(PADDING / 2.0) + self.y_offset);
         let cell_origin =
             |row: usize, col: usize| origin + point(m.width * col as f32, m.height * row as f32);
         let row_bounds = |row: usize| {
@@ -821,24 +1258,40 @@ impl Frame {
         };
         let muted = KitRgba::from_hex(&self.theme.fg_muted);
         let red = KitRgba::from_hex(&self.theme.red);
-        let decorate = !self.overlay.alt_screen && !self.mode.contains(TerminalMode::ALT_SCREEN);
+        let fg = KitRgba::from_hex(&self.theme.fg);
+        let decorate = self.decorate
+            && !self.overlay.alt_screen
+            && !self.mode.contains(TerminalMode::ALT_SCREEN);
+        let block_rows = |start: i32, end: i32| {
+            let start = start.max(0) as usize;
+            let end = (end.max(0) as usize).min(rows.saturating_sub(1));
+            (start < rows).then_some(start..=end)
+        };
 
-        // Block washes under everything.
+        // Block washes under everything: the hovered block, the one moved
+        // to or selected, failed ones.
         if decorate {
             for block in &self.overlay.blocks {
-                if !(block.failed) {
+                let emphasized = self.emphasized.contains(&block.id);
+                let color = if emphasized {
+                    self.accent.opacity(0.09)
+                } else if block.failed {
+                    red.opacity(0.07)
+                } else if self.hovered == Some(block.id) {
+                    fg.opacity(0.05)
+                } else {
                     continue;
-                }
-                let start = block.start_row.max(0) as usize;
-                let end = (block.end_row.max(0) as usize).min(grid.rows.saturating_sub(1));
-                for row in start..=end {
-                    window.paint_quad(fill(row_bounds(row), rgba(red.opacity(0.07))));
+                };
+                if let Some(range) = block_rows(block.start_row, block.end_row) {
+                    for row in range {
+                        window.paint_quad(fill(row_bounds(row), rgba(color)));
+                    }
                 }
             }
         }
 
         // Cell backgrounds, in runs.
-        for row in 0..grid.rows {
+        for row in 0..rows {
             let mut col = 0;
             while col < grid.cols {
                 let cell = grid.cell(row, col);
@@ -882,7 +1335,7 @@ impl Frame {
 
         // Search matches, then the selection.
         let paint_spans = |spans: &[Span], color: Hsla, window: &mut Window| {
-            for span in spans.iter().filter(|s| s.row < grid.rows) {
+            for span in spans.iter().filter(|s| s.row < rows) {
                 let end = span.end.min(grid.cols.saturating_sub(1));
                 if end < span.start {
                     continue;
@@ -900,21 +1353,21 @@ impl Frame {
         paint_spans(&grid.matches, rgba(yellow.opacity(0.35)).into(), window);
         paint_spans(&grid.selection, rgba(self.selection).into(), window);
 
-        // Block separators and stripes.
+        // Block separators, stripes and bookmark ribbons.
         if decorate {
             for block in &self.overlay.blocks {
-                if block.start_row > 0 && (block.start_row as usize) < grid.rows {
+                if block.start_row > 0 && (block.start_row as usize) < rows {
                     let y = origin.y + m.height * block.start_row as f32;
                     window.paint_quad(fill(
                         Bounds::new(point(bounds.origin.x, y), size(bounds.size.width, px(1.))),
                         rgba(muted.opacity(0.28)),
                     ));
                 }
-                if block.failed || block.is_running {
+                let emphasized = self.emphasized.contains(&block.id);
+                if block.failed || block.is_running || emphasized {
                     let color = if block.failed { red } else { self.accent };
-                    let start = block.start_row.max(0) as usize;
-                    let end = (block.end_row.max(0) as usize).min(grid.rows.saturating_sub(1));
-                    if start < grid.rows {
+                    if let Some(range) = block_rows(block.start_row, block.end_row) {
+                        let (start, end) = (*range.start(), *range.end());
                         window.paint_quad(fill(
                             Bounds::new(
                                 point(bounds.origin.x + px(3.), origin.y + m.height * start as f32),
@@ -924,12 +1377,32 @@ impl Frame {
                         ));
                     }
                 }
+                if self.bookmarks.contains(&block.id)
+                    && block.start_row >= 0
+                    && (block.start_row as usize) < rows
+                {
+                    // A ribbon hanging from the block's top edge in the
+                    // right margin.
+                    let top = origin.y + m.height * block.start_row as f32;
+                    let width = px(7.0f32.min((PADDING - 2.).max(4.)));
+                    let left = bounds.origin.x + bounds.size.width - (px(PADDING) + width) / 2.;
+                    let mut ribbon = gpui_kit::PathBuilder::fill();
+                    ribbon.move_to(point(left, top));
+                    ribbon.line_to(point(left + width, top));
+                    ribbon.line_to(point(left + width, top + m.height));
+                    ribbon.line_to(point(left + width / 2., top + m.height - px(4.)));
+                    ribbon.line_to(point(left, top + m.height));
+                    ribbon.close();
+                    if let Ok(path) = ribbon.build() {
+                        window.paint_path(path, rgba(self.accent));
+                    }
+                }
             }
         }
 
         // Text: runs of cells sharing a style, each at its first cell's x so
         // every glyph keeps to the grid.
-        for row in 0..grid.rows {
+        for row in 0..rows {
             let mut col = 0;
             while col < grid.cols {
                 let start = col;
@@ -985,9 +1458,12 @@ impl Frame {
                         color: Some(style.color),
                     }),
                 };
-                let line = window
-                    .text_system()
-                    .shape_line(text.into(), m.font_size, &[run], None);
+                let line = window.text_system().shape_line(
+                    text.into(),
+                    m.font_size,
+                    &[run],
+                    Some(m.width),
+                );
                 let _ = line.paint(
                     cell_origin(row, start),
                     m.height,
@@ -999,13 +1475,22 @@ impl Frame {
             }
         }
 
+        // The link under the pointer, underlined in the cursor color.
+        if let Some(link) = self.hover_link.as_ref().filter(|l| l.row < rows) {
+            let at = cell_origin(link.row, link.start_col) + point(px(0.), m.height - px(1.));
+            window.paint_quad(fill(
+                Bounds::new(
+                    at,
+                    size(m.width * (link.end_col - link.start_col) as f32, px(1.)),
+                ),
+                cell_hsla(rgb_color(&self.theme.cursor)),
+            ));
+        }
+
         // The cursor: a block behind its character (drawn above as the
         // background color), a beam or underline, or a hollow box when the
         // pane isn't focused.
-        if let Some((row, col, _)) = grid
-            .cursor
-            .filter(|(r, c, _)| *r < grid.rows && *c < grid.cols)
-        {
+        if let Some((row, col, _)) = grid.cursor.filter(|(r, c, _)| *r < rows && *c < grid.cols) {
             let cursor = cell_hsla(rgb_color(&self.theme.cursor));
             let at = cell_origin(row, col);
             let wide = grid.cell(row, col).flags.contains(CellFlags::WIDE_CHAR);
@@ -1071,10 +1556,15 @@ impl Frame {
             }
         }
 
-        // Exit status and duration at the right of each block's first row.
+        // Exit status and duration at the right of each block's first row
+        // (the hovered block shows its toolbar there instead), unless
+        // glyphs are already there.
         if decorate {
             for block in &self.overlay.blocks {
-                if block.start_row < 0 || block.start_row as usize >= grid.rows {
+                if block.start_row < 0
+                    || block.start_row as usize >= rows
+                    || self.hovered == Some(block.id)
+                {
                     continue;
                 }
                 let Some(chip) = block_chip_text(block.exit_code, block.duration_ms) else {
@@ -1098,10 +1588,67 @@ impl Frame {
                 let line = window
                     .text_system()
                     .shape_line(text, chip_size, &[run], None);
+                let span = (f32::from(line.width) / f32::from(m.width)).ceil() as usize + 2;
+                let row = block.start_row as usize;
+                if span >= grid.cols / 2
+                    || (grid.cols - span..grid.cols).any(|col| {
+                        let ch = grid.cell(row, col).ch;
+                        ch != ' ' && ch != '\0'
+                    })
+                {
+                    continue;
+                }
                 let x = bounds.origin.x + bounds.size.width - px(PADDING) - line.width;
-                let y = origin.y + m.height * block.start_row as f32;
+                let y = origin.y + m.height * row as f32;
                 let _ = line.paint(point(x, y), m.height, TextAlign::Left, None, window, cx);
             }
+        }
+
+        // Hints: each target underlined, its label in a pill over its start.
+        for (row, start, end, label, fits) in &self.hints {
+            if *row >= rows {
+                continue;
+            }
+            let top = origin.y + m.height * *row as f32;
+            let x = origin.x + m.width * *start as f32;
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(x, top + m.height - px(1.5)),
+                    size(m.width * (end - start) as f32, px(1.5)),
+                ),
+                rgba(self.accent.opacity(if *fits { 0.9 } else { 0.25 })),
+            ));
+            if !fits {
+                continue;
+            }
+            let text: SharedString = label.to_uppercase().into();
+            let run = TextRun {
+                len: text.len(),
+                font: Font {
+                    weight: FontWeight::BOLD,
+                    ..self.font.clone()
+                },
+                color: cell_hsla(bg),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let line = window
+                .text_system()
+                .shape_line(text, m.font_size * 0.85, &[run], None);
+            let pill = Bounds::new(
+                point(x - px(1.), top + px(1.)),
+                size(line.width + px(8.), m.height - px(2.)),
+            );
+            window.paint_quad(fill(pill, rgba(self.accent)).corner_radii(px(3.)));
+            let _ = line.paint(
+                point(pill.origin.x + px(4.), top),
+                m.height,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
         }
     }
 }
@@ -1184,11 +1731,23 @@ impl EntityInputHandler for TerminalView {
         &mut self,
         _: Option<Range<usize>>,
         text: &str,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.marked = None;
-        if text.is_empty() {
+        if text.is_empty() || self.hints.is_some() {
+            return;
+        }
+        if self.typing_goes_to_bar(cx) || !self.blocks.selection.is_empty() && self.bar_shown(cx) {
+            // An unbound Ctrl key can arrive as its control character.
+            let typed: String = text
+                .chars()
+                .filter(|c| !impulse_kit::shell::quoting::is_control(*c))
+                .collect();
+            self.end_block_selection(false, window, cx);
+            if !typed.is_empty() {
+                self.insert_into_bar(&typed, window, cx);
+            }
             return;
         }
         self.backend.clear_selection();
@@ -1248,10 +1807,190 @@ impl EntityInputHandler for TerminalView {
     }
 }
 
+impl TerminalView {
+    /// Which rows to draw and how far down: with the input bar standing in
+    /// for the prompt, an idle shell's prompt isn't drawn and the last
+    /// output meets the bar (pushed down while it's shorter than the pane;
+    /// with a screenful, the grid scrolls up once to tuck the prompt away).
+    /// While a command runs, its output meets the bar until the pane fills.
+    fn layout_rows(
+        &mut self,
+        grid: &Grid,
+        overlay: &BlockOverlay,
+        suppress: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = grid.rows as i32;
+        let mut last = rows - 1;
+        let mut anchor = false;
+        if !overlay.alt_screen && !self.direct {
+            let fills = overlay.blocks.iter().any(|b| b.start_row < 0);
+            let at_prompt = overlay.prompt_row.is_some();
+            if suppress && at_prompt {
+                last = if let Some(block) = overlay.blocks.last() {
+                    block.end_row
+                } else if overlay.has_blocks {
+                    overlay.prompt_row.map_or(rows - 1, |p| p - 1)
+                } else {
+                    -1
+                };
+                // Without the blank lines shells print before a prompt.
+                last = grid.last_non_blank_row(last);
+                anchor = !fills;
+                if fills && self.tuck.armed {
+                    let hidden = (rows - 1) - last;
+                    if hidden <= 0 {
+                        self.tuck.armed = false;
+                    } else if !self.tuck.pending {
+                        self.tuck.pending = true;
+                        self.tuck.scrolled = true;
+                        cx.spawn(async move |this, cx| {
+                            let _ = this.update(cx, |view, cx| {
+                                view.backend.scroll(hidden);
+                                view.tuck.pending = false;
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    }
+                }
+            } else if let Some(cursor) = overlay.cursor_row {
+                last = cursor;
+                anchor = !fills;
+                self.tuck.floor = None;
+            }
+            // Tucked: the prompt is out of view. Scrolling down stops here.
+            if self.tuck.armed && self.tuck.scrolled && !self.tuck.pending && !at_prompt {
+                self.tuck.armed = false;
+                self.tuck.floor = Some(overlay.display_offset.max(0) as usize);
+            }
+        }
+        let last = last.clamp(-1, rows - 1);
+        self.last_content_row = (last < rows - 1).then_some(last.max(0) as usize);
+        let draw_rows = (last + 1) as usize;
+        self.y_offset = if anchor && last >= 0 {
+            self.metrics.height * (rows - 1 - last) as f32
+        } else {
+            px(0.)
+        };
+        self.draw_rows = draw_rows;
+    }
+
+    /// The toolbar over the hovered block: copy output, run again, more.
+    fn block_toolbar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let id = self.blocks.hovered?;
+        if self.direct || self.hints.is_some() {
+            return None;
+        }
+        let overlay = self.backend.block_overlay();
+        let block = overlay.blocks.iter().find(|b| b.id == id)?;
+        let row = block.start_row.max(0) as usize;
+        if row >= self.draw_rows {
+            return None;
+        }
+        let ch = self.metrics.height;
+        let muted = KitRgba::from_hex(&self.theme.fg_muted);
+        let bg = KitRgba::from_hex(&self.theme.terminal_bg);
+        let mut buttons = vec![(ToolbarButton::CopyOutput, "copy", "Copy output")];
+        if block.command.as_ref().is_some_and(|c| !c.is_empty()) && !block.is_running {
+            buttons.push((ToolbarButton::Rerun, "rotate-ccw", "Rerun command"));
+        }
+        buttons.push((ToolbarButton::Menu, "ellipsis", "More"));
+        let top = px(PADDING / 2.) + self.y_offset + ch * row as f32 + ch * 0.55;
+        Some(
+            div()
+                .absolute()
+                .top(top)
+                .right(px(PADDING))
+                .h(ch)
+                .px(px(4.))
+                .flex()
+                .rounded(ch.min(px(14.)) / 2.)
+                .bg(rgba(bg.opacity(0.96)))
+                .border_1()
+                .border_color(rgba(muted.opacity(0.28)))
+                .children(buttons.into_iter().map(|(button, icon, _help)| {
+                    div()
+                        .id(icon)
+                        .w(px(26.))
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .hover(|d| d.bg(rgba(muted.opacity(0.15))))
+                        .child(crate::workbench_chrome::icon(icon, 12., muted.opacity(0.8)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |view, e: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                match button {
+                                    ToolbarButton::CopyOutput => {
+                                        view.copy_block(id, false, true, cx)
+                                    }
+                                    ToolbarButton::Rerun => view.rerun_block(id, cx),
+                                    ToolbarButton::Menu => {
+                                        view.blocks.menu = Some((id, e.position));
+                                        cx.notify();
+                                    }
+                                }
+                            }),
+                        )
+                }))
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
         let focused = self.focus.is_focused(window);
+        let contains_focus = self.focus_handle().contains_focused(window, cx);
+        if contains_focus {
+            self.note_active();
+        }
+        // A program taking the grid (or giving it back) moves the keyboard
+        // between the grid and the bar.
+        let mode = self.backend.mode();
+        let raw = mode.intersects(
+            TerminalMode::BRACKETED_PASTE
+                | TerminalMode::MOUSE_REPORT_CLICK
+                | TerminalMode::MOUSE_MOTION
+                | TerminalMode::MOUSE_DRAG,
+        );
+        let direct = mode.contains(TerminalMode::ALT_SCREEN) || self.command_running && raw;
+        if direct != self.direct {
+            self.direct = direct;
+            if direct {
+                self.close_menu(cx);
+            }
+            if contains_focus {
+                cx.defer_in(window, |view, window, cx| view.focus(window, cx));
+            }
+        }
+        // Back at the prompt after a command: the bar takes the keyboard.
+        if std::mem::take(&mut self.focus_bar_pending)
+            && focused
+            && self.find.is_none()
+            && self.bar_shown(cx)
+        {
+            cx.defer_in(window, |view, window, cx| view.focus(window, cx));
+        }
+        let settings = SettingsStore::get(cx).clone();
+        let bottom = if settings.terminal_context_bar && !self.direct {
+            Some(if self.has_live_bar() {
+                self.input_bar(window, cx)
+            } else {
+                let height = self.bar_height(window, cx);
+                self.bar_placeholder(height)
+            })
+        } else {
+            None
+        };
+        let link_cursor = self.hover_link.is_some();
+        let toolbar = self.block_toolbar(cx);
         let bounds_cell = std::rc::Rc::new(std::cell::Cell::new(Bounds::<Pixels>::default()));
         let (down_bounds, move_bounds, up_bounds, wheel_bounds) = (
             bounds_cell.clone(),
@@ -1259,21 +1998,16 @@ impl Render for TerminalView {
             bounds_cell.clone(),
             bounds_cell.clone(),
         );
-        div()
+        let grid = div()
             .id("terminal")
             .track_focus(&self.focus)
-            .key_context(CONTEXT)
-            .size_full()
-            .cursor(gpui_kit::CursorStyle::IBeam)
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .when(link_cursor, |d| d.cursor_pointer())
+            .when(!link_cursor, |d| d.cursor(gpui_kit::CursorStyle::IBeam))
             .on_key_down(cx.listener(Self::key_down))
-            .on_action(cx.listener(Self::copy))
-            .on_action(cx.listener(Self::paste))
-            .on_action(cx.listener(Self::select_all))
-            .on_action(cx.listener(Self::clear))
-            .on_action(cx.listener(Self::page_up))
-            .on_action(cx.listener(Self::page_down))
-            .on_action(cx.listener(Self::scroll_top))
-            .on_action(cx.listener(Self::scroll_bottom))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |view, e: &MouseDownEvent, window, cx| {
@@ -1291,6 +2025,11 @@ impl Render for TerminalView {
             )
             .on_mouse_move(cx.listener(move |view, e: &MouseMoveEvent, _, cx| {
                 view.mouse_move(e, move_bounds.get(), cx)
+            }))
+            .on_hover(cx.listener(|view, hovered: &bool, _, cx| {
+                if !hovered {
+                    view.mouse_left(cx);
+                }
             }))
             .on_mouse_up(
                 MouseButton::Left,
@@ -1310,7 +2049,14 @@ impl Render for TerminalView {
                             view.update(cx, |view, cx| {
                                 view.fit(bounds);
                                 let (grid, overlay, mode) = view.snapshot();
-                                let settings = SettingsStore::get(cx);
+                                let settings = SettingsStore::get(cx).clone();
+                                let suppress = settings.terminal_context_bar;
+                                if let Some(grid) = &grid {
+                                    view.layout_rows(grid, &overlay, suppress, cx);
+                                }
+                                let mut emphasized: HashSet<u64> =
+                                    view.blocks.selection.iter().copied().collect();
+                                emphasized.extend(view.blocks.highlighted);
                                 Frame {
                                     grid,
                                     overlay,
@@ -1324,6 +2070,31 @@ impl Render for TerminalView {
                                     blink_on: view.blink_on,
                                     cursor_shape: settings.terminal_cursor_shape.clone(),
                                     marked: view.marked.clone(),
+                                    decorate: settings.terminal_blocks && !view.direct,
+                                    draw_rows: view.draw_rows,
+                                    y_offset: view.y_offset,
+                                    emphasized,
+                                    bookmarks: view.blocks.bookmarks.clone(),
+                                    hovered: view.blocks.hovered,
+                                    hover_link: view.hover_link.clone(),
+                                    hints: view
+                                        .hints
+                                        .as_ref()
+                                        .map(|h| {
+                                            h.targets
+                                                .iter()
+                                                .map(|t| {
+                                                    (
+                                                        t.row,
+                                                        t.start_col,
+                                                        t.end_col,
+                                                        t.label.clone(),
+                                                        t.label.starts_with(&h.typed),
+                                                    )
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
                                 }
                             })
                         }
@@ -1340,6 +2111,26 @@ impl Render for TerminalView {
                 )
                 .size_full(),
             )
+            .children(toolbar);
+        div()
+            .id("terminal-pane")
+            .track_focus(&self.root_focus)
+            .key_context(CONTEXT)
+            .size_full()
+            .flex()
+            .flex_col()
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::clear))
+            .on_action(cx.listener(Self::page_up))
+            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::scroll_top))
+            .on_action(cx.listener(Self::scroll_bottom))
+            .children(self.find_bar(cx))
+            .child(grid)
+            .children(bottom)
+            .children(self.block_menu(cx))
     }
 }
 
@@ -1358,6 +2149,6 @@ impl Drop for TerminalView {
 
 impl gpui_kit::Focusable for TerminalView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
+        self.root_focus.clone()
     }
 }
