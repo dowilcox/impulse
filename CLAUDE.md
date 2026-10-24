@@ -134,7 +134,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           (palette.rs: the Swift PaletteModel/PaletteView
                           modes by prefix, recents in
                           palette-recent-commands.json in the data
-                          directory), Markdown preview in or beside the
+                          directory), Markdown and SVG preview (sanitized by
+                          impulse_kit::svg_preview) in or beside the
                           editor, Settings and Keyboard Shortcuts tabs
                           (settings_view.rs, keybindings_view.rs; shortcut
                           overrides rebind live through

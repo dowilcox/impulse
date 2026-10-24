@@ -883,12 +883,12 @@ impl EditorTab {
         });
     }
 
-    /// Show or hide the Markdown preview (`beside`: next to the editor).
-    /// An error message for files that can't be previewed.
+    /// Show or hide the Markdown or SVG preview (`beside`: next to the
+    /// editor). An error message for files that can't be previewed.
     pub fn toggle_preview(&mut self, beside: bool, cx: &mut Context<Self>) -> Result<(), String> {
         let path = self.path.to_string_lossy();
-        if !impulse_kit::markdown_preview::is_markdown_file(&path) {
-            return Err("Open a Markdown file to preview it.".into());
+        if !impulse_kit::markdown_preview::is_previewable_file(&path) {
+            return Err("Open a Markdown or SVG file to preview it.".into());
         }
         self.preview = match self.preview {
             Some(current) if current == beside => None,
@@ -898,8 +898,11 @@ impl EditorTab {
         Ok(())
     }
 
-    fn preview_element(&self, cx: &gpui_kit::App) -> impl IntoElement {
+    fn preview_element(&self, cx: &gpui_kit::App) -> gpui_kit::AnyElement {
         let text = self.state.read(cx).text().to_string();
+        if impulse_kit::svg_preview::is_svg_file(&self.path.to_string_lossy()) {
+            return Self::svg_preview(&text);
+        }
         gpui_kit::div()
             .id("markdown-preview")
             .flex_1()
@@ -911,6 +914,39 @@ impl EditorTab {
             .child(gpui_kit::div().max_w(px(860.)).child(
                 gpui_kit::component::text::TextView::markdown("markdown", text).selectable(true),
             ))
+            .into_any_element()
+    }
+
+    /// The SVG drawn centered and scaled down to fit, without its scripts,
+    /// `foreignObject` and event handlers (`svg_preview::sanitize_svg`).
+    fn svg_preview(source: &str) -> gpui_kit::AnyElement {
+        let body = if source.len() > impulse_kit::svg_preview::MAX_SVG_SIZE {
+            gpui_kit::div()
+                .child("This SVG is too large to preview.")
+                .into_any_element()
+        } else {
+            let svg = impulse_kit::svg_preview::sanitize_svg(source);
+            let image = std::sync::Arc::new(gpui_kit::Image::from_bytes(
+                gpui_kit::ImageFormat::Svg,
+                svg.into_bytes(),
+            ));
+            gpui_kit::img(image)
+                .max_w_full()
+                .max_h_full()
+                .object_fit(gpui_kit::ObjectFit::Contain)
+                .into_any_element()
+        };
+        gpui_kit::div()
+            .id("svg-preview")
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p(px(24.))
+            .child(body)
+            .into_any_element()
     }
 
     pub fn focus_handle(&self, cx: &gpui_kit::App) -> gpui_kit::FocusHandle {
