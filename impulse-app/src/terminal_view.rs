@@ -224,6 +224,8 @@ pub enum TerminalViewEvent {
     TitleChanged,
     Exited(i32),
     Bell,
+    /// A command finished, with its exit status when the shell said.
+    CommandEnded(Option<i32>),
 }
 
 impl gpui_kit::EventEmitter<TerminalViewEvent> for TerminalView {}
@@ -255,7 +257,10 @@ impl TerminalView {
         let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         let metrics = measure(&font, settings.terminal_font_size as f32, window);
         let token = crate::control_server::new_token();
-        let launch = crate::shell_launch::launch(&crate::control_server::terminal_env(&token));
+        let mut env = crate::control_server::terminal_env(&token);
+        // In a task: which one, its slot and the main checkout.
+        env.extend(crate::tasks::identity(&cwd));
+        let launch = crate::shell_launch::launch(&env);
         let config = TerminalConfig {
             shell_path: launch.shell.clone(),
             shell_args: launch.args.clone(),
@@ -413,6 +418,7 @@ impl TerminalView {
                     self.last_duration_ms = block
                         .ended_at_ms
                         .map(|end| end.saturating_sub(block.started_at_ms));
+                    cx.emit(TerminalViewEvent::CommandEnded(block.exit_code));
                 }
                 TerminalEvent::ClipboardStore(text) => {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));

@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::{div, prelude::*, px, svg, AnyElement, Context, FontWeight, Hsla};
 use impulse_kit::chrome::{metrics, Rgba as KitRgba};
 
@@ -260,7 +261,7 @@ impl Workbench {
             )
     }
 
-    fn workspace_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn workspace_row(&self, index: usize, indented: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = &self.palette;
         let workspace = &self.workspaces[index];
         let selected = index == self.active;
@@ -274,7 +275,7 @@ impl Workbench {
             .items_center()
             .gap(px(6.))
             .h(px(metrics::ROW_HEIGHT + 4.))
-            .pl(px(6.))
+            .pl(px(if indented { 14. } else { 6. }))
             .pr(px(8.))
             .mx(px(6.))
             .rounded(px(metrics::RADIUS))
@@ -324,15 +325,18 @@ impl Workbench {
                     })
                     .child(workspace.name()),
             )
-            .when(!workspace.branch.is_empty(), |d| {
-                d.child(
-                    div()
-                        .font_family("JetBrains Mono")
-                        .text_size(px(10.5))
-                        .text_color(hsla(p.text_tertiary))
-                        .child(workspace.branch.clone()),
-                )
-            })
+            .when(
+                !workspace.branch.is_empty() && workspace.branch != workspace.name(),
+                |d| {
+                    d.child(
+                        div()
+                            .font_family("JetBrains Mono")
+                            .text_size(px(10.5))
+                            .text_color(hsla(p.text_tertiary))
+                            .child(workspace.branch.clone()),
+                    )
+                },
+            )
             .when(workspace.kind == Kind::Scratch, |d| {
                 d.child(
                     div()
@@ -341,6 +345,13 @@ impl Workbench {
                         .child("follows tab"),
                 )
             })
+            .children(self.task_chips(index, cx))
+            .tooltip({
+                let help = self.workspace_help(index);
+                move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
+                }
+            })
             .child(
                 div()
                     .font_family("JetBrains Mono")
@@ -348,7 +359,7 @@ impl Workbench {
                     .text_color(hsla(p.text_tertiary))
                     .child(workspace.tabs.len().to_string()),
             );
-        column = column.child(row);
+        column = column.child(row.context_menu(self.workspace_menu(index, cx)));
         if expanded {
             for (t, tab) in workspace.tabs.iter().enumerate() {
                 let surface = tab.focused_surface();
@@ -506,23 +517,15 @@ impl Workbench {
             .gap(px(2.))
             .border_b_1()
             .border_color(hsla(p.hairline));
-        // Folder workspaces under their name, then Scratch.
-        for index in 0..self.workspaces.len() {
-            if self.workspaces[index].kind == Kind::Folder {
-                workspaces = workspaces.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .px(px(14.))
-                        .h(px(metrics::ROW_HEIGHT))
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(hsla(p.text_secondary))
-                        .child(self.workspaces[index].name()),
-                );
+        // A repository's workspaces (its tasks) under its name.
+        for (name, group) in self.workspace_groups() {
+            let indented = name.is_some();
+            if let Some(name) = name {
+                workspaces = workspaces.child(self.repository_header(name));
             }
-            workspaces = workspaces.child(self.workspace_row(index, cx));
+            for index in group {
+                workspaces = workspaces.child(self.workspace_row(index, indented, cx));
+            }
         }
         div()
             .flex()

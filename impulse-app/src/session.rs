@@ -155,7 +155,7 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
             ..Default::default()
         },
         // Settings and Keyboard Shortcuts aren't saved, as in the Swift app.
-        Surface::Settings(_) | Surface::Keybindings(_) => SessionSurface {
+        Surface::Settings(_) | Surface::Keybindings(_) | Surface::TaskFinish(_) => SessionSurface {
             kind: "tool".into(),
             ..Default::default()
         },

@@ -1,0 +1,482 @@
+//! Tasks in the sidebar (the task parts of the Swift `WorkspacesSection`):
+//! a repository's workspaces grouped under its name, a task's "merged"
+//! chip and its overlap chip (the files it changes that another workspace
+//! of the repository changes too, with a conflict check), its summary in
+//! the row's tooltip, and the row's context menu with the task commands.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::rc::Rc;
+
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::{Sizable as _, WindowExt as _};
+use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, Window};
+use impulse_kit::chrome::{metrics, ChromePalette};
+use impulse_kit::git::task_overlap::Pair;
+use impulse_kit::git::task_registry;
+
+use crate::tasks;
+use crate::workbench::Workbench;
+use crate::workbench_chrome::{hsla, icon};
+use crate::workspace::Kind;
+
+/// A context menu entry: a title and what it does to the workspace (by id),
+/// or a separator.
+type MenuAction = Rc<dyn Fn(&mut Workbench, usize, &mut Window, &mut Context<Workbench>)>;
+
+fn action(
+    f: impl Fn(&mut Workbench, usize, &mut Window, &mut Context<Workbench>) + 'static,
+) -> Option<MenuAction> {
+    Some(Rc::new(f))
+}
+
+impl Workbench {
+    /// The task commands from the palette, menus and keys.
+    pub(crate) fn run_task_command(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match id {
+            "new_task" => self.present_new_task(None, false, window, cx),
+            "finish_task" => self.open_finish_task(None, window, cx),
+            "archive_task" => {
+                let index = self.active;
+                self.archive_task(index, window, cx)
+            }
+            "new_task_from_branch" => self.show_palette("task:", window, cx),
+            _ => {}
+        }
+    }
+
+    /// The sidebar's groups: workspaces in their order, those of one
+    /// repository gathered at the first one's place. Each group: its
+    /// header's name (a repository with two or more workspaces), its rows.
+    pub(crate) fn workspace_groups(&self) -> Vec<(Option<String>, Vec<usize>)> {
+        let indices: Vec<usize> = (0..self.workspaces.len()).collect();
+        impulse_kit::grouped_order::groups(&indices, |i| tasks::group_key(&self.workspaces[*i]))
+            .into_iter()
+            .map(|group| {
+                let name = (group.len() > 1)
+                    .then(|| self.workspaces[group[0]].task.repository_name())
+                    .flatten();
+                (name, group)
+            })
+            .collect()
+    }
+
+    /// A repository's header over its workspaces.
+    pub(crate) fn repository_header(&self, name: String) -> AnyElement {
+        let p = &self.palette;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .px(px(14.))
+            .h(px(22.))
+            .child(icon("git-fork", 11., p.text_tertiary))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(hsla(p.text_secondary))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(name),
+            )
+            .into_any_element()
+    }
+
+    /// The row's task chips: "merged", and the overlap count.
+    pub(crate) fn task_chips(&self, index: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let p = &self.palette;
+        let workspace = &self.workspaces[index];
+        let task = &workspace.task;
+        let mut chips = Vec::new();
+        if task.merged {
+            chips.push(
+                div()
+                    .id(("merged", workspace.id))
+                    .font_family("JetBrains Mono")
+                    .text_size(px(10.))
+                    .text_color(hsla(p.success))
+                    .tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(
+                            "Its branch is merged into its base: archive it when you're done",
+                        )
+                        .build(window, cx)
+                    })
+                    .child("merged")
+                    .into_any_element(),
+            );
+        }
+        if !task.overlaps.is_empty() {
+            let path = task_registry::canonical(&workspace.root.to_string_lossy());
+            let mut shared: Vec<&String> = task.overlaps.iter().flat_map(|p| &p.files).collect();
+            shared.sort();
+            shared.dedup();
+            let help = task
+                .overlaps
+                .iter()
+                .map(|pair| {
+                    let count = pair.files.len();
+                    format!(
+                        "Shares {count} file{} with {}",
+                        if count == 1 { "" } else { "s" },
+                        pair.other(&path).name
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let id = workspace.id;
+            chips.push(
+                div()
+                    .id(("overlaps", id))
+                    .flex()
+                    .items_center()
+                    .gap(px(2.))
+                    .cursor_pointer()
+                    .tooltip(move |window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
+                    })
+                    .on_click(cx.listener(move |workbench, _, window, cx| {
+                        cx.stop_propagation();
+                        workbench.present_overlaps(id, window, cx)
+                    }))
+                    .child(icon("triangle-alert", 10., p.warning))
+                    .child(
+                        div()
+                            .font_family("JetBrains Mono")
+                            .text_size(px(10.))
+                            .text_color(hsla(p.warning))
+                            .child(shared.len().to_string()),
+                    )
+                    .into_any_element(),
+            );
+        }
+        chips
+    }
+
+    /// The row's tooltip: its folder, branch, task summary and state.
+    pub(crate) fn workspace_help(&self, index: usize) -> String {
+        let workspace = &self.workspaces[index];
+        let mut lines = vec![match workspace.kind {
+            Kind::Scratch => "Scratch: the file tree follows the active tab".to_string(),
+            Kind::Folder => workspace.root.display().to_string(),
+        }];
+        if !workspace.branch.is_empty() {
+            lines.push(format!("Branch: {}", workspace.branch));
+        }
+        if let Some(summary) = &workspace.task.summary {
+            lines.push(summary.clone());
+        }
+        if workspace.task.merged {
+            lines.push("Merged into its base".into());
+        } else if workspace.task.upstream_gone {
+            lines
+                .push("Its branch was deleted on the remote; it may have been merged there".into());
+        }
+        let tabs = workspace.tabs.len();
+        lines.push(format!("{tabs} tab{}", if tabs == 1 { "" } else { "s" }));
+        lines.join("\n")
+    }
+
+    /// The row's context menu, as the Swift sidebar's (the parts the Rust
+    /// app has).
+    pub(crate) fn workspace_menu(
+        &self,
+        index: usize,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        let workspace = &self.workspaces[index];
+        let task = &workspace.task;
+        let in_repository = task.common_dir.is_some();
+        let mut items: Vec<(String, Option<MenuAction>)> = Vec::new();
+        if task.merged {
+            items.push((
+                "Archive Task…".into(),
+                action(|w, i, window, cx| w.archive_task(i, window, cx)),
+            ));
+            items.push((String::new(), None));
+        } else if task.is_task {
+            items.push((
+                "Finish Task…".into(),
+                action(|w, i, window, cx| w.open_finish_task(Some(i), window, cx)),
+            ));
+            items.push((String::new(), None));
+        }
+        if in_repository {
+            items.push((
+                "New Task…".into(),
+                action(|w, i, window, cx| w.present_new_task(Some(i), false, window, cx)),
+            ));
+            if !task.is_task {
+                items.push((
+                    "Move Changes to New Task…".into(),
+                    action(|w, i, window, cx| w.present_new_task(Some(i), true, window, cx)),
+                ));
+            }
+        }
+        items.push((
+            "Open Folder as Workspace…".into(),
+            action(|w, _, window, cx| w.run_command("open_workspace", window, cx)),
+        ));
+        if workspace.kind == Kind::Folder {
+            items.push((String::new(), None));
+            items.push((
+                "Copy Path".into(),
+                action(|w, i, _, cx| {
+                    let path = w.workspaces[i].root.to_string_lossy().into_owned();
+                    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(path));
+                }),
+            ));
+        }
+        items.push((String::new(), None));
+        items.push((
+            if workspace.expanded {
+                "Hide Tabs"
+            } else {
+                "Show Tabs"
+            }
+            .into(),
+            action(|w, i, _, cx| {
+                w.workspaces[i].expanded = !w.workspaces[i].expanded;
+                cx.notify();
+            }),
+        ));
+        items.push((String::new(), None));
+        if task.is_task && !task.merged {
+            items.push((
+                "Archive Task…".into(),
+                action(|w, i, window, cx| w.archive_task(i, window, cx)),
+            ));
+        }
+        if task.repository_has_merged_tasks {
+            items.push((
+                "Archive Merged Tasks…".into(),
+                action(|w, i, window, cx| w.present_archive_merged_tasks(i, window, cx)),
+            ));
+        }
+        if workspace.kind == Kind::Folder {
+            items.push((
+                "Close Workspace".into(),
+                action(|w, i, window, cx| w.close_workspace(i, window, cx)),
+            ));
+        }
+        let (id, workbench) = (workspace.id, cx.entity().downgrade());
+        move |mut menu, _, _| {
+            for (title, run) in &items {
+                let Some(run) = run.clone() else {
+                    menu = menu.separator();
+                    continue;
+                };
+                let workbench = workbench.clone();
+                menu = menu.item(PopupMenuItem::new(title.clone()).on_click(
+                    move |_, window, cx| {
+                        let run = run.clone();
+                        let _ = workbench.update(cx, |w, cx| {
+                            if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
+                                run(w, index, window, cx)
+                            }
+                        });
+                    },
+                ));
+            }
+            menu
+        }
+    }
+
+    /// The overlap chip's list: each workspace this one shares files with,
+    /// the files (opened in this workspace on click), and a conflict check.
+    fn present_overlaps(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspaces.iter().find(|w| w.id == id) else {
+            return;
+        };
+        let path = task_registry::canonical(&workspace.root.to_string_lossy());
+        let main = tasks::main_checkout_root(&path);
+        let workbench = cx.entity().downgrade();
+        let view = cx.new(|_| OverlapList {
+            palette: self.palette.clone(),
+            workbench,
+            workspace_id: id,
+            path,
+            main: task_registry::canonical(&main),
+            pairs: workspace.task.overlaps.clone(),
+            conflicts: HashMap::new(),
+        });
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .w(px(420.))
+                .title("Changed in more than one workspace")
+                .child(view.clone())
+        });
+    }
+}
+
+/// What the overlap chip opens.
+struct OverlapList {
+    palette: ChromePalette,
+    workbench: gpui_kit::WeakEntity<Workbench>,
+    workspace_id: u64,
+    path: String,
+    /// The repository's main checkout, whose changes can move into a task.
+    main: String,
+    pairs: Vec<Pair>,
+    /// Conflict checks by pair: `None` while running, the files once done.
+    conflicts: HashMap<String, Option<Vec<String>>>,
+}
+
+impl OverlapList {
+    fn check(&mut self, pair: Pair, window: &mut Window, cx: &mut Context<Self>) {
+        let key = pair.key();
+        self.conflicts.insert(key.clone(), None);
+        let work = cx
+            .background_executor()
+            .spawn(async move { tasks::conflicts(&pair).unwrap_or_default() });
+        cx.spawn_in(window, async move |list, cx| {
+            let found = work.await;
+            let _ = list.update(cx, |list, cx| {
+                list.conflicts.insert(key, Some(found));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+impl Render for OverlapList {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette.clone();
+        let mut column = div()
+            .id("overlaps")
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .max_h(px(420.))
+            .overflow_y_scroll();
+        for (n, pair) in self.pairs.clone().into_iter().enumerate() {
+            let other = pair.other(&self.path).clone();
+            let found = self.conflicts.get(&pair.key()).cloned();
+            let mut files = div().flex().flex_col().gap(px(2.));
+            for (f, file) in pair.files.iter().take(20).enumerate() {
+                let conflicting = found
+                    .as_ref()
+                    .and_then(|f| f.as_ref())
+                    .is_some_and(|c| c.contains(file));
+                let target = Path::new(&self.path).join(file);
+                let (workbench, id) = (self.workbench.clone(), self.workspace_id);
+                files = files.child(
+                    div()
+                        .id(("overlap-file", n * 100 + f))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .cursor_pointer()
+                        .on_click(move |_, window, cx| {
+                            window.close_dialog(cx);
+                            let target = target.clone();
+                            let _ = workbench.update(cx, |w, cx| {
+                                if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id)
+                                {
+                                    w.activate_workspace(index, window, cx);
+                                }
+                                w.open_file(&target, window, cx)
+                            });
+                        })
+                        .when(conflicting, |d| {
+                            d.child(icon("triangle-alert", 10., p.danger))
+                        })
+                        .child(
+                            div()
+                                .font_family("JetBrains Mono")
+                                .text_size(px(11.))
+                                .text_color(hsla(if conflicting {
+                                    p.danger
+                                } else {
+                                    p.text_secondary
+                                }))
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(file.clone()),
+                        ),
+                );
+            }
+            if pair.files.len() > 20 {
+                files = files.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(hsla(p.text_tertiary))
+                        .child(format!("…and {} more", pair.files.len() - 20)),
+                );
+            }
+            let status: AnyElement =
+                match found {
+                    None => Button::new(("overlap-check", n))
+                        .small()
+                        .label("Check for Conflicts")
+                        .on_click(cx.listener(move |list, _, window, cx| {
+                            list.check(pair.clone(), window, cx)
+                        }))
+                        .into_any_element(),
+                    Some(None) => div()
+                        .text_size(px(11.))
+                        .text_color(hsla(p.text_tertiary))
+                        .child("Checking…")
+                        .into_any_element(),
+                    Some(Some(files)) => div()
+                        .text_size(px(11.))
+                        .text_color(hsla(if files.is_empty() {
+                            p.success
+                        } else {
+                            p.danger
+                        }))
+                        .child(if files.is_empty() {
+                            "These would merge without conflicts.".to_string()
+                        } else {
+                            format!("{} would conflict.", files.len())
+                        })
+                        .into_any_element(),
+                };
+            let offers_move = other.path == self.main || self.path == self.main;
+            let (workbench, id) = (self.workbench.clone(), self.workspace_id);
+            column = column.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("Also changed in {}", other.name)),
+                    )
+                    .child(files)
+                    .child(div().flex().items_center().gap(px(8.)).child(status).when(
+                        offers_move,
+                        |d| {
+                            d.child(
+                                Button::new(("overlap-move", n))
+                                    .ghost()
+                                    .small()
+                                    .label("Move to New Task…")
+                                    .on_click(move |_, window, cx| {
+                                        window.close_dialog(cx);
+                                        let _ = workbench.update(cx, |w, cx| {
+                                            let index =
+                                                w.workspaces.iter().position(|ws| ws.id == id);
+                                            w.present_new_task(index, true, window, cx)
+                                        });
+                                    }),
+                            )
+                        },
+                    )),
+            );
+        }
+        div()
+            .text_color(hsla(p.text))
+            .rounded(px(metrics::RADIUS))
+            .child(column)
+    }
+}

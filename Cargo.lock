@@ -3373,6 +3373,7 @@ version = "0.36.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "chrono",
  "env_logger",
  "futures",
  "gpui-kit",
