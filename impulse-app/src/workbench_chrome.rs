@@ -360,7 +360,7 @@ impl Workbench {
         settings.sidebar_tabs && settings.sidebar_visible
     }
 
-    pub(crate) fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn titlebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         // macOS draws its traffic lights in this inset; on Linux the window
         // controls are Impulse's own (client-side decorations).
@@ -643,7 +643,7 @@ impl Workbench {
                     ),
                 )
             })
-            .child(div().flex_1())
+            .child(crate::window_frame::drag_region(window))
             .child(
                 div()
                     .flex()
@@ -724,6 +724,7 @@ impl Workbench {
                             .child(diff_stat(r.added, r.removed, p))
                     })),
             )
+            .children(crate::window_frame::controls(window, p))
     }
 
     fn workspace_row(&self, index: usize, indented: bool, cx: &mut Context<Self>) -> AnyElement {

@@ -160,6 +160,7 @@ toolkit with Zed's editor through a fork, not a different toolkit.
 | Open/save panels | GPUI (NSOpenPanel) | GPUI (xdg portal) |
 | Reveal in file manager | `open -R` | `org.freedesktop.FileManager1` |
 | Settings, themes, sessions | `~/Library/Application Support/impulse` (as today) | `$XDG_CONFIG_HOME/impulse`, `$XDG_DATA_HOME/impulse` |
+| Window frame | AppKit's, traffic lights in the titlebar | Impulse's titlebar as the frame when the window manager allows client-side decorations (`window_frame.rs`: drag, double-click to zoom, the window menu, minimize, maximize and close); otherwise the window manager's own |
 | Packaging | `.app` + `.dmg`, signed and notarized | a tarball and a `.deb` (`scripts/package-linux.sh`; icons and fonts in `share/impulse/`, found by `resources.rs`); AppImage later |
 
 ## Dependency map

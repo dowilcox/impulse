@@ -1487,7 +1487,7 @@ impl Render for Workbench {
             // Mono); the editor sets its own.
             .font_features(gpui_kit::FontFeatures::disable_ligatures())
             .text_color(crate::workbench_chrome::hsla(p.text))
-            .child(self.titlebar(cx))
+            .child(self.titlebar(window, cx))
             .child(
                 div()
                     .flex()

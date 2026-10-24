@@ -252,7 +252,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Linux has no portal),
                           menus (menus.rs from impulse_kit::menus: the
                           macOS menu bar, the Linux titlebar menu button,
-                          the fixed items' actions and keys),
+                          the fixed items' actions and keys), the Linux
+                          window frame (window_frame.rs: client-side
+                          decorations, the titlebar's empty stretch moving
+                          and zooming the window, minimize, maximize and
+                          close at its right end),
                           workbench_workspaces.rs (recent folders in
                           recent-workspaces.json via
                           impulse_kit::recent_workspaces, Rename Workspace,

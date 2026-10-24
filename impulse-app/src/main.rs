@@ -81,6 +81,7 @@ mod terminal_view;
 mod tree_watch;
 mod untitled;
 mod update_check;
+mod window_frame;
 mod workbench;
 mod workbench_chrome;
 mod workbench_panes;
@@ -316,6 +317,10 @@ pub fn open_main_window(args: Args, cx: &mut App) {
                 appears_transparent: true,
                 traffic_light_position: Some(gpui_kit::point(px(14.), px(13.))),
             }),
+            // Impulse's own titlebar is the frame (window_frame.rs); a
+            // window manager that won't allow it decorates the window.
+            window_decorations: cfg!(target_os = "linux")
+                .then_some(gpui_kit::WindowDecorations::Client),
             ..Default::default()
         },
         cx,
