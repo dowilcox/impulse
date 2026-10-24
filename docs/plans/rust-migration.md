@@ -480,9 +480,9 @@ Known issues:
   (GPUI Kit's editor can't inject text into a line), `editor_cursor_style`
   and `editor_cursor_blinking` (its caret has no styles, and only the
   primary caret's place is public, so painting our own would lose the
-  other cursors), `smooth_scrolling`
-  and `terminal_bell` (no sound through GPUI; the attention dot still
-  shows).
+  other cursors) and `smooth_scrolling`. `terminal_bell` beeps through
+  NSBeep on the Mac and, on Linux, `canberra-gtk-play` or `paplay` /
+  `pw-play` with the freedesktop bell (`bell.rs`), silent without them.
 - The app hasn't been built or run on a Mac yet. It type-checks for
   `aarch64-apple-darwin` from Linux (`scripts/check-macos.sh`), which
   covers the code behind `cfg(target_os = "macos")`, but linking, the

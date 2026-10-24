@@ -205,7 +205,7 @@ impl TerminalView {
             }
             TerminalEvent::Bell => {
                 // A program can ring thousands of times a second: one
-                // attention request per interval.
+                // beep and one attention request per interval.
                 let now = Instant::now();
                 let mut notified = false;
                 if self
@@ -214,6 +214,9 @@ impl TerminalView {
                     .is_none_or(|last| now.duration_since(last) >= BELL_INTERVAL)
                 {
                     self.agent.last_bell = Some(now);
+                    if SettingsStore::get(cx).terminal_bell {
+                        crate::bell::ring();
+                    }
                     if SettingsStore::get(cx).terminal_attention_on_bell {
                         self.request_attention(cx);
                         notified =

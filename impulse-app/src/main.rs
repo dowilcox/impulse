@@ -18,6 +18,7 @@ mod agent_tasks;
 mod agent_toolbelt;
 mod agent_tracker;
 mod agent_views;
+mod bell;
 mod branch_manager;
 mod branch_switcher;
 mod changes_panel;
