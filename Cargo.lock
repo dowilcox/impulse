@@ -3368,6 +3368,7 @@ dependencies = [
  "impulse-terminal",
  "log",
  "lsp-types",
+ "serde",
  "serde_json",
  "trash",
 ]

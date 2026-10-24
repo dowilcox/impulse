@@ -5,6 +5,7 @@
 //!
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
+mod commands;
 mod editor_keys;
 mod editor_tab;
 mod kit_theme;
