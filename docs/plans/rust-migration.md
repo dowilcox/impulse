@@ -202,8 +202,10 @@ The shipped Swift app keeps working through every phase.
    across files with the Swift app's confirmation rules, and Monaco's keymap.
    Since: occurrence highlights, Go to Type Definition, Implementations and
    Declaration, Monaco's context menu, the Diff View and signature help.
-   Next: inlay hints, Undo for a whole cross-file edit, peek views and
-   Vim mode. Exit:
+   Since then too: Undo for a whole edit across files (a toast, as in
+   Swift), `workspace/applyEdit` from servers, and the Swift client's
+   capabilities (resource operations, so rust-analyzer renames a module's
+   file). Next: peek views and Vim mode. Exit:
    daily-drivable on a real project, on both platforms.
 2. **Logic crates, with parity** (done). Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden

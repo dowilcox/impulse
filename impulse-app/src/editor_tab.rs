@@ -945,6 +945,37 @@ impl EditorTab {
         cx.notify();
     }
 
+    /// The buffer's text.
+    pub fn text(&self, cx: &gpui_kit::App) -> String {
+        self.state.read(cx).value().to_string()
+    }
+
+    /// Put `text` back as one undoable edit, if the buffer still reads
+    /// `expected` (an Undo of an edit across files): whether it did.
+    pub fn restore_text(
+        &mut self,
+        expected: &str,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let current = self.state.read(cx).value().to_string();
+        if current != expected {
+            return false;
+        }
+        let (range, replacement) = impulse_lsp::edits::changed_span(&current, text);
+        let utf16 = |byte: usize| current[..byte].encode_utf16().count();
+        self.state.update(cx, |state, cx| {
+            state.replace_text_in_range(
+                Some(utf16(range.start)..utf16(range.end)),
+                replacement,
+                window,
+                cx,
+            );
+        });
+        true
+    }
+
     pub fn save(&mut self, cx: &mut Context<Self>) {
         if self.read_only {
             return;

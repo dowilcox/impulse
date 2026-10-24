@@ -33,6 +33,32 @@ pub struct PendingEdit {
     pub title: String,
 }
 
+/// How to reverse one part of an applied edit.
+enum UndoStep {
+    /// An open editor's buffer.
+    Editor {
+        path: PathBuf,
+        before: String,
+        after: String,
+    },
+    /// A file rewritten on disk.
+    File {
+        path: PathBuf,
+        before: String,
+        after: String,
+        bom: bool,
+    },
+    /// A file created (emptied, if it was there).
+    Created {
+        path: PathBuf,
+        previous: Option<Vec<u8>>,
+    },
+    Moved {
+        from: PathBuf,
+        to: PathBuf,
+    },
+}
+
 fn name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -112,13 +138,14 @@ impl Workbench {
     ) {
         let workbench = cx.entity().downgrade();
         let lines: Vec<String> = confirmations.iter().map(Confirmation::describe).collect();
-        let reach = boundary
-            .map(|b| format!("It reaches outside “{}”.", name(&b)))
-            .unwrap_or_default();
+        // As the Swift app's alert words it.
+        let place = boundary
+            .map(|b| format!("“{}”", name(&b)))
+            .unwrap_or_else(|| "the project".into());
         window.open_dialog(cx, move |dialog, _, _| {
             let (apply_workbench, pending) = (workbench.clone(), pending.clone());
             dialog
-                .title(format!("{}?", pending.title))
+                .title(format!("Apply “{}”?", pending.title))
                 .w(px(520.))
                 .close_button(false)
                 .child(
@@ -126,9 +153,7 @@ impl Workbench {
                         .flex()
                         .flex_col()
                         .gap(px(8.))
-                        .child(format!(
-                            "This change does more than edit the file you're in. {reach}"
-                        ))
+                        .child(format!("It does more than edit files in {place}:"))
                         .children(lines.iter().map(|line| {
                             div()
                                 .font_family("JetBrains Mono")
@@ -164,27 +189,93 @@ impl Workbench {
     }
 
     fn apply_now(&mut self, pending: &PendingEdit, window: &mut Window, cx: &mut Context<Self>) {
-        let mut touched = 0;
         let mut failure = None;
+        let mut steps = Vec::new();
         for operation in &pending.edit.operations {
-            touched += 1;
-            if let Err(error) = self.apply_operation(operation, pending.utf32, window, cx) {
-                // Changes before it stay, as LSP's "abort" failure handling.
-                failure = Some(error);
-                break;
+            match self.apply_operation(operation, pending.utf32, window, cx) {
+                Ok(step) => steps.extend(step),
+                Err(error) => {
+                    // Changes before it stay, as LSP's "abort" failure handling.
+                    failure = Some(error);
+                    break;
+                }
             }
         }
         if pending.edit.has_resource_operations() {
             self.reload_tree(cx);
         }
         let files = pending.edit.uris().len();
-        self.set_notice(
-            failure.unwrap_or_else(|| match files {
-                0 | 1 if touched <= 1 => format!("{}: done.", pending.title),
-                _ => format!("{}: changed {files} files.", pending.title),
-            }),
+        if let Some(failure) = failure {
+            return self.set_notice(failure, cx);
+        }
+        // One file undoes with Cmd/Ctrl+Z like any edit; more get an Undo
+        // for the whole edit, as the Swift app's toast has.
+        if files <= 1 {
+            return self.set_notice(format!("{}: done.", pending.title), cx);
+        }
+        self.toast_with_action(
+            format!("{}: changed {files} files", pending.title),
+            None,
+            "Undo",
+            window,
             cx,
+            move |this, window, cx| {
+                for step in steps.iter().rev() {
+                    this.undo_step(step, window, cx);
+                }
+                if steps
+                    .iter()
+                    .any(|s| !matches!(s, UndoStep::Editor { .. } | UndoStep::File { .. }))
+                {
+                    this.reload_tree(cx);
+                }
+            },
         );
+    }
+
+    /// Reverse one part of an applied edit, if nothing changed it since.
+    fn undo_step(&mut self, step: &UndoStep, window: &mut Window, cx: &mut Context<Self>) {
+        match step {
+            UndoStep::Editor {
+                path,
+                before,
+                after,
+            } => {
+                if let Some(editor) = self.editor_for(path, cx) {
+                    editor.update(cx, |editor, cx| {
+                        editor.restore_text(after, before, window, cx)
+                    });
+                }
+            }
+            UndoStep::File {
+                path,
+                before,
+                after,
+                bom,
+            } => {
+                if text_file::read(path).is_some_and(|now| &now.text == after) {
+                    let _ = text_file::write(before, *bom, path);
+                    if let Some(editor) = self.editor_for(path, cx) {
+                        editor.update(cx, |editor, cx| editor.reload_from_disk(window, cx));
+                    }
+                }
+            }
+            UndoStep::Created { path, previous } => match previous {
+                Some(bytes) => {
+                    let _ = std::fs::write(path, bytes);
+                }
+                None => {
+                    if std::fs::metadata(path).is_ok_and(|m| m.len() == 0) {
+                        let _ = std::fs::remove_file(path);
+                    }
+                }
+            },
+            UndoStep::Moved { from, to } => {
+                if to.exists() && !from.exists() {
+                    let _ = std::fs::rename(to, from);
+                }
+            }
+        }
     }
 
     fn apply_operation(
@@ -193,16 +284,23 @@ impl Workbench {
         utf32: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<UndoStep>, String> {
         match operation {
             Operation::Edit { uri, edits } => {
                 let path = uri_path(uri);
                 if edits.is_empty() {
-                    return Ok(());
+                    return Ok(None);
                 }
                 if let Some(editor) = self.editor_for(&path, cx) {
                     return editor.update(cx, |editor, cx| {
-                        editor.apply_server_edits(edits, utf32, window, cx)
+                        let before = editor.text(cx);
+                        editor.apply_server_edits(edits, utf32, window, cx)?;
+                        let after = editor.text(cx);
+                        Ok(Some(UndoStep::Editor {
+                            path: path.clone(),
+                            before,
+                            after,
+                        }))
                     });
                 }
                 let file = text_file::read(&path)
@@ -210,7 +308,13 @@ impl Workbench {
                 let updated = apply_text_edits(&file.text, edits, utf32)
                     .ok_or_else(|| format!("The changes to {} overlap.", name(&path)))?;
                 text_file::write(&updated, file.bom, &path)
-                    .map_err(|e| format!("Couldn't write {}: {e}", name(&path)))
+                    .map_err(|e| format!("Couldn't write {}: {e}", name(&path)))?;
+                Ok(Some(UndoStep::File {
+                    path,
+                    before: file.text,
+                    after: updated,
+                    bom: file.bom,
+                }))
             }
             Operation::Create {
                 uri,
@@ -220,16 +324,18 @@ impl Workbench {
                 let path = uri_path(uri);
                 if path.exists() && (*ignore_if_exists || !*overwrite) {
                     return if *ignore_if_exists {
-                        Ok(())
+                        Ok(None)
                     } else {
                         Err(format!("{} already exists.", name(&path)))
                     };
                 }
+                let previous = std::fs::read(&path).ok();
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
                 std::fs::write(&path, "")
-                    .map_err(|e| format!("Couldn't create {}: {e}", name(&path)))
+                    .map_err(|e| format!("Couldn't create {}: {e}", name(&path)))?;
+                Ok(Some(UndoStep::Created { path, previous }))
             }
             Operation::Rename {
                 old_uri,
@@ -240,7 +346,7 @@ impl Workbench {
                 let (from, to) = (uri_path(old_uri), uri_path(new_uri));
                 if to.exists() {
                     if *ignore_if_exists {
-                        return Ok(());
+                        return Ok(None);
                     }
                     if !*overwrite {
                         return Err(format!("{} already exists.", name(&to)));
@@ -251,7 +357,8 @@ impl Workbench {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
                 std::fs::rename(&from, &to)
-                    .map_err(|e| format!("Couldn't move {}: {e}", name(&from)))
+                    .map_err(|e| format!("Couldn't move {}: {e}", name(&from)))?;
+                Ok(Some(UndoStep::Moved { from, to }))
             }
             Operation::Delete {
                 uri,
@@ -261,7 +368,7 @@ impl Workbench {
                 let path = uri_path(uri);
                 if !path.exists() {
                     return if *ignore_if_not_exists {
-                        Ok(())
+                        Ok(None)
                     } else {
                         Err(format!("{} doesn't exist.", name(&path)))
                     };
@@ -273,7 +380,11 @@ impl Workbench {
                 if path.is_dir() && !*recursive && !empty {
                     return Err(format!("{} isn't empty.", name(&path)));
                 }
-                trash::delete(&path).map_err(|e| format!("Couldn't remove {}: {e}", name(&path)))
+                // In the Trash, where it can be put back by hand: Undo
+                // doesn't reach into the Trash.
+                trash::delete(&path)
+                    .map_err(|e| format!("Couldn't remove {}: {e}", name(&path)))?;
+                Ok(None)
             }
         }
     }

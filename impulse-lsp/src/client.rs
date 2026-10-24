@@ -34,6 +34,15 @@ pub enum ServerEvent {
     Message(String),
     /// The process ended.
     Exited,
+    /// `workspace/applyEdit`: an edit the server asks the client to make
+    /// (after a code action's command, say), with the server's label for
+    /// it, its project root and whether its positions count characters.
+    ApplyEdit {
+        edit: lsp_types::WorkspaceEdit,
+        label: Option<String>,
+        root: std::path::PathBuf,
+        utf32: bool,
+    },
 }
 
 type Pending = Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>>;
@@ -250,6 +259,26 @@ fn dispatch(
                         })
                         .collect(),
                 ),
+                // Made by the app (asking first where it must); a server
+                // that waits on the answer carries on.
+                "workspace/applyEdit" => {
+                    let params: Option<lsp_types::ApplyWorkspaceEditParams> = message
+                        .get("params")
+                        .cloned()
+                        .and_then(|p| serde_json::from_value(p).ok());
+                    match (params, client.upgrade()) {
+                        (Some(params), Some(client)) => {
+                            let _ = events.send_blocking(ServerEvent::ApplyEdit {
+                                edit: params.edit,
+                                label: params.label,
+                                root: client.root.clone(),
+                                utf32: client.uses_utf32(),
+                            });
+                            json!({ "applied": true })
+                        }
+                        _ => json!({ "applied": false }),
+                    }
+                }
                 _ => Value::Null,
             };
             if let Some(client) = client.upgrade() {
@@ -334,6 +363,51 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             formatting: Some(lsp_types::DocumentFormattingClientCapabilities::default()),
+            declaration: Some(GotoCapability {
+                link_support: Some(true),
+                ..Default::default()
+            }),
+            type_definition: Some(GotoCapability {
+                link_support: Some(true),
+                ..Default::default()
+            }),
+            implementation: Some(GotoCapability {
+                link_support: Some(true),
+                ..Default::default()
+            }),
+            references: Some(Default::default()),
+            rename: Some(lsp_types::RenameClientCapabilities {
+                prepare_support: Some(true),
+                ..Default::default()
+            }),
+            signature_help: Some(lsp_types::SignatureHelpClientCapabilities {
+                signature_information: Some(lsp_types::SignatureInformationSettings {
+                    documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+                    parameter_information: Some(lsp_types::ParameterInformationSettings {
+                        label_offset_support: Some(true),
+                    }),
+                    active_parameter_support: Some(true),
+                }),
+                ..Default::default()
+            }),
+            document_highlight: Some(Default::default()),
+            ..Default::default()
+        }),
+        // Edits across files, with files created, moved and deleted
+        // (`impulse-app`'s workspace edits), as the Swift client offers.
+        workspace: Some(lsp_types::WorkspaceClientCapabilities {
+            apply_edit: Some(true),
+            workspace_edit: Some(lsp_types::WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                resource_operations: Some(vec![
+                    lsp_types::ResourceOperationKind::Create,
+                    lsp_types::ResourceOperationKind::Rename,
+                    lsp_types::ResourceOperationKind::Delete,
+                ]),
+                failure_handling: Some(lsp_types::FailureHandlingKind::Abort),
+                ..Default::default()
+            }),
+            configuration: Some(true),
             ..Default::default()
         }),
         ..Default::default()

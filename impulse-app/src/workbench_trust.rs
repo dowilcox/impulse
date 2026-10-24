@@ -184,10 +184,10 @@ impl Workbench {
             let (hub, events) = LspHub::new(workspace.root.clone(), self.trust.clone());
             workspace.lsp = Some(hub);
             let workspace_id = workspace.id;
-            workspace.lsp_events = Some(cx.spawn(async move |workbench, cx| {
+            workspace.lsp_events = Some(cx.spawn_in(window, async move |workbench, cx| {
                 while let Ok(event) = events.recv().await {
-                    let alive = workbench.update(cx, |workbench, cx| {
-                        workbench.server_event(workspace_id, event, cx)
+                    let alive = workbench.update_in(cx, |workbench, window, cx| {
+                        workbench.server_event(workspace_id, event, window, cx)
                     });
                     if alive.is_err() {
                         break;
@@ -298,9 +298,31 @@ impl Workbench {
         &mut self,
         workspace_id: u64,
         event: impulse_lsp::ServerEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
+            impulse_lsp::ServerEvent::ApplyEdit {
+                edit,
+                label,
+                root,
+                utf32,
+            } => {
+                // The file the user is in, else the server's root, decides
+                // what the edit may change without asking.
+                let origin = self
+                    .active_editor()
+                    .map(|e| e.read(cx).path.clone())
+                    .unwrap_or_else(|| root.clone());
+                let pending = crate::workspace_edits::PendingEdit {
+                    edit: impulse_lsp::workspace_edit::WorkspaceEdit::from(&edit),
+                    utf32,
+                    origin,
+                    server_root: root,
+                    title: label.unwrap_or_else(|| "Language server edit".into()),
+                };
+                self.apply_workspace_edit(pending, window, cx);
+            }
             impulse_lsp::ServerEvent::Diagnostics(server, params) => {
                 self.record_problems(&server, &params, cx);
                 let Some(workspace) = self.workspaces.iter().find(|w| w.id == workspace_id) else {
