@@ -154,12 +154,13 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
             scope: serde_json::to_value(&r.read(cx).scope).ok(),
             ..Default::default()
         },
-        // Settings, Keyboard Shortcuts, Problems and Finish Task aren't
-        // saved, as in the Swift app.
+        // Settings, Keyboard Shortcuts, Problems, Finish Task and Project
+        // Setup aren't saved, as in the Swift app.
         Surface::Settings(_)
         | Surface::Keybindings(_)
         | Surface::Problems(_)
-        | Surface::TaskFinish(_) => SessionSurface {
+        | Surface::TaskFinish(_)
+        | Surface::ProjectSetup(_) => SessionSurface {
             kind: "tool".into(),
             ..Default::default()
         },

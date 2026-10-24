@@ -38,6 +38,8 @@ pub enum Surface {
     TaskFinish(Entity<crate::task_finish::TaskFinishView>),
     /// The window's language-server diagnostics (one per workspace).
     Problems(Entity<ProblemsView>),
+    /// Project Setup (`project_setup`), one per workspace.
+    ProjectSetup(Entity<crate::project_setup::ProjectSetupView>),
 }
 
 impl Surface {
@@ -60,6 +62,7 @@ impl Surface {
             Surface::Keybindings(_) => "Keyboard Shortcuts".into(),
             Surface::TaskFinish(f) => f.read(cx).title(),
             Surface::Problems(_) => "Problems".into(),
+            Surface::ProjectSetup(_) => "Project Setup".into(),
         }
     }
 
@@ -74,12 +77,14 @@ impl Surface {
             Surface::Keybindings(_) => "keyboard",
             Surface::TaskFinish(_) => "git-merge",
             Surface::Problems(_) => "triangle-alert",
+            Surface::ProjectSetup(_) => "sliders-horizontal",
         }
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
         match self {
             Surface::Editor(e) => e.read(cx).dirty,
+            Surface::ProjectSetup(s) => s.read(cx).is_modified(),
             _ => false,
         }
     }
@@ -95,6 +100,7 @@ impl Surface {
             Surface::Keybindings(k) => k.read(cx).focus.clone(),
             Surface::TaskFinish(f) => f.read(cx).focus_handle().clone(),
             Surface::Problems(p) => p.read(cx).focus.clone(),
+            Surface::ProjectSetup(s) => s.read(cx).focus.clone(),
         }
     }
 
@@ -122,6 +128,10 @@ impl Surface {
                 window.focus(&handle, cx);
             }
             Surface::Problems(p) => p.update(cx, |p, cx| p.focus(window, cx)),
+            Surface::ProjectSetup(s) => {
+                let handle = s.read(cx).focus.clone();
+                window.focus(&handle, cx);
+            }
         }
     }
 
@@ -136,6 +146,7 @@ impl Surface {
             Surface::Editor(e) => e.read(cx).path.parent().map(Path::to_path_buf),
             Surface::Review(r) => Some(PathBuf::from(&r.read(cx).root)),
             Surface::TaskFinish(f) => Some(PathBuf::from(&f.read(cx).root)),
+            Surface::ProjectSetup(s) => Some(PathBuf::from(&s.read(cx).model.root)),
             Surface::History(h) => Some(PathBuf::from(&h.read(cx).root)),
             Surface::Image(i) => i.read(cx).path.parent().map(Path::to_path_buf),
             Surface::Settings(_) | Surface::Keybindings(_) | Surface::Problems(_) => None,

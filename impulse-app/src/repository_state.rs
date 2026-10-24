@@ -31,8 +31,9 @@ pub type StatusMap = HashMap<String, HashMap<String, String>>;
 
 pub enum RepositoryEvent {
     /// HEAD moved (a commit, pull, merge or checkout, from Impulse or a
-    /// terminal) while no operation was in progress.
-    HeadMoved,
+    /// terminal) while no operation was in progress, from one commit to
+    /// another.
+    HeadMoved { from: String, to: String },
 }
 
 pub struct RepositoryState {
@@ -122,17 +123,17 @@ impl RepositoryState {
         self.loaded = true;
         if snapshot != self.snapshot {
             let moved = match (&self.snapshot, &snapshot) {
-                (Some(before), Some(after)) => {
-                    before.head_oid.is_some()
-                        && after.head_oid.is_some()
-                        && before.head_oid != after.head_oid
-                        && after.operation.is_none()
+                (Some(before), Some(after)) if after.operation.is_none() => {
+                    match (&before.head_oid, &after.head_oid) {
+                        (Some(from), Some(to)) if from != to => Some((from.clone(), to.clone())),
+                        _ => None,
+                    }
                 }
-                _ => false,
+                _ => None,
             };
             self.snapshot = snapshot;
-            if moved {
-                cx.emit(RepositoryEvent::HeadMoved);
+            if let Some((from, to)) = moved {
+                cx.emit(RepositoryEvent::HeadMoved { from, to });
             }
         }
         self.statuses = statuses;

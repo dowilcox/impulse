@@ -385,6 +385,18 @@ with a check on its tab and in the sidebar, "1 waiting" in the titlebar, and
 the inbox with Review for the turn's checkpoints. Right: Agent Integration
 on the MCP server for Claude Code, the `claude mcp add-json` command it
 runs.*
+- Project settings: the Project Setup tab
+  ([screenshot](images/rust-project-setup.png)), proposing copies,
+  clones, the database, ports, values, scripts, rules and actions from the
+  repository and saving the managed sections of `.impulse/project.toml`
+  (trusting what it wrote, folding in and removing a local
+  `.git/impulse/project.toml` Impulse wrote, asking when the file changed
+  meanwhile), Try in a New Task and Re-apply; reached from the palette,
+  the sidebar's menu, New Task's "Set Up This Project for Tasks…" and
+  Finish's "Set Up a Check…". Project actions in the palette's `a:` mode,
+  in a tab or a split, once trusted. After a pull, merge or checkout, a
+  toast offers the `[on_change]` commands (or the setup script) and, after
+  a merge, the check script.
 - The terminal draws its own grid (cell runs, selection and search ranges,
   the cursor, block washes, stripes, separators and status chips), takes
   keys through the port of `KeyEncoder` and text through GPUI's input

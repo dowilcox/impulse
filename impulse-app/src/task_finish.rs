@@ -295,6 +295,20 @@ impl TaskFinishView {
                 buttons = buttons.child(button);
             }
         }
+        if step == Step::Check && self.check_script.is_none() {
+            any = true;
+            let workspace = self.workspace_id;
+            buttons = buttons.child(
+                Button::new("finish-set-up-check")
+                    .small()
+                    .ghost()
+                    .label("Set Up a Check…")
+                    .on_click(self.act(move |w, _, window, cx| {
+                        let index = w.workspaces.iter().position(|ws| ws.id == workspace);
+                        w.open_project_setup(index, Some("scripts"), window, cx)
+                    })),
+            );
+        }
         let _ = cx;
         div()
             .flex()

@@ -271,6 +271,10 @@ impl Workbench {
                     view.palette = self.palette.clone();
                     cx.notify();
                 }),
+                Surface::ProjectSetup(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
             }
         }
         cx.notify();
@@ -543,6 +547,7 @@ impl Workbench {
             | Surface::Keybindings(_)
             | Surface::TaskFinish(_) => {}
             Surface::Problems(_) => {}
+            Surface::ProjectSetup(_) => {}
         }
     }
 
@@ -839,6 +844,8 @@ impl Workbench {
             agent if crate::agent_views::AGENT_COMMANDS.contains(&agent) => {
                 self.run_agent_command(agent, window, cx)
             }
+            "project_setup" => self.open_project_setup(None, None, window, cx),
+            "edit_project_config" => self.edit_project_config(window, cx),
             custom if custom.starts_with("custom_") => {
                 self.run_custom(&custom["custom_".len()..], window, cx)
             }
@@ -1005,6 +1012,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
         Surface::Keybindings(k) => k.entity_id(),
         Surface::TaskFinish(f) => f.entity_id(),
         Surface::Problems(p) => p.entity_id(),
+        Surface::ProjectSetup(s) => s.entity_id(),
     }
 }
 
