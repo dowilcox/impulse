@@ -563,7 +563,7 @@ impl SettingsFile {
             return SaveOutcome::ChangedOnDisk;
         }
         let target = crate::text_file::target(&self.path);
-        match write_private(&target, data.as_bytes()) {
+        match write_private_file(&target, data.as_bytes()) {
             Ok(()) => {
                 self.snapshot = Some(hash);
                 SaveOutcome::Saved
@@ -580,7 +580,7 @@ impl SettingsFile {
 }
 
 /// Write `data` atomically, readable by the owner only.
-fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+pub fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

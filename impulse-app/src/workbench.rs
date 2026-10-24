@@ -57,7 +57,7 @@ pub struct Workbench {
     pub(crate) theme: ResolvedTheme,
     pub(crate) workspaces: Vec<Workspace>,
     pub(crate) active: usize,
-    next_id: u64,
+    pub(crate) next_id: u64,
     pub(crate) focus: FocusHandle,
     /// A message for the status bar, such as why a file didn't open.
     pub(crate) notice: Option<String>,
@@ -75,6 +75,30 @@ pub struct Workbench {
 
 impl Workbench {
     pub fn new(args: Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let restore = args.session.clone();
+        let mut workbench = Self::empty(&args, window, cx);
+        crate::session::register(cx.entity().downgrade(), cx);
+        if let Some(state) = restore {
+            workbench.restore(state, window, cx);
+        }
+        if workbench.workspaces.is_empty() {
+            workbench.open_default(&args, window, cx);
+        }
+        let cwd = crate::workspace::normalize(Path::new(&args.cwd));
+        for path in &args.open {
+            let path = cwd.join(path);
+            workbench.open_file(&path, window, cx);
+        }
+        // Once the window (and its dialog layer) exists: language servers if
+        // the folder is trusted, otherwise ask.
+        cx.defer_in(window, |workbench, window, cx| {
+            workbench.request_trust(workbench.active, window, cx)
+        });
+        workbench
+    }
+
+    /// A window with no workspaces yet.
+    fn empty(args: &Args, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = SettingsStore::get(cx).clone();
         crate::workspace::SCRATCH.with(|s| *s.borrow_mut() = settings.scratch_directory.clone());
         let theme_id = args
@@ -88,7 +112,7 @@ impl Workbench {
             .observe_global_in::<SettingsStore>(window, |workbench, window, cx| {
                 workbench.apply_settings(window, cx)
             });
-        let mut workbench = Self {
+        Self {
             palette,
             theme,
             workspaces: Vec::new(),
@@ -104,37 +128,28 @@ impl Workbench {
             theme_override: args.theme.clone(),
             theme_id,
             _settings: settings_subscription,
-        };
+        }
+    }
+
+    /// The folder Impulse started in as a workspace (unless that's home),
+    /// and Scratch, with a terminal.
+    fn open_default(&mut self, args: &Args, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = crate::workspace::normalize(Path::new(&args.cwd));
         if args.trust {
-            workbench.trust.trust(&cwd.to_string_lossy());
+            self.trust.trust(&cwd.to_string_lossy());
         }
-        // A folder workspace for the folder Impulse started in (unless
-        // that's home), and Scratch.
         let home = crate::workspace::home();
         if cwd != home {
-            let id = workbench.next_id();
-            workbench
-                .workspaces
+            let id = self.next_id();
+            self.workspaces
                 .push(Workspace::new(id, Kind::Folder, cwd.clone()));
         }
-        let id = workbench.next_id();
-        workbench
-            .workspaces
+        let id = self.next_id();
+        self.workspaces
             .push(Workspace::new(id, Kind::Scratch, home));
-        let dir = workbench.workspaces[0].default_directory();
-        let terminal = workbench.new_terminal(dir, args.commands.clone(), window, cx);
-        workbench.add_tab(0, terminal, window, cx);
-        for path in &args.open {
-            let path = cwd.join(path);
-            workbench.open_file(&path, window, cx);
-        }
-        // Once the window (and its dialog layer) exists: language servers if
-        // the folder is trusted, otherwise ask.
-        cx.defer_in(window, |workbench, window, cx| {
-            workbench.request_trust(workbench.active, window, cx)
-        });
-        workbench
+        let dir = self.workspaces[0].default_directory();
+        let terminal = self.new_terminal(dir, args.commands.clone(), window, cx);
+        self.add_tab(0, terminal, window, cx);
     }
 
     pub(crate) fn next_id(&mut self) -> u64 {
@@ -206,13 +221,26 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Surface {
+        self.new_terminal_restoring(dir, commands, None, window, cx)
+    }
+
+    /// A terminal that first shows a previous session's output.
+    pub(crate) fn new_terminal_restoring(
+        &mut self,
+        dir: PathBuf,
+        commands: Vec<String>,
+        transcript: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Surface {
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
         let terminal = cx.new(|cx| {
-            TerminalView::new(
+            TerminalView::restoring(
                 theme,
                 palette,
                 dir.to_string_lossy().into_owned(),
                 commands,
+                transcript,
                 window,
                 cx,
             )
@@ -628,6 +656,7 @@ impl Workbench {
                     open: Vec::new(),
                     trust: false,
                     trust_store: self.trust.clone(),
+                    session: None,
                 };
                 crate::open_main_window(args, cx);
             }

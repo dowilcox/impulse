@@ -235,6 +235,20 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::restoring(theme, palette, cwd, commands, None, window, cx)
+    }
+
+    /// A terminal that first shows `transcript` (a previous session's
+    /// output) under a dim "restored" rule, as the Swift app does.
+    pub fn restoring(
+        theme: ResolvedTheme,
+        palette: ChromePalette,
+        cwd: String,
+        commands: Vec<String>,
+        transcript: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings = SettingsStore::get(cx).clone();
         let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
         let metrics = measure(&font, settings.terminal_font_size as f32, window);
@@ -249,6 +263,9 @@ impl TerminalView {
             minimum_contrast: settings.terminal_minimum_contrast as f32,
             allow_clipboard_write: settings.terminal_allow_osc52_write,
             allow_clipboard_read: settings.terminal_allow_osc52_read,
+            restored_transcript: transcript.filter(|t| !t.is_empty()).map(|t| {
+                format!("{t}\u{1b}[0;2m── restored from the previous session ──\u{1b}[0m\r\n")
+            }),
             ..Default::default()
         };
         let size = (80, 24);
@@ -326,6 +343,12 @@ impl TerminalView {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.focus, cx);
+    }
+
+    /// About the last `max_rows` rows of output, with colors, for the
+    /// session.
+    pub fn transcript(&self, max_rows: usize) -> String {
+        self.backend.transcript(max_rows, true)
     }
 
     pub fn write(&self, bytes: &[u8]) {

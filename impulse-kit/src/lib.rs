@@ -39,6 +39,7 @@ pub mod project_replace;
 pub mod review_comments;
 pub mod save_command;
 pub mod search_result;
+pub mod session;
 pub mod settings;
 pub mod shell;
 pub mod shell_parser;

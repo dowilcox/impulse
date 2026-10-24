@@ -10,6 +10,7 @@ mod editor_keys;
 mod editor_tab;
 mod kit_theme;
 mod lsp_hub;
+mod session;
 mod settings_store;
 mod shell_launch;
 mod terminal_view;
@@ -79,9 +80,13 @@ pub struct Args {
     /// The trusted folders: `trusted-folders.json` in the data directory
     /// (`impulse-dev` for debug builds, as for the Swift dev build).
     pub trust_store: std::sync::Arc<impulse_kit::trust::WorkspaceTrust>,
+    /// A saved window to bring back instead of the default one.
+    pub session: Option<impulse_kit::session::SessionWindow>,
 }
 
-fn parse_args() -> Args {
+/// The arguments, and whether any asked for a particular folder, command
+/// or file (then the saved session isn't restored).
+fn parse_args() -> (Args, bool) {
     let mut args = Args {
         theme: None,
         cwd: std::env::current_dir()
@@ -90,10 +95,12 @@ fn parse_args() -> Args {
         commands: Vec::new(),
         open: Vec::new(),
         trust: false,
+        session: None,
         trust_store: std::sync::Arc::new(impulse_kit::trust::WorkspaceTrust::new(Some(
             impulse_kit::paths::trusted_folders_file(cfg!(debug_assertions)),
         ))),
     };
+    let mut explicit = false;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         if flag == "--trust" {
@@ -102,18 +109,27 @@ fn parse_args() -> Args {
         }
         match (flag.as_str(), it.next()) {
             ("--theme", Some(v)) => args.theme = Some(v),
-            ("--cwd", Some(v)) => args.cwd = v,
-            ("--run", Some(v)) => args.commands.push(v),
-            ("--open", Some(v)) => args.open.push(v),
+            ("--cwd", Some(v)) => {
+                explicit = true;
+                args.cwd = v
+            }
+            ("--run", Some(v)) => {
+                explicit = true;
+                args.commands.push(v)
+            }
+            ("--open", Some(v)) => {
+                explicit = true;
+                args.open.push(v)
+            }
             _ => {}
         }
     }
-    args
+    (args, explicit)
 }
 
 fn main() {
     env_logger::init();
-    let args = parse_args();
+    let (args, explicit) = parse_args();
     gpui_kit::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
@@ -127,7 +143,27 @@ fn main() {
                 .expect("bundled fonts");
             let settings = settings_store::SettingsStore::get(cx).clone();
             commands::bind_keys(&settings, cx);
-            open_main_window(args, cx);
+            session::init(cx);
+            let saved = (!explicit).then(|| session::saved(cx)).flatten();
+            match saved {
+                Some(state) => {
+                    for window in state.windows {
+                        open_main_window(
+                            Args {
+                                session: Some(window),
+                                theme: args.theme.clone(),
+                                cwd: args.cwd.clone(),
+                                commands: Vec::new(),
+                                open: Vec::new(),
+                                trust: args.trust,
+                                trust_store: args.trust_store.clone(),
+                            },
+                            cx,
+                        );
+                    }
+                }
+                None => open_main_window(args, cx),
+            }
             cx.activate(true);
         });
 }

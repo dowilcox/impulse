@@ -68,7 +68,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           (types, quoting, login shell, integration),
                           completion, command history (SQLite), kitty
                           keyboard, terminal hints/paths/find,
-                          ChildProcess, project config + settings file +
+                          ChildProcess, SessionState (session-state.json +
+                          scrollback files), project config + settings file +
                           task environment + detector, task registry and
                           worktree tasks, commit graph, git helpers, agent
                           state machine, hook events + installers, MCP
@@ -99,6 +100,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           its own painted grid, keys, input methods,
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged),
+                          session restore (session.rs: autosave every 15 s
+                          when the structure changed, and at quit),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and
