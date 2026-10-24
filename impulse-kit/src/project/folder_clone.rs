@@ -78,7 +78,7 @@ fn clone_file(_from: &Path, _to: &Path) -> bool {
 }
 
 /// A copy of a file, link or whole folder, links copied as links.
-fn copy_item(from: &Path, to: &Path) -> io::Result<()> {
+pub fn copy_item(from: &Path, to: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(from)?;
     if metadata.file_type().is_symlink() {
         let target = fs::read_link(from)?;

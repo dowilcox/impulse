@@ -179,7 +179,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           the file tree's context menu
                           (file_tree_actions.rs: new file and folder, open
                           to the side, history, reveal, copy paths, git
-                          actions, rename, Trash with Undo on Linux),
+                          actions, rename, Trash with Undo on Linux; drag
+                          and drop moving project items and copying ones
+                          from outside, Workbench::tree_drop),
                           menus (menus.rs from impulse_kit::menus: the
                           macOS menu bar, the Linux titlebar menu button,
                           the fixed items' actions and keys),

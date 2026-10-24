@@ -438,3 +438,118 @@ mod tests {
         }
     }
 }
+
+/// A tree row being dragged.
+pub(crate) struct DraggedPath(pub PathBuf);
+
+/// What follows the pointer while a row is dragged: its name.
+pub(crate) struct DragPreview(pub String);
+
+impl gpui_kit::Render for DragPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl gpui_kit::IntoElement {
+        use gpui_kit::component::ActiveTheme as _;
+        use gpui_kit::{div, prelude::*, px};
+        let theme = cx.theme();
+        div()
+            .px(px(8.))
+            .py(px(3.))
+            .rounded(px(5.))
+            .bg(theme.popover)
+            .border_1()
+            .border_color(theme.border)
+            .text_size(px(12.))
+            .text_color(theme.popover_foreground)
+            .child(self.0.clone())
+    }
+}
+
+/// `path` is `root` or inside it (`app-old` beside `app` isn't).
+fn is_inside(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+}
+
+impl Workbench {
+    /// Items dropped on a tree row or the tree: into the row's folder (a
+    /// file's own), moved when they're in the project, copied when they
+    /// come from elsewhere, asking before replacing an item of the same
+    /// name (which goes to the Trash).
+    pub(crate) fn tree_drop(
+        &mut self,
+        sources: Vec<PathBuf>,
+        target: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = if target.is_dir() {
+            target.to_path_buf()
+        } else {
+            target.parent().map(Path::to_path_buf).unwrap_or_default()
+        };
+        let root = self.tree_root(cx);
+        for source in sources {
+            let Some(name) = source.file_name().map(|n| n.to_os_string()) else {
+                continue;
+            };
+            let destination = dir.join(&name);
+            // Not onto itself, nor into itself.
+            if destination == source || destination.starts_with(&source) {
+                continue;
+            }
+            let moving = is_inside(&source, &root);
+            let shown = name.to_string_lossy().into_owned();
+            if destination.exists() {
+                let message = if moving {
+                    "Replace it? The existing one goes to the Trash and the original is moved."
+                } else {
+                    "Replace it with the one you're copying? The existing one goes to the Trash."
+                };
+                self.git_confirm(
+                    format!("An item named “{shown}” already exists"),
+                    message,
+                    "Replace",
+                    true,
+                    window,
+                    cx,
+                    move |this, window, cx| {
+                        if let Err(error) = trash::delete(&destination) {
+                            return this.toast(
+                                Notification::warning(format!("Couldn't replace {shown}: {error}")),
+                                window,
+                                cx,
+                            );
+                        }
+                        this.place(&source, &destination, moving, window, cx);
+                    },
+                );
+                continue;
+            }
+            self.place(&source, &destination, moving, window, cx);
+        }
+    }
+
+    fn place(
+        &mut self,
+        source: &Path,
+        destination: &Path,
+        moving: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let placed = if moving {
+            std::fs::rename(source, destination)
+        } else {
+            impulse_kit::project::folder_clone::copy_item(source, destination)
+        };
+        match placed {
+            Ok(()) => self.reload_tree(cx),
+            Err(error) => self.toast(
+                Notification::warning(format!(
+                    "{}: {error}",
+                    if moving { "Move Failed" } else { "Copy Failed" }
+                )),
+                window,
+                cx,
+            ),
+        }
+    }
+}

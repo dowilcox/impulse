@@ -426,8 +426,19 @@ impl Workbench {
         let open_path = self.active_editor().map(|e| e.read(cx).path.clone());
         let root = self.tree_root(cx);
         let workspace = self.workspace();
+        let (root_drop, root_external) = (root.clone(), root.clone());
         let mut files = div()
             .id("files")
+            .on_drop(cx.listener(
+                move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
+                    this.tree_drop(vec![dragged.0.clone()], &root_drop, window, cx)
+                },
+            ))
+            .on_drop(
+                cx.listener(move |this, paths: &gpui_kit::ExternalPaths, window, cx| {
+                    this.tree_drop(paths.paths().to_vec(), &root_external, window, cx)
+                }),
+            )
             .flex()
             .flex_col()
             .flex_1()
@@ -515,6 +526,33 @@ impl Workbench {
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(hsla(color))
                                 .child(letter)
+                        },
+                    ));
+                let (drag_path, drop_target, external_target) =
+                    (row.path.clone(), row.path.clone(), row.path.clone());
+                let drag_name = row
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let row_element = row_element
+                    .on_drag(
+                        crate::file_tree_actions::DraggedPath(drag_path),
+                        move |_, _, _, cx| {
+                            cx.new(|_| crate::file_tree_actions::DragPreview(drag_name.clone()))
+                        },
+                    )
+                    .drag_over::<crate::file_tree_actions::DraggedPath>(|style, _, _, _| {
+                        style.bg(gpui_kit::black().opacity(0.12))
+                    })
+                    .on_drop(cx.listener(
+                        move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
+                            this.tree_drop(vec![dragged.0.clone()], &drop_target, window, cx)
+                        },
+                    ))
+                    .on_drop(cx.listener(
+                        move |this, paths: &gpui_kit::ExternalPaths, window, cx| {
+                            this.tree_drop(paths.paths().to_vec(), &external_target, window, cx)
                         },
                     ));
                 files = files.child(row_element.context_menu(menu));
