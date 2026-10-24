@@ -47,6 +47,7 @@ pub mod session;
 pub mod settings;
 pub mod shell;
 pub mod shell_parser;
+pub mod sticky_scroll;
 pub mod svg_preview;
 pub mod terminal_find;
 pub mod terminal_hints;

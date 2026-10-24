@@ -259,6 +259,7 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Incoming or Both, from
                           impulse_kit::git::editor_marks; Monaco's keys,
                           bracket pair colors (impulse_kit::bracket_pairs),
+                          sticky scroll (impulse_kit::sticky_scroll),
                           word-based suggestions without a language
                           server (impulse_kit::word_completions);
                           occurrence and selection

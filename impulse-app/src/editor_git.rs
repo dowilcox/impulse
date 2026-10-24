@@ -387,6 +387,18 @@ impl EditorTab {
         let margin_color = cx.theme().border;
         let font = self.font_for_blame(cx);
         let tab = cx.entity().downgrade();
+        let sticky = {
+            let settings = crate::settings_store::SettingsStore::get(cx);
+            settings.sticky_scroll.then(|| StickyStyle {
+                font: gpui_kit::font(settings.font_family.clone()),
+                size: px(settings.font_size as f32),
+                tab_size: self.tab_size,
+                background: cx.theme().background,
+                text: cx.theme().foreground,
+                number: cx.theme().muted_foreground,
+                border: cx.theme().border,
+            })
+        };
         let overlay = canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
@@ -395,6 +407,9 @@ impl EditorTab {
                 };
                 let state = state.read(cx);
                 let text = state.text().clone();
+                let sticky_layout = sticky
+                    .as_ref()
+                    .and_then(|style| sticky_layout(state, &text, style.tab_size));
                 // The right margin, at a column measured on a visible line.
                 if let (Some(column), Some(rows)) = (margin, state.visible_row_range()) {
                     let measured = rows.clone().find_map(|row| {
@@ -489,11 +504,25 @@ impl EditorTab {
                         }
                     }
                 }
-                // A click on a mark opens its peek (before the editor sees
-                // the click).
+                let pinned = match (&sticky, sticky_layout) {
+                    (Some(style), Some(layout)) => paint_sticky(layout, bounds, style, window, cx),
+                    _ => Vec::new(),
+                };
+                // A click on a mark opens its peek, one on a sticky line goes
+                // there (before the editor sees the click).
                 let tab = tab.clone();
-                window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    if let Some((_, row)) = pinned.iter().find(|(r, _)| r.contains(&event.position))
+                    {
+                        let row = *row;
+                        let _ = tab.update(cx, |tab, cx| {
+                            let position = gpui_kit::component::input::Position::new(row as u32, 0);
+                            tab.go_to(position, window, cx);
+                        });
+                        cx.stop_propagation();
                         return;
                     }
                     let hit = bars.iter().find(|(bar, _)| {
@@ -901,4 +930,128 @@ impl crate::workbench::Workbench {
             _ => {}
         }
     }
+}
+
+/// How sticky lines look (the editor's font and colors).
+struct StickyStyle {
+    font: gpui_kit::Font,
+    size: Pixels,
+    tab_size: usize,
+    background: Hsla,
+    text: Hsla,
+    number: Hsla,
+    border: Hsla,
+}
+
+/// The sticky lines for the view's top: where text starts on screen, the
+/// line height, and each line's row and text.
+struct StickyLayout {
+    text_x: Pixels,
+    line_height: Pixels,
+    lines: Vec<(usize, String)>,
+}
+
+/// Work out the lines opening the scopes around the top of the view
+/// (`impulse_kit::sticky_scroll`).
+fn sticky_layout(
+    state: &gpui_kit::component::input::EditorState,
+    text: &gpui_kit::component::input::Rope,
+    tab_size: usize,
+) -> Option<StickyLayout> {
+    let rows = state.visible_row_range()?;
+    let line_height = state.line_height()?;
+    let top = rows.start;
+    let text_x = rows.clone().find_map(|row| {
+        let start = text.line_start_offset(row);
+        state.range_to_bounds(&(start..start)).map(|b| b.origin.x)
+    })?;
+    let lines: Vec<String> = (0..text.lines_len().min(top + 2))
+        .map(|row| {
+            let at = text.line_start_offset(row);
+            text.slice(at..at + text.line_len(row)).to_string()
+        })
+        .collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let sticky = impulse_kit::sticky_scroll::scope_rows(
+        &refs,
+        top + 1,
+        tab_size,
+        impulse_kit::sticky_scroll::MAX_LINES,
+    );
+    Some(StickyLayout {
+        text_x,
+        line_height,
+        lines: sticky
+            .into_iter()
+            .map(|row| {
+                let line: String = refs[row].chars().take(400).collect();
+                (row, line.replace('\t', &" ".repeat(tab_size)))
+            })
+            .collect(),
+    })
+}
+
+/// Paint the sticky lines over the view's first rows: each line's bounds
+/// and row.
+fn paint_sticky(
+    layout: StickyLayout,
+    bounds: Bounds<Pixels>,
+    style: &StickyStyle,
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<(Bounds<Pixels>, usize)> {
+    let StickyLayout {
+        text_x,
+        line_height,
+        lines,
+    } = layout;
+    let mut painted = Vec::new();
+    for (i, (row, line)) in lines.iter().enumerate() {
+        let y = bounds.top() + line_height * i as f32;
+        let area = Bounds::new(
+            point(bounds.left(), y),
+            size(bounds.size.width, line_height),
+        );
+        window.paint_quad(fill(area, style.background));
+        let shape = |content: String, color: Hsla, window: &mut Window| {
+            let run = gpui_kit::TextRun {
+                len: content.len(),
+                font: style.font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window
+                .text_system()
+                .shape_line(content.into(), style.size, &[run], None)
+        };
+        let shaped = shape(line.clone(), style.text, window);
+        let _ = shaped.paint(
+            point(text_x, y),
+            line_height,
+            gpui_kit::TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
+        let number = shape((row + 1).to_string(), style.number, window);
+        let _ = number.paint(
+            point(text_x - number.width - px(18.), y),
+            line_height,
+            gpui_kit::TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
+        painted.push((area, *row));
+    }
+    if !lines.is_empty() {
+        let y = bounds.top() + line_height * lines.len() as f32;
+        window.paint_quad(fill(
+            Bounds::new(point(bounds.left(), y), size(bounds.size.width, px(1.))),
+            style.border,
+        ));
+    }
+    painted
 }
