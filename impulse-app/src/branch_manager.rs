@@ -8,10 +8,9 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{Icon, Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
@@ -164,7 +163,9 @@ impl BranchManager {
             detail.push(format!("↓{}", branch.behind));
         }
         if let Ok(age) = SystemTime::now().duration_since(branch.last_commit) {
-            detail.push(impulse_kit::history::relative_time(age.as_secs_f64()));
+            detail.push(impulse_kit::dates::abbreviated_relative(
+                age.as_secs() as i64
+            ));
         }
         if !branch.subject.is_empty() {
             detail.push(branch.subject.clone());
@@ -369,11 +370,19 @@ impl Render for BranchManager {
             .flex()
             .flex_col()
             .gap(px(10.))
+            .p(px(20.))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(15.))
+                            .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                            .text_color(hsla(p.text))
+                            .child("Branches"),
+                    )
                     .children(self.base.as_ref().map(|base| {
                         div()
                             .text_size(px(11.))
@@ -381,7 +390,7 @@ impl Render for BranchManager {
                             .child(format!("merged means merged into {base}"))
                     }))
                     .child(div().flex_1())
-                    .child(div().w(px(180.)).child(Input::new(&self.filter).small())),
+                    .child(crate::alert::field(&self.filter, 180., 22., p.is_light)),
             )
             .child(
                 div()
@@ -397,8 +406,24 @@ impl Render for BranchManager {
             )
             .child(
                 div()
-                    .h(px(14.))
-                    .when(self.loading, |d| d.child(Spinner::new().small())),
+                    .flex()
+                    .items_center()
+                    .when(self.loading, |d| {
+                        d.child(crate::workbench_chrome::progress_ring(
+                            None,
+                            p.text_tertiary,
+                            12.,
+                            1.5,
+                            0.,
+                        ))
+                    })
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("branches-done")
+                            .primary()
+                            .label("Done")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    ),
             )
     }
 }
@@ -411,19 +436,14 @@ impl Workbench {
         let workbench = cx.entity().downgrade();
         let palette = self.palette.clone();
         let manager = cx.new(|cx| BranchManager::new(workbench, repo, palette, window, cx));
+        let background = hsla(self.palette.overlay);
         crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             dialog
-                .title("Branches")
                 .w(px(640.))
+                .p_0()
+                .bg(background)
+                .close_button(false)
                 .child(manager.clone())
-                .footer(
-                    div().flex().justify_end().child(
-                        Button::new("branches-done")
-                            .primary()
-                            .label("Done")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    ),
-                )
         });
     }
 
