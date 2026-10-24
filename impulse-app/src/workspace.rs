@@ -16,6 +16,7 @@ use crate::history_view::HistoryView;
 use crate::image_view::ImageView;
 use crate::keybindings_view::KeybindingsView;
 use crate::lsp_hub::LspHub;
+use crate::problems_view::ProblemsView;
 use crate::review_view::ReviewView;
 use crate::settings_view::SettingsView;
 use crate::terminal_view::TerminalView;
@@ -33,6 +34,8 @@ pub enum Surface {
     /// The Settings and Keyboard Shortcuts tools (one of each per workspace).
     Settings(Entity<SettingsView>),
     Keybindings(Entity<KeybindingsView>),
+    /// The window's language-server diagnostics (one per workspace).
+    Problems(Entity<ProblemsView>),
 }
 
 impl Surface {
@@ -53,6 +56,7 @@ impl Surface {
             Surface::Image(i) => i.read(cx).title(),
             Surface::Settings(_) => "Settings".into(),
             Surface::Keybindings(_) => "Keyboard Shortcuts".into(),
+            Surface::Problems(_) => "Problems".into(),
         }
     }
 
@@ -65,6 +69,7 @@ impl Surface {
             Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",
             Surface::Keybindings(_) => "keyboard",
+            Surface::Problems(_) => "triangle-alert",
         }
     }
 
@@ -84,6 +89,7 @@ impl Surface {
             Surface::Image(i) => i.read(cx).focus_handle().clone(),
             Surface::Settings(s) => s.read(cx).focus.clone(),
             Surface::Keybindings(k) => k.read(cx).focus.clone(),
+            Surface::Problems(p) => p.read(cx).focus.clone(),
         }
     }
 
@@ -106,6 +112,7 @@ impl Surface {
             }
             Surface::Settings(s) => s.update(cx, |s, cx| s.focus(window, cx)),
             Surface::Keybindings(k) => k.update(cx, |k, cx| k.focus(window, cx)),
+            Surface::Problems(p) => p.update(cx, |p, cx| p.focus(window, cx)),
         }
     }
 
@@ -121,7 +128,7 @@ impl Surface {
             Surface::Review(r) => Some(PathBuf::from(&r.read(cx).root)),
             Surface::History(h) => Some(PathBuf::from(&h.read(cx).root)),
             Surface::Image(i) => i.read(cx).path.parent().map(Path::to_path_buf),
-            Surface::Settings(_) | Surface::Keybindings(_) => None,
+            Surface::Settings(_) | Surface::Keybindings(_) | Surface::Problems(_) => None,
         }
     }
 

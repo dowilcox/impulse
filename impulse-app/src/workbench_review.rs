@@ -30,6 +30,18 @@ impl Workbench {
             self.set_notice("Not in a git repository.".into(), cx);
             return;
         };
+        self.open_review_of(root, scope, window, cx);
+    }
+
+    /// A Review of the repository at `root` in the active workspace,
+    /// reusing the one open there.
+    pub(crate) fn open_review_of(
+        &mut self,
+        root: String,
+        scope: Option<DiffScope>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Already open in this workspace: show it.
         let existing = self
             .workspace()

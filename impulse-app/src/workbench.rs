@@ -82,6 +82,8 @@ pub struct Workbench {
     _settings: gpui_kit::Subscription,
     /// Repositories and the Changes panel (`changes_panel`, `git_actions`).
     pub(crate) git: crate::changes_panel::GitPanel,
+    /// Every language server's diagnostics (`problems_view`).
+    pub(crate) problems: Entity<crate::problems_view::ProblemStore>,
 }
 
 impl Workbench {
@@ -152,6 +154,7 @@ impl Workbench {
             },
             _settings: settings_subscription,
             git: crate::changes_panel::GitPanel::new(window, cx),
+            problems: cx.new(|_| Default::default()),
         }
     }
 
@@ -252,6 +255,10 @@ impl Workbench {
                     cx.notify();
                 }),
                 Surface::Keybindings(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
+                Surface::Problems(view) => view.update(cx, |view, cx| {
                     view.palette = self.palette.clone();
                     cx.notify();
                 }),
@@ -523,7 +530,8 @@ impl Workbench {
             Surface::Review(_)
             | Surface::History(_)
             | Surface::Settings(_)
-            | Surface::Keybindings(_) => {}
+            | Surface::Keybindings(_)
+            | Surface::Problems(_) => {}
         }
     }
 
@@ -754,6 +762,7 @@ impl Workbench {
             }
             "open_settings" => self.open_settings(None, window, cx),
             "open_keybindings" => self.open_keybindings(window, cx),
+            "show_problems" => self.show_problems(window, cx),
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "new_window" => {
@@ -942,6 +951,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
         Surface::Image(i) => i.entity_id(),
         Surface::Settings(s) => s.entity_id(),
         Surface::Keybindings(k) => k.entity_id(),
+        Surface::Problems(p) => p.entity_id(),
     }
 }
 

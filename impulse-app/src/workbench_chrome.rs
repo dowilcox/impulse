@@ -693,6 +693,7 @@ impl Workbench {
                     .child(icon("shield-alert", metrics::ICON_SMALL, p.warning))
                     .child("Restricted")
             }))
+            .children(self.problems_status(cx))
             .children(
                 self.notice
                     .clone()

@@ -269,12 +269,13 @@ impl Workbench {
                 response.data = Some(br#"{"disabled":[]}"#.to_vec());
                 answer(response);
             }
-            "review" | "tasks" | "turns" | "comments" | "problems" | "blocks" | "project" => {
-                answer(ControlResponse::failure(format!(
-                    "impulse {} isn't in the Rust app yet.",
-                    request.command
-                )))
+            "review" | "comments" | "problems" => {
+                self.handle_review_control(&request, terminal, cwd, from_shell, reply, window, cx)
             }
+            "tasks" | "turns" | "blocks" | "project" => answer(ControlResponse::failure(format!(
+                "impulse {} isn't in the Rust app yet.",
+                request.command
+            ))),
             other => answer(ControlResponse::failure(format!(
                 "impulse: unknown command '{other}'"
             ))),

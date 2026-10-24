@@ -6,9 +6,12 @@
 //! numbers in gutters), and the end of its card. Files, hunks and lines can
 //! be staged, unstaged or reverted where the scope allows it, with the
 //! Swift app's keys: j/k hunks, n/p files, s/u/x stage, unstage, revert the
-//! focused hunk, v viewed, o open, Return or Space fold.
+//! focused hunk, v viewed, c comment, o open, Return or Space fold. Review
+//! comments are in `comments`.
 
-use std::collections::HashMap;
+mod comments;
+
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use gpui_kit::{
@@ -27,6 +30,8 @@ use crate::workbench_chrome::{hsla, icon};
 const WHOLE_FILE: i32 = 100_000;
 const NAVIGATOR_WIDTH: f32 = 250.0;
 const CARD_INSET: f32 = 12.0;
+/// The hover group of a diff line's column (its comment button shows).
+const LINE_GROUP: &str = "review-line";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layout {
@@ -53,6 +58,9 @@ struct ReviewFile {
     changed_since_viewed: bool,
     /// A stage or revert is running on it.
     busy: bool,
+    /// Its review comments, and which no longer match their lines.
+    comments: Vec<impulse_kit::review_comments::ReviewComment>,
+    outdated: HashSet<String>,
 }
 
 /// One row of the list.
@@ -61,6 +69,12 @@ enum Row {
     PageTop,
     FileHeader(usize),
     Notice(usize, String),
+    /// Above a file's outdated comments.
+    OutdatedTitle(usize),
+    /// A comment, by id.
+    Comment(usize, String),
+    /// The comment being written in this file.
+    Composer(usize),
     HunkHeader(usize, usize),
     Line(usize, usize, usize),
     /// Split layout: an old-side line beside a new-side line.
@@ -252,6 +266,11 @@ pub struct ReviewView {
     pending_reveal: Option<std::path::PathBuf>,
     /// Inside History: the commit is chosen there, so no scope bar.
     pub embedded: bool,
+    /// The repository's review comments, and when their file last changed.
+    comments: impulse_kit::review_comments::CommentStore,
+    comments_stamp: Option<std::time::SystemTime>,
+    composer: Option<comments::Composer>,
+    editing: Option<comments::Editing>,
     _refresh: gpui_kit::Task<()>,
 }
 
@@ -310,8 +329,13 @@ impl ReviewView {
             generation: 0,
             embedded: false,
             pending_reveal: None,
+            comments: impulse_kit::review_comments::CommentStore::load(PathBuf::new()),
+            comments_stamp: None,
+            composer: None,
+            editing: None,
             _refresh: refresh,
         };
+        view.reload_comments(cx);
         view.refresh(cx);
         view
     }
@@ -405,6 +429,7 @@ impl ReviewView {
     /// The live scopes read again in the background; fixed ones (a commit)
     /// never change.
     fn refresh_if_live(&mut self, cx: &mut Context<Self>) {
+        self.reload_comments_if_changed(cx);
         if !self.loading && (self.scope.includes_working_tree() || self.scope.supports_staging()) {
             self.refresh_quietly(cx);
         }
@@ -447,7 +472,8 @@ impl ReviewView {
                                 _ => false,
                             }
                         });
-                if !same {
+                // While a comment is typed its row isn't rebuilt under it.
+                if !same && !view.is_composing() {
                     view.merge(changes, diffs);
                     view.rebuild_rows();
                     cx.notify();
@@ -489,9 +515,12 @@ impl ReviewView {
                     error,
                     diff,
                     change,
+                    comments: Vec::new(),
+                    outdated: HashSet::new(),
                 }
             })
             .collect();
+        self.assign_comments();
         self.message = self.files.is_empty().then(|| empty_message(&self.scope));
         if let Some((file, hunk)) = self.focused {
             let valid = self
@@ -501,6 +530,19 @@ impl ReviewView {
                 .is_some_and(|d| hunk < d.hunks.len());
             if !valid {
                 self.focused = None;
+            }
+        }
+        // A composer whose line went away goes with it.
+        if let Some(composer) = &self.composer {
+            let valid = self
+                .files
+                .iter()
+                .find(|f| f.change.path == composer.path)
+                .and_then(|f| f.diff.as_ref())
+                .and_then(|d| d.hunks.get(composer.hunk))
+                .is_some_and(|h| composer.line_index < h.lines.len());
+            if !valid {
+                self.composer = None;
             }
         }
     }
@@ -526,17 +568,25 @@ impl ReviewView {
                         rows.push(Row::Notice(index, "No textual changes".into()))
                     }
                     Some(diff) => {
+                        // Comments whose lines changed float at the top.
+                        rows.extend(self.outdated_rows(index));
                         for (h, hunk) in diff.hunks.iter().enumerate() {
                             rows.push(Row::HunkHeader(index, h));
+                            let after = |l: usize| self.rows_after(index, h, l, &hunk.lines[l]);
                             match self.layout {
                                 Layout::Unified => {
                                     for l in 0..hunk.lines.len() {
                                         rows.push(Row::Line(index, h, l));
+                                        rows.extend(after(l));
                                     }
                                 }
                                 Layout::Split => {
                                     for (old, new) in split_pairs(&hunk.lines) {
                                         rows.push(Row::Split(index, h, old, new));
+                                        rows.extend(old.map(after).unwrap_or_default());
+                                        if new != old {
+                                            rows.extend(new.map(after).unwrap_or_default());
+                                        }
                                     }
                                 }
                             }
@@ -553,8 +603,24 @@ impl ReviewView {
             rows.push(Row::FileEnd(index));
         }
         if rows != self.rows {
+            // Only the rows that changed, so the list stays where it was
+            // scrolled (a comment added, a hunk staged).
+            let prefix = rows
+                .iter()
+                .zip(&self.rows)
+                .take_while(|(a, b)| a == b)
+                .count();
+            let suffix = rows[prefix..]
+                .iter()
+                .rev()
+                .zip(self.rows[prefix..].iter().rev())
+                .take_while(|(a, b)| a == b)
+                .count();
+            self.list.splice(
+                prefix..self.rows.len() - suffix,
+                rows.len() - prefix - suffix,
+            );
             self.rows = rows;
-            self.list.reset(self.rows.len());
         }
     }
 
@@ -680,10 +746,11 @@ impl ReviewView {
 
     // MARK: Keys
 
-    fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         let m = &k.modifiers;
-        if m.control || m.alt || m.platform {
+        // Keys typed into a comment are the comment's.
+        if m.control || m.alt || m.platform || !self.focus.is_focused(window) {
             return;
         }
         let key = k.key_char.clone().unwrap_or_else(|| k.key.clone());
@@ -713,6 +780,11 @@ impl ReviewView {
             "o" => {
                 if let Some((file, hunk)) = focused {
                     self.open(file, Some(hunk), cx);
+                }
+            }
+            "c" => {
+                if let Some((file, hunk)) = focused {
+                    self.open_composer(file, hunk, None, window, cx);
                 }
             }
             "enter" | " " | "space" => {
@@ -1002,6 +1074,7 @@ impl ReviewView {
                     .child(icon("chevrons-up-down", 13., p.text_secondary))
                     .child(context_title),
             )
+            .child(self.comments_menu(cx))
             .child(
                 div()
                     .id("refresh")
@@ -1060,6 +1133,7 @@ impl ReviewView {
                             .text_color(hsla(if file.viewed { p.text_tertiary } else { p.text }))
                             .child(name),
                     )
+                    .children(self.navigator_count(index))
                     .when(file.viewed, |d| d.child(icon("check", 11., p.success))),
             );
         }
@@ -1157,6 +1231,7 @@ impl ReviewView {
                         ));
                     }
                 }
+                actions = actions.child(self.hunk_comment_button(f, h, cx));
                 card(div())
                     .id(("hunk", index))
                     .h(px(26.))
@@ -1187,10 +1262,13 @@ impl ReviewView {
                     .child(actions)
                     .into_any_element()
             }
-            Row::Line(f, h, l) => self.line_row(f, h, &[(Some(l), Side::Single)]),
+            Row::Line(f, h, l) => self.line_row(f, h, &[(Some(l), Side::Single)], cx),
             Row::Split(f, h, old, new) => {
-                self.line_row(f, h, &[(old, Side::Old), (new, Side::New)])
+                self.line_row(f, h, &[(old, Side::Old), (new, Side::New)], cx)
             }
+            Row::OutdatedTitle(_) => self.outdated_title_row(),
+            Row::Comment(f, id) => self.comment_row(f, &id, cx),
+            Row::Composer(_) => self.composer_row(cx),
         }
     }
 
@@ -1370,7 +1448,13 @@ impl ReviewView {
     }
 
     /// A diff line (unified), or an old and a new one side by side (split).
-    fn line_row(&self, f: usize, h: usize, sides: &[(Option<usize>, Side)]) -> AnyElement {
+    fn line_row(
+        &self,
+        f: usize,
+        h: usize,
+        sides: &[(Option<usize>, Side)],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let colors = &self.colors;
         let Some(hunk) = self.files[f].diff.as_ref().and_then(|d| d.hunks.get(h)) else {
             return div().into_any_element();
@@ -1379,6 +1463,7 @@ impl ReviewView {
         let gutter_width = (self.font_size * 0.62 * 5.0 + 12.0).ceil().max(46.);
         let marker_width = (self.font_size * 0.62 + 8.0).ceil().max(18.);
         let focused = self.focused == Some((f, h));
+        let busy = self.files[f].busy;
         let mut row = div()
             .w_full()
             .h(px(line_height))
@@ -1459,6 +1544,12 @@ impl ReviewView {
                         .whitespace_nowrap()
                         .child(code_text(line, colors.text, word)),
                 );
+            if let (Some(l), false) = (index, busy) {
+                column = column
+                    .relative()
+                    .group(LINE_GROUP)
+                    .child(self.gutter_comment_button(f, h, *l, i, cx));
+            }
             row = row.child(column);
         }
         if focused {

@@ -1,12 +1,14 @@
 //! Review comments anchored to lines of one side of a file's diff (the
 //! Swift `ReviewComment` and `ReviewCommentAnchoring`): when a comment no
 //! longer matches the lines it was written on, and the prompt that hands
-//! comments to a coding agent.
+//! comments to a coding agent; and [`CommentStore`], one repository's
+//! comments in the data directory (the Swift `ReviewCommentStore`).
 //!
 //! The JSON is the Swift app's (camelCase keys, dates as ISO 8601 in UTC
 //! without fractional seconds), so saved comments read the same in both.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -154,6 +156,112 @@ pub fn code_fence(snippet: &str) -> String {
         longest = longest.max(run);
     }
     "`".repeat((longest + 1).max(3))
+}
+
+/// Review comments for one repository, kept under the app's data
+/// directory (never inside the repository) at `review/<digest>.json`, the
+/// digest being the first 10 bytes of the root's SHA-256 in hex, as the
+/// Swift app names it. Every change is written at once.
+pub struct CommentStore {
+    path: PathBuf,
+    pub comments: Vec<ReviewComment>,
+}
+
+impl CommentStore {
+    /// Where a repository's comments are saved.
+    pub fn file(data_dir: &Path, root: &str) -> PathBuf {
+        use sha2::{Digest, Sha256};
+        let digest: String = Sha256::digest(root.as_bytes())[..10]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        data_dir.join("review").join(format!("{digest}.json"))
+    }
+
+    /// The repository's comments as last saved (none when the file is
+    /// missing or doesn't parse).
+    pub fn open(data_dir: &Path, root: &str) -> Self {
+        Self::load(Self::file(data_dir, root))
+    }
+
+    pub fn load(path: PathBuf) -> Self {
+        let comments = std::fs::read(&path)
+            .ok()
+            .and_then(|data| serde_json::from_slice(&data).ok())
+            .unwrap_or_default();
+        CommentStore { path, comments }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn for_path(&self, path: &str) -> Vec<ReviewComment> {
+        self.comments
+            .iter()
+            .filter(|c| c.path == path)
+            .cloned()
+            .collect()
+    }
+
+    pub fn add(&mut self, comment: ReviewComment) {
+        self.comments.push(comment);
+        self.save();
+    }
+
+    /// Change a comment's text; false when there's no such comment.
+    pub fn update(&mut self, id: &str, text: &str) -> bool {
+        let Some(comment) = self.comments.iter_mut().find(|c| c.id == id) else {
+            return false;
+        };
+        comment.text = text.to_string();
+        self.save();
+        true
+    }
+
+    /// Mark a comment addressed (`resolution`) or open again (`None`);
+    /// false when there's no such comment.
+    pub fn resolve(&mut self, id: &str, resolution: Option<Resolution>) -> bool {
+        let Some(comment) = self.comments.iter_mut().find(|c| c.id == id) else {
+            return false;
+        };
+        comment.resolution = resolution;
+        self.save();
+        true
+    }
+
+    pub fn remove(&mut self, id: &str) {
+        self.comments.retain(|c| c.id != id);
+        self.save();
+    }
+
+    pub fn remove_all(&mut self) {
+        self.comments.clear();
+        self.save();
+    }
+
+    fn save(&self) {
+        let Ok(data) = serde_json::to_vec_pretty(&self.comments) else {
+            return;
+        };
+        if let Err(error) = crate::settings::write_private_file(&self.path, &data) {
+            log::error!(
+                "Couldn't save review comments to {}: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
+impl Resolution {
+    /// Addressed by `by` now.
+    pub fn now(by: impl Into<String>, note: impl Into<String>) -> Self {
+        Resolution {
+            by: by.into(),
+            note: note.into(),
+            at: SystemTime::now(),
+        }
+    }
 }
 
 /// Dates as `2026-10-24T09:30:00Z`, the format of Swift's `.iso8601`
@@ -381,5 +489,54 @@ mod tests {
             iso8601::parse("2026-10-24T09:30:05Z")
         );
         assert!(iso8601::parse("yesterday").is_none());
+    }
+
+    #[test]
+    fn the_store_keeps_comments_per_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = CommentStore::file(dir.path(), "/work/repo");
+        // SHA-256 of "/work/repo", its first 10 bytes.
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(name.len(), 20 + ".json".len());
+        assert_eq!(file.parent().unwrap(), dir.path().join("review"));
+        assert_ne!(file, CommentStore::file(dir.path(), "/work/other"));
+
+        let mut store = CommentStore::open(dir.path(), "/work/repo");
+        assert!(store.comments.is_empty());
+        store.add(comment());
+        let other = ReviewComment::new("b.rs", Side::New, 1, 1, "", "Hm.");
+        let other_id = other.id.clone();
+        store.add(other);
+        let id = store.comments[0].id.clone();
+        assert!(store.update(&id, "Rename both."));
+        assert!(store.resolve(&id, Some(Resolution::now("Claude Code", "Renamed."))));
+        assert!(!store.resolve("missing", None));
+
+        let reread = CommentStore::open(dir.path(), "/work/repo");
+        assert_eq!(reread.comments.len(), 2);
+        assert_eq!(reread.for_path("src/a.swift")[0].text, "Rename both.");
+        assert_eq!(
+            reread.for_path("src/a.swift")[0]
+                .resolution
+                .as_ref()
+                .unwrap()
+                .note,
+            "Renamed."
+        );
+
+        let mut store = reread;
+        assert!(store.resolve(&id, None));
+        store.remove(&other_id);
+        assert_eq!(
+            CommentStore::open(dir.path(), "/work/repo").comments.len(),
+            1
+        );
+        store.remove_all();
+        assert!(CommentStore::open(dir.path(), "/work/repo")
+            .comments
+            .is_empty());
+        assert!(CommentStore::open(dir.path(), "/work/other")
+            .comments
+            .is_empty());
     }
 }
