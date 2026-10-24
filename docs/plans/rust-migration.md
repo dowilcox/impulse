@@ -312,7 +312,10 @@ which inserts the type when picked.*
   byte as the Swift app writes them).
 - The app shell: folder workspaces and Scratch, each with its tabs; tabs of
   split panes laid out by `LayoutTree` with draggable dividers, zoom, and the
-  pane commands; every command as one `RunCommand` action bound from the
+  pane commands; preview tabs (a single click in the file tree, replaced by
+  the next until edited, split or double-clicked), pinned tabs (icon only,
+  saved with the session, closing asks), tabs dragged to reorder, and the
+  tab context menu (pin, close, move into the current tab, even out panes); every command as one `RunCommand` action bound from the
   keybinding table (Mac defaults as today, Linux ones as the v0.29 Linux app
   had them, with plain Ctrl+letter left to the shell in terminals);
   settings.json watched and merged as `SettingsStore` does; session restore

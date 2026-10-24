@@ -181,6 +181,11 @@ pub struct Tab {
     pub focused: PaneId,
     /// A pane shown alone while the others stay in the layout.
     pub zoomed: Option<PaneId>,
+    /// A file shown from a single click in the file tree: the next one
+    /// replaces it, until it's edited, split or double-clicked.
+    pub preview: bool,
+    /// Shown as its icon only, and closing it asks first.
+    pub pinned: bool,
 }
 
 impl Tab {
@@ -191,6 +196,8 @@ impl Tab {
             panes: HashMap::from([(pane, surface)]),
             focused: pane,
             zoomed: None,
+            preview: false,
+            pinned: false,
         }
     }
 
@@ -217,6 +224,7 @@ impl Tab {
         self.panes.insert(pane, surface);
         self.focused = pane;
         self.zoomed = None;
+        self.preview = false;
     }
 
     /// Take a pane out. False when it was the last one (the tab closes).

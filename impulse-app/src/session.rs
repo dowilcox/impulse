@@ -199,7 +199,7 @@ impl Workbench {
                         let index =
                             |id: &PaneId| order.iter().position(|o| o == id).unwrap_or(0) as i64;
                         SessionTab {
-                            pinned: false,
+                            pinned: tab.pinned,
                             panes: order
                                 .iter()
                                 .filter_map(|id| tab.panes.get(id))
@@ -359,6 +359,7 @@ impl Workbench {
         let (_, first_id, first) = panes.first().cloned()?;
         let tab_id = self.next_id();
         let mut tab = Tab::new(tab_id, first_id, first);
+        tab.pinned = saved.pinned;
         let id_of = |index: i64| {
             panes
                 .iter()

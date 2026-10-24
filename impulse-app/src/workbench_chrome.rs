@@ -5,8 +5,10 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::menu::ContextMenuExt as _;
-use gpui_kit::{div, prelude::*, px, svg, AnyElement, Context, FontWeight, Hsla};
+use std::rc::Rc;
+
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
+use gpui_kit::{div, prelude::*, px, svg, AnyElement, Context, FontWeight, Hsla, Window};
 use impulse_kit::chrome::{metrics, Rgba as KitRgba};
 
 use crate::settings_store::SettingsStore;
@@ -93,6 +95,91 @@ impl Workbench {
         cx.notify();
     }
 
+    /// A tab's context menu. Its actions find the tab by id when chosen:
+    /// tabs can close or move while the menu is open.
+    fn tab_menu(
+        &self,
+        ws: usize,
+        index: usize,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        type Run = Rc<dyn Fn(&mut Workbench, usize, usize, &mut Window, &mut Context<Workbench>)>;
+        let workspace = &self.workspaces[ws];
+        let tab = &workspace.tabs[index];
+        let current = ws == self.active;
+        let mut items: Vec<(&'static str, Option<Run>)> = vec![
+            (
+                if tab.pinned { "Unpin Tab" } else { "Pin Tab" },
+                Some(Rc::new(|w, ws, t, _, cx| w.toggle_pin(ws, t, cx))),
+            ),
+            (
+                "Close Tab",
+                Some(Rc::new(|w, ws, t, window, cx| {
+                    w.active = ws;
+                    w.close_tab_at(t, window, cx)
+                })),
+            ),
+            ("", None),
+        ];
+        if current && index != workspace.active {
+            items.push((
+                "Move into Current Tab, Right",
+                Some(Rc::new(|w, _, t, window, cx| {
+                    w.join_tab(t, false, window, cx)
+                })),
+            ));
+            items.push((
+                "Move into Current Tab, Below",
+                Some(Rc::new(|w, _, t, window, cx| {
+                    w.join_tab(t, true, window, cx)
+                })),
+            ));
+            items.push(("", None));
+        } else if current && tab.is_split() {
+            items.push((
+                "Even Out Panes",
+                Some(Rc::new(|w, _, _, window, cx| {
+                    w.run_command("equalize_panes", window, cx)
+                })),
+            ));
+            items.push((
+                "Move Pane to New Tab",
+                Some(Rc::new(|w, _, _, window, cx| {
+                    w.run_command("move_pane_to_tab", window, cx)
+                })),
+            ));
+            items.push(("", None));
+        }
+        items.push((
+            "New Tab",
+            Some(Rc::new(|w, _, _, window, cx| {
+                w.run_command("new_tab", window, cx)
+            })),
+        ));
+        let (id, workbench) = (tab.id, cx.entity().downgrade());
+        move |mut menu, _, _| {
+            for (title, run) in &items {
+                let Some(run) = run.clone() else {
+                    menu = menu.separator();
+                    continue;
+                };
+                let workbench = workbench.clone();
+                menu = menu.item(PopupMenuItem::new(*title).on_click(move |_, window, cx| {
+                    let _ = workbench.update(cx, |w, cx| {
+                        let found = w.workspaces.iter().enumerate().find_map(|(ws, workspace)| {
+                            let t = workspace.tabs.iter().position(|t| t.id == id)?;
+                            Some((ws, t))
+                        });
+                        if let Some((ws, t)) = found {
+                            run(w, ws, t, window, cx)
+                        }
+                    });
+                }));
+            }
+            menu
+        }
+    }
+
     pub(crate) fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         // macOS draws its traffic lights in this inset; on Linux the window
@@ -116,6 +203,14 @@ impl Workbench {
             let dirty = tab.panes.values().any(|s| s.is_dirty(cx));
             let attention = !active && Self::tab_needs_attention(tab, cx);
             let color = if active { p.text } else { p.text_secondary };
+            let compact = tab.pinned;
+            let drop_color = hsla(p.selection);
+            let title = surface.title(cx);
+            let help = if tab.preview {
+                format!("{title}\nPreview: double-click to keep")
+            } else {
+                title.clone()
+            };
             let mut t = div()
                 .id(("tab", tab.id))
                 .group("tab")
@@ -123,13 +218,36 @@ impl Workbench {
                 .items_center()
                 .gap(px(6.))
                 .h(px(metrics::TAB_HEIGHT))
-                .pl(px(12.))
+                .pl(px(if compact { 8. } else { 12. }))
                 .pr(px(8.))
                 .max_w(px(220.))
                 .rounded(px(metrics::RADIUS))
                 .text_color(hsla(color))
                 .hover(|s| s.bg(hsla(p.hover)))
-                .on_click(cx.listener(move |w, _, window, cx| w.activate_tab(index, window, cx)))
+                .on_click(
+                    cx.listener(move |w, event: &gpui_kit::ClickEvent, window, cx| {
+                        if event.click_count() >= 2 {
+                            w.keep_tab(index, cx);
+                        }
+                        w.activate_tab(index, window, cx)
+                    }),
+                )
+                .on_drag(
+                    DraggedTab {
+                        index,
+                        title: title.clone(),
+                    },
+                    |dragged, _, _, cx| {
+                        cx.new(|_| crate::file_tree_actions::DragPreview(dragged.title.clone()))
+                    },
+                )
+                .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(drop_color))
+                .on_drop(cx.listener(move |w, dragged: &DraggedTab, _, cx| {
+                    w.move_tab(dragged.index, index, cx)
+                }))
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
+                })
                 .child(self.tab_icon(
                     tab,
                     if tab.is_split() {
@@ -140,52 +258,57 @@ impl Workbench {
                     metrics::ICON,
                     color,
                     cx,
-                ))
-                .child(
-                    div()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(surface.title(cx)),
-                )
-                .child(
-                    div()
-                        .id(("close", tab.id))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .w(px(16.))
-                        .h(px(16.))
-                        .rounded(px(metrics::RADIUS_SMALL))
-                        .hover(|s| s.bg(hsla(p.pressed)))
-                        .on_click(cx.listener(move |w, _, window, cx| {
-                            cx.stop_propagation();
-                            w.close_tab_at(index, window, cx)
-                        }))
-                        .child(if attention {
-                            crate::agent_views::status_dot(7., p.attention)
-                        } else if dirty {
-                            div()
-                                .w(px(8.))
-                                .h(px(8.))
-                                .rounded_full()
-                                .bg(hsla(p.text_secondary))
-                                .into_any_element()
-                        } else {
-                            div()
-                                .invisible()
-                                .group_hover("tab", |s| s.visible())
-                                .when(active, |d| d.visible())
-                                .child(icon("x", metrics::ICON_SMALL, p.text_tertiary))
-                                .into_any_element()
-                        }),
-                );
+                ));
+            if !compact {
+                t = t
+                    .child(
+                        div()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .when(tab.preview, |d| d.italic())
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .id(("close", tab.id))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(16.))
+                            .h(px(16.))
+                            .rounded(px(metrics::RADIUS_SMALL))
+                            .hover(|s| s.bg(hsla(p.pressed)))
+                            .on_click(cx.listener(move |w, _, window, cx| {
+                                cx.stop_propagation();
+                                w.close_tab_at(index, window, cx)
+                            }))
+                            .child(if attention {
+                                crate::agent_views::status_dot(7., p.attention)
+                            } else if dirty {
+                                div()
+                                    .w(px(8.))
+                                    .h(px(8.))
+                                    .rounded_full()
+                                    .bg(hsla(p.text_secondary))
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .invisible()
+                                    .group_hover("tab", |s| s.visible())
+                                    .when(active, |d| d.visible())
+                                    .child(icon("x", metrics::ICON_SMALL, p.text_tertiary))
+                                    .into_any_element()
+                            }),
+                    );
+            }
             if active {
                 t = t
                     .bg(hsla(p.raised))
                     .border_b_2()
                     .border_color(hsla(p.accent));
             }
+            let t = t.context_menu(self.tab_menu(self.active, index, cx));
             tabs = tabs.child(t);
         }
         div()
@@ -384,6 +507,7 @@ impl Workbench {
             for (t, tab) in workspace.tabs.iter().enumerate() {
                 let surface = tab.focused_surface();
                 let active_tab = selected && t == workspace.active;
+                let menu = self.tab_menu(index, t, cx);
                 column = column.child(
                     div()
                         .id(("workspace-tab", tab.id))
@@ -398,10 +522,15 @@ impl Workbench {
                         .text_size(px(11.5))
                         .text_color(hsla(if active_tab { p.text } else { p.text_secondary }))
                         .hover(|s| s.bg(hsla(p.hover)))
-                        .on_click(cx.listener(move |w, _, window, cx| {
-                            w.active = index;
-                            w.activate_tab(t, window, cx);
-                        }))
+                        .on_click(cx.listener(
+                            move |w, event: &gpui_kit::ClickEvent, window, cx| {
+                                w.active = index;
+                                if event.click_count() >= 2 {
+                                    w.keep_tab(t, cx);
+                                }
+                                w.activate_tab(t, window, cx);
+                            },
+                        ))
                         .child(self.tab_icon(
                             tab,
                             surface.icon(),
@@ -409,11 +538,19 @@ impl Workbench {
                             p.text_tertiary,
                             cx,
                         ))
-                        .child(div().flex_1().min_w_0().child(surface.title(cx)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .when(tab.preview, |d| d.italic())
+                                .child(surface.title(cx)),
+                        )
                         .children(
                             (!active_tab && Self::tab_needs_attention(tab, cx))
                                 .then(|| crate::agent_views::status_dot(6., p.attention)),
-                        ),
+                        )
+                        .children(tab.pinned.then(|| icon("pin", 10., p.text_tertiary)))
+                        .context_menu(menu),
                 );
             }
         }
@@ -479,13 +616,19 @@ impl Workbench {
                     .pr(px(10.))
                     .when(selected, |d| d.bg(hsla(p.selection)))
                     .hover(|style| style.bg(hsla(p.hover)))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if is_dir {
-                            this.toggle_dir(path.clone(), cx);
-                        } else {
-                            this.open_file(&path, window, cx);
-                        }
-                    }))
+                    .on_click(
+                        cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
+                            if is_dir {
+                                this.toggle_dir(path.clone(), cx);
+                            } else if event.click_count() >= 2 {
+                                // The second click of a double-click keeps the
+                                // preview.
+                                this.open_file(&path, window, cx);
+                            } else {
+                                this.preview_file(&path, window, cx);
+                            }
+                        }),
+                    )
                     .child(div().w(px(12.)).child(if row.is_dir {
                         icon(
                             if expanded {
@@ -761,4 +904,11 @@ impl Workbench {
             .child(div().flex_1())
             .children(right)
     }
+}
+
+/// A titlebar tab being dragged to a new place.
+#[derive(Clone)]
+pub(crate) struct DraggedTab {
+    index: usize,
+    title: String,
 }

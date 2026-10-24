@@ -354,9 +354,17 @@ impl Workbench {
     ) {
         let (tab_id, pane) = (self.next_id(), self.next_id());
         let workspace = &mut self.workspaces[index];
-        // After the active tab, as the Swift app inserts them.
+        // After the active tab, as the Swift app inserts them; never among
+        // the pinned ones unless it's the last of them.
         let at = if workspace.tabs.is_empty() {
             0
+        } else if workspace.tabs[workspace.active].pinned {
+            workspace
+                .tabs
+                .iter()
+                .rposition(|t| t.pinned)
+                .unwrap_or(workspace.active)
+                + 1
         } else {
             workspace.active + 1
         };
@@ -416,10 +424,37 @@ impl Workbench {
 
     /// Open `path` in an editor tab, or go to the tab it's already in.
     pub(crate) fn open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_file_as(path, false, window, cx);
+    }
+
+    /// Open `path` from a single click in the file tree: in the workspace's
+    /// preview tab when `editor_preview_tabs` is on.
+    pub(crate) fn preview_file(
+        &mut self,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let preview = SettingsStore::get(cx).editor_preview_tabs;
+        self.open_file_as(path, preview, window, cx);
+    }
+
+    fn open_file_as(
+        &mut self,
+        path: &Path,
+        preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some((w, t, pane)) = self.find_editor(path, cx) {
             self.active = w;
             self.workspaces[w].active = t;
-            self.workspaces[w].tabs[t].focused = pane;
+            let tab = &mut self.workspaces[w].tabs[t];
+            tab.focused = pane;
+            // Opening it for real keeps a preview.
+            if !preview {
+                tab.preview = false;
+            }
             self.focus_active(window, cx);
             cx.notify();
             return;
@@ -436,11 +471,25 @@ impl Workbench {
             Ok(editor) => {
                 let index = self.active;
                 self.start_lsp(index, &editor, window, cx);
-                cx.subscribe(&editor, |_, _, _: &EditorTabChanged, cx| cx.notify())
-                    .detach();
+                cx.subscribe(&editor, |w, editor, _: &EditorTabChanged, cx| {
+                    // An edit keeps a preview tab.
+                    if editor.read(cx).dirty {
+                        w.keep_preview_showing(&editor);
+                    }
+                    cx.notify()
+                })
+                .detach();
                 cx.observe(&editor, |_, _, cx| cx.notify()).detach();
                 self.notice = None;
+                if preview && self.replace_preview(Surface::Editor(editor.clone()), window, cx) {
+                    return;
+                }
                 self.add_tab(index, Surface::Editor(editor), window, cx);
+                if preview {
+                    let workspace = self.workspace_mut();
+                    let active = workspace.active;
+                    workspace.tabs[active].preview = true;
+                }
             }
             Err(refusal) => {
                 let name = path
@@ -450,6 +499,127 @@ impl Workbench {
                 self.set_notice(refusal.message(&name), cx);
             }
         }
+    }
+
+    /// Show `surface` in the active workspace's preview tab instead of what
+    /// it shows, when there's one to replace: one clean editor, not split.
+    fn replace_preview(
+        &mut self,
+        surface: Surface,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(index) = self.workspace().tabs.iter().position(|t| t.preview) else {
+            return false;
+        };
+        let tab = &self.workspace().tabs[index];
+        let old = tab.focused_surface().clone();
+        if tab.is_split() || !matches!(old, Surface::Editor(_)) || old.is_dirty(cx) {
+            self.workspace_mut().tabs[index].preview = false;
+            return false;
+        }
+        self.editor_closed(&old);
+        let pane = self.next_id();
+        let tab = &mut self.workspace_mut().tabs[index];
+        tab.layout = impulse_kit::layout_tree::LayoutTree::Leaf(pane);
+        tab.panes = std::collections::HashMap::from([(pane, surface)]);
+        tab.focused = pane;
+        tab.zoomed = None;
+        self.workspace_mut().active = index;
+        self.focus_active(window, cx);
+        cx.notify();
+        true
+    }
+
+    /// Keep the preview tab showing `editor` (it was edited).
+    fn keep_preview_showing(&mut self, editor: &Entity<EditorTab>) {
+        for workspace in &mut self.workspaces {
+            for tab in &mut workspace.tabs {
+                if tab.preview
+                    && tab
+                        .panes
+                        .values()
+                        .any(|s| matches!(s, Surface::Editor(e) if e == editor))
+                {
+                    tab.preview = false;
+                }
+            }
+        }
+    }
+
+    /// Turn the preview tab at `index` into a normal one (double-click).
+    pub(crate) fn keep_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(tab) = self.workspace_mut().tabs.get_mut(index) {
+            tab.preview = false;
+            cx.notify();
+        }
+    }
+
+    /// Pin or unpin tab `index` of workspace `ws`.
+    pub(crate) fn toggle_pin(&mut self, ws: usize, index: usize, cx: &mut Context<Self>) {
+        if let Some(tab) = self
+            .workspaces
+            .get_mut(ws)
+            .and_then(|w| w.tabs.get_mut(index))
+        {
+            tab.preview = false;
+            tab.pinned = !tab.pinned;
+            cx.notify();
+        }
+    }
+
+    /// Move the tab at `from` to `to` in the active workspace, keeping the
+    /// same tab active.
+    pub(crate) fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        let workspace = self.workspace_mut();
+        if from == to || from >= workspace.tabs.len() || to >= workspace.tabs.len() {
+            return;
+        }
+        let active = workspace.tabs[workspace.active].id;
+        let tab = workspace.tabs.remove(from);
+        workspace.tabs.insert(to, tab);
+        workspace.active = workspace
+            .tabs
+            .iter()
+            .position(|t| t.id == active)
+            .unwrap_or(0);
+        cx.notify();
+    }
+
+    /// Move every pane of the tab at `index` into the active tab, beside its
+    /// focused pane (right, or below).
+    pub(crate) fn join_tab(
+        &mut self,
+        index: usize,
+        below: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace();
+        if index == workspace.active || index >= workspace.tabs.len() {
+            return;
+        }
+        let target = workspace.tabs[workspace.active].id;
+        let source = self.workspace_mut().tabs.remove(index);
+        let workspace = self.workspace_mut();
+        workspace.active = workspace
+            .tabs
+            .iter()
+            .position(|t| t.id == target)
+            .unwrap_or(0);
+        let axis = if below {
+            impulse_kit::layout_tree::SplitAxis::Vertical
+        } else {
+            impulse_kit::layout_tree::SplitAxis::Horizontal
+        };
+        for (_, surface) in source.surfaces() {
+            let pane = self.next_id();
+            if let Some(tab) = self.workspace_mut().active_tab_mut() {
+                tab.split(pane, surface.clone(), axis, false);
+            }
+        }
+        self.focus_active(window, cx);
+        cx.notify();
     }
 
     /// An image tab's surface.
@@ -509,6 +679,32 @@ impl Workbench {
         let Some(tab) = self.workspace().tabs.get(index) else {
             return;
         };
+        if tab.pinned {
+            let (id, workbench) = (tab.id, cx.entity().downgrade());
+            crate::tasks::confirm(
+                window,
+                cx,
+                "Pinned Tab".into(),
+                "This tab is pinned. Close anyway?".into(),
+                "Close",
+                "Cancel",
+                true,
+                move |yes, window, cx| {
+                    if !yes {
+                        return;
+                    }
+                    let _ = workbench.update(cx, |w, cx| {
+                        // Re-find the tab: others may have closed or opened.
+                        let workspace = w.workspace_mut();
+                        if let Some(index) = workspace.tabs.iter().position(|t| t.id == id) {
+                            workspace.tabs[index].pinned = false;
+                            w.close_tab_at(index, window, cx);
+                        }
+                    });
+                },
+            );
+            return;
+        }
         let dirty: Vec<String> = tab
             .panes
             .values()

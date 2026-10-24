@@ -95,7 +95,9 @@ impulse-lsp/              Rust (rust branch): the language-server client
 impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           macOS and Linux: workspaces (folder + Scratch)
                           with tabs of split panes (LayoutTree, draggable
-                          dividers, zoom), commands as one RunCommand
+                          dividers, zoom; preview tabs from a single click
+                          in the file tree, pinned tabs, tabs dragged to
+                          reorder, the tab context menu), commands as one RunCommand
                           action bound from impulse_kit::keybindings,
                           workbench chrome, the terminal (the login shell
                           with integration, shell_launch.rs),
