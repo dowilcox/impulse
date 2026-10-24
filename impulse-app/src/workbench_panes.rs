@@ -198,6 +198,7 @@ impl Workbench {
             Surface::Settings(s) => s.clone().into_any_element(),
             Surface::Keybindings(k) => k.clone().into_any_element(),
             Surface::TaskFinish(f) => f.clone().into_any_element(),
+            Surface::ProjectSetup(s) => s.clone().into_any_element(),
         };
         div()
             .relative()

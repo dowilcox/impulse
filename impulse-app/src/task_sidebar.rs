@@ -218,6 +218,10 @@ impl Workbench {
                     action(|w, i, window, cx| w.present_new_task(Some(i), true, window, cx)),
                 ));
             }
+            items.push((
+                "Project Setup…".into(),
+                action(|w, i, window, cx| w.open_project_setup(Some(i), None, window, cx)),
+            ));
         }
         items.push((
             "Open Folder as Workspace…".into(),

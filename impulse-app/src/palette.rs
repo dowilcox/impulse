@@ -322,6 +322,9 @@ pub(crate) struct Host {
     editor: Option<Entity<EditorTab>>,
     commands: Vec<AppCommand>,
     settings: Settings,
+    /// The project's actions, or why its settings can't be read.
+    project_actions: Vec<impulse_kit::project::config::Action>,
+    project_error: Option<String>,
 }
 
 pub struct Palette {
@@ -576,16 +579,10 @@ impl Palette {
             Mode::Settings => self.refresh_settings(&term),
             Mode::Symbols => self.refresh_symbols(&term, window, cx),
             Mode::WorkspaceSymbols => self.refresh_workspace_symbols(term, window, cx),
-            Mode::Actions => self.not_yet("Project actions"),
+            Mode::Actions => self.refresh_actions(&term),
             Mode::Help => self.refresh_help(),
         }
         cx.notify();
-    }
-
-    /// A mode whose feature the Rust app doesn't have yet.
-    fn not_yet(&mut self, feature: &str) {
-        self.rows = Vec::new();
-        self.empty_message = format!("{feature} isn't in the Rust app yet.");
     }
 
     // MARK: Files
@@ -1223,6 +1220,45 @@ impl Palette {
         self.empty_message = "No matching settings".into();
     }
 
+    // MARK: Project actions
+
+    fn refresh_actions(&mut self, term: &str) {
+        let actions = &self.host.project_actions;
+        self.rows = fuzzy::rank(actions, term, usize::MAX, false, |a| &a.name)
+            .into_iter()
+            .map(|(action, m)| {
+                let split = matches!(action.open.as_deref(), Some("right" | "down"));
+                let listed = action.clone();
+                Row::new(
+                    format!("action:{}", action.name),
+                    Some("play"),
+                    action.name.clone(),
+                    move |w, window, cx| w.palette_run_project_action(listed.clone(), window, cx),
+                )
+                .highlights(m.positions)
+                .subtitle(Some(action.command.clone()))
+                .trailing(split.then(|| "split".to_string()))
+            })
+            .collect();
+        let title = if actions.is_empty() {
+            "Add project actions…"
+        } else {
+            "Edit project actions…"
+        };
+        self.rows.push(
+            Row::new("action-edit", Some("pencil"), title, |w, window, cx| {
+                w.edit_project_config(window, cx)
+            })
+            .subtitle(Some(
+                self.host
+                    .project_error
+                    .clone()
+                    .unwrap_or_else(|| impulse_kit::project::config::RELATIVE_PATH.into()),
+            )),
+        );
+        self.empty_message = String::new();
+    }
+
     // MARK: Symbols
 
     fn refresh_symbols(&mut self, term: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1807,6 +1843,10 @@ impl Workbench {
             settings: SettingsStore::get(cx).clone(),
             ..Default::default()
         };
+        match self.palette_project_actions(cx) {
+            Ok(actions) => host.project_actions = actions,
+            Err(error) => host.project_error = Some(error),
+        }
         for (w, workspace) in self.workspaces.iter().enumerate() {
             host.workspaces.push(WorkspaceInfo {
                 id: workspace.id,

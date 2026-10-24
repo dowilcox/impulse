@@ -150,7 +150,14 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           task_sheet.rs New Task; task_finish.rs Finish
                           Task; task_cleanup.rs Archive/Undo;
                           task_sidebar.rs repository groups, merged and
-                          overlap chips), the Quick Terminal
+                          overlap chips), project settings
+                          (project_setup.rs: the Project Setup tab,
+                          Surface::ProjectSetup, over
+                          project_setup_model.rs; project_actions.rs: the
+                          palette's a: actions, Edit Project Actions;
+                          dependency_prompts.rs: [on_change] and check
+                          offers on RepositoryEvent::HeadMoved), the Quick
+                          Terminal
                           (quick_terminal.rs: a pop-up
                           window over a TerminalView with no_bar, its
                           shortcut registered with global-hotkey),

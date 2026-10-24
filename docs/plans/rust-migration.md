@@ -322,6 +322,18 @@ which inserts the type when picked.*
   overlap chips. A task's terminals get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT`
   and `IMPULSE_REPO_ROOT`. Agents' parts (an agent's request, its brief,
   waiting for its turn) come with the agents.
+- Project settings: the Project Setup tab
+  ([screenshot](images/rust-project-setup.png)), proposing copies,
+  clones, the database, ports, values, scripts, rules and actions from the
+  repository and saving the managed sections of `.impulse/project.toml`
+  (trusting what it wrote, folding in and removing a local
+  `.git/impulse/project.toml` Impulse wrote, asking when the file changed
+  meanwhile), Try in a New Task and Re-apply; reached from the palette,
+  the sidebar's menu, New Task's "Set Up This Project for Tasks…" and
+  Finish's "Set Up a Check…". Project actions in the palette's `a:` mode,
+  in a tab or a split, once trusted. After a pull, merge or checkout, a
+  toast offers the `[on_change]` commands (or the setup script) and, after
+  a merge, the check script.
 - The terminal draws its own grid (cell runs, selection and search ranges,
   the cursor, block washes, stripes, separators and status chips), takes
   keys through the port of `KeyEncoder` and text through GPUI's input

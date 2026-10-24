@@ -674,18 +674,38 @@ impl Render for TaskSheet {
                 )
             })
             .when(!self.is_loading && self.needs_setup(), |d| {
+                let (workbench, root) = (self.workbench.clone(), self.repo_root.clone());
                 d.child(
                     div()
-                        .text_size(px(11.))
-                        .text_color(hsla(p.text_tertiary))
-                        .child(if self.lock_files.is_empty() {
-                            "No setup for tasks yet.".to_string()
-                        } else {
-                            format!(
-                                "No setup script. This repository has {}.",
-                                self.lock_files.join(" and ")
-                            )
-                        }),
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(hsla(p.text_tertiary))
+                                .child(if self.lock_files.is_empty() {
+                                    "No setup for tasks yet.".to_string()
+                                } else {
+                                    format!(
+                                        "No setup script. This repository has {}.",
+                                        self.lock_files.join(" and ")
+                                    )
+                                }),
+                        )
+                        .child(
+                            Button::new("task-set-up")
+                                .ghost()
+                                .xsmall()
+                                .label("Set Up This Project for Tasks…")
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let root = root.clone();
+                                    let _ = workbench.update(cx, |w, cx| {
+                                        w.open_project_setup_at(root, None, window, cx)
+                                    });
+                                }),
+                        ),
                 )
             })
             .children(self.error.clone().map(|error| {

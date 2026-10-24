@@ -233,9 +233,14 @@ impl Workbench {
                 workbench.sync_branches(cx);
                 cx.notify();
             });
-            let events = cx.subscribe(&state, |workbench, _, event, cx| match event {
-                // Files changed with HEAD: list the tree's folders again.
-                RepositoryEvent::HeadMoved => workbench.reload_tree(cx),
+            let events = cx.subscribe(&state, |workbench, state, event, cx| match event {
+                // Files changed with HEAD: list the tree's folders again, and
+                // offer to bring dependencies up to date.
+                RepositoryEvent::HeadMoved { from, to } => {
+                    workbench.reload_tree(cx);
+                    let root = state.read(cx).root.clone();
+                    workbench.offer_dependency_steps(root, from.clone(), to.clone(), cx);
+                }
             });
             self.git.held.insert(
                 root.clone(),
