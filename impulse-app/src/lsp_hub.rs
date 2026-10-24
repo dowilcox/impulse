@@ -112,6 +112,14 @@ impl LspHub {
 
 /// One open document's link to its server: what it last sent, and the
 /// providers GPUI Kit's editor calls.
+/// What Go to Type Definition, Implementations and Declaration ask for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Navigation {
+    TypeDefinition,
+    Implementation,
+    Declaration,
+}
+
 pub struct DocumentLink {
     pub client: Arc<LspClient>,
     pub uri: Uri,
@@ -265,6 +273,41 @@ impl DocumentLink {
                 .request::<lsp_types::request::References>(params)
                 .await?
                 .unwrap_or_default())
+        })
+    }
+
+    /// Where the symbol at `offset` has its type defined, is implemented or
+    /// is declared (Monaco's Go to Type Definition, Implementations and
+    /// Declaration).
+    pub fn navigate(
+        &self,
+        kind: Navigation,
+        text: &Rope,
+        offset: usize,
+        cx: &App,
+    ) -> Task<Result<Vec<lsp_types::Location>, String>> {
+        use lsp_types::request::{GotoDeclaration, GotoImplementation, GotoTypeDefinition};
+        let params = GotoDefinitionParams {
+            text_document_position_params: self.at(text, offset),
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            let response = match kind {
+                Navigation::TypeDefinition => client.request::<GotoTypeDefinition>(params).await?,
+                Navigation::Implementation => client.request::<GotoImplementation>(params).await?,
+                Navigation::Declaration => client.request::<GotoDeclaration>(params).await?,
+            };
+            Ok(match response {
+                Some(GotoDefinitionResponse::Scalar(location)) => vec![location],
+                Some(GotoDefinitionResponse::Array(locations)) => locations,
+                Some(GotoDefinitionResponse::Link(links)) => links
+                    .into_iter()
+                    .map(|l| lsp_types::Location::new(l.target_uri, l.target_selection_range))
+                    .collect(),
+                None => Vec::new(),
+            })
         })
     }
 

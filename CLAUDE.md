@@ -174,7 +174,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys, occurrence and selection
                           highlights as range decorations from document
-                          highlights or impulse_kit::occurrences), workspace trust, language
+                          highlights or impulse_kit::occurrences, Monaco's
+                          context menu, Go to Type Definition,
+                          Implementations and Declaration through
+                          DocumentLink::navigate, Change All Occurrences), workspace trust, language
                           servers (code actions, formatting, rename and
                           references with edits across files);
                           scripts/spike/linux-shot.sh screenshots it on Linux

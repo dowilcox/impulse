@@ -21,6 +21,10 @@ actions!(
         InsertLineBelow,
         InsertLineAbove,
         AddNextOccurrence,
+        ChangeAllOccurrences,
+        GoToTypeDefinition,
+        GoToImplementations,
+        GoToDeclaration,
     ]
 );
 
@@ -41,6 +45,8 @@ pub fn bind_keys(cx: &mut App) {
             KeyBinding::new("cmd-shift-enter", InsertLineAbove, c),
             KeyBinding::new("cmd-d", AddNextOccurrence, c),
             KeyBinding::new("f12", GoToDefinition, c),
+            KeyBinding::new("cmd-f12", GoToImplementations, c),
+            KeyBinding::new("cmd-f2", ChangeAllOccurrences, c),
             KeyBinding::new("cmd-i", ShowCompletions, c),
             KeyBinding::new("ctrl-space", ShowCompletions, c),
             KeyBinding::new("alt-cmd-f", Replace, c),
@@ -57,6 +63,8 @@ pub fn bind_keys(cx: &mut App) {
             KeyBinding::new("ctrl-shift-enter", InsertLineAbove, c),
             KeyBinding::new("ctrl-d", AddNextOccurrence, c),
             KeyBinding::new("f12", GoToDefinition, c),
+            KeyBinding::new("ctrl-f12", GoToImplementations, c),
+            KeyBinding::new("ctrl-f2", ChangeAllOccurrences, c),
             KeyBinding::new("ctrl-space", ShowCompletions, c),
             KeyBinding::new("ctrl-shift-z", Redo, c),
         ]);

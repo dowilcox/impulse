@@ -10,6 +10,7 @@ use gpui_kit::component::input::{
     Editor, EditorState, InputEvent, Position, RangeDecoration, RangeDecorationCollection,
     RangeDecorationStyle, RopeExt, TabSize,
 };
+use gpui_kit::component::native_menu::NativeMenu;
 use gpui_kit::{
     prelude::*, px, App, Context, Entity, EntityInputHandler, EventEmitter, Subscription, Window,
 };
@@ -984,6 +985,10 @@ impl Render for EditorTab {
         if line_height > 0 {
             editor = editor.line_height(px(line_height as f32));
         }
+        editor = editor.context_menu(Self::context_menu(
+            self.primary_link().is_some(),
+            !self.read_only,
+        ));
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()
@@ -996,6 +1001,22 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::insert_line_below))
             .on_action(cx.listener(Self::insert_line_above))
             .on_action(cx.listener(Self::add_next_occurrence))
+            .on_action(cx.listener(Self::change_all_occurrences))
+            .on_action(cx.listener(
+                |tab, _: &crate::editor_keys::GoToTypeDefinition, window, cx| {
+                    tab.navigate(crate::lsp_hub::Navigation::TypeDefinition, window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |tab, _: &crate::editor_keys::GoToImplementations, window, cx| {
+                    tab.navigate(crate::lsp_hub::Navigation::Implementation, window, cx)
+                },
+            ))
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::GoToDeclaration, window, cx| {
+                    tab.navigate(crate::lsp_hub::Navigation::Declaration, window, cx)
+                }),
+            )
             .map(|d| match self.preview {
                 None => d.child(editor),
                 Some(false) => d.child(self.preview_element(cx)),
@@ -1103,5 +1124,135 @@ impl EditorTab {
                 self.marks = Some(marks);
             }
         }
+    }
+}
+
+impl EditorTab {
+    /// Monaco's context menu: navigation, refactoring, the clipboard and
+    /// the command palette. Language-server items are off without one.
+    fn context_menu(
+        lsp: bool,
+        editable: bool,
+    ) -> impl Fn(NativeMenu, &mut Window, &mut gpui_kit::App) -> NativeMenu + 'static {
+        use crate::editor_keys::{
+            ChangeAllOccurrences, GoToDeclaration, GoToImplementations, GoToTypeDefinition,
+        };
+        use crate::workbench::{FindReferences, FormatDocument, RenameSymbol};
+        use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, ToggleCodeActions};
+        move |menu, _, _| {
+            menu.menu_with_disabled("Go to Definition", !lsp, Box::new(GoToDefinition))
+                .menu_with_disabled("Go to Type Definition", !lsp, Box::new(GoToTypeDefinition))
+                .menu_with_disabled("Go to Implementations", !lsp, Box::new(GoToImplementations))
+                .menu_with_disabled("Go to Declaration", !lsp, Box::new(GoToDeclaration))
+                .menu_with_disabled("Go to References", !lsp, Box::new(FindReferences))
+                .separator()
+                .menu_with_disabled("Rename Symbol", !(lsp && editable), Box::new(RenameSymbol))
+                .menu_with_disabled(
+                    "Change All Occurrences",
+                    !editable,
+                    Box::new(ChangeAllOccurrences),
+                )
+                .menu_with_disabled(
+                    "Format Document",
+                    !(lsp && editable),
+                    Box::new(FormatDocument),
+                )
+                .menu_with_disabled(
+                    "Show Code Actions",
+                    !(lsp && editable),
+                    Box::new(ToggleCodeActions),
+                )
+                .separator()
+                .menu_with_disabled("Cut", !editable, Box::new(Cut))
+                .menu("Copy", Box::new(Copy))
+                .menu_with_disabled("Paste", !editable, Box::new(Paste))
+                .separator()
+                .menu(
+                    "Command Palette",
+                    Box::new(crate::commands::RunCommand::new("command_palette")),
+                )
+        }
+    }
+
+    /// Change All Occurrences: a cursor on every whole-word occurrence of
+    /// the word at the cursor, or every match of the selection.
+    fn change_all_occurrences(
+        &mut self,
+        _: &crate::editor_keys::ChangeAllOccurrences,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use impulse_kit::occurrences;
+        let (text, selection) = {
+            let state = self.state.read(cx);
+            (state.value().to_string(), state.selected_range())
+        };
+        let (current, others) = if selection.is_empty() {
+            let Some(word) = occurrences::word_at(&text, selection.start) else {
+                return;
+            };
+            let all = occurrences::whole_word_matches(&text, &text[word.clone()]);
+            (
+                word.clone(),
+                all.into_iter().filter(|r| *r != word).collect(),
+            )
+        } else {
+            (
+                selection.clone(),
+                occurrences::selection_matches(&text, selection),
+            )
+        };
+        self.state.update(cx, |state, cx| {
+            state.set_selected_range(current, cx);
+            for range in others {
+                state.add_selection(range, cx);
+            }
+        });
+    }
+
+    /// Go to Type Definition, Implementations or Declaration: straight
+    /// there for one place, a list to pick from for several.
+    fn navigate(
+        &mut self,
+        kind: crate::lsp_hub::Navigation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(link), Some(hooks)) = (self.primary_link(), self.hooks.clone()) else {
+            return self.say("No language server for this file.", cx);
+        };
+        let (text, offset) = {
+            let state = self.state.read(cx);
+            (state.text().clone(), state.cursor())
+        };
+        let task = link.navigate(kind, &text, offset, cx);
+        let (own_text, own_uri) = (text.to_string(), link.uri.clone());
+        let nothing = match kind {
+            crate::lsp_hub::Navigation::TypeDefinition => "No type definition found.",
+            crate::lsp_hub::Navigation::Implementation => "No implementation found.",
+            crate::lsp_hub::Navigation::Declaration => "No declaration found.",
+        };
+        cx.spawn_in(window, async move |tab, cx| {
+            let locations = task.await.unwrap_or_default();
+            let _ = tab.update_in(cx, |tab, window, cx| match locations.as_slice() {
+                [] => tab.say(nothing, cx),
+                [location] if location.uri == own_uri => {
+                    let start = location.range.start;
+                    tab.state
+                        .update(cx, |state, cx| state.set_cursor_position(start, window, cx));
+                }
+                [location] => {
+                    let params = lsp_types::ShowDocumentParams {
+                        uri: location.uri.clone(),
+                        external: Some(false),
+                        take_focus: Some(true),
+                        selection: Some(location.range),
+                    };
+                    (hooks.show_document)(&params, window, cx);
+                }
+                _ => tab.show_references(locations, &own_uri, &own_text, hooks, window, cx),
+            });
+        })
+        .detach();
     }
 }
