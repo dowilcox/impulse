@@ -780,6 +780,16 @@ impl Workbench {
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "quick_terminal" => crate::quick_terminal::toggle(cx),
             "manage_branches" => self.show_branch_manager(window, cx),
+            "diff_view" => match self.active_editor().cloned() {
+                Some(editor) => {
+                    if let Err(message) =
+                        editor.update(cx, |editor, cx| editor.toggle_diff_view(window, cx))
+                    {
+                        self.set_notice(message, cx);
+                    }
+                }
+                None => self.set_notice("Open a file to see its changes.".into(), cx),
+            },
             "editor_integration" => {
                 SettingsStore::update(cx, |s| {
                     s.terminal_editor_integration = !s.terminal_editor_integration

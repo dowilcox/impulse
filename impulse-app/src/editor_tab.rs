@@ -76,6 +76,8 @@ pub struct EditorTab {
     /// Other places the symbol at the cursor appears, and other matches of
     /// the selection (Monaco's occurrence and selection highlights).
     marks: Option<RangeDecorationCollection>,
+    /// Diff View: the file at HEAD beside the editor, changed lines tinted.
+    diff: Option<DiffView>,
     /// The selection the marks were worked out for.
     marked_at: Option<std::ops::Range<usize>>,
     _marking: Option<gpui_kit::Task<()>>,
@@ -139,9 +141,13 @@ impl EditorTab {
                 cx.notify();
                 return;
             }
-            // A preview beside the editor follows every edit.
+            // A preview beside the editor follows every edit, as does the
+            // Diff View.
             if tab.preview.is_some() {
                 cx.notify();
+            }
+            if tab.diff.is_some() {
+                tab.refresh_diff(DIFF_DELAY, cx);
             }
             if !tab.dirty {
                 tab.dirty = true;
@@ -176,6 +182,7 @@ impl EditorTab {
             hooks: None,
             occurrences: None,
             marks: None,
+            diff: None,
             marked_at: None,
             _marking: None,
             _subscription: subscription,
@@ -1017,10 +1024,29 @@ impl Render for EditorTab {
                     tab.navigate(crate::lsp_hub::Navigation::Declaration, window, cx)
                 }),
             )
-            .map(|d| match self.preview {
-                None => d.child(editor),
-                Some(false) => d.child(self.preview_element(cx)),
-                Some(true) => d
+            .map(|d| match (self.preview, &self.diff) {
+                (None, Some(diff)) => {
+                    let mut base = Editor::new(&diff.base)
+                        .size_full()
+                        .font_family(settings.font_family.clone())
+                        .text_size(px(size))
+                        .bordered(false);
+                    if line_height > 0 {
+                        base = base.line_height(px(line_height as f32));
+                    }
+                    d.flex()
+                        .child(gpui_kit::div().flex_1().min_w_0().h_full().child(base))
+                        .child(
+                            gpui_kit::div()
+                                .w(px(1.))
+                                .h_full()
+                                .bg(gpui_kit::component::ActiveTheme::theme(&**cx).border),
+                        )
+                        .child(gpui_kit::div().flex_1().min_w_0().h_full().child(editor))
+                }
+                (None, None) => d.child(editor),
+                (Some(false), _) => d.child(self.preview_element(cx)),
+                (Some(true), _) => d
                     .flex()
                     .child(gpui_kit::div().flex_1().min_w_0().h_full().child(editor))
                     .child(
@@ -1254,5 +1280,123 @@ impl EditorTab {
             });
         })
         .detach();
+    }
+}
+
+/// How long typing rests before the Diff View marks again.
+const DIFF_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// The Diff View's left side and the marks on both sides.
+struct DiffView {
+    base: Entity<EditorState>,
+    base_text: String,
+    base_marks: RangeDecorationCollection,
+    own_marks: RangeDecorationCollection,
+    _refresh: Option<gpui_kit::Task<()>>,
+}
+
+impl EditorTab {
+    pub fn is_diff_view(&self) -> bool {
+        self.diff.is_some()
+    }
+
+    /// Toggle Diff View: the file at HEAD, read-only, beside the editor,
+    /// with removed lines tinted on the left and added ones on the right,
+    /// following edits (Monaco's side-by-side diff editor in the Swift app).
+    /// An error message when the file isn't in a repository.
+    pub fn toggle_diff_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        if let Some(diff) = self.diff.take() {
+            diff.own_marks.dispose(cx);
+            cx.notify();
+            return Ok(());
+        }
+        let base_text = impulse_git::buffer_diff::head_text(&self.path)
+            .ok_or_else(|| "This file isn't in a git repository.".to_string())?;
+        if self.preview == Some(false) {
+            self.preview = None;
+        }
+        let settings = crate::settings_store::SettingsStore::get(cx).clone();
+        let grammar = grammar_for(&self.language).to_string();
+        let (tab_size, use_spaces) = (self.tab_size, self.use_spaces);
+        let text = base_text.clone();
+        let base = cx.new(|cx| {
+            let mut state = EditorState::new(window, cx)
+                .language(grammar)
+                .line_number(settings.show_line_numbers)
+                .folding(settings.folding)
+                .soft_wrap(settings.word_wrap)
+                .tab_size(TabSize {
+                    tab_size,
+                    hard_tabs: !use_spaces,
+                })
+                .default_value(text);
+            state.set_readonly(true, cx);
+            state
+        });
+        let base_marks = base.update(cx, |state, cx| {
+            state.create_range_decorations_collection(Vec::new(), cx)
+        });
+        let own_marks = self.state.update(cx, |state, cx| {
+            state.create_range_decorations_collection(Vec::new(), cx)
+        });
+        self.diff = Some(DiffView {
+            base,
+            base_text,
+            base_marks,
+            own_marks,
+            _refresh: None,
+        });
+        self.refresh_diff(std::time::Duration::ZERO, cx);
+        cx.notify();
+        Ok(())
+    }
+
+    /// Mark the changed lines again, after `delay`.
+    fn refresh_diff(&mut self, delay: std::time::Duration, cx: &mut Context<Self>) {
+        let Some(diff) = self.diff.as_mut() else {
+            return;
+        };
+        let old = diff.base_text.clone();
+        let new = self.state.read(cx).value().to_string();
+        diff._refresh = Some(cx.spawn(async move |tab, cx| {
+            if !delay.is_zero() {
+                cx.background_executor().timer(delay).await;
+            }
+            let (removed, added) = cx
+                .background_executor()
+                .spawn(async move {
+                    use impulse_git::buffer_diff::{line_byte_ranges, line_changes};
+                    let changes = line_changes(&old, &new);
+                    (
+                        line_byte_ranges(&old, &changes.removed),
+                        line_byte_ranges(&new, &changes.added),
+                    )
+                })
+                .await;
+            let _ = tab.update(cx, |tab, cx| {
+                let Some(diff) = tab.diff.as_ref() else {
+                    return;
+                };
+                let theme = gpui_kit::component::ActiveTheme::theme(&**cx);
+                let (red, green) = (theme.danger.opacity(0.22), theme.success.opacity(0.18));
+                let marks = |ranges: Vec<std::ops::Range<usize>>, color| {
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            RangeDecoration::new(range)
+                                .with_style(RangeDecorationStyle::Fill)
+                                .with_color(color)
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let (base_marks, own_marks) = (diff.base_marks.clone(), diff.own_marks.clone());
+                base_marks.set(marks(removed, red), cx);
+                own_marks.set(marks(added, green), cx);
+            });
+        }));
     }
 }

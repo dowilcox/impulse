@@ -17,6 +17,7 @@
 
 pub mod blame;
 pub mod branches;
+pub mod buffer_diff;
 pub mod change_move;
 pub mod changed_files;
 pub mod cli;

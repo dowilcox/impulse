@@ -189,7 +189,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           highlights or impulse_kit::occurrences, Monaco's
                           context menu, Go to Type Definition,
                           Implementations and Declaration through
-                          DocumentLink::navigate, Change All Occurrences), workspace trust, language
+                          DocumentLink::navigate, Change All Occurrences,
+                          the Diff View: HEAD read-only beside the buffer,
+                          lines marked by impulse_git::buffer_diff), workspace trust, language
                           servers (code actions, formatting, rename and
                           references with edits across files);
                           scripts/spike/linux-shot.sh screenshots it on Linux

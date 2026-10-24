@@ -343,6 +343,13 @@ which inserts the type when picked.*
 top of the file's card; one on a removed line and one written with c on
 the focused hunk sit under their lines.*
 
+- The editor's Diff View (Toggle Diff View): the file at HEAD, read-only,
+  beside the editable buffer, removed lines tinted on the left and added
+  ones on the right as you type (`impulse_git::buffer_diff`). Unlike
+  Monaco's diff editor the two sides aren't padded to line up yet. Also
+  Monaco's context menu, Go to Type Definition, Implementations and
+  Declaration, Change All Occurrences, and occurrence and selection
+  highlights.
 - Agents: Claude Code, Codex, opencode and the other known agents are found
   in a terminal from its foreground process (`/proc` on Linux, libproc and
   `KERN_PROCARGS2` on macOS) and from their hooks (`impulse hook`), and
