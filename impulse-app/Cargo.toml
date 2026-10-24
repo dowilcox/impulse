@@ -1,0 +1,15 @@
+[package]
+name = "impulse-app"
+version = "0.36.0"
+edition = "2021"
+description = "The Impulse app in Rust on GPUI, for macOS and Linux (exploration)"
+license = "GPL-3.0-only"
+
+[dependencies]
+# Zed publishes GPUI from its repository; pinned to a release tag.
+gpui = { git = "https://github.com/zed-industries/zed", tag = "v0.233.10" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", tag = "v0.233.10", features = ["font-kit", "wayland", "x11"] }
+impulse-terminal = { path = "../impulse-terminal" }
+impulse-kit = { path = "../impulse-kit" }
+env_logger = "0.11"
+log = { workspace = true }

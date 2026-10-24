@@ -63,3 +63,16 @@ fn shell_parser_matches_fixture() {
         assert_eq!(actual, expected, "input={input:?} cursor={cursor}");
     }
 }
+
+#[test]
+fn resolved_themes_match_fixtures() {
+    let names = impulse_kit::theme::builtin_theme_names();
+    assert_eq!(names.len(), 19);
+    for id in names {
+        let theme = impulse_kit::theme::builtin_theme(id).unwrap();
+        let actual = serde_json::to_value(&theme).unwrap();
+        let expected: Value =
+            serde_json::from_str(&fixture(&format!("themes/{id}.theme.json"))).unwrap();
+        assert_eq!(actual, expected, "theme {id}");
+    }
+}

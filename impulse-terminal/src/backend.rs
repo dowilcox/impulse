@@ -175,8 +175,27 @@ const SHELL_NONCE_VAR: &str = "IMPULSE_SHELL_NONCE";
 /// 128 random bits, hex.
 fn random_nonce() -> String {
     let mut bytes = [0u8; 16];
-    unsafe { libc::arc4random_buf(bytes.as_mut_ptr().cast(), bytes.len()) };
+    fill_random(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(target_os = "macos")]
+fn fill_random(bytes: &mut [u8]) {
+    unsafe { libc::arc4random_buf(bytes.as_mut_ptr().cast(), bytes.len()) };
+}
+
+#[cfg(target_os = "linux")]
+fn fill_random(bytes: &mut [u8]) {
+    let mut filled = 0;
+    while filled < bytes.len() {
+        let rest = &mut bytes[filled..];
+        let n = unsafe { libc::getrandom(rest.as_mut_ptr().cast(), rest.len(), 0) };
+        if n > 0 {
+            filled += n as usize;
+        } else if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            panic!("getrandom failed: {}", io::Error::last_os_error());
+        }
+    }
 }
 
 /// Most bytes read from the PTY before the loop handles queued input,
@@ -850,7 +869,7 @@ const CHILD_EXIT_GRACE: Duration = Duration::from_secs(1);
 /// kill it. alacritty's `Pty` waits for the child when dropped, so a shell
 /// ignoring SIGHUP would otherwise hold the reader thread forever. The child
 /// is left for that wait to reap.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn stop_child(pid: u32) {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return;
@@ -868,7 +887,11 @@ fn stop_child(pid: u32) {
             )
         };
         // An error means it's already been reaped.
-        result != 0 || info.si_pid == pid
+        #[cfg(target_os = "macos")]
+        let exited_pid = info.si_pid;
+        #[cfg(target_os = "linux")]
+        let exited_pid = unsafe { info.si_pid() };
+        result != 0 || exited_pid == pid
     };
     if exited() {
         return;
@@ -885,7 +908,7 @@ fn stop_child(pid: u32) {
     unsafe { libc::kill(pid, libc::SIGKILL) };
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn stop_child(pid: u32) {
     if let Ok(pid) = libc::pid_t::try_from(pid) {
         unsafe { libc::kill(pid, libc::SIGHUP) };

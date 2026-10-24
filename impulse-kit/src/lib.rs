@@ -6,6 +6,8 @@
 //! against the golden fixtures the Swift port is checked against
 //! (`impulse-macos/Tests/ImpulseKitTests/Fixtures/`).
 
+pub mod chrome;
 pub mod close_risk;
 pub mod glob;
 pub mod shell_parser;
+pub mod theme;

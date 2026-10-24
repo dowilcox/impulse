@@ -54,10 +54,14 @@ impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
                           1337 attention, 21337 status), command blocks,
                           history
 impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
-impulse-kit/              Rust: start of the full-Rust migration (rust branch,
-                          docs/plans/rust-migration.md): ImpulseKit logic
-                          revived from v0.29.0, tested against the shared
-                          golden fixtures; not linked into the app yet
+impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
+                          full-Rust migration (docs/plans/rust-migration.md):
+                          glob, close risk, shell parser, themes revived from
+                          v0.29.0, ChromePalette ported; tested against the
+                          shared golden fixtures
+impulse-app/              Rust (rust branch): the GPUI app spike for macOS
+                          and Linux (workbench chrome + live terminal);
+                          scripts/spike/linux-shot.sh screenshots it on Linux
 vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide
                           (committed; refreshed by scripts/vendor-*.sh)
 assets/                   file icons + icon-mapping.json (copied into the
@@ -73,7 +77,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, which nothing links yet), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit` and the GPUI spike `impulse-app`, which pins GPUI to a Zed release tag, mirrors Zed's `[patch.crates-io]` entries and was locked from Zed's `Cargo.lock`; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 
@@ -109,6 +113,7 @@ impulse-macos/swiftw test [--filter Name]
 cargo build -p impulse-ffi           # staticlib the Swift app links
 cargo test -p impulse-terminal       # block/OSC/history tests
 cargo test -p impulse-kit            # rust branch: ported logic vs the golden fixtures
+cargo run -p impulse-app             # rust branch: the GPUI spike (macOS + Linux)
 cargo fmt && cargo clippy
 
 # One-time / occasional
@@ -152,6 +157,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
 - **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first.
+- **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
 - **scripts/smoke/run.py [name-prefix…]** — smoke checks for a release, in the same headless mode and demo home: each scenario in `scripts/smoke/scenarios.py` drives the dev build through real use (edits and saves, commands in zsh, bash and fish, the `impulse` CLI, agent hooks, a fresh managed language-server install with trust, tasks from creation to Finish, Agent Integration installing the MCP server, opencode's plugin replacing opencode 1's plugin and MCP entry, its two halves driven by a stand-in opencode (`scripts/smoke/opencode-agent.mjs`, which needs `node`), the MCP server asking for a task and an agent finishing its own, session restore) and checks the state its actions dump (`dump=`) plus the files and git repositories they changed. Build with `build.sh --dev` first; results and window images are left in `target/smoke/<scenario>/`.
 
 ## History
