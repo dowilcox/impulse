@@ -4,31 +4,89 @@
 //! input bar, and the 24pt status bar. Sizes come from
 //! `impulse_kit::chrome::metrics`, colors from `ChromePalette`.
 
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use gpui_kit::{
-    div, prelude::*, px, svg, AnyElement, Context, Entity, FocusHandle, FontWeight, Hsla,
-    KeyDownEvent, SharedString, Window,
+    actions, div, prelude::*, px, svg, AnyElement, App, Context, Entity, FocusHandle, FontWeight,
+    Hsla, KeyBinding, KeyDownEvent, SharedString, Window,
 };
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 
-use crate::editor_view::{self, EditorView};
+use crate::editor_tab::{EditorTab, EditorTabChanged, ShowDocument};
+use crate::lsp_hub::LspHub;
 use crate::terminal_view::{rgba, TerminalView};
 use crate::Args;
 
 const UI_FONT: &str = "Inter";
 
+actions!(impulse, [Save, CloseTab]);
+
+/// Keys for the workbench's commands: `secondary` is Cmd on macOS and Ctrl
+/// on Linux.
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("secondary-s", Save, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+    ]);
+}
+
+enum Tab {
+    /// The workspace's terminal (`Workbench::terminal`).
+    Terminal,
+    Editor(Entity<EditorTab>),
+}
+
+/// One row of the file tree.
+struct TreeRow {
+    path: PathBuf,
+    name: String,
+    is_dir: bool,
+    depth: usize,
+}
+
 pub struct Workbench {
     palette: ChromePalette,
     terminal: Entity<TerminalView>,
-    /// The file opened with `--open`, as an editor tab.
-    editor: Option<(String, Entity<EditorView>)>,
-    editor_active: bool,
+    tabs: Vec<Tab>,
+    active: usize,
     focus: FocusHandle,
     input: String,
+    root: PathBuf,
     workspace: String,
     branch: String,
-    files: Vec<(String, bool)>,
+    /// Each listed folder's entries (folders first, then by name), read
+    /// when the folder is first expanded.
+    children: HashMap<PathBuf, Vec<(String, bool)>>,
+    expanded: HashSet<PathBuf>,
+    /// A message for the status bar, such as why a file didn't open.
+    notice: Option<String>,
+    /// Language servers, when the folder is trusted.
+    lsp: Option<std::rc::Rc<LspHub>>,
+    _lsp_events: Option<gpui_kit::Task<()>>,
+}
+
+fn list_dir(dir: &Path) -> Vec<(String, bool)> {
+    let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| {
+                    (
+                        e.file_name().to_string_lossy().into_owned(),
+                        e.path().is_dir(),
+                    )
+                })
+                .filter(|(name, _)| !name.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+    });
+    entries
 }
 
 fn git(cwd: &str, args: &[&str]) -> String {
@@ -45,7 +103,7 @@ impl Workbench {
         let theme = impulse_kit::theme::builtin_theme(&args.theme)
             .unwrap_or_else(|| impulse_kit::theme::builtin_theme("nord").unwrap());
         let palette = ChromePalette::new(&theme, false);
-        editor_view::apply_theme(&theme, cx);
+        crate::kit_theme::apply(&theme, &palette, cx);
         let terminal = cx.new(|cx| {
             TerminalView::new(
                 theme.clone(),
@@ -58,56 +116,231 @@ impl Workbench {
         });
         cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
 
-        let mut files: Vec<(String, bool)> = std::fs::read_dir(&args.cwd)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .map(|e| {
-                        (
-                            e.file_name().to_string_lossy().into_owned(),
-                            e.path().is_dir(),
-                        )
-                    })
-                    .filter(|(name, _)| !name.starts_with('.'))
-                    .collect()
-            })
-            .unwrap_or_default();
-        files.sort_by(|a, b| {
-            b.1.cmp(&a.1)
-                .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
-        });
-
-        let editor = args.open.as_ref().map(|path| {
-            let path = std::path::Path::new(&args.cwd).join(path);
-            let title = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            (title, cx.new(|cx| EditorView::open(&path, window, cx)))
-        });
+        let root = PathBuf::from(&args.cwd);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        if let Some((_, editor)) = &editor {
-            editor.update(cx, |editor, cx| editor.focus(window, cx));
-        }
-        Self {
+        let mut workbench = Self {
             palette,
+            tabs: vec![Tab::Terminal],
             terminal,
-            editor_active: editor.is_some(),
-            editor,
+            active: 0,
             focus,
             input: String::new(),
-            workspace: std::path::Path::new(&args.cwd)
+            workspace: root
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
             branch: git(&args.cwd, &["rev-parse", "--abbrev-ref", "HEAD"]),
-            files,
+            children: HashMap::from([(root.clone(), list_dir(&root))]),
+            expanded: HashSet::new(),
+            root: root.clone(),
+            notice: None,
+            lsp: None,
+            _lsp_events: None,
+        };
+        if args.trust {
+            let (hub, events) = LspHub::new(root);
+            workbench.lsp = Some(hub);
+            workbench._lsp_events = Some(cx.spawn(async move |workbench, cx| {
+                while let Ok(event) = events.recv().await {
+                    let alive =
+                        workbench.update(cx, |workbench, cx| workbench.server_event(event, cx));
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        for path in &args.open {
+            let path = workbench.root.join(path);
+            workbench.open_file(&path, window, cx);
+        }
+        workbench
+    }
+
+    /// Open `path` in an editor tab, or go to the tab it's already in.
+    fn open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let existing = self.tabs.iter().position(|tab| match tab {
+            Tab::Editor(editor) => editor.read(cx).path == path,
+            Tab::Terminal => false,
+        });
+        if let Some(index) = existing {
+            self.activate(index, window, cx);
+            return;
+        }
+        let lsp = self.lsp.clone();
+        let show_document = self.show_document_handler(cx);
+        match impulse_kit::text_file::open(path).map(|opened| {
+            cx.new(|cx| {
+                let lsp = lsp.as_deref().map(|hub| (hub, show_document));
+                EditorTab::new(path, opened, lsp, window, cx)
+            })
+        }) {
+            Ok(editor) => {
+                cx.subscribe(&editor, |_, _, _: &EditorTabChanged, cx| cx.notify())
+                    .detach();
+                cx.observe(&editor, |_, _, cx| cx.notify()).detach();
+                self.tabs.push(Tab::Editor(editor));
+                self.notice = None;
+                self.activate(self.tabs.len() - 1, window, cx);
+            }
+            Err(refusal) => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.notice = Some(refusal.message(&name));
+                cx.notify();
+            }
         }
     }
 
+    /// Go-to-definition into another file: open it in a tab at the target.
+    /// Targets in the same file are left to the editor.
+    fn show_document_handler(&self, cx: &mut Context<Self>) -> ShowDocument {
+        let workbench = cx.entity().downgrade();
+        std::rc::Rc::new(move |params, window, cx| {
+            let path =
+                std::path::PathBuf::from(impulse_kit::uri::uri_to_file_path(params.uri.as_str()));
+            let Some(workbench) = workbench.upgrade() else {
+                return false;
+            };
+            if workbench.read(cx).active_path(cx).as_deref() == Some(path.as_path())
+                || !path.is_file()
+            {
+                return false;
+            }
+            let start = params.selection.map(|range| range.start);
+            workbench.update(cx, |workbench, cx| {
+                workbench.open_file(&path, window, cx);
+                if let (Some(start), Some(editor)) = (start, workbench.active_editor().cloned()) {
+                    editor.update(cx, |editor, cx| editor.go_to(start, window, cx));
+                }
+            });
+            true
+        })
+    }
+
+    fn active_path(&self, cx: &App) -> Option<PathBuf> {
+        self.active_editor()
+            .map(|editor| editor.read(cx).path.clone())
+    }
+
+    /// What a language server sent on its own.
+    fn server_event(&mut self, event: impulse_lsp::ServerEvent, cx: &mut Context<Self>) {
+        match event {
+            impulse_lsp::ServerEvent::Diagnostics(params) => {
+                log::debug!(
+                    "diagnostics for {}: {:?}",
+                    params.uri.as_str(),
+                    params
+                        .diagnostics
+                        .iter()
+                        .map(|d| (d.source.clone(), d.message.clone()))
+                        .collect::<Vec<_>>()
+                );
+                for tab in &self.tabs {
+                    if let Tab::Editor(editor) = tab {
+                        if editor.read(cx).is_document(&params.uri) {
+                            editor.update(cx, |editor, cx| {
+                                editor.set_diagnostics(params.diagnostics.clone(), cx)
+                            });
+                        }
+                    }
+                }
+            }
+            impulse_lsp::ServerEvent::Message(message) => log::info!("language server: {message}"),
+            impulse_lsp::ServerEvent::Exited => log::warn!("a language server exited"),
+        }
+    }
+
+    fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.active = index.min(self.tabs.len().saturating_sub(1));
+        match &self.tabs[self.active] {
+            Tab::Editor(editor) => editor.update(cx, |editor, cx| editor.focus(window, cx)),
+            Tab::Terminal => window.focus(&self.focus, cx),
+        }
+        cx.notify();
+    }
+
+    fn active_editor(&self) -> Option<&Entity<EditorTab>> {
+        match self.tabs.get(self.active) {
+            Some(Tab::Editor(editor)) => Some(editor),
+            _ => None,
+        }
+    }
+
+    fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor().cloned() {
+            editor.update(cx, |editor, cx| editor.save(cx));
+        }
+    }
+
+    /// Close the active tab. The terminal stays; an editor with unsaved
+    /// changes asks first, by needing a second close.
+    fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(self.active, window, cx);
+    }
+
+    fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Tab::Editor(editor)) = self.tabs.get(index) else {
+            return;
+        };
+        let (dirty, title) = {
+            let editor = editor.read(cx);
+            (editor.dirty, editor.title.clone())
+        };
+        let warning = format!("{title} has unsaved changes. Close again to discard them.");
+        if dirty && self.notice.as_deref() != Some(warning.as_str()) {
+            self.notice = Some(warning);
+            cx.notify();
+            return;
+        }
+        self.notice = None;
+        self.tabs.remove(index);
+        let next = if self.active >= index {
+            self.active.saturating_sub(1)
+        } else {
+            self.active
+        };
+        self.activate(next, window, cx);
+    }
+
+    fn toggle_dir(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !self.expanded.remove(&path) {
+            self.children
+                .entry(path.clone())
+                .or_insert_with(|| list_dir(&path));
+            self.expanded.insert(path);
+        }
+        cx.notify();
+    }
+
+    /// The visible rows: the root's entries, and those of every expanded
+    /// folder under them.
+    fn tree_rows(&self) -> Vec<TreeRow> {
+        fn walk(wb: &Workbench, dir: &Path, depth: usize, rows: &mut Vec<TreeRow>) {
+            for (name, is_dir) in wb.children.get(dir).map(Vec::as_slice).unwrap_or_default() {
+                let path = dir.join(name);
+                let expanded = *is_dir && wb.expanded.contains(&path);
+                rows.push(TreeRow {
+                    path: path.clone(),
+                    name: name.clone(),
+                    is_dir: *is_dir,
+                    depth,
+                });
+                if expanded {
+                    walk(wb, &path, depth + 1, rows);
+                }
+            }
+        }
+        let mut rows = Vec::new();
+        walk(self, &self.root, 0, &mut rows);
+        rows
+    }
+
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.editor_active {
+        if self.active_editor().is_some() {
             return;
         }
         let keystroke = &event.keystroke;
@@ -204,25 +437,39 @@ impl Workbench {
                     .child(self.branch.clone()),
             )
             .child(div().w(px(8.)))
-            .child(
-                tab("terminal", "bash", !self.editor_active)
-                    .id("tab-terminal")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.editor_active = false;
-                        window.focus(&this.focus, cx);
-                        cx.notify();
-                    })),
-            )
-            .children(self.editor.as_ref().map(|(title, _)| {
-                tab("file-code", title, self.editor_active)
-                    .id("tab-editor")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.editor_active = true;
-                        if let Some((_, editor)) = &this.editor {
-                            editor.update(cx, |editor, cx| editor.focus(window, cx));
-                        }
-                        cx.notify();
-                    }))
+            .children(self.tabs.iter().enumerate().map(|(index, tab_kind)| {
+                let active = index == self.active;
+                let (icon, title, dirty) = match tab_kind {
+                    Tab::Terminal => ("terminal", "bash".to_string(), false),
+                    Tab::Editor(editor) => {
+                        let editor = editor.read(cx);
+                        ("file-code", editor.title.clone(), editor.dirty)
+                    }
+                };
+                let mut t = tab(icon, &title, active).id(("tab", index)).on_click(
+                    cx.listener(move |this, _, window, cx| this.activate(index, window, cx)),
+                );
+                if matches!(tab_kind, Tab::Editor(_)) {
+                    // A dot while there are unsaved changes, otherwise a close button.
+                    t = t.child(if dirty {
+                        div()
+                            .w(px(8.))
+                            .h(px(8.))
+                            .rounded_full()
+                            .bg(self.c(p.text_secondary))
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id(("close", index))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.close(index, window, cx)
+                            }))
+                            .child(self.icon("x", metrics::ICON_SMALL, p.text_tertiary))
+                            .into_any_element()
+                    });
+                }
+                t
             }))
             .child(self.icon("plus", metrics::ICON, p.text_secondary))
             .child(div().flex_1())
@@ -250,7 +497,7 @@ impl Workbench {
             )
     }
 
-    fn sidebar(&self) -> impl IntoElement {
+    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let row = |icon: &str, label: String, selected: bool, indent: f32| {
             let mut r = div()
@@ -269,28 +516,63 @@ impl Workbench {
             }
             r
         };
-        let mut files = div().flex().flex_col().py(px(4.));
-        for (name, is_dir) in self.files.iter().take(24) {
+        let open_path = self.active_editor().map(|e| e.read(cx).path.clone());
+        let mut files = div()
+            .id("files")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .py(px(4.));
+        for (index, row) in self.tree_rows().into_iter().enumerate() {
+            let expanded = self.expanded.contains(&row.path);
+            let selected = open_path.as_deref() == Some(row.path.as_path());
+            let path = row.path.clone();
+            let is_dir = row.is_dir;
             let mut r = div()
+                .id(("file", index))
                 .flex()
+                .flex_none()
                 .items_center()
                 .gap(px(6.))
                 .h(px(metrics::ROW_HEIGHT))
-                .px(px(10.))
-                .child(div().w(px(12.)).child(if *is_dir {
-                    self.icon("chevron-right", metrics::ICON_SMALL, p.text_tertiary)
-                        .into_any_element()
+                .pl(px(10. + 14. * row.depth as f32))
+                .pr(px(10.))
+                .hover(|style| style.bg(rgba(p.hover)))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if is_dir {
+                        this.toggle_dir(path.clone(), cx);
+                    } else {
+                        this.open_file(&path, window, cx);
+                    }
+                }))
+                .child(div().w(px(12.)).child(if row.is_dir {
+                    self.icon(
+                        if expanded {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        },
+                        metrics::ICON_SMALL,
+                        p.text_tertiary,
+                    )
+                    .into_any_element()
                 } else {
                     div().into_any_element()
                 }))
                 .child(self.icon(
-                    if *is_dir { "folder" } else { "file" },
+                    match (row.is_dir, expanded) {
+                        (true, true) => "folder-open",
+                        (true, false) => "folder",
+                        _ => "file",
+                    },
                     metrics::ICON,
-                    if *is_dir { p.info } else { p.text_secondary },
+                    if row.is_dir { p.info } else { p.text_secondary },
                 ))
-                .child(name.clone());
-            if *is_dir {
-                r = r.text_color(self.c(p.text));
+                .child(row.name);
+            if selected {
+                r = r.bg(self.c(p.selection));
             }
             files = files.child(r);
         }
@@ -460,9 +742,45 @@ impl Workbench {
             .text_size(px(12.))
             .text_color(self.c(p.text_secondary))
             .child(item("git-branch", self.branch.clone()))
-            .child(item("folder", self.terminal.read(cx).cwd.clone()))
+            .children(
+                self.notice
+                    .clone()
+                    .map(|notice| div().text_color(self.c(p.warning)).child(notice)),
+            )
             .child(div().flex_1())
-            .child(item("terminal", "bash".into()))
+            .children(match self.active_editor() {
+                Some(editor) => {
+                    let editor = editor.read(cx);
+                    let (line, column) = editor.cursor(cx);
+                    vec![
+                        editor.notice.clone().map(|n| {
+                            div()
+                                .text_color(self.c(p.warning))
+                                .child(n)
+                                .into_any_element()
+                        }),
+                        Some(
+                            div()
+                                .child(format!("Ln {line}, Col {column}"))
+                                .into_any_element(),
+                        ),
+                        Some(
+                            div()
+                                .child(format!("Spaces: {}", editor.tab_size))
+                                .into_any_element(),
+                        ),
+                        Some(div().child("UTF-8").into_any_element()),
+                        Some(div().child(editor.language.clone()).into_any_element()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                }
+                None => vec![
+                    item("folder", self.terminal.read(cx).cwd.clone()).into_any_element(),
+                    item("terminal", "bash".into()).into_any_element(),
+                ],
+            })
     }
 }
 
@@ -479,6 +797,8 @@ impl Render for Workbench {
         div()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
+            .on_action(cx.listener(Self::save))
+            .on_action(cx.listener(Self::close_tab))
             .flex()
             .flex_col()
             .size_full()
@@ -488,17 +808,20 @@ impl Render for Workbench {
             .text_color(self.c(p.text))
             .child(self.titlebar(cx))
             .child(
-                div().flex().flex_1().min_h_0().child(self.sidebar()).child(
-                    match (&self.editor, self.editor_active) {
-                        (Some((_, editor)), true) => div()
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.sidebar(cx))
+                    .child(match self.active_editor() {
+                        Some(editor) => div()
                             .flex_1()
                             .h_full()
                             .min_w_0()
                             .child(editor.clone())
                             .into_any_element(),
-                        _ => self.content(cx).into_any_element(),
-                    },
-                ),
+                        None => self.content(cx).into_any_element(),
+                    }),
             )
             .child(self.status_bar(cx))
     }

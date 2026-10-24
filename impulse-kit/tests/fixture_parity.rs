@@ -76,3 +76,33 @@ fn resolved_themes_match_fixtures() {
         assert_eq!(actual, expected, "theme {id}");
     }
 }
+
+#[test]
+fn uris_and_languages_match_fixtures() {
+    #[derive(Deserialize)]
+    struct Pair {
+        path: String,
+        uri: String,
+    }
+    #[derive(Deserialize)]
+    struct Lang {
+        uri: String,
+        language: String,
+    }
+    use impulse_kit::uri::{file_path_to_uri, language_from_uri, uri_to_file_path};
+    let to_uri: Vec<Pair> = serde_json::from_str(&fixture("path_to_uri.json")).unwrap();
+    for c in to_uri {
+        assert_eq!(
+            file_path_to_uri(std::path::Path::new(&c.path)).as_deref(),
+            Some(c.uri.as_str())
+        );
+    }
+    let to_path: Vec<Pair> = serde_json::from_str(&fixture("uri_to_path.json")).unwrap();
+    for c in to_path {
+        assert_eq!(uri_to_file_path(&c.uri), c.path, "uri={}", c.uri);
+    }
+    let langs: Vec<Lang> = serde_json::from_str(&fixture("language_from_uri.json")).unwrap();
+    for c in langs {
+        assert_eq!(language_from_uri(&c.uri), c.language, "uri={}", c.uri);
+    }
+}

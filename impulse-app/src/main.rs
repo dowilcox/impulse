@@ -3,9 +3,11 @@
 //! drawn from the theme the way `ChromePalette` draws it, with a live
 //! terminal from `impulse-terminal`.
 //!
-//! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]...`
+//! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
-mod editor_view;
+mod editor_tab;
+mod kit_theme;
+mod lsp_hub;
 mod terminal_view;
 mod workbench;
 
@@ -60,8 +62,11 @@ pub struct Args {
     pub theme: String,
     pub cwd: String,
     pub commands: Vec<String>,
-    /// A file to open in an editor tab, which then has the focus.
-    pub open: Option<String>,
+    /// Files to open in editor tabs; the last one has the focus.
+    pub open: Vec<String>,
+    /// Trust the folder: language servers may run in it. (Until the port of
+    /// `WorkspaceTrust`, which asks and remembers.)
+    pub trust: bool,
 }
 
 fn parse_args() -> Args {
@@ -71,15 +76,20 @@ fn parse_args() -> Args {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "/".into()),
         commands: Vec::new(),
-        open: None,
+        open: Vec::new(),
+        trust: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
+        if flag == "--trust" {
+            args.trust = true;
+            continue;
+        }
         match (flag.as_str(), it.next()) {
             ("--theme", Some(v)) => args.theme = v,
             ("--cwd", Some(v)) => args.cwd = v,
             ("--run", Some(v)) => args.commands.push(v),
-            ("--open", Some(v)) => args.open = Some(v),
+            ("--open", Some(v)) => args.open.push(v),
             _ => {}
         }
     }
@@ -93,6 +103,7 @@ fn main() {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
+            workbench::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");

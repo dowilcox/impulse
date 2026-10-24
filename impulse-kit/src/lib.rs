@@ -10,4 +10,6 @@ pub mod chrome;
 pub mod close_risk;
 pub mod glob;
 pub mod shell_parser;
+pub mod text_file;
 pub mod theme;
+pub mod uri;

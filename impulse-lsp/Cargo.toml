@@ -1,0 +1,19 @@
+[package]
+name = "impulse-lsp"
+version = "0.36.0"
+edition = "2021"
+description = "Impulse's language-server client (the Rust port of ImpulseLSP): no UI, any executor"
+license = "GPL-3.0-only"
+
+[dependencies]
+# The version GPUI Kit's editor providers take, so values pass through.
+lsp-types = { version = "0.97", features = ["proposed"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+futures = "0.3"
+async-channel = "2"
+impulse-kit = { path = "../impulse-kit" }
+
+[dev-dependencies]
+tempfile = "3"

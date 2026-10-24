@@ -30,10 +30,10 @@ ported `ChromePalette`.*
 | App | Toolkit | Editor | Terminal | Accessibility | Platforms |
 |---|---|---|---|---|---|
 | **Zed** | GPUI (its own) | Zed's `editor` (142k lines; Vim mode, multi-cursor, tree-sitter, LSP) | `alacritty_terminal` + GPUI | none in GPUI | macOS, Linux, Windows |
-| **Longbridge Pro** | GPUI + **GPUI Kit** (Apache-2.0) | GPUI Kit `Editor` (tree-sitter, LSP, 200k lines) | — | AccessKit, tested | macOS, Linux, Windows |
+| **Longbridge Pro** | GPUI + **GPUI Kit** (Apache-2.0) | GPUI Kit `Editor` (tree-sitter, LSP, 200k lines) | none | AccessKit, tested | macOS, Linux, Windows |
 | **Lapce** | Floem (its own) | Lapce's editor (Vim mode, LSP) | `alacritty_terminal` | not checked | macOS, Linux, Windows |
 | **COSMIC Edit / Term** | iced (libcosmic) | cosmic-text editor | `alacritty_terminal` | not checked | Linux first |
-| **SolidCraft**, Rerun | egui + wgpu | none (egui `TextEdit` only) | — | AccessKit (built into egui) | desktop + browser (wasm) |
+| **SolidCraft**, Rerun | egui + wgpu | none (egui `TextEdit` only) | none | AccessKit (built into egui) | desktop + browser (wasm) |
 | Tauri apps (GitButler, …) | system web view | Monaco / CodeMirror | xterm.js | the browser's | macOS, Linux, Windows |
 
 What the survey says:
@@ -98,10 +98,11 @@ for:
 
 | Monaco feature Impulse uses | GPUI Kit `Editor` | Work |
 |---|---|---|
-| Highlighting, folding, line numbers, indent guides, whitespace, word wrap, ligatures | yes | theme mapping (done in the spike) |
+| Highlighting, folding, line numbers, indent guides, whitespace, word wrap, ligatures | yes | **done**: colors from Impulse's theme |
 | Multi-cursor, column selection, ⌘D next occurrence | yes (⌘D to check) | keymap to match Monaco's |
-| Find and replace widget | find yes, replace to check | theme it |
-| LSP: completion, hover, diagnostics, definition, code actions | yes | wire to `impulse-lsp` |
+| Find and replace widget | yes (replace is a toggle in its panel) | **themed**; first keystroke into it is lost under Xvfb (below) |
+| LSP: completion, hover, diagnostics, definition | yes | **done**: wired to `impulse-lsp`, checked against rust-analyzer; definition into another file not yet exercised |
+| LSP: code actions | yes | add the provider |
 | LSP: references, rename, signature help, formatting, document highlight, type definition, implementation, declaration, inlay hints | partly | add providers (our LSP layer already speaks them) |
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
 | Diff editor (side by side and inline) | diff component exists | build the editor diff view on it |
@@ -165,7 +166,7 @@ toolkit with Zed's editor through a fork, not a different toolkit.
 impulse-terminal/   terminal emulation (unchanged; macOS + Linux)
 impulse-kit/        pure logic: themes, chrome palette, parsers, …   [started]
 impulse-git/        git2 reads + git CLI writes
-impulse-lsp/        language-server client
+impulse-lsp/        language-server client                         [started]
 impulse-protocol/   control socket + MCP server
 impulse-cli/        the `impulse` binary
 impulse-platform/   the per-OS services above
@@ -180,12 +181,15 @@ and `impulse-macos/web/` are deleted at cut-over.
 
 The shipped Swift app keeps working through every phase.
 
-1. **Editor first.** Because the editor matters most and is the biggest
-   unknown, it goes first: theme GPUI Kit's editor chrome from Impulse's
-   theme, wire it to `impulse-lsp` against rust-analyzer and
-   typescript-language-server, match Monaco's keymap, then the gaps in the
-   table (replace, peek, diff view, Vim mode). Exit: daily-drivable on a real
-   project, on both platforms.
+1. **Editor first** (in progress). Because the editor matters most and is the
+   biggest unknown, it goes first. Done: GPUI Kit's chrome themed from
+   Impulse's theme, editor tabs opened from the file tree with Impulse's file
+   rules, save, dirty marks, the editor status bar, and `impulse-lsp` wired to
+   the editor (diagnostics, hover, completion, definition). Next: workspace
+   trust (`WorkspaceTrust`) instead of the `--trust` flag, Monaco's keymap,
+   code actions and the rest of the LSP features, the `.impulse/lsp.json`
+   config, then the gaps in the table (peek, diff view, Vim mode). Exit:
+   daily-drivable on a real project, on both platforms.
 2. **Logic crates, with parity.** Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden
    fixtures read in place from `impulse-macos/Tests/*/Fixtures/`, port each
@@ -208,21 +212,59 @@ The shipped Swift app keeps working through every phase.
 
 ## Done so far
 
+| Editor tabs | Diagnostics | Completion |
+|---|---|---|
+| ![Editor tabs](images/rust-editor-tabs.png) | ![Diagnostics](images/rust-editor-diagnostics.png) | ![Completion](images/rust-editor-completion.png) |
+
+*Linux, under Xvfb. Left: a folder expanded in the file tree, `lib.rs` open
+with an unsaved edit (the dot), the editor status bar. Middle: rust-analyzer's
+type error, live while typing. Right: `name.pu` narrowed to `push` and
+`push_str`, with the method's documentation.*
+
 - `impulse-terminal` builds and passes all 112 tests on Linux.
-- `impulse-kit`: `glob`, `close_risk`, `shell_parser` and `theme` revived from
-  `v0.29.0`, `chrome` (`ChromePalette`, `Metrics`) ported; they pass the
-  `glob`, `close_risk`, `shell_parser` and all 19 `themes/*.theme.json`
-  fixtures, plus the Rust twins of the Swift unit tests.
-- `impulse-app`: the spike above on GPUI Kit, with a live terminal and an
-  editor tab (`--open <file>`), switching by clicking the tabs. Builds and
-  runs on Linux; not yet built on a Mac.
-- `scripts/spike/linux-shot.sh` screenshots it under Xvfb with software
+- `impulse-kit`: `glob`, `close_risk`, `shell_parser`, `theme` and `uri`
+  (file URIs and language ids) revived from `v0.29.0`; `chrome`
+  (`ChromePalette`, `Metrics`) and `text_file` (the Swift `TextFile` and the
+  open checks in `TabManager`: UTF-8 only, BOM kept, writes through symlinks
+  keeping permissions, binary and size limits) ported. They pass the `glob`,
+  `close_risk`, `shell_parser`, `path_to_uri`, `uri_to_path`,
+  `language_from_uri` and all 19 `themes/*.theme.json` fixtures, plus the
+  Rust twins of the Swift unit tests.
+- `impulse-lsp`: the language-server client with no UI and no executor of its
+  own. `Content-Length` framing, the server process and its reader thread,
+  the initialize handshake (asking for UTF-32 positions, which are GPUI Kit's
+  character columns, and converting when a server only does UTF-16), answers
+  to the server's own requests, document sync, the default server per
+  language from Swift's `LSPConfig`, and completion filtering as Monaco does
+  it. An end-to-end test runs rust-analyzer (diagnostics, hover, completion)
+  and skips where it isn't installed.
+- `impulse-app` on GPUI Kit: a live terminal; editor tabs opened from the
+  file tree or `--open`, with dirty marks, close buttons, Save (`secondary-s`,
+  ⌘S or Ctrl+S) and Close Tab (`secondary-w`); a save that would overwrite a
+  change made on disk, or a close that would lose edits, asks by needing a
+  second press; the editor status bar (`Ln 5, Col 12`, `Spaces: 4`, `UTF-8`,
+  language); every GPUI Kit component themed from Impulse's theme; and, with
+  `--trust`, language servers per language with diagnostics, hover,
+  completion and go-to-definition.
+- `scripts/spike/linux-shot.sh` screenshots the app under Xvfb with software
   Vulkan, so CI can check the UI without a GPU.
+
+Known issues:
+
+- Under Xvfb, the first key typed into the editor's search field is lost
+  (focus moves there at once in GPUI Kit's code, so this looks like key
+  input on X11 without a window manager). To check on a real Linux desktop
+  and on the Mac.
+- GPUI Kit's hover popover draws a code block's language label on top of
+  the code ([screenshot](images/rust-editor-hover.png)).
+- Completions insert plain text: snippet support is off until GPUI Kit's
+  snippet handling is checked.
+- The app hasn't been built on a Mac yet.
 
 ## Risks
 
-- **The editor gap** (table above): replace, peek views, the diff editor and
-  Vim mode are ours to build.
+- **The editor gap** (table above): peek views, the diff editor and Vim mode
+  are ours to build.
 - **Two young dependencies**: GPUI is pre-1.0 and GPUI Kit pins its own GPUI
   snapshots. Exact pins plus `impulse-ui` contain the churn; the fallback for
   either is the code itself (both are open source).

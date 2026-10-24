@@ -56,12 +56,17 @@ impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
 impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
 impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           full-Rust migration (docs/plans/rust-migration.md):
-                          glob, close risk, shell parser, themes revived from
-                          v0.29.0, ChromePalette ported; tested against the
-                          shared golden fixtures
-impulse-app/              Rust (rust branch): the app spike on GPUI + GPUI
-                          Kit for macOS and Linux (workbench chrome, live
-                          terminal, editor tab via --open);
+                          glob, close risk, shell parser, themes, file URIs
+                          and language ids revived from v0.29.0;
+                          ChromePalette and TextFile ported; tested against
+                          the shared golden fixtures
+impulse-lsp/              Rust (rust branch): the language-server client
+                          (no UI, any executor); its e2e test runs
+                          rust-analyzer when installed
+impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
+                          macOS and Linux: workbench chrome, live terminal,
+                          editor tabs (GPUI Kit's Editor, themed, file tree,
+                          save), language servers with --trust;
                           scripts/spike/linux-shot.sh screenshots it on Linux
 vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide
                           (committed; refreshed by scripts/vendor-*.sh)
@@ -78,7 +83,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit` and the spike `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-lsp` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 
@@ -114,7 +119,8 @@ impulse-macos/swiftw test [--filter Name]
 cargo build -p impulse-ffi           # staticlib the Swift app links
 cargo test -p impulse-terminal       # block/OSC/history tests
 cargo test -p impulse-kit            # rust branch: ported logic vs the golden fixtures
-cargo run -p impulse-app             # rust branch: the GPUI spike (macOS + Linux)
+cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
+cargo run -p impulse-app -- --open <file> --trust   # rust branch: the GPUI app
 cargo fmt && cargo clippy
 
 # One-time / occasional
