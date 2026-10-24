@@ -75,6 +75,8 @@ pub struct Workbench {
     /// `--theme`, which wins over `color_scheme` for this run.
     theme_override: Option<String>,
     theme_id: String,
+    /// The command palette and quick open (`palette.rs`).
+    pub(crate) command_palette: Entity<crate::palette::Palette>,
     _settings: gpui_kit::Subscription,
 }
 
@@ -118,7 +120,7 @@ impl Workbench {
                 workbench.apply_settings(window, cx)
             });
         Self {
-            palette,
+            palette: palette.clone(),
             theme,
             workspaces: Vec::new(),
             active: 0,
@@ -133,6 +135,10 @@ impl Workbench {
             pending_edits: Vec::new(),
             theme_override: args.theme.clone(),
             theme_id,
+            command_palette: {
+                let (workbench, colors) = (cx.weak_entity(), palette.clone());
+                cx.new(|cx| crate::palette::Palette::new(workbench, colors, window, cx))
+            },
             _settings: settings_subscription,
         }
     }
@@ -607,7 +613,11 @@ impl Workbench {
             "toggle_sidebar" => {
                 SettingsStore::update(cx, |s| s.sidebar_visible = !s.sidebar_visible)
             }
-            "show_files" | "show_changes" | "project_search" | "search_text" => {
+            palette if crate::palette::prefix_for(palette).is_some() => {
+                let prefix = crate::palette::prefix_for(palette).unwrap_or_default();
+                self.show_palette(prefix, window, cx)
+            }
+            "show_files" | "show_changes" | "project_search" => {
                 self.panel = match id {
                     "show_files" => SidebarPanel::Files,
                     "show_changes" => SidebarPanel::Changes,
@@ -881,5 +891,6 @@ impl Render for Workbench {
                     .child(self.content(window, cx)),
             )
             .child(self.status_bar(cx))
+            .child(gpui_kit::deferred(self.command_palette.clone()).with_priority(1))
     }
 }

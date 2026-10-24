@@ -249,6 +249,29 @@ impl EditorTab {
             .map(|(_, link)| link.clone())
     }
 
+    /// The primary server's symbols in this file; `None` without a server.
+    pub fn document_symbols(
+        &self,
+        cx: &gpui_kit::App,
+    ) -> Option<gpui_kit::Task<Result<Vec<impulse_kit::document_symbols::OutlineSymbol>, String>>>
+    {
+        let link = self.primary_link()?;
+        Some(link.document_symbols(self.state.read(cx).text(), cx))
+    }
+
+    /// The primary server's project symbols matching `query`; `None`
+    /// without a server.
+    #[allow(clippy::type_complexity)]
+    pub fn workspace_symbols(
+        &self,
+        query: String,
+        cx: &gpui_kit::App,
+    ) -> Option<
+        gpui_kit::Task<Result<Vec<(impulse_kit::document_symbols::OutlineSymbol, String)>, String>>,
+    > {
+        Some(self.primary_link()?.workspace_symbols(query, cx))
+    }
+
     fn say(&mut self, notice: impl Into<String>, cx: &mut Context<Self>) {
         self.notice = Some(notice.into());
         cx.notify();

@@ -110,7 +110,12 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           and hunks, viewed marks, the j/k/n/p/s/u/x/v/o
                           keys), History (history_view.rs: the lane graph,
                           ref chips, paging, the commit's details over its
-                          Review list),
+                          Review list), command palette and quick open
+                          (palette.rs: the Swift PaletteModel/PaletteView
+                          modes by prefix, recents in
+                          palette-recent-commands.json in the data
+                          directory), Markdown preview in or beside the
+                          editor,
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

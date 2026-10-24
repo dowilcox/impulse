@@ -69,7 +69,7 @@ fn tree_rows(workspace: &Workspace, root: &Path) -> Vec<TreeRow> {
 impl Workbench {
     /// The folder the file tree shows: a folder workspace's root, or for
     /// Scratch the active tab's folder.
-    fn tree_root(&self, cx: &gpui_kit::App) -> PathBuf {
+    pub(crate) fn tree_root(&self, cx: &gpui_kit::App) -> PathBuf {
         let workspace = self.workspace();
         match workspace.kind {
             Kind::Folder => workspace.root.clone(),

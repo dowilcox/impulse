@@ -268,6 +268,52 @@ impl DocumentLink {
         })
     }
 
+    /// The file's symbols in document order (the palette's @ mode).
+    pub fn document_symbols(
+        &self,
+        text: &Rope,
+        cx: &App,
+    ) -> Task<Result<Vec<impulse_kit::document_symbols::OutlineSymbol>, String>> {
+        self.sync(text);
+        let params = lsp_types::DocumentSymbolParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.uri.clone(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            let response = client
+                .request::<lsp_types::request::DocumentSymbolRequest>(params)
+                .await?;
+            let json = serde_json::to_vec(&response).map_err(|e| e.to_string())?;
+            Ok(impulse_kit::document_symbols::parse(&json))
+        })
+    }
+
+    /// The project's symbols matching `query`, each with its file (the
+    /// palette's # mode).
+    pub fn workspace_symbols(
+        &self,
+        query: String,
+        cx: &App,
+    ) -> Task<Result<Vec<(impulse_kit::document_symbols::OutlineSymbol, String)>, String>> {
+        let params = lsp_types::WorkspaceSymbolParams {
+            query,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            let response = client
+                .request::<lsp_types::request::WorkspaceSymbolRequest>(params)
+                .await?;
+            let json = serde_json::to_vec(&response).map_err(|e| e.to_string())?;
+            Ok(impulse_kit::document_symbols::parse_workspace(&json))
+        })
+    }
+
     /// The LSP position of a byte offset, in the server's encoding.
     fn position(&self, text: &Rope, offset: usize) -> Position {
         let chars = text.offset_to_position(offset);
