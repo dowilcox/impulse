@@ -778,6 +778,12 @@ pub(crate) fn trust_key(source_path: &str, loaded: &Loaded, root: &str) -> Strin
     if loaded.local.as_ref().map(|l| l.path.as_str()) == Some(source_path) {
         return source_path.to_string();
     }
+    repository_trust_key(root)
+}
+
+/// The main repository a committed settings file at `root` is trusted
+/// under (Swift's `ProjectActions.trustKey(for:)`).
+pub(crate) fn repository_trust_key(root: &str) -> String {
     branches::common_git_directory(root)
         .map(|c| parent_of(&c))
         .unwrap_or_else(|| root.to_string())

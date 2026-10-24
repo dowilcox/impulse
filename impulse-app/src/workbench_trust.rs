@@ -238,6 +238,154 @@ impl Workbench {
         editor.update(cx, |editor, cx| editor.start_lsp(&hub, hooks, window, cx));
     }
 
+    /// Ask whether to trust `folder`, one that isn't a workspace (a lone
+    /// file's repository or folder); trusting it starts the servers of the
+    /// files open in it.
+    fn ask_to_trust(&mut self, folder: String, window: &mut Window, cx: &mut Context<Self>) {
+        let name = Path::new(&folder)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| folder.clone());
+        let workbench = cx.entity().downgrade();
+        crate::tasks::confirm(
+            window,
+            cx,
+            format!("Do you trust the files in “{name}”?"),
+            "Impulse can run code from this folder on its own: language servers, \
+             formatters and commands on save, and background git fetch. Until you \
+             trust it, they stay off."
+                .into(),
+            "Trust Folder",
+            "Stay Restricted",
+            false,
+            move |yes, window, cx| {
+                if !yes {
+                    return;
+                }
+                let _ = workbench.update(cx, |w, cx| {
+                    w.trust.trust(&folder);
+                    w.start_lsp_under(Path::new(&folder), window, cx);
+                });
+            },
+        )
+    }
+
+    /// The folder Trust and Restrict act on (Swift's
+    /// `trustFolderForActiveContext`): the active folder workspace, else
+    /// the active file's repository, else its folder.
+    fn trust_folder_for_active_context(&self, cx: &App) -> Option<String> {
+        let workspace = self.workspace();
+        if workspace.kind == Kind::Folder {
+            return Some(workspace.root.to_string_lossy().into_owned());
+        }
+        let path = self.active_editor().map(|e| e.read(cx).path.clone())?;
+        let dir = path.parent()?.to_string_lossy().into_owned();
+        Some(
+            impulse_git::repo_root(&dir)
+                .map(|r| r.trim_end_matches('/').to_string())
+                .unwrap_or(dir),
+        )
+    }
+
+    /// Trust This Folder…
+    pub(crate) fn trust_active_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(folder) = self.trust_folder_for_active_context(cx) else {
+            return crate::toasts::show(
+                window,
+                cx,
+                crate::toasts::Toast::info("Open a folder or a file to trust it."),
+            );
+        };
+        if self.trust.is_enabled() && self.trust.is_trusted(&folder) {
+            let name = folder_name(&folder);
+            return crate::toasts::show(
+                window,
+                cx,
+                crate::toasts::Toast::info(format!("“{name}” is already trusted.")),
+            );
+        }
+        if self.workspace().kind == Kind::Folder {
+            let index = self.active;
+            self.workspaces[index].declined = false;
+            self.present_trust_prompt(index, window, cx);
+        } else {
+            self.ask_to_trust(folder, window, cx);
+        }
+    }
+
+    /// Restrict This Folder: no longer trusted, and its trusted project
+    /// files forgotten so their commands ask again. A folder trusted as
+    /// part of one above it says so, offering to restrict that one.
+    pub(crate) fn restrict_active_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(folder) = self.trust_folder_for_active_context(cx) else {
+            return;
+        };
+        let name = folder_name(&folder);
+        forget_project_trust(&folder);
+        if let Some(above) = self.trust.revoke(&folder) {
+            let above_name = folder_name(&above);
+            let workbench = cx.entity().downgrade();
+            let restrict: crate::tasks::Run = Rc::new(move |_, cx| {
+                let above = above.clone();
+                let _ = workbench.update(cx, |w, cx| {
+                    w.trust.revoke(&above);
+                    forget_project_trust(&above);
+                    w.trust_changed(cx);
+                });
+            });
+            return crate::toasts::show(
+                window,
+                cx,
+                crate::toasts::Toast::info(format!(
+                    "“{name}” is trusted as part of “{above_name}”."
+                ))
+                .action(format!("Restrict {above_name}"), restrict)
+                .lifetime(Some(std::time::Duration::from_secs(10))),
+            );
+        }
+        let normalized = impulse_kit::trust::normalize(&folder);
+        for workspace in &mut self.workspaces {
+            if impulse_kit::trust::normalize(&workspace.root.to_string_lossy()) == normalized {
+                workspace.declined = true;
+            }
+        }
+        self.trust_changed(cx);
+        crate::toasts::show(
+            window,
+            cx,
+            crate::toasts::Toast::info(format!(
+                "“{name}” is restricted: language servers, formatters and background fetch are off."
+            )),
+        );
+    }
+
+    /// Forget Trusted Folders: every folder, and every project file.
+    pub(crate) fn forget_trusted_folders(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.trust.revoke_all();
+        let mut projects = crate::tasks::project_trust();
+        projects.revoke_all();
+        crate::tasks::save_project_trust(&projects);
+        self.trust_changed(cx);
+        crate::toasts::show(
+            window,
+            cx,
+            crate::toasts::Toast::info(
+                "Every folder is restricted until you trust it again, and project files ask before running commands.",
+            ),
+        );
+    }
+
+    /// Trust was taken away: language servers stop where it's gone.
+    fn trust_changed(&mut self, cx: &mut Context<Self>) {
+        for index in 0..self.workspaces.len() {
+            let root = self.workspaces[index].root.to_string_lossy().into_owned();
+            if self.workspaces[index].lsp.is_some() && !self.trust.is_trusted(&root) {
+                self.disable_lsp(index, cx);
+            }
+        }
+        cx.notify();
+    }
+
     /// Language servers stayed off for a file outside the trusted folders:
     /// say so once per folder, offering to trust it (not for a file in a
     /// folder workspace, whose own question covers it).
@@ -264,28 +412,8 @@ impl Workbench {
         let message = format!("Language servers are off in “{name}”: it isn't a trusted folder.");
         let workbench = cx.entity().downgrade();
         let trust: crate::tasks::Run = Rc::new(move |window, cx| {
-            let (folder, name, workbench) = (folder.clone(), name.clone(), workbench.clone());
-            crate::tasks::confirm(
-                window,
-                cx,
-                format!("Do you trust the files in “{name}”?"),
-                "Impulse can run code from this folder on its own: language servers, \
-                 formatters and commands on save, and background git fetch. Until you \
-                 trust it, they stay off."
-                    .into(),
-                "Trust Folder",
-                "Stay Restricted",
-                false,
-                move |yes, window, cx| {
-                    if !yes {
-                        return;
-                    }
-                    let _ = workbench.update(cx, |w, cx| {
-                        w.trust.trust(&folder);
-                        w.start_lsp_under(Path::new(&folder), window, cx);
-                    });
-                },
-            )
+            let folder = folder.clone();
+            let _ = workbench.update(cx, |w, cx| w.ask_to_trust(folder, window, cx));
         });
         crate::tasks::toast(
             window,
@@ -677,4 +805,23 @@ pub(crate) fn shutdown_servers(cx: &mut gpui_kit::App) -> impl std::future::Futu
             client.kill();
         }
     }
+}
+
+/// A folder's last component, as the trust messages name it.
+fn folder_name(folder: &str) -> String {
+    Path::new(folder)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| folder.to_string())
+}
+
+/// Forget the trusted project files of `folder`: those of repositories
+/// inside it and of the repository it's in (trust is kept per main
+/// repository, so a task's folder names its repository's), as Swift's
+/// `forgetProjectTrust`.
+fn forget_project_trust(folder: &str) {
+    let mut projects = crate::tasks::project_trust();
+    projects.revoke_within(folder);
+    projects.revoke(&crate::tasks::repository_trust_key(folder));
+    crate::tasks::save_project_trust(&projects);
 }

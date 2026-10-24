@@ -553,6 +553,12 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   non-UTF-8 file's toast offers Open in Default App, or Reveal for one
   that would run (`text_file::opens_as_program`); and a settings.json
   edited outside Impulse while Impulse saved says so, with Open File.
+  Trust This Folder, Restrict This Folder and Forget Trusted Folders act
+  as Swift's: on the active folder workspace, else the open file's
+  repository; an already trusted folder says so; Restrict forgets the
+  folder's trusted project files and, for a folder trusted through one
+  above it, offers to restrict that one; Forget clears project-file trust
+  too.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

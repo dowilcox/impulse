@@ -1344,28 +1344,9 @@ impl Workbench {
                 }
             }
             "file_history" => self.open_history(true, window, cx),
-            "trust_folder" => {
-                let index = self.active;
-                self.workspaces[index].declined = false;
-                self.present_trust_prompt(index, window, cx);
-            }
-            "restrict_folder" => {
-                let root = self.workspace().root.to_string_lossy().into_owned();
-                self.trust.restrict(&root);
-                self.disable_lsp(self.active, cx);
-                let name = self.workspace().name();
-                self.set_notice(
-                    format!("{name} is restricted: language servers are off."),
-                    cx,
-                );
-            }
-            "forget_trusted_folders" => {
-                self.trust.revoke_all();
-                for index in 0..self.workspaces.len() {
-                    self.disable_lsp(index, cx);
-                }
-                self.set_notice("Every folder is restricted again.".into(), cx);
-            }
+            "trust_folder" => self.trust_active_folder(window, cx),
+            "restrict_folder" => self.restrict_active_folder(window, cx),
+            "forget_trusted_folders" => self.forget_trusted_folders(window, cx),
             "open_settings_json" => {
                 let path = impulse_kit::settings::settings_path(cfg!(debug_assertions));
                 if !path.exists() {
