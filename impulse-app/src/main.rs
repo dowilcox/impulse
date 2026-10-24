@@ -25,6 +25,7 @@ mod dependency_prompts;
 mod editor_keys;
 mod editor_tab;
 mod file_icons;
+mod file_tree_actions;
 mod git_actions;
 mod history_view;
 mod image_view;

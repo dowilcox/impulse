@@ -176,6 +176,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           shortcut registered with global-hotkey),
                           Use Impulse as $EDITOR (EDITOR/VISUAL set to
                           `impulse edit` by control_server::terminal_env),
+                          the file tree's context menu
+                          (file_tree_actions.rs: new file and folder, open
+                          to the side, history, reveal, copy paths, git
+                          actions, rename, Trash with Undo on Linux),
                           menus (menus.rs from impulse_kit::menus: the
                           macOS menu bar, the Linux titlebar menu button,
                           the fixed items' actions and keys),

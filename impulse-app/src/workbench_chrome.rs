@@ -456,68 +456,68 @@ impl Workbench {
                 let path = row.path.clone();
                 let is_dir = row.is_dir;
                 let status = self.git.tree_status(&row.path, p, ignored, cx);
-                files = files.child(
-                    div()
-                        .id(("file", index))
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(6.))
-                        .h(px(metrics::ROW_HEIGHT))
-                        .pl(px(10. + 14. * row.depth as f32))
-                        .pr(px(10.))
-                        .when(selected, |d| d.bg(hsla(p.selection)))
-                        .hover(|style| style.bg(hsla(p.hover)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if is_dir {
-                                this.toggle_dir(path.clone(), cx);
-                            } else {
-                                this.open_file(&path, window, cx);
-                            }
-                        }))
-                        .child(div().w(px(12.)).child(if row.is_dir {
-                            icon(
-                                if expanded {
-                                    "chevron-down"
-                                } else {
-                                    "chevron-right"
-                                },
-                                metrics::ICON_SMALL,
-                                p.text_tertiary,
-                            )
-                            .into_any_element()
+                let menu = self.tree_menu(row.path.clone(), row.is_dir, cx);
+                let row_element = div()
+                    .id(("file", index))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(6.))
+                    .h(px(metrics::ROW_HEIGHT))
+                    .pl(px(10. + 14. * row.depth as f32))
+                    .pr(px(10.))
+                    .when(selected, |d| d.bg(hsla(p.selection)))
+                    .hover(|style| style.bg(hsla(p.hover)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if is_dir {
+                            this.toggle_dir(path.clone(), cx);
                         } else {
-                            div().into_any_element()
-                        }))
-                        .child(
-                            gpui_kit::img(crate::file_icons::icon_path(
-                                &row.name, row.is_dir, expanded,
-                            ))
-                            .size(px(16.))
-                            .flex_none(),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
-                                .child(row.name),
-                        )
-                        .children(status.filter(|(letter, _)| !letter.is_empty()).map(
-                            |(letter, color)| {
-                                div()
-                                    .flex_none()
-                                    .font_family("JetBrains Mono")
-                                    .text_size(px(10.))
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(hsla(color))
-                                    .child(letter)
+                            this.open_file(&path, window, cx);
+                        }
+                    }))
+                    .child(div().w(px(12.)).child(if row.is_dir {
+                        icon(
+                            if expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
                             },
-                        )),
-                );
+                            metrics::ICON_SMALL,
+                            p.text_tertiary,
+                        )
+                        .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }))
+                    .child(
+                        gpui_kit::img(crate::file_icons::icon_path(
+                            &row.name, row.is_dir, expanded,
+                        ))
+                        .size(px(16.))
+                        .flex_none(),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
+                            .child(row.name),
+                    )
+                    .children(status.filter(|(letter, _)| !letter.is_empty()).map(
+                        |(letter, color)| {
+                            div()
+                                .flex_none()
+                                .font_family("JetBrains Mono")
+                                .text_size(px(10.))
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(hsla(color))
+                                .child(letter)
+                        },
+                    ));
+                files = files.child(row_element.context_menu(menu));
             }
         }
         if self.panel == SidebarPanel::Search {
