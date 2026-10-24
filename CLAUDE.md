@@ -124,7 +124,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           control_commands.rs; Linux keeps it in
                           $XDG_RUNTIME_DIR), Review (review_view.rs:
                           scopes, unified and split diffs with word-level
-                          changes, stage/unstage/revert of files, hunks and
+                          changes and syntax colors (review_view/syntax.rs:
+                          each side through GPUI Kit's tree-sitter
+                          highlighter), stage/unstage/revert of files, hunks and
                           selected lines (review_view/selection.rs: gutter
                           click, Shift extends, ⌘C, Esc, the line menu),
                           viewed marks, the j/k/n/p/s/u/x/v/c/o/t keys and

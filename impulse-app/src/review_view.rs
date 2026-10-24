@@ -12,6 +12,7 @@
 mod comments;
 mod navigator;
 mod selection;
+mod syntax;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -66,6 +67,8 @@ struct ReviewFile {
     outdated: HashSet<String>,
     /// Lines picked in one of its hunks (`selection`).
     selection: Option<selection::LineSelection>,
+    /// Its lines' syntax colors, worked out when first shown (`syntax`).
+    syntax: Option<std::rc::Rc<syntax::FileSyntax>>,
 }
 
 /// One row of the list.
@@ -533,6 +536,7 @@ impl ReviewView {
                     comments: Vec::new(),
                     outdated: HashSet::new(),
                     selection: None,
+                    syntax: None,
                 }
             })
             .collect();
@@ -1405,14 +1409,35 @@ impl ReviewView {
                     .child(actions)
                     .into_any_element()
             }
-            Row::Line(f, h, l) => self.line_row(f, h, &[(Some(l), Side::Single)], cx),
+            Row::Line(f, h, l) => {
+                self.ensure_syntax(f, cx);
+                self.line_row(f, h, &[(Some(l), Side::Single)], cx)
+            }
             Row::Split(f, h, old, new) => {
+                self.ensure_syntax(f, cx);
                 self.line_row(f, h, &[(old, Side::Old), (new, Side::New)], cx)
             }
             Row::OutdatedTitle(_) => self.outdated_title_row(),
             Row::Comment(f, id) => self.comment_row(f, &id, cx),
             Row::Composer(_) => self.composer_row(cx),
         }
+    }
+
+    /// File `f`'s syntax colors, worked out the first time it's drawn.
+    fn ensure_syntax(&mut self, f: usize, cx: &mut Context<Self>) {
+        let Some(file) = self.files.get_mut(f) else {
+            return;
+        };
+        if file.syntax.is_some() {
+            return;
+        }
+        let Some(diff) = &file.diff else {
+            return;
+        };
+        let theme = gpui_kit::component::ActiveTheme::theme(&**cx)
+            .highlight_theme
+            .clone();
+        file.syntax = Some(std::rc::Rc::new(syntax::highlight(diff, &theme)));
     }
 
     fn file_header(&self, f: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -1706,7 +1731,17 @@ impl ReviewView {
                     .items_center()
                     .min_w_0()
                     .whitespace_nowrap()
-                    .child(code_text(line, colors.text, word)),
+                    .child(code_text(
+                        line,
+                        colors.text,
+                        word,
+                        index
+                            .and_then(|l| {
+                                self.files[f].syntax.as_ref()?.hunks.get(h)?.get(l).cloned()
+                            })
+                            .unwrap_or_default()
+                            .as_slice(),
+                    )),
             );
             if let (Some(l), false) = (index, busy) {
                 column = column
@@ -1757,52 +1792,61 @@ enum Side {
     New,
 }
 
-/// A line's code, with its word-level changes highlighted (spans are UTF-16
-/// offsets).
-fn code_text(line: &DiffLine, text: KitRgba, word: KitRgba) -> StyledText {
-    let content = line.content.replace('\t', "    ");
-    if line.spans.is_empty() || line.content.contains('\t') {
-        return StyledText::new(content);
-    }
-    // UTF-16 offset -> byte offset.
-    let mut map = Vec::with_capacity(content.len() + 1);
-    let mut units = 0u32;
-    for (byte, ch) in content.char_indices() {
-        map.push((units, byte));
-        units += ch.len_utf16() as u32;
-    }
-    map.push((units, content.len()));
-    let byte_at = |unit: u32| {
-        map.iter()
-            .find(|(u, _)| *u >= unit)
-            .map(|(_, b)| *b)
-            .unwrap_or(content.len())
-    };
+/// A line's code: syntax colors (byte ranges of its content), its
+/// word-level changes highlighted (spans are UTF-16 offsets) unless they
+/// cover most of it, tabs as four spaces.
+fn code_text(
+    line: &DiffLine,
+    text: KitRgba,
+    word: KitRgba,
+    syntax: &[(std::ops::Range<usize>, Hsla)],
+) -> StyledText {
     let font = gpui_kit::font("JetBrains Mono");
-    let run = |len: usize, background: Option<Hsla>| TextRun {
-        len,
-        font: font.clone(),
-        color: hsla(text),
-        background_color: background,
-        underline: None,
-        strikethrough: None,
+    // A line changed through most of its length shows no word changes
+    // (they'd only repeat the line's tint), as in the Swift app.
+    let length: u32 = line.content.encode_utf16().count() as u32;
+    let covered: u32 = line
+        .spans
+        .iter()
+        .map(|s| s.end.saturating_sub(s.start))
+        .sum();
+    let spans = if length > 0 && covered as f32 / length as f32 > 0.6 {
+        &[][..]
+    } else {
+        &line.spans[..]
     };
-    let mut runs = Vec::new();
-    let mut at = 0;
-    for span in &line.spans {
-        let (start, end) = (byte_at(span.start), byte_at(span.end));
-        if start > at {
-            runs.push(run(start - at, None));
+    let mut shown = String::with_capacity(line.content.len());
+    let mut runs: Vec<TextRun> = Vec::new();
+    let mut units = 0u32;
+    for (byte, ch) in line.content.char_indices() {
+        let color = syntax
+            .iter()
+            .rev()
+            .find(|(r, _)| r.contains(&byte))
+            .map_or(hsla(text), |(_, c)| *c);
+        let changed = spans.iter().any(|s| s.start <= units && units < s.end);
+        let background = changed.then(|| hsla(word));
+        units += ch.len_utf16() as u32;
+        let before = shown.len();
+        if ch == '\t' {
+            shown.push_str("    ");
+        } else {
+            shown.push(ch);
         }
-        if end > start.max(at) {
-            runs.push(run(end - start.max(at), Some(hsla(word))));
+        let len = shown.len() - before;
+        match runs.last_mut() {
+            Some(run) if run.color == color && run.background_color == background => run.len += len,
+            _ => runs.push(TextRun {
+                len,
+                font: font.clone(),
+                color,
+                background_color: background,
+                underline: None,
+                strikethrough: None,
+            }),
         }
-        at = end.max(at);
     }
-    if at < content.len() {
-        runs.push(run(content.len() - at, None));
-    }
-    StyledText::new(content).with_runs(runs)
+    StyledText::new(shown).with_runs(runs)
 }
 
 fn status_letter(status: ChangeStatus, p: &ChromePalette) -> impl IntoElement {
