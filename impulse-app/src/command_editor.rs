@@ -175,6 +175,9 @@ pub struct CommandEditor {
     typing: bool,
     selecting: bool,
     caret_on: bool,
+    /// Whether it had the focus when last drawn: only then does the caret
+    /// blink (each blink redraws the window).
+    shown_focused: bool,
     layout: Rc<RefCell<Layout>>,
     /// The width the text wrapped to in the last paint.
     width: Rc<Cell<Pixels>>,
@@ -189,8 +192,11 @@ impl CommandEditor {
                 .await;
             if this
                 .update(cx, |editor, cx| {
-                    editor.caret_on = !editor.caret_on;
-                    cx.notify();
+                    let on = !editor.shown_focused || !editor.caret_on;
+                    if on != editor.caret_on {
+                        editor.caret_on = on;
+                        cx.notify();
+                    }
                 })
                 .is_err()
             {
@@ -218,6 +224,7 @@ impl CommandEditor {
             typing: false,
             selecting: false,
             caret_on: true,
+            shown_focused: false,
             layout: Rc::default(),
             width: Rc::new(Cell::new(px(0.))),
             _blink: blink,
@@ -1083,6 +1090,7 @@ struct Frame {
 impl Render for CommandEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window);
+        self.shown_focused = focused;
         let display = self.display_text();
         let runs = self.runs(display.len());
         let frame = Frame {
