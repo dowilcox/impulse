@@ -154,12 +154,10 @@ impl SettingsView {
         for item in &items {
             let key = item.key;
             let field = match &item.control {
-                Control::Toggle => continue,
-                Control::Integer { .. } | Control::Decimal { .. } => {
-                    let zero_label = match &item.control {
-                        Control::Integer { zero_label, .. } => zero_label.unwrap_or(""),
-                        _ => "",
-                    };
+                // Decimals show their value as text, with no field.
+                Control::Toggle | Control::Decimal { .. } => continue,
+                Control::Integer { zero_label, .. } => {
+                    let zero_label = zero_label.unwrap_or("");
                     let state = cx.new(|cx| {
                         let mut state = InputState::new(window, cx)
                             .placeholder(zero_label)
@@ -558,14 +556,6 @@ impl SettingsView {
                 };
                 json!(parsed.clamp(min, max))
             }
-            Control::Decimal { min, max, .. } => {
-                let current = settings.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
-                json!(text
-                    .trim()
-                    .parse::<f64>()
-                    .unwrap_or(current)
-                    .clamp(min, max))
-            }
             _ => return,
         };
         if settings.get(key) != Some(value.clone()) {
@@ -806,6 +796,8 @@ impl SettingsView {
     fn page_title(&self, title: impl Into<SharedString>) -> impl IntoElement {
         div()
             .text_size(px(18.))
+            // SF Pro's line at 18 points.
+            .line_height(px(21.))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(hsla(self.palette.text))
             .child(title.into())
@@ -939,12 +931,27 @@ impl SettingsView {
     }
 
     /// Up and down arrows, one above the other (`NSStepper`).
+    /// Swift's `Stepper`: an 18x24 pill, the halves split by a hairline,
+    /// with chevrons 8 wide.
     fn stepper(&self, key: &'static str, cx: &mut Context<Self>) -> AnyElement {
         let p = &self.palette;
+        let (fill, line, chevron) = if p.is_light {
+            (
+                Rgba::BLACK.opacity(0.06),
+                Rgba::BLACK.opacity(0.12),
+                Rgba::BLACK.opacity(0.55),
+            )
+        } else {
+            (
+                Rgba::WHITE.opacity(0.075),
+                Rgba::WHITE.opacity(0.18),
+                Rgba::WHITE.opacity(0.6),
+            )
+        };
         let half = |id: &'static str, name: &'static str, action: StepAction| {
             div()
                 .id(named(id, key))
-                .flex_1()
+                .h(px(11.5))
                 .w_full()
                 .flex()
                 .items_center()
@@ -954,21 +961,19 @@ impl SettingsView {
                 .on_click(
                     cx.listener(move |view, _, window, cx| view.step(key, action, window, cx)),
                 )
-                .child(icon(name, 10., p.text_secondary))
+                .child(icon(name, 16., chevron))
         };
         div()
             .flex()
             .flex_col()
-            .w(px(16.))
-            .h(px(22.))
-            .rounded(px(5.))
-            .bg(hsla(if p.is_light {
-                Rgba::BLACK.opacity(0.06)
-            } else {
-                Rgba::WHITE.opacity(0.075)
-            }))
+            .flex_none()
+            .w(px(18.))
+            .h(px(24.))
+            .rounded(px(6.))
+            .bg(hsla(fill))
             .overflow_hidden()
             .child(half("step-up", "chevron-up", StepAction::Increment))
+            .child(div().mx(px(2.)).h(px(1.)).flex_none().bg(hsla(line)))
             .child(half("step-down", "chevron-down", StepAction::Decrement))
             .into_any_element()
     }
@@ -1032,9 +1037,31 @@ impl SettingsView {
                     .unwrap_or(false);
                 self.switch(key, on)
             }
+            // The value as text and a stepper, as Swift's decimal control.
+            (Control::Decimal { .. }, _) => {
+                let value = SettingsStore::get(cx)
+                    .get(key)
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .w(px(40.))
+                            .flex()
+                            .justify_end()
+                            .font_family(MONO_FONT)
+                            .text_size(px(12.))
+                            .child(format!("{value:.1}")),
+                    )
+                    .child(self.stepper(key, cx))
+                    .into_any_element()
+            }
             // A field and an up/down stepper beside it, as Swift's
             // TextField and Stepper.
-            (Control::Integer { .. } | Control::Decimal { .. }, Some(Field::Number(state))) => {
+            (Control::Integer { .. }, Some(Field::Number(state))) => {
                 div()
                     .flex()
                     .items_center()
@@ -1105,9 +1132,12 @@ impl SettingsView {
                     .text_system()
                     .shape_line(title.into(), px(13.), &[run], None)
                     .width;
+                // NSPopUpButton's 24-point frame around its 22-point face.
                 div()
                     .w(px(210.))
+                    .h(px(24.))
                     .flex()
+                    .items_center()
                     .justify_center()
                     .child(
                         popup_frame(p).w(width + px(40.)).max_w(px(210.)).child(
