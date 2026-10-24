@@ -753,16 +753,23 @@ fn command_bindings(settings: &Settings) -> Vec<KeyBinding> {
             ));
         }
     }
-    let terminal = Some(crate::terminal_view::CONTEXT);
+    // GPUI ranks a binding without a context as matching at the deepest
+    // level, so the input bar and find field (command editors inside the
+    // terminal) need these bound in their own context too.
     if platform == Platform::Linux {
-        for (_, shortcut) in bindings
-            .iter()
-            .filter(|(_, s)| keybindings::is_shell_chord(s))
-        {
-            keys.extend(binding(shortcut, NoAction, terminal));
-        }
-        for (id, alias) in keybindings::terminal_aliases(&bindings) {
-            keys.extend(binding(&alias, RunCommand::new(id), terminal));
+        for terminal in [
+            crate::terminal_view::CONTEXT,
+            crate::command_editor::CONTEXT,
+        ] {
+            for (_, shortcut) in bindings
+                .iter()
+                .filter(|(_, s)| keybindings::is_shell_chord(s))
+            {
+                keys.extend(binding(shortcut, NoAction, Some(terminal)));
+            }
+            for (id, alias) in keybindings::terminal_aliases(&bindings) {
+                keys.extend(binding(&alias, RunCommand::new(id), Some(terminal)));
+            }
         }
     }
     // Copy and paste in a terminal are its own (⌘C with nothing selected

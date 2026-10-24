@@ -7,6 +7,8 @@
 
 mod branch_switcher;
 mod changes_panel;
+mod command_editor;
+mod command_history;
 mod commands;
 mod control_commands;
 mod control_server;
@@ -27,6 +29,9 @@ mod session;
 mod settings_store;
 mod settings_view;
 mod shell_launch;
+mod terminal_blocks;
+mod terminal_find_bar;
+mod terminal_input_bar;
 mod terminal_view;
 mod workbench;
 mod workbench_chrome;
@@ -159,6 +164,7 @@ fn main() {
             editor_keys::bind_keys(cx);
             terminal_view::bind_keys(cx);
             palette::bind_keys(cx);
+            command_editor::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");

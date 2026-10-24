@@ -558,6 +558,13 @@ pub fn display_for(
 /// the shell, and a command bound to one is reached with Shift added, when
 /// that's free (Ctrl+W closes the tab elsewhere, Ctrl+Shift+W in a
 /// terminal). The (command, shortcut) pairs to bind in terminals.
+///
+/// Commands in `TERMINAL_FIRST` act on the terminal itself, so their alias
+/// is bound even when another command has it outside terminals: Find is
+/// Ctrl+Shift+F in a terminal, as in other Linux terminals, and Project
+/// Search everywhere else.
+pub const TERMINAL_FIRST: &[&str] = &["find"];
+
 pub fn terminal_aliases(bindings: &[(&'static str, Shortcut)]) -> Vec<(&'static str, Shortcut)> {
     let taken: std::collections::HashSet<&Shortcut> = bindings.iter().map(|(_, s)| s).collect();
     bindings
@@ -568,7 +575,7 @@ pub fn terminal_aliases(bindings: &[(&'static str, Shortcut)]) -> Vec<(&'static 
                 shift: true,
                 ..s.clone()
             };
-            (!taken.contains(&alias)).then_some((*id, alias))
+            (!taken.contains(&alias) || TERMINAL_FIRST.contains(id)).then_some((*id, alias))
         })
         .collect()
 }
@@ -591,6 +598,21 @@ pub fn is_shell_chord(shortcut: &Shortcut) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_takes_ctrl_shift_f_in_terminals() {
+        let bindings = vec![
+            ("find", Shortcut::parse("ctrl+f").unwrap()),
+            ("project_search", Shortcut::parse("ctrl+shift+f").unwrap()),
+            ("close_tab", Shortcut::parse("ctrl+w").unwrap()),
+            ("reopen", Shortcut::parse("ctrl+shift+w").unwrap()),
+        ];
+        let aliases = terminal_aliases(&bindings);
+        assert_eq!(
+            aliases,
+            vec![("find", Shortcut::parse("ctrl+shift+f").unwrap())]
+        );
+    }
 
     fn none() -> BTreeMap<String, String> {
         BTreeMap::new()

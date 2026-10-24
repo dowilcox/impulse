@@ -126,7 +126,9 @@ toolkit with Zed's editor through a fork, not a different toolkit.
   its traffic lights in the 78pt inset; Linux draws its own window buttons.
 - **Keyboard**: one keymap where `secondary` is ⌘ on macOS and Ctrl on Linux.
   In a terminal Ctrl belongs to the shell, so on Linux terminal focus uses
-  Ctrl+Shift for Impulse's shortcuts, as Linux terminals do.
+  Ctrl+Shift for Impulse's shortcuts, as Linux terminals do. Find is
+  Ctrl+Shift+F in a terminal (Project Search everywhere else), the way other
+  Linux terminals use it (`keybindings::TERMINAL_FIRST`).
 - **Menus**: the macOS menu bar from `CommandRegistry`; on Linux the same menus
   from a titlebar button. The palette has every command on both.
 - **Markdown preview**: native, from cmark-gfm's AST or GPUI Kit's Markdown

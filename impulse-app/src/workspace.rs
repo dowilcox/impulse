@@ -89,10 +89,8 @@ impl Surface {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         match self {
-            Surface::Terminal(t) => {
-                let handle = t.read(cx).focus_handle().clone();
-                window.focus(&handle, cx);
-            }
+            // The input bar when it's showing, otherwise the grid.
+            Surface::Terminal(t) => t.update(cx, |t, cx| t.focus(window, cx)),
             Surface::Editor(e) => e.update(cx, |e, cx| e.focus(window, cx)),
             Surface::Review(r) => {
                 let handle = r.read(cx).focus_handle().clone();
