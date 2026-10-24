@@ -1,0 +1,19 @@
+[package]
+name = "impulse-git"
+version = "0.36.0"
+edition = "2021"
+description = "Impulse's git layer (the Rust port of ImpulseGit): libgit2 reads, git CLI writes, safety snapshots"
+license = "GPL-3.0-only"
+
+[dependencies]
+# libgit2 1.9 built from the crate's vendored copy, without the HTTPS and SSH
+# transports (so no OpenSSL or libssh2): Impulse only reads through libgit2,
+# and fetches and pushes run the user's `git`.
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
+# FSEvents on macOS, inotify on Linux.
+notify = "8"
+sha2 = "0.10"
+libc = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }

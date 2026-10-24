@@ -75,6 +75,11 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           installer, JSONC edits and task policy/briefs
                           ported; tested against the shared
                           golden fixtures
+impulse-git/              Rust (rust branch): ImpulseGit: libgit2 (git2,
+                          vendored 1.9.7, no network transports) for reads,
+                          the git CLI for writes, safety snapshots, task
+                          landing, change moves, operation abort, search,
+                          watcher; checked against the Swift git fixtures
 impulse-protocol/         Rust (rust branch): ImpulseProtocol: control-socket
                           messages (byte-compatible with the Swift app), the
                           socket client, the MCP server and tool catalog,
@@ -114,7 +119,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-lsp`, `impulse-protocol`, `impulse-cli` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-git`, `impulse-lsp`, `impulse-protocol`, `impulse-cli` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 
@@ -150,6 +155,7 @@ impulse-macos/swiftw test [--filter Name]
 cargo build -p impulse-ffi           # staticlib the Swift app links
 cargo test -p impulse-terminal       # block/OSC/history tests
 cargo test -p impulse-kit            # rust branch: ported logic vs the golden fixtures
+cargo test -p impulse-git            # rust branch: git layer vs the Swift git fixtures
 cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
 cargo test -p impulse-protocol -p impulse-cli   # rust branch: control protocol, MCP, CLI
 cargo run -p impulse-app -- --cwd <folder> --open <file>   # rust branch: the GPUI app

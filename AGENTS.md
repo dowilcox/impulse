@@ -10,6 +10,7 @@ Impulse is a Mac-first terminal IDE written in Swift (AppKit + SwiftUI), with th
 - `impulse-terminal/` — Rust terminal emulation on `alacritty_terminal` (PTY, grid, OSC 133/7/9/6973 scanning, command blocks, history).
 - `impulse-ffi/` — the C FFI over `impulse-terminal`, linked into the app as a static library.
 - `impulse-kit/` (rust branch) — the full-Rust migration's port of ImpulseKit, checked against the Swift tests' golden fixtures; see `docs/plans/rust-migration.md`.
+- `impulse-git/` (rust branch) — the git layer in Rust (libgit2 reads, git CLI writes).
 - `impulse-lsp/` (rust branch) — the language-server client for the Rust app.
 - `impulse-protocol/` and `impulse-cli/` (rust branch) — the control protocol, MCP server and `impulse` CLI in Rust.
 - `impulse-app/` (rust branch) — the app on GPUI + GPUI Kit (pinned exactly) for macOS and Linux: terminal, editor tabs, language servers.
@@ -22,7 +23,7 @@ Use the scripts; don't replicate their steps by hand.
 
 - `./impulse-macos/build.sh --dev` — build `dist/Impulse Dev.app` (runs alongside the release app).
 - `impulse-macos/swiftw build` / `impulse-macos/swiftw test` — build or test the Swift package with the flags the local toolchain needs.
-- `cargo test -p impulse-terminal`, `cargo test -p impulse-kit`, `cargo test -p impulse-lsp`, `cargo test -p impulse-protocol -p impulse-cli`, `cargo fmt`, `cargo clippy` — Rust core.
+- `cargo test -p impulse-terminal`, `cargo test -p impulse-kit`, `cargo test -p impulse-git`, `cargo test -p impulse-lsp`, `cargo test -p impulse-protocol -p impulse-cli`, `cargo fmt`, `cargo clippy` — Rust core.
 - `python3 scripts/smoke/run.py` — smoke checks of the dev build (editor, shells, CLI, agents, language servers, tasks, session restore), headless; run before a release. The opencode scenario needs `node`.
 - `./scripts/release.sh <version> [--push]` — the only release path.
 
