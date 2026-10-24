@@ -5,12 +5,14 @@
 //! panes); trust and language servers in `workbench_trust`.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::{
     actions, div, prelude::*, px, App, Context, Entity, FocusHandle, KeyBinding, Window,
 };
 use impulse_kit::chrome::ChromePalette;
+use impulse_kit::close_risk::CloseRiskAction;
 use impulse_kit::layout_tree::{PaneDirection, SplitAxis};
 use impulse_kit::theme::ResolvedTheme;
 use impulse_kit::trust::WorkspaceTrust;
@@ -86,6 +88,8 @@ pub struct Workbench {
     pub(crate) problems: Entity<crate::problems_view::ProblemStore>,
     /// The folders of open files, watched (`editor_watch`).
     pub(crate) editor_watch: crate::editor_watch::EditorWatch,
+    /// Closing the window was asked about and confirmed (`close_flow`).
+    pub(crate) close_confirmed: bool,
 }
 
 impl Workbench {
@@ -111,6 +115,7 @@ impl Workbench {
         });
         workbench.start_task_monitor(window, cx);
         workbench.start_editor_watch(window, cx);
+        workbench.guard_window_close(window, cx);
         workbench
     }
 
@@ -160,6 +165,7 @@ impl Workbench {
             git: crate::changes_panel::GitPanel::new(window, cx),
             problems: cx.new(|_| Default::default()),
             editor_watch: crate::editor_watch::EditorWatch::new(),
+            close_confirmed: false,
         }
     }
 
@@ -654,26 +660,45 @@ impl Workbench {
         None
     }
 
-    /// Close the focused pane (the tab with it when it's the only one). An
-    /// editor with unsaved changes needs a second close, as a warning.
+    /// Close the focused pane (the tab with it when it's the only one),
+    /// asking first about unsaved changes and running commands.
     pub(crate) fn close_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(surface) = self.focused_surface().cloned() else {
+        let Some(tab) = self.workspace().active_tab() else {
             return;
         };
-        if surface.is_dirty(cx) {
-            let warning = format!(
-                "{} has unsaved changes. Close again to discard them.",
-                surface.title(cx)
-            );
-            if self.notice.as_deref() != Some(warning.as_str()) {
-                self.set_notice(warning, cx);
-                return;
-            }
+        if !tab.is_split() {
+            let index = self.workspace().active;
+            return self.close_tab_at(index, window, cx);
         }
-        self.close_surface(&surface, window, cx);
+        let target = crate::close_flow::Target::Pane {
+            tab: tab.id,
+            pane: tab.focused,
+        };
+        self.confirm_close(
+            target,
+            CloseRiskAction::CloseTab,
+            Default::default(),
+            window,
+            cx,
+            Rc::new(move |w, window, cx| {
+                let crate::close_flow::Target::Pane { tab, pane } = target else {
+                    return;
+                };
+                let surface = w
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| ws.tabs.iter())
+                    .find(|t| t.id == tab)
+                    .and_then(|t| t.panes.get(&pane).cloned());
+                if let Some(surface) = surface {
+                    w.close_surface(&surface, window, cx);
+                }
+            }),
+        );
     }
 
-    /// Close the tab at `index` of the active workspace, every pane in it.
+    /// Close the tab at `index` of the active workspace, every pane in it,
+    /// asking first about a pin, unsaved changes and running commands.
     pub(crate) fn close_tab_at(
         &mut self,
         index: usize,
@@ -683,48 +708,23 @@ impl Workbench {
         let Some(tab) = self.workspace().tabs.get(index) else {
             return;
         };
-        if tab.pinned {
-            let (id, workbench) = (tab.id, cx.entity().downgrade());
-            crate::tasks::confirm(
-                window,
-                cx,
-                "Pinned Tab".into(),
-                "This tab is pinned. Close anyway?".into(),
-                "Close",
-                "Cancel",
-                true,
-                move |yes, window, cx| {
-                    if !yes {
-                        return;
-                    }
-                    let _ = workbench.update(cx, |w, cx| {
-                        // Re-find the tab: others may have closed or opened.
-                        let workspace = w.workspace_mut();
-                        if let Some(index) = workspace.tabs.iter().position(|t| t.id == id) {
-                            workspace.tabs[index].pinned = false;
-                            w.close_tab_at(index, window, cx);
-                        }
-                    });
-                },
-            );
+        let id = tab.id;
+        self.confirm_close(
+            crate::close_flow::Target::Tab(id),
+            CloseRiskAction::CloseTab,
+            Default::default(),
+            window,
+            cx,
+            Rc::new(move |w, window, cx| w.remove_tab(id, window, cx)),
+        );
+    }
+
+    /// Take tab `id` out of the active workspace now.
+    fn remove_tab(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        // Re-find the tab: others may have closed or opened while asking.
+        let Some(index) = self.workspace().tabs.iter().position(|t| t.id == id) else {
             return;
-        }
-        let dirty: Vec<String> = tab
-            .panes
-            .values()
-            .filter(|s| s.is_dirty(cx))
-            .map(|s| s.title(cx))
-            .collect();
-        if !dirty.is_empty() {
-            let warning = format!(
-                "{} has unsaved changes. Close again to discard them.",
-                dirty.join(", ")
-            );
-            if self.notice.as_deref() != Some(warning.as_str()) {
-                self.set_notice(warning, cx);
-                return;
-            }
-        }
+        };
         let tab = self.workspace_mut().tabs.remove(index);
         for surface in tab.panes.values() {
             self.remember_closed(surface, cx);

@@ -97,7 +97,7 @@ pub fn init(cx: &mut App) {
         }
     }
     cx.bind_keys(keys.into_iter().flatten());
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| crate::close_flow::quit(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -207,7 +207,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
         root.on_action(cx.listener(|this, _: &Open, window, cx| this.open_files_dialog(window, cx)))
-            .on_action(cx.listener(|_, _: &CloseWindow, window, _| window.remove_window()))
+            .on_action(cx.listener(|w, _: &CloseWindow, window, cx| w.close_window(window, cx)))
             .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
             .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
             .on_action(cx.listener(|this, _: &About, window, cx| this.show_about(window, cx)))

@@ -19,6 +19,7 @@ mod agent_views;
 mod branch_manager;
 mod branch_switcher;
 mod changes_panel;
+mod close_flow;
 mod command_editor;
 mod command_history;
 mod commands;

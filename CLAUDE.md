@@ -190,6 +190,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           with Undo on Linux; drag
                           and drop moving project items and copying ones
                           from outside, Workbench::tree_drop),
+                          close_flow.rs (asking before closing a pane,
+                          tab or window, or quitting: a pinned tab, Save,
+                          Don't Save or Cancel for each unsaved editor,
+                          then running terminal work from
+                          impulse_kit::close_risk),
                           New File and Install Language Servers
                           (untitled.rs: an untitled EditorTab saved with
                           the system's save dialog, or a typed path where
