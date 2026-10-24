@@ -366,8 +366,16 @@ struct RepositoryTasks {
     common: String,
     pairs: Vec<Pair>,
     merged: HashSet<String>,
+    /// Merged tasks that Finish pushed for review (merged on the server).
+    reviewed_merged: HashSet<String>,
     upstream_gone: HashSet<String>,
     summaries: HashMap<String, Option<String>>,
+}
+
+thread_local! {
+    /// Tasks whose "was merged" toast went out, in any window (Swift's
+    /// `OverlapMonitor.claimCleanUpOffer`): offered once per run.
+    static OFFERED_CLEAN_UP: std::cell::RefCell<HashSet<String>> = Default::default();
 }
 
 static MONITOR_BUSY: AtomicBool = AtomicBool::new(false);
@@ -540,8 +548,14 @@ fn compute_repository(main: &str, common: &str, trust: &WorkspaceTrust) -> Repos
         pairs = task_overlap::pairs(&changes, &ignoring);
     }
     let trusted = trust.is_trusted(main);
-    let merged = merged_records(main, &tasks, trusted)
+    let merged_records = merged_records(main, &tasks, trusted);
+    let merged = merged_records
         .iter()
+        .map(|t| task_registry::canonical(&t.path))
+        .collect();
+    let reviewed_merged = merged_records
+        .iter()
+        .filter(|t| t.pushed_for_review.is_some())
         .map(|t| task_registry::canonical(&t.path))
         .collect();
     let upstream_gone = if tasks.is_empty() {
@@ -566,6 +580,7 @@ fn compute_repository(main: &str, common: &str, trust: &WorkspaceTrust) -> Repos
         common: common.to_string(),
         pairs,
         merged,
+        reviewed_merged,
         upstream_gone,
         summaries,
     }
@@ -621,6 +636,7 @@ impl Workbench {
 
     fn apply_task_states(&mut self, found: Vec<RepositoryTasks>, cx: &mut Context<Self>) {
         self.note_new_overlaps(&found, cx);
+        self.offer_clean_up(&found, cx);
         let mut changed = false;
         for workspace in &mut self.workspaces {
             let Some(repository) = found
@@ -651,6 +667,58 @@ impl Workbench {
         if changed {
             cx.notify();
         }
+    }
+
+    /// A task Finish pushed for review was merged on the server: the
+    /// window that has it open offers to finish the job, once (Swift's
+    /// `reviewedTasksMerged`).
+    fn offer_clean_up(&mut self, found: &[RepositoryTasks], cx: &mut Context<Self>) {
+        let offers: Vec<(u64, String)> = found
+            .iter()
+            .flat_map(|r| r.reviewed_merged.iter())
+            .filter_map(|path| {
+                let workspace = self
+                    .workspaces
+                    .iter()
+                    .find(|w| task_registry::canonical(&w.root.to_string_lossy()) == *path)?;
+                OFFERED_CLEAN_UP
+                    .with_borrow_mut(|offered| offered.insert(path.clone()))
+                    .then(|| (workspace.id, workspace.name()))
+            })
+            .collect();
+        if offers.is_empty() {
+            return;
+        }
+        let Some((_, handle)) = crate::session::workbenches(cx)
+            .into_iter()
+            .find(|(w, _)| w.entity_id() == cx.entity_id())
+        else {
+            return;
+        };
+        let workbench = cx.entity().downgrade();
+        let _ = handle.update(cx, move |_, window, cx| {
+            for (id, name) in offers {
+                let workbench = workbench.clone();
+                let clean_up: Run = Rc::new(move |window, cx| {
+                    let _ = workbench.update(cx, |w, cx| {
+                        let index = w.workspaces.iter().position(|ws| ws.id == id);
+                        if index.is_some() {
+                            w.open_finish_task(index, window, cx);
+                        }
+                    });
+                });
+                crate::toasts::show(
+                    window,
+                    cx,
+                    crate::toasts::Toast::success(
+                        "Finish can update the main checkout and archive the task.",
+                    )
+                    .title(format!("{name} was merged."))
+                    .action("Clean Up…", clean_up)
+                    .lifetime(Some(Duration::from_secs(30))),
+                );
+            }
+        });
     }
 
     /// Pairs of workspaces that just started changing the same files: a

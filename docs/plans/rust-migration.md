@@ -559,6 +559,10 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   folder's trusted project files and, for a folder trusted through one
   above it, offers to restrict that one; Forget clears project-file trust
   too.
+  A task Finish pushed for review that turns out merged on the server
+  gets "<task> was merged." with Clean Up… (Finish), once, in the window
+  that has it; a workspace row's + on hover offers New Task from <repo>…
+  and Open Folder as Workspace….
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

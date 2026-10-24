@@ -1241,6 +1241,7 @@ impl Workbench {
                         },
                     ),
             )
+            .child(self.new_workspace_button(index, cx))
             .tooltip({
                 let help = self.workspace_help(index);
                 move |window, cx| {
@@ -2046,6 +2047,59 @@ pub(crate) fn chrome_button(
         })
         .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
         .child(div().whitespace_nowrap().child(title.into()))
+}
+
+impl Workbench {
+    /// The row's + on hover (Swift's `newWorkspaceItems`): a task from its
+    /// repository, named for the main checkout, or another folder.
+    fn new_workspace_button(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::button::ButtonVariants as _;
+        use gpui_kit::component::menu::DropdownMenu as _;
+        use gpui_kit::component::Sizable as _;
+        let workspace = &self.workspaces[index];
+        let repository = workspace.task.common_dir.is_some().then(|| {
+            let main = crate::tasks::main_checkout_root(&workspace.root.to_string_lossy());
+            Path::new(&main)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| workspace.name())
+        });
+        let (id, workbench) = (workspace.id, cx.entity().downgrade());
+        div()
+            .flex_none()
+            .invisible()
+            .group_hover("workspace", |s| s.visible())
+            .child(
+                gpui_kit::component::button::Button::new(("workspace-new", id as usize))
+                    .ghost()
+                    .xsmall()
+                    .icon(gpui_kit::component::Icon::empty().path("icons/plus.svg"))
+                    .dropdown_menu(move |menu: PopupMenu, _, _| {
+                        let mut menu = menu;
+                        if let Some(repository) = &repository {
+                            let workbench = workbench.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(format!("New Task from {repository}…"))
+                                    .on_click(move |_, window, cx| {
+                                        let _ = workbench.update(cx, |w, cx| {
+                                            let index =
+                                                w.workspaces.iter().position(|ws| ws.id == id);
+                                            w.present_new_task(index, false, window, cx)
+                                        });
+                                    }),
+                            );
+                        }
+                        let workbench = workbench.clone();
+                        menu.item(PopupMenuItem::new("Open Folder as Workspace…").on_click(
+                            move |_, window, cx| {
+                                let _ = workbench.update(cx, |w, cx| {
+                                    w.run_command("open_workspace", window, cx)
+                                });
+                            },
+                        ))
+                    }),
+            )
+    }
 }
 
 /// The sidebar's width while dragging its edge, and the limits Swift's
