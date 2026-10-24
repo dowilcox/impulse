@@ -158,6 +158,9 @@ impl VimLayer {
             status.command_line.map(|line| format!("{line}\u{258f}")),
             status.message,
             Some(status.keys).filter(|k| !k.is_empty()),
+            self.vim
+                .recording()
+                .map(|name| format!("recording @{name}")),
         ]
         .into_iter()
         .flatten()
@@ -236,6 +239,8 @@ impl VimLayer {
             return false;
         }
         if !self.vim.takes_keys() && !matches!(key, Key::Escape | Key::Ctrl('[' | 'c')) {
+            // The editor types it; a macro being recorded keeps it.
+            self.vim.typed(key);
             return false;
         }
         let Some(tab) = self.tab.upgrade() else {

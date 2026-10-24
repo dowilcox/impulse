@@ -857,3 +857,63 @@ fn notation() {
         ]
     );
 }
+
+#[test]
+fn marks() {
+    let t = "one\n  t|wo\nthree\nfour";
+    // `'a` goes to the line's first non-blank, `` `a `` to the place.
+    assert_eq!(run(t, "majjj'a"), "one\n  |two\nthree\nfour");
+    assert_eq!(run(t, "majjj`a"), "one\n  t|wo\nthree\nfour");
+    // As targets: `'` takes whole lines, `` ` `` up to the place.
+    assert_eq!(run(t, "majjd'a"), "|one");
+    assert_eq!(run("ab|cdef", "mal`a"), "ab|cdef");
+    assert_eq!(run("ab|cdef", "ma$d`a"), "ab|f");
+    // `''` returns to where the last jump started.
+    assert_eq!(run(t, "G''"), "one\n  |two\nthree\nfour");
+    // An unset mark goes nowhere.
+    assert_eq!(run(t, "'z"), t);
+}
+
+#[test]
+fn macros() {
+    // Recorded keys, Insert mode's typing included, played with `@`.
+    let t = "|a\nb\nc\nd";
+    assert_eq!(run(t, "qaA!<Esc>jq@a"), "a!\nb!\n|c\nd");
+    assert_eq!(run(t, "qaA!<Esc>jq2@a"), "a!\nb!\nc!\n|d");
+    assert_eq!(run(t, "qaA!<Esc>jq@a@@"), "a!\nb!\nc!\n|d");
+    // A macro with an operator and a count.
+    assert_eq!(run("|one two three", "qqdwq@q"), "|three");
+    // An unknown macro does nothing.
+    assert_eq!(run(t, "@z"), t);
+    let mut ed = Ed::new(t);
+    ed.keys("qa");
+    assert_eq!(ed.vim.recording(), Some('a'));
+    ed.keys("q");
+    assert_eq!(ed.vim.recording(), None);
+}
+
+#[test]
+fn incremental_search() {
+    let t = "|foo bar\nbaz bar\nbar";
+    let mut ed = Ed::new(t);
+    // Each key shows the first match from where the search started.
+    ed.keys("/ba");
+    assert_eq!(ed.show(), "foo |bar\nbaz bar\nbar");
+    assert_eq!(ed.vim.highlighted_pattern(), Some("ba"));
+    ed.keys("z");
+    assert_eq!(ed.show(), "foo bar\n|baz bar\nbar");
+    ed.keys("<BS>");
+    assert_eq!(ed.show(), "foo |bar\nbaz bar\nbar");
+    // Enter lands on the same match; Escape goes back.
+    ed.keys("z<CR>");
+    assert_eq!(ed.show(), "foo bar\n|baz bar\nbar");
+    let mut ed = Ed::new(t);
+    ed.keys("/baz<Esc>");
+    assert_eq!(ed.show(), t);
+    assert_eq!(ed.vim.highlighted_pattern(), None);
+    // Backwards from the end.
+    assert_eq!(
+        run("foo bar\nbaz bar\n|bar", "?baz<CR>"),
+        "foo bar\n|baz bar\nbar"
+    );
+}

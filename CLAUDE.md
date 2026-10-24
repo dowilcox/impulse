@@ -82,7 +82,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           installer, JSONC edits and task policy/briefs
                           ported; Vim mode's state machine (vim/: modes,
                           counts, motions, operators, text objects,
-                          registers, `.`, search, `:` commands); tested
+                          registers, `.`, search as you type, marks,
+                          macros, `:` commands); tested
                           against the shared
                           golden fixtures
 impulse-git/              Rust (rust branch): ImpulseGit: libgit2 (git2,

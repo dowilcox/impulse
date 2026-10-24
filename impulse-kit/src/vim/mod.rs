@@ -238,6 +238,12 @@ enum Motion {
     SearchWord(bool),
     /// `/` or `?`: open the search line.
     SearchPrompt(bool),
+    /// `'x` (its line) or `` `x `` (its place); `''` is where the last jump
+    /// started.
+    Mark {
+        name: char,
+        line: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,20 +308,38 @@ enum Act {
     ReplaceChar(char),
     ReplaceNewline,
     Join,
-    Put { before: bool },
+    Put {
+        before: bool,
+    },
     Undo,
     Redo,
     Repeat,
     Insert(InsertAt),
     ReplaceMode,
-    Visual { linewise: bool },
+    Visual {
+        linewise: bool,
+    },
     ToggleCaseChar,
-    Scroll { by: Scroll, down: bool },
-    Reveal { at: Reveal, first_non_blank: bool },
+    Scroll {
+        by: Scroll,
+        down: bool,
+    },
+    Reveal {
+        at: Reveal,
+        first_non_blank: bool,
+    },
     Reselect,
     CommandLine,
     SwapEnds,
     Escape,
+    /// `m` and a letter.
+    SetMark(char),
+    /// `q` and a letter: record the keys that follow into a macro.
+    Record(char),
+    /// `q` while recording.
+    StopRecording,
+    /// `@` and a letter (`@@`: the last one played).
+    Play(char),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -389,6 +413,9 @@ struct CommandLine {
     operator: Option<(Op, Option<usize>, Option<char>)>,
     /// A count for the search (`3/foo`).
     count: Option<usize>,
+    /// A search typed in Normal mode: where the cursor was, as the typed
+    /// pattern's first match is shown while typing (`incsearch`).
+    origin: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -439,6 +466,15 @@ pub struct Vim {
     replaced: Vec<Option<char>>,
     last_inserted: String,
     last_ex: String,
+    /// Marks by name, as a line and column (so they stay on their line
+    /// when the text before them changes length).
+    marks: HashMap<char, (usize, usize)>,
+    /// The macro being recorded, and its keys so far.
+    recording: Option<(char, Vec<Key>)>,
+    macros: HashMap<char, Vec<Key>>,
+    last_played: Option<char>,
+    /// Inside `@`: Insert mode's keys are typed here, not by the editor.
+    playing: bool,
 }
 
 impl Default for Vim {
@@ -470,6 +506,11 @@ impl Vim {
             replaced: Vec::new(),
             last_inserted: String::new(),
             last_ex: String::new(),
+            marks: HashMap::new(),
+            recording: None,
+            macros: HashMap::new(),
+            last_played: None,
+            playing: false,
         }
     }
 
@@ -511,18 +552,34 @@ impl Vim {
 
     /// The search pattern while its matches are highlighted.
     pub fn highlighted_pattern(&self) -> Option<&str> {
+        if let Some(line) = self.typed_search() {
+            return Some(line);
+        }
         self.search
             .as_ref()
             .filter(|_| self.highlight)
             .map(|s| s.pattern.as_str())
     }
 
+    /// A search being typed, with something typed.
+    fn typed_search(&self) -> Option<&str> {
+        self.command_line
+            .as_ref()
+            .filter(|line| line.origin.is_some() && !line.text.is_empty())
+            .map(|line| line.text.as_str())
+    }
+
     /// The last search's matches while they're highlighted (until `:noh`).
     pub fn search_highlights(&mut self, text: &str) -> Vec<Range<usize>> {
-        if !self.highlight {
+        let typed = self.typed_search().map(str::to_string);
+        if !self.highlight && typed.is_none() {
             return Vec::new();
         }
-        let Some(regex) = self.search_regex() else {
+        let regex = match typed {
+            Some(pattern) => compile(&pattern, false),
+            None => self.search_regex(),
+        };
+        let Some(regex) = regex else {
             return Vec::new();
         };
         regex
@@ -587,6 +644,9 @@ impl Vim {
     /// Handle one key.
     pub fn key(&mut self, key: Key, cx: &mut Context) -> Outcome {
         self.message = None;
+        if let Some((_, keys)) = self.recording.as_mut() {
+            keys.push(key);
+        }
         // Insert mode's typing is the editor's.
         if self.mode == Mode::Insert
             && self.command_line.is_none()
@@ -599,26 +659,107 @@ impl Vim {
             cursor: cx.cursor.min(cx.text.len()),
             actions: Vec::new(),
         };
+        self.step(key, &mut w, cx);
+        self.outcome(cx.text, w)
+    }
+
+    /// A key the editor typed itself (Insert mode), for a macro being
+    /// recorded.
+    pub fn typed(&mut self, key: Key) {
+        if let Some((_, keys)) = self.recording.as_mut() {
+            keys.push(key);
+        }
+    }
+
+    /// The macro being recorded, for the status bar.
+    pub fn recording(&self) -> Option<char> {
+        self.recording.as_ref().map(|(name, _)| *name)
+    }
+
+    fn step(&mut self, key: Key, w: &mut Work, cx: &mut Context) {
         if self.command_line.is_some() {
-            self.command_line_key(key, &mut w, cx);
-        } else {
-            match self.mode {
-                Mode::Insert => self.finish_insert(&mut w),
-                Mode::Replace => self.replace_key(key, &mut w),
-                Mode::Normal | Mode::Visual | Mode::VisualLine => {
-                    self.pending.push(key);
-                    match self.parse(&self.pending) {
-                        Parse::More => {}
-                        Parse::Bad => self.pending.clear(),
-                        Parse::Done(cmd) => {
-                            self.pending.clear();
-                            self.run(cmd, &mut w, cx);
-                        }
+            self.command_line_key(key, w, cx);
+            return;
+        }
+        match self.mode {
+            Mode::Insert if self.playing && !matches!(key, Key::Escape | Key::Ctrl('[' | 'c')) => {
+                self.type_key(key, w, cx)
+            }
+            Mode::Insert => self.finish_insert(w),
+            Mode::Replace => self.replace_key(key, w),
+            Mode::Normal | Mode::Visual | Mode::VisualLine => {
+                self.pending.push(key);
+                match self.parse(&self.pending) {
+                    Parse::More => {}
+                    Parse::Bad => self.pending.clear(),
+                    Parse::Done(cmd) => {
+                        self.pending.clear();
+                        self.run(cmd, w, cx);
                     }
                 }
             }
         }
-        self.outcome(cx.text, w)
+    }
+
+    /// Insert mode's typing, while a macro plays.
+    fn type_key(&mut self, key: Key, w: &mut Work, cx: &Context) {
+        let put = |text: &str, w: &mut Work| {
+            w.text.insert_str(w.cursor, text);
+            w.cursor += text.len();
+        };
+        match key {
+            Key::Char(c) => put(c.encode_utf8(&mut [0; 4]), w),
+            Key::Enter => {
+                let ending = line_ending(&w.text).to_string();
+                put(&ending, w)
+            }
+            Key::Tab => put(cx.indent, w),
+            Key::Backspace if w.cursor > 0 => {
+                let at = prev(&w.text, w.cursor);
+                w.text.replace_range(at..w.cursor, "");
+                w.cursor = at;
+            }
+            Key::Delete if w.cursor < w.text.len() => {
+                let end = next(&w.text, w.cursor);
+                w.text.replace_range(w.cursor..end, "");
+            }
+            Key::Left if w.cursor > 0 => w.cursor = prev(&w.text, w.cursor),
+            Key::Right if w.cursor < w.text.len() => w.cursor = next(&w.text, w.cursor),
+            _ => {}
+        }
+    }
+
+    /// `@`: the macro's keys, `count` times, as one change.
+    fn play(&mut self, name: char, count: usize, w: &mut Work, cx: &mut Context) {
+        let name = if name == '@' {
+            match self.last_played {
+                Some(name) => name,
+                None => return,
+            }
+        } else {
+            name
+        };
+        if self.playing {
+            return;
+        }
+        let Some(keys) = self.macros.get(&name).cloned() else {
+            return;
+        };
+        self.last_played = Some(name);
+        self.playing = true;
+        // Its keys aren't recorded again into a macro being recorded.
+        let recording = self.recording.take();
+        'runs: for _ in 0..count {
+            for &key in &keys {
+                self.step(key, w, cx);
+                if self.message.is_some() && self.mode == Mode::Normal {
+                    // A search that failed, and the like, stops it.
+                    break 'runs;
+                }
+            }
+        }
+        self.recording = recording;
+        self.playing = false;
     }
 
     fn outcome(&mut self, original: &str, w: Work) -> Outcome {
@@ -795,6 +936,22 @@ impl Vim {
             Key::Char('o') => act(Act::Insert(InsertAt::Below)),
             Key::Char('O') => act(Act::Insert(InsertAt::Above)),
             Key::Char('R') => act(Act::ReplaceMode),
+            Key::Char('q') if self.recording.is_some() => act(Act::StopRecording),
+            Key::Char('q') => match keys.get(i + 1) {
+                None => Parse::More,
+                Some(Key::Char(c)) if c.is_ascii_lowercase() => act(Act::Record(*c)),
+                _ => Parse::Bad,
+            },
+            Key::Char('@') => match keys.get(i + 1) {
+                None => Parse::More,
+                Some(Key::Char(c)) if c.is_ascii_lowercase() || *c == '@' => act(Act::Play(*c)),
+                _ => Parse::Bad,
+            },
+            Key::Char('m') => match keys.get(i + 1) {
+                None => Parse::More,
+                Some(Key::Char(c)) if c.is_ascii_lowercase() => act(Act::SetMark(*c)),
+                _ => Parse::Bad,
+            },
             Key::Char('v') => act(Act::Visual { linewise: false }),
             Key::Char('V') => act(Act::Visual { linewise: true }),
             Key::Char('~') => act(Act::ToggleCaseChar),
@@ -1102,9 +1259,23 @@ impl Vim {
             }
             Motion::CurrentLine => linewise(first_of((line + n - 1).min(last_line))),
             Motion::Column => exclusive(at_column(t, line_start(t, from), n - 1)),
-            Motion::FileStart => linewise(first_of(count.map_or(0, |c| c - 1).min(last_line))),
+            Motion::FileStart => {
+                self.marks.insert('\'', (line, column(t, from)));
+                linewise(first_of(count.map_or(0, |c| c - 1).min(last_line)))
+            }
             Motion::FileEnd => {
+                self.marks.insert('\'', (line, column(t, from)));
                 linewise(first_of(count.map_or(last_line, |c| c - 1).min(last_line)))
+            }
+            Motion::Mark { name, line: whole } => {
+                let (to_line, to_col) = *self.marks.get(&name)?;
+                self.marks.insert('\'', (line, column(t, from)));
+                let to_line = to_line.min(last_line);
+                if whole {
+                    linewise(first_of(to_line))
+                } else {
+                    exclusive(at_column(t, start_of_line(t, to_line), to_col))
+                }
             }
             Motion::Find { ch, forward, till } => {
                 self.last_find = Some((ch, forward, till));
@@ -1615,6 +1786,20 @@ impl Vim {
                 }
                 w.actions.push(Action::Reveal(at));
             }
+            Act::Record(name) => self.recording = Some((name, Vec::new())),
+            Act::StopRecording => {
+                if let Some((name, mut keys)) = self.recording.take() {
+                    // Without the `q` that stopped it.
+                    keys.pop();
+                    self.macros.insert(name, keys);
+                }
+            }
+            Act::Play(name) => self.play(name, count, w, cx),
+            Act::SetMark(name) => {
+                let cursor = w.cursor;
+                self.marks
+                    .insert(name, (line_of(&w.text, cursor), column(&w.text, cursor)));
+            }
             Act::Reselect => {
                 let Some((anchor, head, linewise)) = self.last_visual else {
                     return;
@@ -2053,30 +2238,49 @@ impl Vim {
             text,
             operator,
             count: None,
+            origin: None,
         });
     }
 
     fn command_line_key(&mut self, key: Key, w: &mut Work, cx: &mut Context) {
+        let mode = self.mode;
         let Some(line) = self.command_line.as_mut() else {
             return;
         };
+        if line.prompt != ':' && line.operator.is_none() && mode == Mode::Normal {
+            line.origin.get_or_insert(w.cursor);
+        }
+        let origin = line.origin;
         match key {
             Key::Escape | Key::Ctrl('[') | Key::Ctrl('c') => {
                 self.command_line = None;
                 self.leave_visual(w);
+                if let Some(origin) = origin {
+                    w.cursor = origin;
+                }
             }
             Key::Backspace => {
                 if line.text.pop().is_none() {
                     self.command_line = None;
                     self.leave_visual(w);
                 }
+                self.preview_search(w);
             }
-            Key::Ctrl('u') => line.text.clear(),
-            Key::Char(c) => line.text.push(c),
+            Key::Ctrl('u') => {
+                line.text.clear();
+                self.preview_search(w);
+            }
+            Key::Char(c) => {
+                line.text.push(c);
+                self.preview_search(w);
+            }
             Key::Enter => {
                 let Some(line) = self.command_line.take() else {
                     return;
                 };
+                if let Some(origin) = line.origin {
+                    w.cursor = origin;
+                }
                 if line.prompt == ':' {
                     self.leave_visual(w);
                     self.ex(&line.text, w, cx);
@@ -2086,6 +2290,38 @@ impl Vim {
             }
             _ => {}
         }
+    }
+
+    /// The search being typed's first match, from where it started (or
+    /// that place, when nothing matches yet).
+    fn preview_search(&mut self, w: &mut Work) {
+        let Some(line) = self.command_line.as_ref() else {
+            return;
+        };
+        let Some(origin) = line.origin else {
+            return;
+        };
+        let forward = line.prompt == '/';
+        let found = compile(&line.text, false)
+            .filter(|_| !line.text.is_empty())
+            .and_then(|regex| {
+                let t = &w.text;
+                if forward {
+                    regex
+                        .find_iter(t)
+                        .map(|m| m.start())
+                        .find(|&s| s > origin)
+                        .or_else(|| regex.find(t).map(|m| m.start()))
+                } else {
+                    regex
+                        .find_iter(t)
+                        .map(|m| m.start())
+                        .take_while(|&s| s < origin)
+                        .last()
+                        .or_else(|| regex.find_iter(t).last().map(|m| m.start()))
+                }
+            });
+        w.cursor = found.unwrap_or(origin);
     }
 
     fn leave_visual(&mut self, w: &mut Work) {
@@ -2360,6 +2596,16 @@ fn parse_motion(keys: &[Key], i: usize) -> Step<Motion> {
         Key::Char('N') => one(Motion::SearchNext(true)),
         Key::Char('*') => one(Motion::SearchWord(true)),
         Key::Char('#') => one(Motion::SearchWord(false)),
+        Key::Char(c @ ('\'' | '`')) => match keys.get(i + 1) {
+            None => Step::More,
+            Some(Key::Char(name)) if name.is_ascii_lowercase() || matches!(name, '\'' | '`') => {
+                Step::Done(Motion::Mark {
+                    name: if *name == '`' { '\'' } else { *name },
+                    line: c == '\'',
+                })
+            }
+            _ => Step::Bad,
+        },
         Key::Char('/') => one(Motion::SearchPrompt(true)),
         Key::Char('?') => one(Motion::SearchPrompt(false)),
         Key::Char(c @ ('f' | 't' | 'F' | 'T')) => match keys.get(i + 1) {
