@@ -7,6 +7,7 @@
 //! `:` commands in `ex`. Text typed in Insert mode is the editor's own: the
 //! machine only sees the text before and after, to repeat it with `.`.
 
+mod block;
 mod ex;
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ pub enum Mode {
     Replace,
     Visual,
     VisualLine,
+    VisualBlock,
 }
 
 impl Mode {
@@ -36,11 +38,12 @@ impl Mode {
             Mode::Replace => "--REPLACE--",
             Mode::Visual => "--VISUAL--",
             Mode::VisualLine => "--VISUAL LINE--",
+            Mode::VisualBlock => "--VISUAL BLOCK--",
         }
     }
 
     fn is_visual(self) -> bool {
-        matches!(self, Mode::Visual | Mode::VisualLine)
+        matches!(self, Mode::Visual | Mode::VisualLine | Mode::VisualBlock)
     }
 }
 
@@ -201,6 +204,8 @@ pub struct Status {
 struct Register {
     text: String,
     linewise: bool,
+    /// A Visual Block's columns, one line of the block per line.
+    block: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -340,6 +345,12 @@ enum Act {
     StopRecording,
     /// `@` and a letter (`@@`: the last one played).
     Play(char),
+    /// Ctrl-V.
+    VisualBlock,
+    /// `I` or `A` (true) on a block.
+    BlockInsert(bool),
+    /// `O` on a block.
+    SwapColumns,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -404,6 +415,8 @@ struct InsertSession {
     /// `o` and `O`: repeats go on new lines with this indentation.
     new_line: Option<String>,
     change: Option<Change>,
+    /// Started on a Visual Block: Escape types the same on its other lines.
+    block: Option<block::BlockInsert>,
 }
 
 struct CommandLine {
@@ -687,7 +700,7 @@ impl Vim {
             }
             Mode::Insert => self.finish_insert(w),
             Mode::Replace => self.replace_key(key, w),
-            Mode::Normal | Mode::Visual | Mode::VisualLine => {
+            Mode::Normal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.pending.push(key);
                 match self.parse(&self.pending) {
                     Parse::More => {}
@@ -766,6 +779,12 @@ impl Vim {
         let edit = diff(original, &w.text);
         let selection = match self.mode {
             Mode::Visual | Mode::VisualLine => self.visual_range(&w.text),
+            // The block is drawn by the editor (`block_ranges`); the caret
+            // is its moving corner.
+            Mode::VisualBlock => {
+                let at = self.head.min(w.text.len());
+                at..at
+            }
             Mode::Normal => {
                 let at = clamp_normal(&w.text, w.cursor);
                 at..at
@@ -884,6 +903,14 @@ impl Vim {
                 };
             }
             let visual_op = |op, linewise| done(Kind::VisualOperate { op, linewise });
+            if self.mode == Mode::VisualBlock {
+                match key {
+                    Key::Char('I') => return done(Kind::Do(Act::BlockInsert(false))),
+                    Key::Char('A') => return done(Kind::Do(Act::BlockInsert(true))),
+                    Key::Char('O') => return done(Kind::Do(Act::SwapColumns)),
+                    _ => {}
+                }
+            }
             match key {
                 Key::Char('x') | Key::Delete => return visual_op(Op::Delete, false),
                 Key::Char('X') | Key::Char('D') => return visual_op(Op::Delete, true),
@@ -953,6 +980,7 @@ impl Vim {
                 _ => Parse::Bad,
             },
             Key::Char('v') => act(Act::Visual { linewise: false }),
+            Key::Ctrl('v') => act(Act::VisualBlock),
             Key::Char('V') => act(Act::Visual { linewise: true }),
             Key::Char('~') => act(Act::ToggleCaseChar),
             Key::Char(':') => act(Act::CommandLine),
@@ -1013,7 +1041,8 @@ impl Vim {
     fn run(&mut self, cmd: Cmd, w: &mut Work, cx: &mut Context) {
         let count = cmd.count.unwrap_or(1).clamp(1, MAX_COUNT);
         let visual_before = self.mode.is_visual().then(|| self.visual_size(&w.text));
-        let changes = is_change(&cmd.kind);
+        // `.` doesn't repeat what was done to a Visual Block.
+        let changes = is_change(&cmd.kind) && self.mode != Mode::VisualBlock;
         match cmd.kind {
             Kind::Move(Motion::SearchPrompt(forward)) => {
                 self.open_command_line(if forward { '/' } else { '?' }, String::new(), None);
@@ -1034,6 +1063,9 @@ impl Vim {
                     return;
                 };
                 self.operate(op, span, cmd.register, 1, w, cx);
+            }
+            Kind::VisualOperate { op, linewise } if self.mode == Mode::VisualBlock => {
+                self.block_operate(op, linewise, cmd.register, w, cx);
             }
             Kind::VisualOperate { op, linewise } => {
                 let mut span = self.visual_span(&w.text);
@@ -1601,6 +1633,7 @@ impl Vim {
                     self.operate(Op::Yank, span, cmd.register, 1, w, cx);
                 }
             }
+            Act::ReplaceChar(c) if self.mode == Mode::VisualBlock => self.block_replace(c, w),
             Act::ReplaceChar(_) | Act::ReplaceNewline if visual => {
                 let span = self.visual_span(&w.text);
                 self.end_visual();
@@ -1786,6 +1819,24 @@ impl Vim {
                 }
                 w.actions.push(Action::Reveal(at));
             }
+            Act::VisualBlock => {
+                if self.mode == Mode::VisualBlock {
+                    self.end_visual();
+                    w.cursor = self.head;
+                    self.mode = Mode::Normal;
+                } else {
+                    if !visual {
+                        self.anchor = w.cursor;
+                        self.head = w.cursor;
+                    }
+                    self.mode = Mode::VisualBlock;
+                }
+            }
+            Act::BlockInsert(append) => self.block_insert(append, w),
+            Act::SwapColumns => {
+                let text = w.text.clone();
+                self.swap_block_columns(&text);
+            }
             Act::Record(name) => self.recording = Some((name, Vec::new())),
             Act::StopRecording => {
                 if let Some((name, mut keys)) = self.recording.take() {
@@ -1873,6 +1924,10 @@ impl Vim {
         let Some(reg) = self.read_register(register, cx) else {
             return;
         };
+        if reg.block && !self.mode.is_visual() {
+            self.put_block(&reg, before, w);
+            return;
+        }
         let content: String = reg.text.repeat(count);
         if self.mode.is_visual() {
             let span = self.visual_span(&w.text);
@@ -2046,7 +2101,11 @@ impl Vim {
         yank: bool,
         w: &mut Work,
     ) {
-        let reg = Register { text, linewise };
+        let reg = Register {
+            text,
+            linewise,
+            block: false,
+        };
         match register {
             Some('_') => return,
             Some('+' | '*') => w.actions.push(Action::CopyToClipboard(reg.text.clone())),
@@ -2055,6 +2114,7 @@ impl Vim {
                 let mut joined = self.registers.get(&lower).cloned().unwrap_or(Register {
                     text: String::new(),
                     linewise,
+                    block: false,
                 });
                 if joined.linewise && !reg.linewise {
                     joined.text.push_str(&reg.text);
@@ -2095,19 +2155,26 @@ impl Vim {
             '+' | '*' => {
                 let text = (cx.clipboard)()?;
                 let linewise = text.ends_with('\n');
-                Some(Register { text, linewise })
+                Some(Register {
+                    text,
+                    linewise,
+                    block: false,
+                })
             }
             '.' => Some(Register {
                 text: self.last_inserted.clone(),
                 linewise: false,
+                block: false,
             }),
             ':' => Some(Register {
                 text: self.last_ex.clone(),
                 linewise: false,
+                block: false,
             }),
             '/' => self.search.as_ref().map(|s| Register {
                 text: s.pattern.clone(),
                 linewise: false,
+                block: false,
             }),
             c => self.registers.get(&c.to_ascii_lowercase()).cloned(),
         }
@@ -2124,6 +2191,7 @@ impl Vim {
             count,
             new_line,
             change: None,
+            block: None,
         });
     }
 
@@ -2135,6 +2203,13 @@ impl Vim {
             return;
         };
         let typed = typed_text(&session.before, &w.text, session.start);
+        if let Some(block) = &session.block {
+            if typed.delete_before == 0 && typed.delete_after == 0 {
+                let cursor = w.cursor;
+                self.finish_block_insert(block, &typed.text, w);
+                w.cursor = cursor;
+            }
+        }
         if session.count > 1 && typed.delete_before == 0 && typed.delete_after == 0 {
             let piece = match &session.new_line {
                 Some(indent) => format!("{}{indent}{}", line_ending(&w.text), typed.text),

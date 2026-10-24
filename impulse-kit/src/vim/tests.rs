@@ -917,3 +917,31 @@ fn incremental_search() {
         "foo bar\n|baz bar\nbar"
     );
 }
+
+#[test]
+fn visual_block() {
+    let t = "|abcd\nefgh\nijkl";
+    // A block's ranges, one per line.
+    let mut ed = Ed::new(t);
+    ed.keys("<C-v>jl");
+    assert_eq!(ed.vim.mode(), Mode::VisualBlock);
+    assert_eq!(ed.vim.block_ranges(&ed.text), vec![0..2, 5..7]);
+    // Delete, change and replace the columns.
+    assert_eq!(run(t, "l<C-v>jjld"), "a|d\neh\nil");
+    assert_eq!(run(t, "l<C-v>jlcXY<Esc>"), "aX|Yd\neXYh\nijkl");
+    assert_eq!(run(t, "<C-v>jjrz"), "|zbcd\nzfgh\nzjkl");
+    assert_eq!(run(t, "<C-v>jU"), "|Abcd\nEfgh\nijkl");
+    // `I` and `A` type on every line of the block; `$A` at each end.
+    assert_eq!(run(t, "l<C-v>jI-<Esc>"), "a|-bcd\ne-fgh\nijkl");
+    assert_eq!(run(t, "<C-v>jlA-<Esc>"), "ab|-cd\nef-gh\nijkl");
+    assert_eq!(run("|ab\nabcd", "<C-v>j$A;<Esc>"), "ab|;\nabcd;");
+    // `D` to the lines' ends; a yanked block puts column by column.
+    assert_eq!(run(t, "l<C-v>jD"), "|a\ne\nijkl");
+    assert_eq!(run(t, "<C-v>jly$p"), "abcd|ab\nefghef\nijkl");
+    // `O` moves to the other corner on the line; Escape leaves.
+    let mut ed = Ed::new(t);
+    ed.keys("<C-v>jlO");
+    assert_eq!(ed.vim.block_ranges(&ed.text), vec![0..2, 5..7]);
+    ed.keys("<Esc>");
+    assert_eq!(ed.vim.mode(), Mode::Normal);
+}

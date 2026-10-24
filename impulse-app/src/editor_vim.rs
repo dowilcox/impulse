@@ -52,6 +52,7 @@ const TAKEN: &[&str] = &[
     "ctrl-b",
     "ctrl-e",
     "ctrl-y",
+    "ctrl-v",
     "ctrl-[",
 ];
 
@@ -119,6 +120,9 @@ pub struct VimLayer {
     /// The last search's matches.
     found: RangeDecorationCollection,
     found_for: Option<String>,
+    /// A Visual Block's columns.
+    columns: RangeDecorationCollection,
+    columns_shown: Vec<Range<usize>>,
     /// The editor's selection and length when last followed.
     seen: Option<(Range<usize>, usize)>,
     _observe: Subscription,
@@ -134,6 +138,9 @@ impl VimLayer {
         let found = state.update(cx, |s, cx| {
             s.create_range_decorations_collection(Vec::new(), cx)
         });
+        let columns = state.update(cx, |s, cx| {
+            s.create_range_decorations_collection(Vec::new(), cx)
+        });
         let observe = cx.observe(state, |layer, _, cx| layer.follow(cx));
         let mut layer = Self {
             vim: Vim::new(),
@@ -142,6 +149,8 @@ impl VimLayer {
             block,
             found,
             found_for: None,
+            columns,
+            columns_shown: Vec::new(),
             seen: None,
             _observe: observe,
         };
@@ -193,6 +202,23 @@ impl VimLayer {
 
     /// The block cursor and search matches for the current text.
     fn paint(&mut self, text: &str, cx: &mut Context<Self>) {
+        let columns = self.vim.block_ranges(text);
+        if columns != self.columns_shown {
+            let color = cx.theme().selection;
+            self.columns.set(
+                columns
+                    .iter()
+                    .filter(|range| !range.is_empty())
+                    .map(|range| {
+                        RangeDecoration::new(range.clone())
+                            .with_style(RangeDecorationStyle::Fill)
+                            .with_color(color)
+                    })
+                    .collect(),
+                cx,
+            );
+            self.columns_shown = columns;
+        }
         let cursor = self.state.read(cx).cursor();
         let block = self.vim.block_cursor(text, cursor);
         // Decorations move with edits: compare with where it is now.
@@ -458,6 +484,7 @@ impl Attached {
             old.layer.update(cx, |layer, cx| {
                 layer.block.clear(cx);
                 layer.found.clear(cx);
+                layer.columns.clear(cx);
             });
         } else {
             *this = Self::new(true, state, cx);

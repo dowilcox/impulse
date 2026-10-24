@@ -42,7 +42,7 @@ impl Default for DirectoryIcons {
 
 /// Where the material icons are.
 pub fn material_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../assets/icons/material")
+    crate::resources::get().material.clone()
 }
 
 static MAPPING: LazyLock<Mapping> = LazyLock::new(|| {

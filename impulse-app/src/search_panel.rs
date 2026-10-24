@@ -98,6 +98,7 @@ impl SearchPanel {
     }
 
     /// Search for `text` now (the snapshot's `search=` action).
+    #[cfg(debug_assertions)]
     pub fn search_for(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.query.update(cx, |input, cx| {
             input.set_value(text.to_string(), window, cx)
@@ -107,6 +108,7 @@ impl SearchPanel {
 
     /// Replace `query` with `replacement`, shown and searched now (the
     /// snapshot's `replace=`).
+    #[cfg(debug_assertions)]
     pub fn replace_for(
         &mut self,
         query: &str,

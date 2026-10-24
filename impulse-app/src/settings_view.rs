@@ -1069,15 +1069,14 @@ impl SettingsView {
                     .child(self.stepper(key, cx))
                     .into_any_element()
             }
-            (Control::Text { .. }, Some(Field::Text(state))) => div()
-                .w(px(210.))
-                .child(Input::new(state).small())
-                .into_any_element(),
+            (Control::Text { .. }, Some(Field::Text(state))) => {
+                text_field(state).w(px(210.)).into_any_element()
+            }
             (Control::Folder { .. }, Some(Field::Text(state))) => div()
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .child(div().w(px(150.)).child(Input::new(state).small()))
+                .child(text_field(state).w(px(150.)))
                 .child(
                     Button::new(named("choose", key))
                         .label("Choose\u{2026}")
@@ -1111,32 +1110,11 @@ impl SettingsView {
                     .flex()
                     .justify_center()
                     .child(
-                        div()
-                            .w(width + px(40.))
-                            .max_w(px(210.))
-                            .h(px(22.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(5.))
-                            .bg(hsla(if p.is_light {
-                                Rgba::BLACK.opacity(0.06)
-                            } else {
-                                Rgba::WHITE.opacity(0.075)
-                            }))
-                            .child(
-                                Select::new(state)
-                                    .small()
-                                    .appearance(false)
-                                    .icon(
-                                        gpui_kit::component::Icon::empty()
-                                            .path("icons/chevrons-up-down.svg"),
-                                    )
-                                    .w_full()
-                                    .h_full()
-                                    .text_size(px(13.))
-                                    .menu_width(px(240.))
-                                    .accessibility_label(item.title),
-                            ),
+                        popup_frame(p).w(width + px(40.)).max_w(px(210.)).child(
+                            popup(state)
+                                .menu_width(px(240.))
+                                .accessibility_label(item.title),
+                        ),
                     )
                     .into_any_element()
             }
@@ -1356,16 +1334,16 @@ impl SettingsView {
                         .py(px(6.))
                         .child(mono_field(&row.pattern).w(px(110.)).flex_none())
                         .child(
-                            div()
+                            popup_frame(&p)
                                 .w(px(150.))
                                 .flex_none()
-                                .child(Select::new(&row.tab_width).small()),
+                                .child(popup(&row.tab_width)),
                         )
                         .child(
-                            div()
+                            popup_frame(&p)
                                 .w(px(130.))
                                 .flex_none()
-                                .child(Select::new(&row.indent).small()),
+                                .child(popup(&row.indent)),
                         )
                         .child(mono_field(&row.formatter).flex_1().min_w_0())
                         .child(
@@ -1598,10 +1576,96 @@ fn commit_on<V: 'static>(
     })
 }
 
-pub(crate) fn mono_field(state: &Entity<InputState>) -> gpui_kit::Div {
+/// A rounded-border `NSTextField` with mono text (the Swift settings' and
+/// project setup's fields): 22 high, the text field color.
+pub(crate) fn mono_field(state: &Entity<InputState>) -> TextField {
+    TextField {
+        state: state.clone(),
+        mono: true,
+        style: gpui_kit::StyleRefinement::default(),
+    }
+}
+
+/// The same with the UI font.
+pub(crate) fn text_field(state: &Entity<InputState>) -> TextField {
+    TextField {
+        mono: false,
+        ..mono_field(state)
+    }
+}
+
+/// A pop-up button's frame (Swift's `Picker`): filled, 22 high; the
+/// `Select` inside it goes without its own look.
+pub(crate) fn popup_frame(p: &ChromePalette) -> gpui_kit::Div {
     div()
-        .font_family(MONO_FONT)
-        .child(Input::new(state).small())
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .rounded(px(5.))
+        .bg(hsla(if p.is_light {
+            Rgba::BLACK.opacity(0.06)
+        } else {
+            Rgba::WHITE.opacity(0.075)
+        }))
+}
+
+/// The `Select` for a `popup_frame`.
+pub(crate) fn popup<D>(state: &Entity<SelectState<D>>) -> Select<D>
+where
+    D: gpui_kit::component::select::SelectDelegate + 'static,
+{
+    Select::new(state)
+        .small()
+        .appearance(false)
+        .icon(gpui_kit::component::Icon::empty().path("icons/chevrons-up-down.svg"))
+        .w_full()
+        .h_full()
+        .text_size(px(13.))
+}
+
+#[derive(IntoElement)]
+pub(crate) struct TextField {
+    state: Entity<InputState>,
+    mono: bool,
+    style: gpui_kit::StyleRefinement,
+}
+
+impl Styled for TextField {
+    fn style(&mut self) -> &mut gpui_kit::StyleRefinement {
+        &mut self.style
+    }
+}
+
+impl RenderOnce for TextField {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        use gpui_kit::component::ActiveTheme as _;
+        let theme = cx.theme();
+        let background = if theme.is_dark() {
+            gpui_kit::rgb(0x171717)
+        } else {
+            gpui_kit::rgb(0xffffff)
+        };
+        let mut field = div()
+            .h(px(22.))
+            .flex()
+            .items_center()
+            .px(px(6.))
+            .rounded(px(5.))
+            .border_1()
+            .border_color(theme.input)
+            .bg(background)
+            .child(
+                Input::new(&self.state)
+                    .small()
+                    .appearance(false)
+                    .px_0()
+                    .when(self.mono, |input| {
+                        input.font_family(MONO_FONT).text_size(px(12.))
+                    }),
+            );
+        gpui_kit::Refineable::refine(field.style(), &self.style);
+        field
+    }
 }
 
 /// A 22pt icon button (the Swift `ChromeIconButton`).

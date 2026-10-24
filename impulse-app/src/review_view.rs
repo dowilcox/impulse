@@ -893,6 +893,7 @@ impl ReviewView {
     /// `keys=` letters, `select=path:hunk:from-to`, `comment=` text on the
     /// focused hunk, `reveal=` a path, `edit` the first comment,
     /// `composer`, `scope=uncommitted` or `scope=branch:<base>`.
+    #[cfg(debug_assertions)]
     pub fn debug_action(
         &mut self,
         action: &str,

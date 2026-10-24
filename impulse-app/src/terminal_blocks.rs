@@ -287,6 +287,7 @@ impl TerminalView {
     }
 
     /// Select the newest `count` blocks (the snapshot's `select-blocks=`).
+    #[cfg(debug_assertions)]
     pub(crate) fn select_last_blocks(
         &mut self,
         count: usize,

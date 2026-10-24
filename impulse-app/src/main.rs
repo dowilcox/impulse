@@ -59,6 +59,7 @@ mod project_setup;
 mod project_setup_model;
 mod quick_terminal;
 mod repository_state;
+mod resources;
 mod review_view;
 mod save_pipeline;
 mod search_panel;
@@ -90,7 +91,6 @@ mod workspace;
 mod workspace_edits;
 
 use std::borrow::Cow;
-use std::path::PathBuf;
 
 use gpui_kit::{
     px, size, App, AppContext, AssetSource, Bounds, SharedString, TitlebarOptions, WindowBounds,
@@ -103,9 +103,13 @@ struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<Cow<'static, [u8]>>> {
-        let file = match path.strip_prefix("material/") {
-            Some(name) => file_icons::material_dir().join(name),
-            None => repo_root().join("vendor/lucide").join(path),
+        let resources = resources::get();
+        let file = if let Some(name) = path.strip_prefix("material/") {
+            resources.material.join(name)
+        } else if let Some(name) = path.strip_prefix("icons/") {
+            resources.lucide.join(name)
+        } else {
+            return gpui_kit::assets::Assets.load(path);
         };
         match std::fs::read(file) {
             Ok(bytes) => Ok(Some(Cow::Owned(bytes))),
@@ -119,15 +123,11 @@ impl AssetSource for Assets {
     }
 }
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
-}
-
 /// The same bundled fonts on every platform, so text looks the same
 /// everywhere: Inter for the chrome (SF Pro can't ship on Linux) and
 /// JetBrains Mono, the default terminal font.
 fn bundled_fonts() -> Vec<Cow<'static, [u8]>> {
-    let fonts = repo_root().join("vendor/fonts");
+    let fonts = &resources::get().fonts;
     [
         "inter/Inter-Regular.ttf",
         "inter/Inter-Medium.ttf",

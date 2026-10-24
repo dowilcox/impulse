@@ -102,8 +102,12 @@ impl Workbench {
             let trees = workbench.update_in(cx, |workbench, window, cx| {
                 // Only while the window is in front (Swift: while visible;
                 // the headless snapshot's windows never are).
-                let looking =
-                    window.is_window_active() || crate::debug_snapshot::config().is_some();
+                #[allow(unused_mut)]
+                let mut looking = window.is_window_active();
+                #[cfg(debug_assertions)]
+                {
+                    looking |= crate::debug_snapshot::config().is_some();
+                }
                 looking.then(|| workbench.process_trees(cx))
             });
             let Ok(trees) = trees else {

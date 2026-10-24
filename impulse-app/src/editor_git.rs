@@ -278,6 +278,7 @@ impl EditorTab {
 
     /// Peek the change on buffer line `line` (the snapshot's `git-peek=`,
     /// what a click on its mark does).
+    #[cfg(debug_assertions)]
     pub(crate) fn peek_change_at(&mut self, line: usize, cx: &mut Context<Self>) -> bool {
         let start = impulse_kit::git::editor_marks::hunk_at_line(&self.git.hunks, line)
             .map(|h| h.new_start);

@@ -905,13 +905,28 @@ impl TerminalView {
                             .into_any_element();
                     }
                     let leading = match status {
-                        Some(failed) => Some(crate::workbench_chrome::icon(
-                            if failed { "circle-x" } else { "circle-check" },
-                            10.,
-                            c(if failed { &theme.red } else { &theme.green }),
-                        )),
-                        None => icon
-                            .map(|i| crate::workbench_chrome::icon(i, 9.5, c(&theme.fg_comment))),
+                        // A filled circle with the mark cut out (SF Symbols'
+                        // checkmark.circle.fill and xmark.circle.fill).
+                        Some(failed) => Some(
+                            div()
+                                .size(px(10.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .bg(hsla(c(if failed { &theme.red } else { &theme.green })))
+                                .child(crate::workbench_chrome::icon(
+                                    if failed { "x" } else { "check" },
+                                    7.,
+                                    c(&theme.bg),
+                                ))
+                                .into_any_element(),
+                        ),
+                        None => icon.map(|i| {
+                            crate::workbench_chrome::icon(i, 9.5, c(&theme.fg_comment))
+                                .into_any_element()
+                        }),
                     };
                     div()
                         .flex()

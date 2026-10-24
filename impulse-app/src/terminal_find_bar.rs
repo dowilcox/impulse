@@ -107,6 +107,7 @@ impl TerminalView {
     }
 
     /// Find `text` (the snapshot's `find=`), showing the bar if it's hidden.
+    #[cfg(debug_assertions)]
     pub(crate) fn find_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.find.is_none() {
             self.toggle_find(window, cx);
@@ -121,6 +122,7 @@ impl TerminalView {
     }
 
     /// Whole words only (the snapshot's `find-word`).
+    #[cfg(debug_assertions)]
     pub(crate) fn find_whole_word(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.find.is_none() {
             self.toggle_find(window, cx);
