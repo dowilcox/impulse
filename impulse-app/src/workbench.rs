@@ -499,6 +499,7 @@ impl Workbench {
             Ok(editor) => {
                 let index = self.active;
                 self.start_lsp(index, &editor, window, cx);
+                self.wire_editor_git(&editor, window, cx);
                 cx.subscribe(&editor, |w, editor, _: &EditorTabChanged, cx| {
                     // An edit keeps a preview tab.
                     if editor.read(cx).dirty {

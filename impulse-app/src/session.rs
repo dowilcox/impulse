@@ -418,6 +418,7 @@ impl Workbench {
     ) -> Option<Surface> {
         let opened = impulse_kit::text_file::open(path).ok()?;
         let editor = cx.new(|cx| crate::editor_tab::EditorTab::new(path, opened, window, cx));
+        self.wire_editor_git(&editor, window, cx);
         cx.subscribe(
             &editor,
             |_, _, _: &crate::editor_tab::EditorTabChanged, cx| cx.notify(),

@@ -64,6 +64,19 @@ impl LspHub {
         (hub, receiver)
     }
 
+    /// Whether any installed server would serve `path` in `language` if its
+    /// folder were trusted (starts nothing).
+    pub fn has_servers(path: &Path, language: &str) -> bool {
+        let config = LspConfig::load(
+            global_config_path().as_deref(),
+            path.parent().and_then(project_config_folder).as_deref(),
+        );
+        config
+            .servers_for(language)
+            .into_iter()
+            .any(|(_, server)| resolve_command(&server.command).is_some())
+    }
+
     /// The servers for `path` in `language`, started if they aren't
     /// running: those its project's `lsp.json` (or the global one, or the
     /// defaults) name and that are installed, each in the file's project

@@ -92,6 +92,44 @@ return editor.getValue();
 """
 
 
+# The Rust app has no Monaco to script: the same steps as `edit=` commands
+# (EditorTab::debug_edit), columns in characters.
+EDIT_UNICODE_RUST = r"""
+cursor 1:15
+type  ✓
+cursor 2:1
+type » 
+cursor 3:1
+type » 
+cursor 4:1
+type » 
+cursor 5:4
+paste \npasted 🧭 line\nand another
+select 2:3-2:4
+type 道🌲
+cursor 1:13
+select 1:13-1:15
+type 
+cursor 2:4
+type \n
+undo
+undo
+redo
+"""
+
+EDIT_CRLF_RUST = r"""
+cursor 2:7
+type \ninserted
+cursor 5:1
+paste pasted one\npasted two\n
+"""
+
+
+def edit_action(label: str, js: str, rust: str) -> str:
+    """Monaco's JavaScript for the Swift app, `edit=` for the Rust one."""
+    return f"edit={label}:{rust}" if capture.RUST else f"js={label}:{js}"
+
+
 def setup_editor() -> None:
     write(SMOKE / "unicode.txt", UNICODE_TEXT)
     write(SMOKE / "crlf.txt", CRLF_TEXT.encode())
@@ -106,23 +144,24 @@ EDITOR_ACTIONS = [
     "until=prompt",
     # Edits in a file with emoji, CJK and combining characters.
     "open=smoke/unicode.txt", "until=editor",
-    "js=unicode:" + EDIT_UNICODE,
+    edit_action("unicode", EDIT_UNICODE, EDIT_UNICODE_RUST),
     "sleep=1", "dump=unicode-edited",
     "save", "until=result:save:unicode.txt", "sleep=1", "dump=unicode-saved",
     # CRLF line endings stay CRLF.
     "open=smoke/crlf.txt", "until=editor",
-    "js=crlf:" + EDIT_CRLF,
+    edit_action("crlf", EDIT_CRLF, EDIT_CRLF_RUST),
     "sleep=1", "save", "until=result:save:crlf.txt", "sleep=1", "dump=crlf-saved",
     # A clean buffer follows the file on disk, and the reload can be undone.
     "open=smoke/reload.txt", "until=editor",
     "write-file=smoke/reload.txt|version two\nfrom disk\n",
-    "until=15:js:editor.getValue() === 'version two\\nfrom disk\\n'",
+    ("until=15:text:version two\\nfrom disk\\n" if capture.RUST
+     else "until=15:js:editor.getValue() === 'version two\\nfrom disk\\n'"),
     "sleep=1", "dump=reloaded",
-    "js=undo-reload:editor.trigger('smoke', 'undo'); return editor.getValue();",
+    edit_action("undo-reload", "editor.trigger('smoke', 'undo'); return editor.getValue();", "undo"),
     "sleep=1", "dump=reload-undone",
     # A dirty buffer isn't replaced by a change on disk; saving then asks.
     "open=smoke/dirty.txt", "until=editor",
-    "js=dirty:" + TYPE_AT_START,
+    edit_action("dirty", TYPE_AT_START, "cursor 1:1\ntype edited "),
     "write-file=smoke/dirty.txt|changed elsewhere\n",
     "sleep=3", "dump=dirty-after-disk",
     "save", "until=10:sheet", "dump=conflict-sheet",
@@ -468,11 +507,7 @@ def setup_lsp() -> None:
     }, indent=2))
 
 
-LSP_ACTIONS = [
-    "trust-on",
-    f"workspace={TS_TRUSTED}", "until=10:sheet", "dump=trust-sheet",
-    "sheet-button=Trust Folder", "until=no-sheet",
-    f"open={TS_TRUSTED}/src/main.ts", "until=editor",
+LSP_STEPS_SWIFT = [
     # The server needs a moment to load the project.
     "until=120:js:JSON.parse(await (async () => {" + HOVER + "})()) !== null",
     "js=hover:" + HOVER,
@@ -489,9 +524,29 @@ LSP_ACTIONS = [
     # Renaming the declaration reaches main.ts too (applied by Impulse, not Monaco).
     "js=rename:" + lsp_request("Rename", 5, 16, {"new_name": "distanceInKm"}),
     "until=20:js:editor.getValue().includes('distanceInKm')", "sleep=2", "dump=lsp",
+]
+# The same for the Rust app: `lsp=` asks the editor's server directly
+# (EditorTab::debug_lsp); a rename is applied as Rename Symbol applies it.
+LSP_STEPS_RUST = [
+    "lsp-wait=ready:hover:5:14",
+    "lsp=hover:hover:5:14",
+    "lsp=completion:completion:4:18",
+    "lsp=definition:definition:5:14",
+    f"open={TS_TRUSTED}/src/geo.ts", "until=editor",
+    "lsp=rename:rename:5:16:distanceInKm",
+    "until=20:has:distanceInKm", "sleep=2", "dump=lsp",
+]
+
+LSP_ACTIONS = [
+    "trust-on",
+    f"workspace={TS_TRUSTED}", "until=10:sheet", "dump=trust-sheet",
+    "sheet-button=Trust Folder", "until=no-sheet",
+    f"open={TS_TRUSTED}/src/main.ts", "until=editor",
+    *(LSP_STEPS_RUST if capture.RUST else LSP_STEPS_SWIFT),
     f"workspace={TS_RESTRICTED}", "until=10:sheet", "sheet-button=Stay Restricted", "until=no-sheet",
     f"open={TS_RESTRICTED}/src/main.ts", "until=editor", "sleep=8",
-    "js=hover-restricted:" + HOVER, "sleep=1", "dump=restricted",
+    "lsp=hover-restricted:hover:5:14" if capture.RUST else "js=hover-restricted:" + HOVER,
+    "sleep=1", "dump=restricted",
     # A file from a folder nobody was asked about (from a trusted workspace:
     # after Stay Restricted the notice keeps quiet): a notice says why.
     "select-workspace=smoke-ts",

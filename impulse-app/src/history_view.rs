@@ -44,6 +44,9 @@ pub struct HistoryView {
     palette: ChromePalette,
     loading: bool,
     exhausted: bool,
+    /// A commit to select once its page is loaded (Show Commit for This
+    /// Line).
+    reveal: Option<String>,
 }
 
 /// "3m", "2h", "5d", "4w", "8mo", "2y": the Swift abbreviated relative date.
@@ -108,6 +111,7 @@ impl HistoryView {
             rows: Vec::new(),
             graph: GraphLayout::default(),
             selected: None,
+            reveal: None,
             details: None,
             review,
             scroll: UniformListScrollHandle::new(),
@@ -188,13 +192,39 @@ impl HistoryView {
                     .collect();
                 view.rows.extend(view.graph.append(&commits));
                 view.entries.extend(page);
-                if view.selected.is_none() && !view.entries.is_empty() {
+                if view.reveal.is_some() {
+                    view.reveal_pending(cx);
+                } else if view.selected.is_none() && !view.entries.is_empty() {
                     view.select(0, cx);
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Select commit `sha`, loading pages until it's there (at most a few
+    /// thousand commits back).
+    pub fn reveal(&mut self, sha: String, cx: &mut Context<Self>) {
+        self.reveal = Some(sha);
+        self.reveal_pending(cx);
+    }
+
+    fn reveal_pending(&mut self, cx: &mut Context<Self>) {
+        let Some(sha) = self.reveal.clone() else {
+            return;
+        };
+        if let Some(index) = self.entries.iter().position(|e| e.sha.starts_with(&sha)) {
+            self.reveal = None;
+            self.select(index, cx);
+        } else if self.exhausted || self.entries.len() > 20 * PAGE {
+            self.reveal = None;
+            if self.selected.is_none() && !self.entries.is_empty() {
+                self.select(0, cx);
+            }
+        } else {
+            self.load_page(cx);
+        }
     }
 
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {

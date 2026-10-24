@@ -25,6 +25,9 @@ actions!(
         GoToTypeDefinition,
         GoToImplementations,
         GoToDeclaration,
+        ShowLineCommit,
+        NextConflict,
+        PreviousConflict,
     ]
 );
 

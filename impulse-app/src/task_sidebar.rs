@@ -19,7 +19,7 @@ use impulse_kit::git::task_registry;
 use crate::tasks;
 use crate::workbench::Workbench;
 use crate::workbench_chrome::{hsla, icon};
-use crate::workspace::Kind;
+use crate::workspace::{Kind, Workspace};
 
 /// A context menu entry: a title and what it does to the workspace (by id),
 /// or a separator.
@@ -65,6 +65,69 @@ impl Workbench {
                 (name, group)
             })
             .collect()
+    }
+
+    /// Put the workspaces in the order of `order` (indexes into them),
+    /// keeping the same one shown. The order is saved with the session.
+    fn reorder_workspaces(&mut self, order: Vec<usize>, cx: &mut Context<Self>) {
+        if order.len() != self.workspaces.len() {
+            return;
+        }
+        let active = self.workspaces[self.active].id;
+        let mut old: Vec<Option<Workspace>> = std::mem::take(&mut self.workspaces)
+            .into_iter()
+            .map(Some)
+            .collect();
+        self.workspaces = order.into_iter().filter_map(|i| old[i].take()).collect();
+        self.active = self
+            .workspaces
+            .iter()
+            .position(|w| w.id == active)
+            .unwrap_or(0);
+        cx.notify();
+    }
+
+    /// Where workspace `index` lands one row up (-1) or down (+1) as the
+    /// sidebar shows them (a repository's workspaces together).
+    fn moved_order(&self, index: usize, step: isize) -> Option<Vec<usize>> {
+        let indices: Vec<usize> = (0..self.workspaces.len()).collect();
+        impulse_kit::grouped_order::moving(&indices, index, step, |i| {
+            tasks::group_key(&self.workspaces[*i])
+        })
+    }
+
+    pub(crate) fn move_workspace(&mut self, index: usize, step: isize, cx: &mut Context<Self>) {
+        if let Some(order) = self.moved_order(index, step) {
+            self.reorder_workspaces(order, cx);
+        }
+    }
+
+    /// A workspace row dropped on another: among its repository's rows when
+    /// they share one, else its whole group to the target's group.
+    pub(crate) fn drop_workspace(&mut self, dragged: u64, target: u64, cx: &mut Context<Self>) {
+        let find = |id: u64| self.workspaces.iter().position(|w| w.id == id);
+        let (Some(from), Some(to)) = (find(dragged), find(target)) else {
+            return;
+        };
+        if from == to {
+            return;
+        }
+        let indices: Vec<usize> = (0..self.workspaces.len()).collect();
+        let key = |i: &usize| tasks::group_key(&self.workspaces[*i]);
+        let groups = impulse_kit::grouped_order::groups(&indices, key);
+        let group_of = |i: usize| groups.iter().position(|g| g.contains(&i));
+        let (Some(from_group), Some(to_group)) = (group_of(from), group_of(to)) else {
+            return;
+        };
+        let order = if from_group == to_group {
+            let position = groups[to_group].iter().position(|&i| i == to).unwrap_or(0);
+            impulse_kit::grouped_order::moving_to_position(&indices, from, position, key)
+        } else {
+            impulse_kit::grouped_order::moving_group(&indices, from, to_group, key)
+        };
+        if let Some(order) = order {
+            self.reorder_workspaces(order, cx);
+        }
     }
 
     /// A repository's header over its workspaces.
@@ -238,6 +301,18 @@ impl Workbench {
             ));
         }
         items.push((String::new(), None));
+        if self.moved_order(index, -1).is_some() {
+            items.push((
+                "Move Up".into(),
+                action(|w, i, _, cx| w.move_workspace(i, -1, cx)),
+            ));
+        }
+        if self.moved_order(index, 1).is_some() {
+            items.push((
+                "Move Down".into(),
+                action(|w, i, _, cx| w.move_workspace(i, 1, cx)),
+            ));
+        }
         items.push((
             if workspace.expanded {
                 "Hide Tabs"
@@ -483,4 +558,11 @@ impl Render for OverlapList {
             .rounded(px(metrics::RADIUS))
             .child(column)
     }
+}
+
+/// A sidebar workspace row being dragged to a new place.
+#[derive(Clone)]
+pub(crate) struct DraggedWorkspace {
+    pub id: u64,
+    pub name: String,
 }

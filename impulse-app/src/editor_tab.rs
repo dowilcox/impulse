@@ -60,7 +60,7 @@ pub struct EditorTab {
     pub preview: Option<bool>,
     /// A message for the status bar ("changed on disk", a failed save).
     pub notice: Option<String>,
-    state: Entity<EditorState>,
+    pub(crate) state: Entity<EditorState>,
     bom: bool,
     /// The file's line ending, put back on write.
     pub line_ending: LineEnding,
@@ -91,6 +91,8 @@ pub struct EditorTab {
     marked_at: Option<std::ops::Range<usize>>,
     /// Vim mode, with `editor_vim_mode` on (`editor_vim`).
     pub(crate) vim: Option<crate::editor_vim::Attached>,
+    /// Change marks, the peek, inline blame and conflicts (`editor_git`).
+    pub(crate) git: crate::editor_git::GitLayer,
     _marking: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
     _observe_state: Subscription,
@@ -151,6 +153,7 @@ impl EditorTab {
             for (_, link) in &tab.links {
                 link.sync(state.read(cx).text());
             }
+            tab.git_text_changed(cx);
             // A reload from disk isn't an edit of the user's.
             if tab.reloading {
                 tab.reloading = false;
@@ -174,7 +177,7 @@ impl EditorTab {
         });
         let observe_state = cx.observe(&state, |tab, _, cx| tab.selection_moved(cx));
         let vim = crate::editor_vim::Attached::new(settings.editor_vim_mode, &state, cx);
-        Self {
+        let mut tab = Self {
             title: path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -207,11 +210,14 @@ impl EditorTab {
             _signature_request: None,
             marked_at: None,
             vim,
+            git: Default::default(),
             _marking: None,
             _subscription: subscription,
             _observe_state: observe_state,
             _lsp_start: Vec::new(),
-        }
+        };
+        tab.refresh_git(cx);
+        tab
     }
 
     /// Take changed settings (settings.json edited, or the Settings tab).
@@ -1019,6 +1025,169 @@ impl EditorTab {
         self.state.read(cx).value().to_string()
     }
 
+    /// Run a small editing script for the headless snapshots (the Rust
+    /// app's stand-in for driving Monaco with JavaScript), one command a
+    /// line: `cursor L:C`, `select L:C-L:C` (1-based, columns in
+    /// characters), `type TEXT` and `paste TEXT` (`\n` for a line break,
+    /// replacing the selection), `undo`, `redo`. Answers the buffer's text.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_edit(
+        &mut self,
+        script: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        use gpui_kit::component::input::{Redo, Undo};
+        let offset = |text: &str, at: &str| -> Option<usize> {
+            let (line, column) = at.split_once(':')?;
+            let (line, column) = (line.parse::<usize>().ok()?, column.parse::<usize>().ok()?);
+            let start = text
+                .split_inclusive('\n')
+                .take(line.saturating_sub(1))
+                .map(str::len)
+                .sum::<usize>();
+            let rest = &text[start..];
+            let within = rest
+                .char_indices()
+                .nth(column.saturating_sub(1))
+                .map_or(rest.trim_end_matches('\n').len(), |(i, _)| i);
+            Some(start + within)
+        };
+        // Leading space is indentation; trailing space is typed.
+        for line in script
+            .lines()
+            .map(str::trim_start)
+            .filter(|l| !l.is_empty())
+        {
+            let (command, argument) = line.split_once(' ').unwrap_or((line, ""));
+            let argument = argument.replace("\\n", "\n");
+            let text = self.text(cx);
+            match command {
+                "cursor" | "select" => {
+                    let (from, to) = argument.split_once('-').unwrap_or((&argument, &argument));
+                    if let (Some(from), Some(to)) = (offset(&text, from), offset(&text, to)) {
+                        self.state
+                            .update(cx, |state, cx| state.set_selected_range(from..to, cx));
+                    }
+                }
+                "type" | "paste" => self
+                    .state
+                    .update(cx, |state, cx| state.replace(argument.clone(), window, cx)),
+                "undo" | "redo" => {
+                    let focus = self.focus_handle(cx);
+                    if command == "undo" {
+                        focus.dispatch_action(&Undo, window, cx);
+                    } else {
+                        focus.dispatch_action(&Redo, window, cx);
+                    }
+                }
+                _ => log::warn!("edit: unknown command “{line}”"),
+            }
+        }
+        self.text(cx)
+    }
+
+    /// Ask the primary server what Monaco's providers would for the
+    /// headless snapshots (`lsp=`): hover texts, completion labels, the
+    /// first definition (`{uri, line}`, 1-based), or a rename applied as
+    /// Rename Symbol applies it (`true`). `line` and `character` are the
+    /// LSP's (0-based). `None` without a server.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_lsp(
+        &mut self,
+        kind: &str,
+        line: u32,
+        character: u32,
+        new_name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::Task<serde_json::Value>> {
+        use gpui_kit::component::input::{CompletionProvider, DefinitionProvider, HoverProvider};
+        use serde_json::{json, Value};
+        let link = self.primary_link()?;
+        let text = self.state.read(cx).text().clone();
+        let offset = text.line_start_offset(line as usize) + character as usize;
+        let task: gpui_kit::Task<Value> = match kind {
+            "hover" => {
+                let request = link.hover(&text, offset, window, cx);
+                cx.background_spawn(async move {
+                    let Ok(Some(hover)) = request.await else {
+                        return Value::Null;
+                    };
+                    let texts: Vec<String> = match hover.contents {
+                        lsp_types::HoverContents::Markup(m) => vec![m.value],
+                        lsp_types::HoverContents::Scalar(s) => vec![marked(s)],
+                        lsp_types::HoverContents::Array(a) => a.into_iter().map(marked).collect(),
+                    };
+                    json!(texts)
+                })
+            }
+            "completion" => {
+                let context = lsp_types::CompletionContext {
+                    trigger_kind: lsp_types::CompletionTriggerKind::INVOKED,
+                    trigger_character: None,
+                };
+                let request = link.completions(&text, offset, context, window, cx);
+                cx.background_spawn(async move {
+                    match request.await {
+                        Ok(lsp_types::CompletionResponse::Array(items)) => {
+                            json!(items.into_iter().map(|i| i.label).collect::<Vec<_>>())
+                        }
+                        Ok(lsp_types::CompletionResponse::List(list)) => {
+                            json!(list.items.into_iter().map(|i| i.label).collect::<Vec<_>>())
+                        }
+                        Err(_) => Value::Null,
+                    }
+                })
+            }
+            "definition" => {
+                let request = link.definitions(&text, offset, window, cx);
+                cx.background_spawn(async move {
+                    match request
+                        .await
+                        .ok()
+                        .and_then(|links| links.into_iter().next())
+                    {
+                        Some(found) => json!({
+                            "uri": found.target_uri.to_string(),
+                            "line": found.target_selection_range.start.line + 1,
+                        }),
+                        None => Value::Null,
+                    }
+                })
+            }
+            "rename" => {
+                let hooks = self.hooks.clone()?;
+                let new_name = new_name?;
+                let request = link.rename(&text, offset, new_name.clone(), cx);
+                window.spawn(cx, async move |cx| match request.await {
+                    Ok(Some(edit)) => {
+                        let pending = crate::workspace_edits::PendingEdit {
+                            edit: impulse_lsp::workspace_edit::WorkspaceEdit::from(&edit),
+                            utf32: link.client.uses_utf32(),
+                            origin: link.path.clone(),
+                            server_root: link.client.root.clone(),
+                            title: format!("Rename to {new_name}"),
+                        };
+                        let _ = cx.update(|window, cx| (hooks.apply_edit)(pending, window, cx));
+                        Value::Bool(true)
+                    }
+                    Ok(None) => Value::Null,
+                    Err(error) => json!({ "error": error }),
+                })
+            }
+            _ => return None,
+        };
+        return Some(task);
+
+        fn marked(s: lsp_types::MarkedString) -> String {
+            match s {
+                lsp_types::MarkedString::String(s) => s,
+                lsp_types::MarkedString::LanguageString(l) => l.value,
+            }
+        }
+    }
+
     /// The buffer's text as the file holds it: with its line ending.
     pub fn disk_text(&self, cx: &gpui_kit::App) -> String {
         self.line_ending.apply(&self.text(cx))
@@ -1087,6 +1256,7 @@ impl EditorTab {
                 self.dirty = false;
                 self.notice = None;
                 self.stamp = text_file::stamp(&self.path);
+                self.refresh_git(cx);
                 Some(text)
             }
             Err(error) => {
@@ -1163,6 +1333,22 @@ impl EditorTab {
         self.reload_from_disk(window, cx);
     }
 
+    /// Replace a byte range of the buffer as one undoable edit.
+    pub(crate) fn replace_range(
+        &mut self,
+        range: std::ops::Range<usize>,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.text(cx);
+        let (start, end) = (range.start.min(current.len()), range.end.min(current.len()));
+        let utf16 = |byte: usize| current[..byte].encode_utf16().count();
+        self.state.update(cx, |state, cx| {
+            state.replace_text_in_range(Some(utf16(start)..utf16(end)), text, window, cx);
+        });
+    }
+
     /// Replace the buffer with `text` as one undoable edit that isn't the
     /// user's.
     fn replace_buffer(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1212,6 +1398,7 @@ impl Render for EditorTab {
             !self.read_only,
         ));
         let editor = crate::editor_vim::wrap(self.vim.as_ref(), editor, cx);
+        let editor = self.wrap_git(editor, cx);
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()
@@ -1231,6 +1418,21 @@ impl Render for EditorTab {
                 }
             }))
             .children(signature)
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::ShowLineCommit, _, cx| {
+                    tab.show_line_commit(cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::NextConflict, window, cx| {
+                    tab.go_to_conflict(1, window, cx)
+                }),
+            )
+            .on_action(cx.listener(
+                |tab, _: &crate::editor_keys::PreviousConflict, window, cx| {
+                    tab.go_to_conflict(-1, window, cx)
+                },
+            ))
             .on_action(cx.listener(
                 |tab, _: &crate::editor_keys::GoToTypeDefinition, window, cx| {
                     tab.navigate(crate::lsp_hub::Navigation::TypeDefinition, window, cx)
@@ -1295,6 +1497,7 @@ impl EditorTab {
             return;
         }
         self.marked_at = Some(range.clone());
+        self.git_cursor_moved(cx);
         let settings = crate::settings_store::SettingsStore::get(cx);
         let wanted = if range.is_empty() {
             settings.editor_occurrences_highlight
@@ -1384,6 +1587,7 @@ impl EditorTab {
     ) -> impl Fn(NativeMenu, &mut Window, &mut gpui_kit::App) -> NativeMenu + 'static {
         use crate::editor_keys::{
             ChangeAllOccurrences, GoToDeclaration, GoToImplementations, GoToTypeDefinition,
+            ShowLineCommit,
         };
         use crate::workbench::{FindReferences, FormatDocument, RenameSymbol};
         use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, ToggleCodeActions};
@@ -1410,6 +1614,7 @@ impl EditorTab {
                     !(lsp && editable),
                     Box::new(ToggleCodeActions),
                 )
+                .menu("Show Commit for This Line", Box::new(ShowLineCommit))
                 .separator()
                 .menu_with_disabled("Cut", !editable, Box::new(Cut))
                 .menu("Copy", Box::new(Copy))

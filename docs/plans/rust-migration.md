@@ -111,6 +111,7 @@ for:
 | Vim mode (monaco-vim) | no | **done**: `impulse_kit::vim`, a state machine on plain text (Normal, Insert, Visual, Visual Line and Replace; counts, motions, `d c y > < gu gU g~` with motions and text objects, registers with `+`/`*` as the clipboard, `.`, `/ ? n N * #`, `:w :q :wq :x :{line} :s :d :y :noh`), over the editor in `editor_vim.rs`; the mode in the status bar, an inverted character as the block cursor; not yet macros, marks, Visual Block or incremental search |
 | Sticky scroll, minimap, bracket pair colors | no | sticky scroll and bracket colors first; minimap last |
 | Context menu with Impulse's items | menus yes | **done**: Monaco's items (navigation, rename, Change All Occurrences, format, code actions, clipboard, Command Palette) |
+| Git in the editor: change marks, peek, inline blame, conflicts | view zones, decorations | **done**: marks against the index painted over the gutter (GPUI Kit has no gutter decorations), the peek docked under the editor (Revert, Stage, Diff, Review), inline blame after the resting cursor's line, Show Commit for This Line, conflicts tinted with a bar for Accept Current, Incoming or Both and ↑↓ (Monaco puts these in view zones per block) |
 | Save pipeline and files changed on disk | n/a (ours) | **done**: a "changed on disk" question (Save Anyway, Reload from Disk), formatter and commands on save in trusted folders, their results adopted as one edit; open files' folders watched, clean editors reloading what agents and git write |
 
 This is real work, but it is work on an editor built for embedding, and the
@@ -444,10 +445,11 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   app when `IMPULSE_SNAPSHOT_APP` names its binary (the default on Linux),
   in the same demo home (its data folder `~/.local/share/impulse-dev` on
   Linux), composing shots with `scripts/docs/imagetool.py` where there's
-  no Swift. On Linux under Xvfb: terminal-zsh, -bash and -fish, tasks,
-  agent-integration and session pass; editor and lsp drive Monaco with
-  `js=`, which the Rust editor has no page for (they need actions of
-  their own). Shots cropped to a floating window
+  no Swift. The Rust app has no Monaco to script, so its editor and lsp
+  scenarios use `edit=` (cursor, select, type, paste, undo, redo) and
+  `lsp=` (hover, completion, definition, rename through the app's own
+  paths) where the Swift ones run `js=`. On Linux under Xvfb every
+  scenario passes. Shots cropped to a floating window
   (`crop: "overlay"`) need the in-window dialog's bounds in
   `snapshot.log`.
 

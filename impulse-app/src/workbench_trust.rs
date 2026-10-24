@@ -247,18 +247,18 @@ impl Workbench {
         } else {
             self.workspace_for(&path)
         };
-        let Some(hub) = self.workspaces.get(index).and_then(|w| w.lsp.clone()) else {
-            return;
-        };
         if !self.trust.is_trusted(&path.to_string_lossy())
             && SettingsStore::get(cx).ask_to_trust_folders
         {
             let language = editor.read(cx).language.clone();
-            if !hub.servers_for(&path, &language, cx).is_empty() {
+            if crate::lsp_hub::LspHub::has_servers(&path, &language) {
                 self.note_restricted_file(&path, window, cx);
             }
             return;
         }
+        let Some(hub) = self.workspaces.get(index).and_then(|w| w.lsp.clone()) else {
+            return;
+        };
         let hooks = EditorHooks {
             show_document: self.show_document_handler(cx),
             apply_edit: self.apply_edit_handler(cx),

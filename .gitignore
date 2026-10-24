@@ -17,3 +17,6 @@ impulse-macos/.libgit2/
 
 # Website build output (scripts/build-site.py)
 website/_site/
+
+# Python bytecode from the docs and smoke scripts.
+__pycache__/

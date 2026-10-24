@@ -117,6 +117,11 @@ pub fn apply(
     k.highlight_theme = highlight_theme(theme).into();
     Theme::sync_base(cx);
     cx.refresh_windows();
+    cx.set_global(crate::editor_git::GitColors {
+        added: hsla(p.git_added),
+        modified: hsla(p.git_modified),
+        deleted: hsla(p.git_deleted),
+    });
 }
 
 /// Impulse's theme as GPUI Kit's highlight theme (Zed's theme format), with

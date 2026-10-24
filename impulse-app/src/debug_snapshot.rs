@@ -307,6 +307,51 @@ async fn perform(action: &str, cx: &mut AsyncApp) {
             sleep(cx, 0.25).await;
         }
     }
+    // `lsp=label:kind:line:character[:new name]` asks the selected editor's
+    // server (EditorTab::debug_lsp) and reports the answer; `lsp-wait=` asks
+    // until there's one (the server is still loading the project).
+    for (prefix, wait) in [("lsp=", false), ("lsp-wait=", true)] {
+        let Some(spec) = action.strip_prefix(prefix) else {
+            continue;
+        };
+        let parts: Vec<&str> = spec.splitn(5, ':').collect();
+        let (label, kind) = (
+            parts.first().copied().unwrap_or(""),
+            parts.get(1).copied().unwrap_or(""),
+        );
+        let number = |i: usize| {
+            parts
+                .get(i)
+                .and_then(|n| n.parse::<u32>().ok())
+                .unwrap_or(0)
+        };
+        let (line, character, new_name) =
+            (number(2), number(3), parts.get(4).map(|n| n.to_string()));
+        let deadline = Instant::now() + Duration::from_secs(if wait { 120 } else { 20 });
+        loop {
+            let task = cx.update(|cx| {
+                with_workbench(cx, |workbench, window, cx| {
+                    let editor = workbench.active_editor().cloned()?;
+                    editor.update(cx, |e, cx| {
+                        e.debug_lsp(kind, line, character, new_name.clone(), window, cx)
+                    })
+                })
+                .flatten()
+            });
+            let answer = match task {
+                Some(task) => task.await,
+                None => Value::Null,
+            };
+            if !wait || !answer.is_null() || Instant::now() > deadline {
+                if wait && answer.is_null() {
+                    fail(format!("lsp-wait={label}: no answer"));
+                }
+                report(label, answer);
+                return;
+            }
+            sleep(cx, 1.0).await;
+        }
+    }
     if let Some(title) = action.strip_prefix("task=") {
         let title = title.to_string();
         cx.update(|cx| present_task_sheet(&title, None, cx));
@@ -714,6 +759,18 @@ fn perform_now(action: &str, cx: &mut App) {
                     "js={label}: the Rust app's editor has no web page to run it in"
                 ));
             }
+            // The Rust app's stand-in for `js=`: `edit=label:script`,
+            // EditorTab::debug_edit's commands on the selected editor.
+            ("edit", Some(spec)) => {
+                let (label, script) = spec.split_once(':').unwrap_or((spec, ""));
+                match workbench.active_editor().cloned() {
+                    Some(editor) => {
+                        let text = editor.update(cx, |e, cx| e.debug_edit(script, window, cx));
+                        report(label, Value::String(text));
+                    }
+                    None => fail(format!("edit={label}: no editor is selected")),
+                }
+            }
             ("key", Some(key)) => {
                 if let Ok(keystroke) = gpui_kit::Keystroke::parse(key) {
                     window.dispatch_keystroke(keystroke, cx);
@@ -844,6 +901,8 @@ fn task_sheet_create(cx: &mut App) -> bool {
 ///     tabs:<n>            at least n tabs
 ///     panes:<n>           at least n panes in the selected tab
 ///     tool:<title>        a tool tab whose title contains title is open
+///     text:<text>         the selected editor holds text (`\n` escaped)
+///     has:<text>          the selected editor's text contains text
 fn holds(condition: &str, cx: &mut App) -> bool {
     let (kind, argument) = condition.split_once(':').unwrap_or((condition, ""));
     let count = argument.parse::<usize>().unwrap_or(1);
@@ -865,6 +924,12 @@ fn holds(condition: &str, cx: &mut App) -> bool {
                 ));
                 true
             }
+            "text" => workbench
+                .active_editor()
+                .is_some_and(|e| e.read(cx).text(cx) == argument.replace("\\n", "\n")),
+            "has" => workbench
+                .active_editor()
+                .is_some_and(|e| e.read(cx).text(cx).contains(argument)),
             "file" => debug_path(argument, workbench).exists(),
             "no-file" => !debug_path(argument, workbench).exists(),
             "sheet" => window.has_active_dialog(cx),

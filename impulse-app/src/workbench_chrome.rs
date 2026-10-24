@@ -409,6 +409,7 @@ impl Workbench {
         let selected = index == self.active;
         let id = workspace.id;
         let expanded = workspace.expanded;
+        let drop_color = hsla(p.selection);
         let mut column = div().flex().flex_col();
         let row = div()
             .id(("workspace", id))
@@ -424,6 +425,23 @@ impl Workbench {
             .when(selected, |d| d.bg(hsla(p.selection)))
             .when(!selected, |d| d.hover(|s| s.bg(hsla(p.hover))))
             .on_click(cx.listener(move |w, _, window, cx| w.activate_workspace(index, window, cx)))
+            .on_drag(
+                crate::task_sidebar::DraggedWorkspace {
+                    id,
+                    name: workspace.name(),
+                },
+                |dragged, _, _, cx| {
+                    cx.new(|_| crate::file_tree_actions::DragPreview(dragged.name.clone()))
+                },
+            )
+            .drag_over::<crate::task_sidebar::DraggedWorkspace>(move |style, _, _, _| {
+                style.bg(drop_color)
+            })
+            .on_drop(cx.listener(
+                move |w, dragged: &crate::task_sidebar::DraggedWorkspace, _, cx| {
+                    w.drop_workspace(dragged.id, id, cx)
+                },
+            ))
             .child(
                 div()
                     .id(("expand", id))
