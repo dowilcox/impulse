@@ -1,9 +1,10 @@
 //! Alerts drawn as macOS 26's `NSAlert` sheet, which the Swift app uses for
 //! its questions: 260 wide, a bold title over the message, an optional
 //! accessory (a checkbox, fields) centered under it, and pill buttons, the
-//! first being the default (Return) one. Stacked full width while the alert
-//! is its own width; side by side, the default on the right, when a wide
-//! accessory widens it. Escape picks the button titled "Cancel".
+//! first being the default (Return) one, in a 228-wide block: stacked, or
+//! two side by side (the default on the right) when both titles fit half of
+//! it. A wide accessory widens the alert. Escape picks the button titled
+//! "Cancel".
 //!
 //! The colors are the system's, not the theme's, as `NSAlert` has them.
 
@@ -101,7 +102,6 @@ impl Alert {
             .accessory_width
             .filter(|w| *w > WIDTH - 2. * INSET)
             .map_or(WIDTH, |w| w + 2. * WIDE_INSET);
-        let wide = width > WIDTH;
         let alert = Rc::new(self);
         let default = alert.buttons.first().map(|(_, action)| action.clone());
         let cancel = alert
@@ -137,7 +137,7 @@ impl Alert {
                     }
                     false
                 })
-                .child(body(&alert, colors, wide, window, cx))
+                .child(body(&alert, colors, width, window, cx))
         });
     }
 }
@@ -173,13 +173,37 @@ impl Colors {
     }
 }
 
+/// The width of the button block: 16 in from a 260-wide alert's sides, and
+/// centered in a wider one.
+const BUTTONS: f32 = 228.;
+const SIDE_BY_SIDE_GAP: f32 = 12.;
+
 fn body(
     alert: &Alert,
     colors: Colors,
-    wide: bool,
+    width: f32,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let measure = |text: &SharedString, weight: gpui_kit::FontWeight| {
+        let run = gpui_kit::TextRun {
+            len: text.len(),
+            font: gpui_kit::Font {
+                weight,
+                ..gpui_kit::font(crate::workbench::UI_FONT)
+            },
+            color: colors.text,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        f32::from(
+            window
+                .text_system()
+                .shape_line(text.clone(), px(13.), &[run], None)
+                .width,
+        )
+    };
     let text = |content: SharedString| {
         div()
             .text_size(px(13.))
@@ -187,7 +211,14 @@ fn body(
             .text_color(colors.text)
             .child(content)
     };
-    let buttons = alert
+    // Two buttons whose titles fit half the block go side by side.
+    let half = (BUTTONS - SIDE_BY_SIDE_GAP) / 2.;
+    let side_by_side = alert.buttons.len() == 2
+        && alert
+            .buttons
+            .iter()
+            .all(|(title, _)| measure(title, gpui_kit::FontWeight::NORMAL) + 28. <= half);
+    let buttons: Vec<AnyElement> = alert
         .buttons
         .iter()
         .enumerate()
@@ -219,34 +250,18 @@ fn body(
                 } else {
                     colors.text
                 })
-                .when(wide, |d| d.min_w(px(106.)))
+                .when(side_by_side, |d| d.flex_1())
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                 .on_click(move |_, window, cx| action(window, cx))
                 .child(title.clone())
                 .into_any_element()
-        });
-    let buttons: Vec<AnyElement> = buttons.collect();
-    let inset = if wide { WIDE_INSET } else { INSET };
+        })
+        .collect();
+    // The text keeps its inset; a wide accessory comes 16 from the sides.
+    let inset = INSET;
+    let accessory_inset = if width > WIDTH { WIDE_INSET } else { INSET };
     // NSAlert leaves 9 points under a one-line title, 16 under a wrapped one.
-    let title_width = {
-        let run = gpui_kit::TextRun {
-            len: alert.title.len(),
-            font: gpui_kit::Font {
-                weight: gpui_kit::FontWeight::BOLD,
-                ..gpui_kit::font(crate::workbench::UI_FONT)
-            },
-            color: colors.text,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        window
-            .text_system()
-            .shape_line(alert.title.clone(), px(13.), &[run], None)
-            .width
-    };
-    let column = if wide { 0. } else { WIDTH - 2. * INSET };
-    let title_gap = if !wide && f32::from(title_width) > column {
+    let title_gap = if measure(&alert.title, gpui_kit::FontWeight::BOLD) > width - 2. * inset {
         16.
     } else {
         9.
@@ -270,26 +285,26 @@ fn body(
             d.child(
                 div()
                     .mt(px(16.))
-                    .px(px(inset))
+                    .px(px(accessory_inset))
                     .flex()
                     .justify_center()
                     .child(accessory(window, cx)),
             )
         })
         .child(
-            div()
-                .mt(px(14.))
-                .px(px(16.))
-                .flex()
-                .gap(px(if wide { 12. } else { 6. }))
-                .when(wide, |d| d.justify_center())
-                .when(!wide, |d| d.flex_col())
-                // Side by side, the default goes on the right.
-                .children(if wide {
-                    buttons.into_iter().rev().collect::<Vec<_>>()
-                } else {
-                    buttons
-                }),
+            div().mt(px(14.)).flex().justify_center().child(
+                div()
+                    .w(px(BUTTONS))
+                    .flex()
+                    .when(side_by_side, |d| d.gap(px(SIDE_BY_SIDE_GAP)))
+                    .when(!side_by_side, |d| d.flex_col().gap(px(6.)))
+                    // Side by side, the default goes on the right.
+                    .children(if side_by_side {
+                        buttons.into_iter().rev().collect::<Vec<_>>()
+                    } else {
+                        buttons
+                    }),
+            ),
         )
         .into_any_element()
 }
@@ -367,4 +382,26 @@ pub(crate) fn field(
                 .px_0()
                 .text_size(px(13.)),
         )
+}
+
+/// The project trust prompt's list of commands (an `NSTextView` in a bezel,
+/// 11-point mono): all of them, scrolling past fourteen lines.
+pub(crate) fn command_list(text: String, lines: usize, light: bool) -> impl IntoElement {
+    let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
+    let line = 13.;
+    div()
+        .id("alert-commands")
+        .w(px(440.))
+        .h(px(lines.clamp(2, 14) as f32 * line + 12.))
+        .overflow_y_scroll()
+        .px(px(10.))
+        .py(px(5.))
+        .border_1()
+        .border_color(hsla(ink.opacity(0.25)))
+        .font_family(crate::settings_view::MONO_FONT)
+        .text_size(px(11.))
+        .line_height(px(line))
+        .text_color(hsla(ink.opacity(0.88)))
+        .whitespace_normal()
+        .child(text)
 }

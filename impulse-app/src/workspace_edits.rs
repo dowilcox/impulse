@@ -9,9 +9,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, Context, Window};
+use gpui_kit::{Context, Window};
 use impulse_kit::text_file;
 use impulse_lsp::edits::apply_text_edits;
 use impulse_lsp::workspace_edit::{
@@ -142,50 +141,34 @@ impl Workbench {
         let place = boundary
             .map(|b| format!("“{}”", name(&b)))
             .unwrap_or_else(|| "the project".into());
-        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
-            let (apply_workbench, pending) = (workbench.clone(), pending.clone());
-            dialog
-                .title(format!("Apply “{}”?", pending.title))
-                .w(px(520.))
-                .close_button(false)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(format!("It does more than edit files in {place}:"))
-                        .children(lines.iter().map(|line| {
-                            div()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(12.))
-                                .child(line.clone())
-                        })),
-                )
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("edit-cancel")
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(Button::new("edit-apply").primary().label("Apply").on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let pending = pending.clone();
-                                let _ = apply_workbench.update(cx, |workbench, cx| {
-                                    // Things may have changed while asking.
-                                    match workbench.edit_refusal(&pending.edit, cx) {
-                                        Some(refusal) => workbench.set_notice(refusal, cx),
-                                        None => workbench.apply_now(&pending, window, cx),
-                                    }
-                                });
-                            },
-                        )),
-                )
-        });
+        // As the Swift app's alert words it: the first twelve, then a count.
+        const SHOWN: usize = 12;
+        let mut list: Vec<String> = lines
+            .iter()
+            .take(SHOWN)
+            .map(|l| format!("\u{2022} {l}"))
+            .collect();
+        if lines.len() > SHOWN {
+            list.push(format!("\u{2026}and {} more", lines.len() - SHOWN));
+        }
+        crate::alert::Alert::new(format!("Apply \u{201c}{}\u{201d}?", pending.title))
+            .message(format!(
+                "It does more than edit files in {place}:\n\n{}",
+                list.join("\n")
+            ))
+            .button("Apply", move |window, cx| {
+                window.close_dialog(cx);
+                let pending = pending.clone();
+                let _ = workbench.update(cx, |workbench, cx| {
+                    // Things may have changed while asking.
+                    match workbench.edit_refusal(&pending.edit, cx) {
+                        Some(refusal) => workbench.set_notice(refusal, cx),
+                        None => workbench.apply_now(&pending, window, cx),
+                    }
+                });
+            })
+            .button("Cancel", |window, cx| window.close_dialog(cx))
+            .show(window, cx);
     }
 
     fn apply_now(&mut self, pending: &PendingEdit, window: &mut Window, cx: &mut Context<Self>) {

@@ -20,7 +20,7 @@ use std::time::Duration;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{div, prelude::*, px, App, Context, Window};
+use gpui_kit::{prelude::*, App, Context, Window};
 use impulse_git::{branches, operations, scoped_diff, snapshot};
 use impulse_kit::child_process::ChildProcess;
 use impulse_kit::git::task_overlap::{self, Pair};
@@ -912,11 +912,12 @@ impl Workbench {
         let mut message = String::new();
         if !commands.is_empty() {
             message = if commands.len() == 1 {
-                format!("{what} can run the command below on this computer. ")
+                format!("{what} can run the command below on {}. ", this_computer())
             } else {
                 format!(
-                    "{what} can run all {} commands below on this computer. ",
-                    commands.len()
+                    "{what} can run all {} commands below on {}. ",
+                    commands.len(),
+                    this_computer()
                 )
             };
         }
@@ -945,87 +946,52 @@ impl Workbench {
         let workbench = cx.entity().downgrade();
         let config = Rc::new(config);
         let untrusted = Rc::new(untrusted);
-        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
-            let answer = {
-                let (then, workbench, config, untrusted) = (
-                    then.clone(),
-                    workbench.clone(),
-                    config.clone(),
-                    untrusted.clone(),
-                );
-                move |trusted: bool, window: &mut Window, cx: &mut App| {
-                    window.close_dialog(cx);
-                    let Some(then) = then.borrow_mut().take() else {
-                        return;
-                    };
-                    if trusted {
-                        let mut store = project_trust();
-                        for file in untrusted.iter() {
-                            store.trust(&file.key, &file.digest);
-                        }
-                        save_project_trust(&store);
+        let answer = {
+            let (then, workbench, config, untrusted) = (
+                then.clone(),
+                workbench.clone(),
+                config.clone(),
+                untrusted.clone(),
+            );
+            move |trusted: bool, window: &mut Window, cx: &mut App| {
+                window.close_dialog(cx);
+                let Some(then) = then.borrow_mut().take() else {
+                    return;
+                };
+                if trusted {
+                    let mut store = project_trust();
+                    for file in untrusted.iter() {
+                        store.trust(&file.key, &file.digest);
                     }
-                    let config = trusted.then(|| (*config).clone());
-                    let _ =
-                        workbench.update(cx, |workbench, cx| then(workbench, config, window, cx));
+                    save_project_trust(&store);
                 }
-            };
-            let answer = Rc::new(answer);
-            let (cancel, ok) = (answer.clone(), answer.clone());
-            let (enter, escape) = (answer.clone(), answer);
-            dialog
-                .title(title.clone())
-                .w(px(480.))
-                .overlay_closable(false)
-                .close_button(false)
-                .on_ok(move |_, window, cx| {
-                    enter(true, window, cx);
-                    false
-                })
-                .on_cancel(move |_, window, cx| {
-                    escape(false, window, cx);
-                    false
-                })
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .child(message.clone())
-                        .when(!listed.is_empty(), |d| {
-                            d.child(
-                                div()
-                                    .id("trust-commands")
-                                    .max_h(px(220.))
-                                    .overflow_y_scroll()
-                                    .p(px(6.))
-                                    .border_1()
-                                    .rounded(px(4.))
-                                    .font_family("JetBrains Mono")
-                                    .text_size(px(11.))
-                                    .whitespace_normal()
-                                    .child(listed.clone()),
-                            )
-                        }),
-                )
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("project-trust-cancel")
-                                .label("Cancel")
-                                .on_click(move |_, window, cx| cancel(false, window, cx)),
-                        )
-                        .child(
-                            Button::new("project-trust-ok")
-                                .primary()
-                                .label("Trust and Run")
-                                .on_click(move |_, window, cx| ok(true, window, cx)),
-                        ),
-                )
-        });
+                let config = trusted.then(|| (*config).clone());
+                let _ = workbench.update(cx, |workbench, cx| then(workbench, config, window, cx));
+            }
+        };
+        let answer = Rc::new(answer);
+        let (ok, cancel) = (answer.clone(), answer);
+        let lines = listed.lines().count();
+        let mut alert = crate::alert::Alert::new(title).message(message);
+        if !listed.is_empty() {
+            let light = crate::alert::is_light(cx);
+            alert = alert.accessory(Some(440.), move |_, _| {
+                crate::alert::command_list(listed.clone(), lines, light).into_any_element()
+            });
+        }
+        alert
+            .button("Trust and Run", move |window, cx| ok(true, window, cx))
+            .button("Cancel", move |window, cx| cancel(false, window, cx))
+            .show(window, cx);
+    }
+}
+
+/// Where project commands run, as the trust prompt says it.
+fn this_computer() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "your Mac"
+    } else {
+        "this computer"
     }
 }
 

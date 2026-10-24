@@ -2168,50 +2168,25 @@ impl Workbench {
                 }
             });
         });
-        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
-            let (reload, save, cancel, escape) = (
-                answer.clone(),
-                answer.clone(),
-                answer.clone(),
-                answer.clone(),
-            );
-            dialog
-                .title(format!("{RELATIVE_PATH} changed since Project Setup read it"))
-                .w(px(480.))
-                .overlay_closable(false)
-                .close_button(false)
-                .on_cancel(move |_, window, cx| {
-                    escape(Answer::Cancel, window, cx);
-                    false
-                })
-                .child(div().whitespace_normal().child(
-                    "Reload shows the file as it is now, discarding your changes here. Save Anyway \
-                     replaces the sections this screen manages with what it shows, discarding the \
-                     changes made to them in the file.",
-                ))
-                .footer(
-                    div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("changed-cancel")
-                                .label("Cancel")
-                                .on_click(move |_, window, cx| cancel(Answer::Cancel, window, cx)),
-                        )
-                        .child(
-                            Button::new("changed-save")
-                                .label("Save Anyway")
-                                .on_click(move |_, window, cx| save(Answer::SaveAnyway, window, cx)),
-                        )
-                        .child(
-                            Button::new("changed-reload")
-                                .primary()
-                                .label("Reload")
-                                .on_click(move |_, window, cx| reload(Answer::Reload, window, cx)),
-                        ),
-                )
-        });
+        let (reload, save, cancel) = (answer.clone(), answer.clone(), answer);
+        crate::alert::Alert::new(format!(
+            "{RELATIVE_PATH} changed since Project Setup read it"
+        ))
+        .message(
+            "Reload shows the file as it is now, discarding your changes here. Save Anyway \
+                 replaces the sections this screen manages with what it shows, discarding the \
+                 changes made to them in the file.",
+        )
+        .button("Reload", move |window, cx| {
+            reload(Answer::Reload, window, cx)
+        })
+        .button("Save Anyway", move |window, cx| {
+            save(Answer::SaveAnyway, window, cx)
+        })
+        .button("Cancel", move |window, cx| {
+            cancel(Answer::Cancel, window, cx)
+        })
+        .show(window, cx);
     }
 
     /// Save, then New Task from the repository, to see the settings work.

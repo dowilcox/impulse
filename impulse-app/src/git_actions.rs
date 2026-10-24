@@ -1490,7 +1490,7 @@ impl Workbench {
                     .w(px(300.))
                     .flex()
                     .flex_col()
-                    .gap(px(8.))
+                    .gap(px(6.))
                     .child(crate::alert::field(&name, 300., 26., light))
                     .child(crate::alert::field(&message, 300., 26., light))
                     .children(remote.clone().map(|remote| {
