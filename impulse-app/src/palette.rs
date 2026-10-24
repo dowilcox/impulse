@@ -349,6 +349,8 @@ pub struct Palette {
     file_matches: Option<(String, usize, Arc<Vec<String>>)>,
     /// Local branches then remote ones without a local branch: (name, remote).
     branches: Option<Vec<(String, bool)>>,
+    /// Branches New Task from Branch can open: (name, remote).
+    task_branches: Option<Vec<(String, bool)>>,
     symbols: Option<Vec<OutlineSymbol>>,
     generation: usize,
     /// The newest refresh's generation, readable from the background: a
@@ -410,6 +412,7 @@ impl Palette {
             file_index_date: None,
             file_matches: None,
             branches: None,
+            task_branches: None,
             symbols: None,
             generation: 0,
             latest: Arc::default(),
@@ -441,6 +444,7 @@ impl Palette {
     /// cached branches and symbols, and set the initial query.
     fn prepare(&mut self, prefix: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.branches = None;
+        self.task_branches = None;
         self.symbols = None;
         let root = self.host.root.clone();
         let stale = self
@@ -568,7 +572,7 @@ impl Palette {
             Mode::Tabs => self.refresh_tabs(&term),
             Mode::Workspaces => self.refresh_workspaces(&term),
             Mode::History => self.refresh_history(&term, window, cx),
-            Mode::TaskBranches => self.not_yet("New Task from Branch"),
+            Mode::TaskBranches => self.refresh_task_branches(&term, window, cx),
             Mode::Settings => self.refresh_settings(&term),
             Mode::Symbols => self.refresh_symbols(&term, window, cx),
             Mode::WorkspaceSymbols => self.refresh_workspace_symbols(term, window, cx),
@@ -1005,6 +1009,68 @@ impl Palette {
             "No matching branches".into()
         };
         self.rows = rows;
+    }
+
+    /// `task:`: branches no worktree has checked out, local then remote
+    /// (without a local branch of the same name), each opened as a task.
+    fn refresh_task_branches(&mut self, term: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(branches) = self.task_branches.as_ref() else {
+            let root = self.file_index_root.clone();
+            self.busy = true;
+            self.rows = Vec::new();
+            self.empty_message = "Loading branches…".into();
+            let listing = cx.background_executor().spawn(async move {
+                let (local, remote) = impulse_git::operations::branches(&root);
+                let checked_out: Vec<String> = impulse_git::operations::worktrees(&root)
+                    .into_iter()
+                    .filter_map(|w| w.branch)
+                    .collect();
+                let mut all: Vec<(String, bool)> = local
+                    .iter()
+                    .filter(|b| !checked_out.contains(b))
+                    .map(|b| (b.clone(), false))
+                    .collect();
+                all.extend(
+                    remote
+                        .into_iter()
+                        .filter(|r| {
+                            !r.ends_with("/HEAD") && !local.iter().any(|l| l == local_name(r))
+                        })
+                        .map(|r| (r, true)),
+                );
+                all
+            });
+            self.work = Some(cx.spawn_in(window, async move |this, cx| {
+                let branches = listing.await;
+                let _ = this.update_in(cx, |palette, window, cx| {
+                    palette.busy = false;
+                    palette.task_branches = Some(branches);
+                    if palette.mode == Mode::TaskBranches {
+                        palette.refresh(window, cx);
+                    }
+                });
+            }));
+            return;
+        };
+        self.rows = fuzzy::rank(branches, term, usize::MAX, false, |b| &b.0)
+            .into_iter()
+            .map(|((name, remote), m)| {
+                let (name, remote) = (name.clone(), *remote);
+                Row::new(
+                    format!("task-branch:{name}"),
+                    Some(if remote { "globe" } else { "git-branch" }),
+                    name.clone(),
+                    move |w, window, cx| w.open_branch_as_task(name.clone(), remote, window, cx),
+                )
+                .highlights(m.positions)
+                .trailing(remote.then(|| "remote".to_string()))
+            })
+            .collect();
+        self.empty_message = if branches.is_empty() {
+            "No branches to open: each one is checked out already".into()
+        } else {
+            "No matching branches".into()
+        };
     }
 
     // MARK: Tabs

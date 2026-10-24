@@ -312,6 +312,16 @@ which inserts the type when picked.*
   from the same `session-state.json` and scrollback files; the control
   socket for `impulse` (`open`, `edit` waiting for the tab, `split`, `tab`,
   `notify`, `checkpoint`, `unsaved`).
+- Tasks: New Task (the sheet, the worktree beside the repository, copies,
+  the task list and its slot, the task's own values and setup script once
+  the project settings are trusted, the main checkout's changes moved in
+  with Undo), New Task from Branch (`task:`), Finish Task (its tab: commit
+  check, sync, the check script in a terminal, landing through
+  `impulse_git::landing`, update, clean up), Archive Task and Archive Merged
+  Tasks with Undo, and the sidebar's repository groups with the merged and
+  overlap chips. A task's terminals get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT`
+  and `IMPULSE_REPO_ROOT`. Agents' parts (an agent's request, its brief,
+  waiting for its turn) come with the agents.
 - The terminal draws its own grid (cell runs, selection and search ranges,
   the cursor, block washes, stripes, separators and status chips), takes
   keys through the port of `KeyEncoder` and text through GPUI's input

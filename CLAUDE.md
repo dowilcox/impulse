@@ -146,7 +146,12 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           (search_panel.rs; workbench_search.rs opens
                           results and runs Replace All with Undo, reloading
                           clean editors with EditorTab::reload_from_disk),
-                          the Quick Terminal (quick_terminal.rs: a pop-up
+                          tasks (tasks.rs: registry, identity, trust, prep;
+                          task_sheet.rs New Task; task_finish.rs Finish
+                          Task; task_cleanup.rs Archive/Undo;
+                          task_sidebar.rs repository groups, merged and
+                          overlap chips), the Quick Terminal
+                          (quick_terminal.rs: a pop-up
                           window over a TerminalView with no_bar, its
                           shortcut registered with global-hotkey),
                           Use Impulse as $EDITOR (EDITOR/VISUAL set to

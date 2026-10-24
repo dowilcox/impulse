@@ -33,6 +33,8 @@ pub enum Surface {
     /// The Settings and Keyboard Shortcuts tools (one of each per workspace).
     Settings(Entity<SettingsView>),
     Keybindings(Entity<KeybindingsView>),
+    /// A task's Finish tab (`task_finish`).
+    TaskFinish(Entity<crate::task_finish::TaskFinishView>),
 }
 
 impl Surface {
@@ -53,6 +55,7 @@ impl Surface {
             Surface::Image(i) => i.read(cx).title(),
             Surface::Settings(_) => "Settings".into(),
             Surface::Keybindings(_) => "Keyboard Shortcuts".into(),
+            Surface::TaskFinish(f) => f.read(cx).title(),
         }
     }
 
@@ -65,6 +68,7 @@ impl Surface {
             Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",
             Surface::Keybindings(_) => "keyboard",
+            Surface::TaskFinish(_) => "git-merge",
         }
     }
 
@@ -84,6 +88,7 @@ impl Surface {
             Surface::Image(i) => i.read(cx).focus_handle().clone(),
             Surface::Settings(s) => s.read(cx).focus.clone(),
             Surface::Keybindings(k) => k.read(cx).focus.clone(),
+            Surface::TaskFinish(f) => f.read(cx).focus_handle().clone(),
         }
     }
 
@@ -106,6 +111,10 @@ impl Surface {
             }
             Surface::Settings(s) => s.update(cx, |s, cx| s.focus(window, cx)),
             Surface::Keybindings(k) => k.update(cx, |k, cx| k.focus(window, cx)),
+            Surface::TaskFinish(f) => {
+                let handle = f.read(cx).focus_handle().clone();
+                window.focus(&handle, cx);
+            }
         }
     }
 
@@ -119,6 +128,7 @@ impl Surface {
             Surface::Terminal(t) => Some(PathBuf::from(&t.read(cx).cwd)),
             Surface::Editor(e) => e.read(cx).path.parent().map(Path::to_path_buf),
             Surface::Review(r) => Some(PathBuf::from(&r.read(cx).root)),
+            Surface::TaskFinish(f) => Some(PathBuf::from(&f.read(cx).root)),
             Surface::History(h) => Some(PathBuf::from(&h.read(cx).root)),
             Surface::Image(i) => i.read(cx).path.parent().map(Path::to_path_buf),
             Surface::Settings(_) | Surface::Keybindings(_) => None,
@@ -245,6 +255,8 @@ pub struct Workspace {
     pub lsp_events: Option<gpui_kit::Task<()>>,
     /// The user kept this folder restricted this session: don't ask again.
     pub declined: bool,
+    /// Its repository, whether it's a task, and the task's states.
+    pub task: crate::tasks::TaskInfo,
 }
 
 impl Workspace {
@@ -253,6 +265,7 @@ impl Workspace {
             Kind::Scratch => scratch_root(),
             Kind::Folder => normalize(&root),
         };
+        let task = crate::tasks::TaskInfo::read(kind, &root);
         let mut workspace = Workspace {
             id,
             kind,
@@ -267,6 +280,7 @@ impl Workspace {
             lsp: None,
             lsp_events: None,
             declined: false,
+            task,
         };
         workspace.refresh_branch();
         workspace.reload_tree();

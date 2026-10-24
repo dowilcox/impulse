@@ -105,6 +105,7 @@ impl Workbench {
         cx.defer_in(window, |workbench, window, cx| {
             workbench.request_trust(workbench.active, window, cx)
         });
+        workbench.start_task_monitor(window, cx);
         workbench
     }
 
@@ -256,6 +257,10 @@ impl Workbench {
                     cx.notify();
                 }),
                 Surface::Keybindings(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
+                Surface::TaskFinish(view) => view.update(cx, |view, cx| {
                     view.palette = self.palette.clone();
                     cx.notify();
                 }),
@@ -527,7 +532,8 @@ impl Workbench {
             Surface::Review(_)
             | Surface::History(_)
             | Surface::Settings(_)
-            | Surface::Keybindings(_) => {}
+            | Surface::Keybindings(_)
+            | Surface::TaskFinish(_) => {}
         }
     }
 
@@ -807,6 +813,9 @@ impl Workbench {
                     terminal.update(cx, |t, cx| t.perform_block_command(block, window, cx));
                 }
             }
+            "new_task" | "finish_task" | "archive_task" | "new_task_from_branch" => {
+                self.run_task_command(id, window, cx)
+            }
             custom if custom.starts_with("custom_") => {
                 self.run_custom(&custom["custom_".len()..], window, cx)
             }
@@ -971,6 +980,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
         Surface::Image(i) => i.entity_id(),
         Surface::Settings(s) => s.entity_id(),
         Surface::Keybindings(k) => k.entity_id(),
+        Surface::TaskFinish(f) => f.entity_id(),
     }
 }
 
