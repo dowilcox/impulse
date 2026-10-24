@@ -12,6 +12,11 @@ log = { workspace = true }
 toml = "0.8"
 dirs = "6"
 url = "2"
+comrak = { version = "0.57", default-features = false }
+regex = "1"
+unicode-properties = { version = "0.1", default-features = false, features = ["general-category"] }
+getrandom = "0.3"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

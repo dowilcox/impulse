@@ -7,6 +7,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
 
+# Dependencies (GPUI is large) build without debug info, so a checkout's
+# target directory stays a few GB; our own crates keep full debug info.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 opt-level = 3
 lto = true
