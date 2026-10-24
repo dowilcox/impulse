@@ -67,8 +67,13 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           problems, review comments, update checker, shell
                           (types, quoting, login shell, integration),
                           completion, command history (SQLite), kitty
-                          keyboard, terminal hints/paths/find and
-                          ChildProcess ported; tested against the shared
+                          keyboard, terminal hints/paths/find,
+                          ChildProcess, project config + settings file +
+                          task environment + detector, task registry and
+                          worktree tasks, commit graph, git helpers, agent
+                          state machine, hook events + installers, MCP
+                          installer, JSONC edits and task policy/briefs
+                          ported; tested against the shared
                           golden fixtures
 impulse-protocol/         Rust (rust branch): ImpulseProtocol: control-socket
                           messages (byte-compatible with the Swift app), the

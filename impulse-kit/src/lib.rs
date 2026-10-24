@@ -7,6 +7,7 @@
 //! (`impulse-macos/Tests/ImpulseKitTests/Fixtures/`).
 
 pub mod accessible_text;
+pub mod agents;
 pub mod buffer_edits;
 pub mod child_process;
 pub mod chrome;
@@ -19,6 +20,7 @@ pub mod document_symbols;
 pub mod drag_reorder;
 pub mod file_tree;
 pub mod fuzzy;
+pub mod git;
 pub mod glob;
 pub mod grouped_order;
 pub mod history;
@@ -32,6 +34,7 @@ pub mod markdown_theme;
 pub mod monaco_theme;
 pub mod paths;
 pub mod problems;
+pub mod project;
 pub mod project_replace;
 pub mod review_comments;
 pub mod save_command;

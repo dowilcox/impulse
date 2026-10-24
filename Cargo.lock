@@ -3396,6 +3396,7 @@ name = "impulse-kit"
 version = "0.36.0"
 dependencies = [
  "base64",
+ "chrono",
  "comrak",
  "dirs 6.0.0",
  "getrandom 0.3.4",
@@ -3405,8 +3406,10 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "toml 0.8.23",
+ "unicode-normalization",
  "unicode-properties",
  "url",
 ]
