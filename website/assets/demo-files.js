@@ -45,7 +45,7 @@ window.DEMO_FILES = {
   "base": "# trailhead\n\nTrail info for hikers: a small HTTP API over a list of trails.\n\n```sh\nnpm run dev      # http://localhost:3000\nnpm test\n```\n"
  },
  "package.json": {
-  "base": "{\n  \"name\": \"trailhead\",\n  \"version\": \"0.2.0\",\n  \"description\": \"Trail info and mountain forecasts for hikers\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"node --watch src/server.ts\",\n    \"start\": \"node src/server.ts\",\n    \"test\": \"node --test --test-reporter=./scripts/test-reporter.mjs test/\",\n    \"lint\": \"node --check src/server.ts\"\n  },\n  \"engines\": { \"node\": \">=24\" }\n}\n"
+  "base": "{\n  \"name\": \"trailhead\",\n  \"version\": \"0.2.0\",\n  \"description\": \"Trail info and mountain forecasts for hikers\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"node --watch src/server.ts\",\n    \"start\": \"node src/server.ts\",\n    \"test\": \"node --test --test-reporter=./scripts/test-reporter.mjs test/*.test.ts\",\n    \"lint\": \"node --check src/server.ts\"\n  },\n  \"engines\": { \"node\": \">=24\" }\n}\n"
  },
  "tsconfig.json": {
   "base": "{\n  \"compilerOptions\": {\n    \"target\": \"es2023\",\n    \"module\": \"nodenext\",\n    \"strict\": true,\n    \"allowImportingTsExtensions\": true,\n    \"noEmit\": true\n  },\n  \"include\": [\"src\", \"test\"]\n}\n"

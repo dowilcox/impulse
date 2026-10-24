@@ -121,7 +121,7 @@ PACKAGE_JSON = """
   "scripts": {
     "dev": "node --watch src/server.ts",
     "start": "node src/server.ts",
-    "test": "node --test --test-reporter=./scripts/test-reporter.mjs test/",
+    "test": "node --test --test-reporter=./scripts/test-reporter.mjs test/*.test.ts",
     "lint": "node --check src/server.ts"
   },
   "engines": { "node": ">=24" }

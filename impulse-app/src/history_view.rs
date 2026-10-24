@@ -20,9 +20,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use gpui_kit::component::button::ButtonVariants as _;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     canvas, div, point, prelude::*, px, uniform_list, AnyElement, App, Bounds, ClipboardItem,
     Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla, KeyDownEvent, PathBuilder,
@@ -876,7 +875,7 @@ impl HistoryView {
         })
     }
 
-    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let mut header = div()
             .flex()
@@ -909,12 +908,9 @@ impl HistoryView {
         header
             .child(div().flex_1().min_w(px(4.)))
             .child(
-                div().w(px(300.)).flex_shrink(1.).child(
-                    Input::new(&self.filter)
-                        .small()
-                        .cleanable(true)
-                        .prefix(icon("search", 12., p.text_tertiary)),
-                ),
+                crate::workbench_chrome::chrome_text_field(&self.filter, "search", p, window, cx)
+                    .w(px(300.))
+                    .flex_shrink(1.),
             )
             .child(
                 gpui_kit::component::button::Button::new("history-presets")
@@ -1279,7 +1275,7 @@ impl Render for HistoryView {
                     .min_h(px(140.))
                     .border_b_1()
                     .border_color(hsla(p.hairline))
-                    .child(self.header(cx))
+                    .child(self.header(window, cx))
                     .child(list),
             )
             .child(self.details_bar(cx))

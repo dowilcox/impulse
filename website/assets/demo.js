@@ -1064,7 +1064,7 @@
       if (args[0] === "-v" || args[0] === "--version") { print("11.6.0"); return 0; }
       if (script === "ci") { await sleep(700); print("added 1 package, and audited 2 packages in 412ms"); print(""); print('found <span class="t-green t-bold">0</span> vulnerabilities'); return 0; }
       if (script === "install" || script === "i") { await sleep(500); print("up to date, audited 2 packages in 214ms"); print(""); print('found <span class="t-green t-bold">0</span> vulnerabilities'); return 0; }
-      const scripts = { test: "node --test --test-reporter=./scripts/test-reporter.mjs test/", lint: "node --check src/server.ts", dev: "node --watch src/server.ts", start: "node src/server.ts" };
+      const scripts = { test: "node --test --test-reporter=./scripts/test-reporter.mjs test/*.test.ts", lint: "node --check src/server.ts", dev: "node --watch src/server.ts", start: "node src/server.ts" };
       if (!script) { print("Usage: npm &lt;command&gt;  (try npm test)"); return 1; }
       if (!scripts[script]) { print(`<span class="t-red">npm error</span> Missing script: "${esc(script)}"`); return 1; }
       print(`<span class="t-dim">&gt; trailhead@0.2.0 ${script}</span>`, false);

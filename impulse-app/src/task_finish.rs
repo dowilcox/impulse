@@ -591,6 +591,7 @@ impl Render for TaskFinishView {
             .child(
                 Button::new("finish-close")
                     .label("Close")
+                    .small()
                     .on_click(self.act(|w, view, window, cx| {
                         let surface = Surface::TaskFinish(view);
                         w.close_surface(&surface, window, cx)
@@ -600,6 +601,7 @@ impl Render for TaskFinishView {
                 d.child(
                     Button::new("finish-run")
                         .primary()
+                        .small()
                         .icon(Icon::empty().path("icons/git-merge.svg"))
                         .label(self.finish_title())
                         .disabled(self.is_running || self.is_loading)
