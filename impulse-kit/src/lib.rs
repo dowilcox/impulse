@@ -9,6 +9,7 @@
 pub mod chrome;
 pub mod close_risk;
 pub mod glob;
+pub mod line_edits;
 pub mod paths;
 pub mod shell_parser;
 pub mod text_file;

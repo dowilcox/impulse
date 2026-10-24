@@ -99,11 +99,12 @@ for:
 | Monaco feature Impulse uses | GPUI Kit `Editor` | Work |
 |---|---|---|
 | Highlighting, folding, line numbers, indent guides, whitespace, word wrap, ligatures | yes | **done**: colors from Impulse's theme |
-| Multi-cursor, column selection, ⌘D next occurrence | yes (⌘D to check) | keymap to match Monaco's |
+| Multi-cursor, column selection, ⌘D next occurrence | yes, ⌘D ours | **done**: Monaco's keys on both platforms (`editor_keys.rs`): ⌘D as whole words, toggle comment, move, copy and delete lines, insert line above or below, F12, ⌘I and Ctrl+Space for suggestions |
 | Find and replace widget | yes (replace is a toggle in its panel) | **themed**; first keystroke into it is lost under Xvfb (below) |
 | LSP: completion, hover, diagnostics, definition | yes | **done**: wired to `impulse-lsp`, checked against rust-analyzer; definition into another file not yet exercised |
-| LSP: code actions, Format Document (⌥⇧F) | yes | **done**: every server's actions (⌘. or Ctrl+.), resolved when picked; formatting as one undo step. Edits a code action makes to other files aren't applied yet |
-| LSP: references, rename, signature help, formatting, document highlight, type definition, implementation, declaration, inlay hints | partly | add providers (our LSP layer already speaks them) |
+| LSP: code actions, Format Document (⌥⇧F) | yes | **done**: every server's actions (⌘. or Ctrl+.), resolved when picked; formatting as one undo step |
+| Rename (F2), Find References (⇧F12), edits across files | no | **done**: rename through `prepareRename`; workspace edits applied across open tabs and files on disk, asking first as `LSPWorkspaceEdits` does; references in a list that opens each place (a peek view comes with the peek work) |
+| LSP: signature help, document highlight, type definition, implementation, declaration, inlay hints | partly | add providers (our LSP layer already speaks them) |
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
 | Diff editor (side by side and inline) | diff component exists | build the editor diff view on it |
 | Vim mode (monaco-vim) | no | port: a modal layer over the editor's actions |
@@ -186,12 +187,12 @@ The shipped Swift app keeps working through every phase.
    Impulse's theme, editor tabs opened from the file tree with Impulse's file
    rules, save, dirty marks, the editor status bar, workspace trust (the same
    prompt and `trusted-folders.json` as the Swift app), the `lsp.json`
-   config, and `impulse-lsp` wired to the editor (diagnostics, hover,
-   completion, definition, code actions, Format Document). Next: Monaco's
-   keymap, rename and references (with edits across files, which ask first as
-   `LSPWorkspaceEdits` does), signature help, then the gaps in the table
-   (peek, diff view, Vim mode). Exit: daily-drivable on a real project, on
-   both platforms.
+   config, `impulse-lsp` wired to the editor (diagnostics, hover, completion,
+   definition, code actions, Format Document, rename, references), edits
+   across files with the Swift app's confirmation rules, and Monaco's keymap.
+   Next: signature help and the other LSP features in the table, Undo for a
+   whole cross-file edit, then peek views, the diff view and Vim mode. Exit:
+   daily-drivable on a real project, on both platforms.
 2. **Logic crates, with parity.** Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden
    fixtures read in place from `impulse-macos/Tests/*/Fixtures/`, port each
@@ -227,13 +228,23 @@ type error, live while typing. Right: `name.pu` narrowed to `push` and
 |---|---|
 | ![Trust prompt](images/rust-trust-prompt.png) | ![Code action](images/rust-editor-code-action.png) |
 
+| Rename across files | Find References |
+|---|---|
+| ![Rename](images/rust-editor-rename.png) | ![References](images/rust-editor-references.png) |
+
+*Renaming `add` to `sum` in `main.rs` changed both of its calls in the open
+tab and the definition in `util.rs`, which wasn't open, on disk; the status
+bar reports it. Find References lists each place with its line; picking one
+opens it at the symbol.*
+
 *Left: opening a folder that isn't trusted asks, as the Swift app does; the
 status bar says Restricted until it's trusted, and language servers start for
 the open files the moment it is. Right: rust-analyzer's assist on ⌘. / Ctrl+.,
 which inserts the type when picked.*
 
 - `impulse-terminal` builds and passes all 112 tests on Linux.
-- `impulse-kit`: `trust` (the Swift `WorkspaceTrust` and all its tests, reading
+- `impulse-kit`: `line_edits` (Monaco's line commands and ⌘D as plain text
+  operations, with tests); `trust` (the Swift `WorkspaceTrust` and all its tests, reading
   and writing the same `trusted-folders.json`) and `paths` (the data
   directory: `~/Library/Application Support/impulse` on macOS as today,
   `~/.local/share/impulse` on Linux; `impulse-dev` for debug builds). `glob`, `close_risk`, `shell_parser`, `theme` and `uri`
@@ -252,8 +263,11 @@ which inserts the type when picked.*
   app's settings), document sync, `config` (the Swift `LSPConfig`: the 18
   default servers and their languages, root markers, the global and project
   `lsp.json` with the same trust rules, root detection that never goes above
-  the trusted folder, initialization options), `edits` (a server's text
-  edits applied against the original text, and the one span that changed),
+  the trusted folder, initialization options), `edits` (the Swift
+  `TextEditApplier`: edits against the original text, inserts keeping their
+  order, `\r\n` lines, overlaps refused; and the one span that changed),
+  `workspace_edit` (the Swift `WorkspaceEdit`: operations in order, the
+  confirmations, the edit boundary, with its tests),
   and completion filtering as Monaco does it. An end-to-end test runs
   rust-analyzer (diagnostics, hover, completion) and skips where it isn't
   installed.
@@ -281,9 +295,9 @@ Known issues:
   the code ([screenshot](images/rust-editor-hover.png)).
 - Completions insert plain text: snippet support is off until GPUI Kit's
   snippet handling is checked.
-- Edits a code action makes to other files are skipped (logged); the Swift
-  app applies them and asks first for ones that create, move or delete
-  files.
+- A cross-file edit (rename, a code action) can't be undone as a whole
+  yet: each open tab undoes its own part, files changed on disk don't. The
+  Swift app offers Undo for the whole edit.
 - The app hasn't been built on a Mac yet.
 
 ## Risks

@@ -27,3 +27,5 @@ lsp-types = { version = "0.97", features = ["proposed"] }
 futures = "0.3"
 async-channel = "2"
 anyhow = "1"
+# Deleting files a workspace edit removes: to the Trash, as the Swift app does.
+trash = "5"

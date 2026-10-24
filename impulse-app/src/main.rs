@@ -5,11 +5,13 @@
 //!
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
+mod editor_keys;
 mod editor_tab;
 mod kit_theme;
 mod lsp_hub;
 mod terminal_view;
 mod workbench;
+mod workspace_edits;
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -109,6 +111,7 @@ fn main() {
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
             workbench::bind_keys(cx);
+            editor_keys::bind_keys(cx);
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");

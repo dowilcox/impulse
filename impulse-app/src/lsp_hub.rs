@@ -115,6 +115,9 @@ impl LspHub {
 pub struct DocumentLink {
     pub client: Arc<LspClient>,
     pub uri: Uri,
+    pub path: PathBuf,
+    /// The workbench's handler for edits that reach other files.
+    pub apply_edit: RefCell<Option<crate::editor_tab::ApplyEdit>>,
     version: RefCell<i32>,
     sent: RefCell<Rope>,
 }
@@ -131,6 +134,8 @@ impl DocumentLink {
         Some(Rc::new(Self {
             client,
             uri,
+            path: path.to_path_buf(),
+            apply_edit: RefCell::default(),
             version: RefCell::new(1),
             sent: RefCell::new(text.clone()),
         }))
@@ -151,6 +156,10 @@ impl DocumentLink {
         self.client
             .did_change(self.uri.clone(), version, text.to_string());
         *self.sent.borrow_mut() = text.clone();
+    }
+
+    pub fn version(&self) -> i32 {
+        *self.version.borrow()
     }
 
     pub fn saved(&self) {
@@ -186,6 +195,73 @@ impl DocumentLink {
         cx.background_executor().spawn(async move {
             Ok(client
                 .request::<Formatting>(params)
+                .await?
+                .unwrap_or_default())
+        })
+    }
+
+    /// Where the symbol at `offset` is and what it's called, if it can be
+    /// renamed (`prepareRename`, when the server offers it).
+    pub fn prepare_rename(
+        &self,
+        text: &Rope,
+        offset: usize,
+        cx: &App,
+    ) -> Task<Result<Option<lsp_types::PrepareRenameResponse>, String>> {
+        let params = self.at(text, offset);
+        let client = self.client.clone();
+        let prepares = matches!(
+            client.capabilities().rename_provider,
+            Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
+                prepare_provider: Some(true),
+                ..
+            }))
+        );
+        cx.background_executor().spawn(async move {
+            if !prepares {
+                return Ok(None);
+            }
+            client
+                .request::<lsp_types::request::PrepareRenameRequest>(params)
+                .await
+        })
+    }
+
+    pub fn rename(
+        &self,
+        text: &Rope,
+        offset: usize,
+        new_name: String,
+        cx: &App,
+    ) -> Task<Result<Option<lsp_types::WorkspaceEdit>, String>> {
+        let params = lsp_types::RenameParams {
+            text_document_position: self.at(text, offset),
+            new_name,
+            work_done_progress_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor()
+            .spawn(async move { client.request::<lsp_types::request::Rename>(params).await })
+    }
+
+    pub fn references(
+        &self,
+        text: &Rope,
+        offset: usize,
+        cx: &App,
+    ) -> Task<Result<Vec<lsp_types::Location>, String>> {
+        let params = lsp_types::ReferenceParams {
+            text_document_position: self.at(text, offset),
+            context: lsp_types::ReferenceContext {
+                include_declaration: true,
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let client = self.client.clone();
+        cx.background_executor().spawn(async move {
+            Ok(client
+                .request::<lsp_types::request::References>(params)
                 .await?
                 .unwrap_or_default())
         })
@@ -375,6 +451,8 @@ impl CodeActionProvider for DocumentLink {
         let client = self.client.clone();
         let uri = self.uri.clone();
         let utf32 = client.uses_utf32();
+        let handler = self.apply_edit.borrow().clone();
+        let origin = self.path.clone();
         window.spawn(cx, async move |cx| {
             // Servers may leave the edit out until the action is picked.
             let action = if action.edit.is_none() && action.data.is_some() {
@@ -386,14 +464,23 @@ impl CodeActionProvider for DocumentLink {
                 action
             };
             if let Some(edit) = &action.edit {
-                let (here, elsewhere) = edits_for(edit, &uri);
-                if elsewhere > 0 {
-                    log::warn!(
-                        "{}: {elsewhere} edits to other files aren't applied yet",
-                        action.title
-                    );
+                match handler {
+                    // Across files, asking first when it reaches far.
+                    Some(handler) => {
+                        let pending = crate::workspace_edits::PendingEdit {
+                            edit: impulse_lsp::workspace_edit::WorkspaceEdit::from(edit),
+                            utf32,
+                            origin,
+                            server_root: client.root.clone(),
+                            title: action.title.clone(),
+                        };
+                        cx.update(|window, cx| handler(pending, window, cx))?;
+                    }
+                    None => {
+                        let (here, _) = edits_for(edit, &uri);
+                        cx.update(|window, cx| apply_edits(&state, &here, utf32, window, cx))?;
+                    }
                 }
-                cx.update(|window, cx| apply_edits(&state, &here, utf32, window, cx))?;
             }
             if let Some(command) = action.command {
                 let params = lsp_types::ExecuteCommandParams {
@@ -465,7 +552,10 @@ pub fn apply_edits(
     }
     state.update(cx, |state, cx| {
         let old = state.value().to_string();
-        let new = impulse_lsp::edits::apply_text_edits(&old, edits, utf32);
+        let Some(new) = impulse_lsp::edits::apply_text_edits(&old, edits, utf32) else {
+            log::warn!("a language server sent overlapping edits; nothing was changed");
+            return;
+        };
         let (range, replacement) = impulse_lsp::edits::changed_span(&old, &new);
         if range.is_empty() && replacement.is_empty() {
             return;

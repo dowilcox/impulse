@@ -19,14 +19,17 @@ use gpui_kit::{
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 use impulse_kit::trust::WorkspaceTrust;
 
-use crate::editor_tab::{EditorTab, EditorTabChanged, ShowDocument};
+use crate::editor_tab::{ApplyEdit, EditorHooks, EditorTab, EditorTabChanged, ShowDocument};
 use crate::lsp_hub::LspHub;
 use crate::terminal_view::{rgba, TerminalView};
 use crate::Args;
 
 const UI_FONT: &str = "Inter";
 
-actions!(impulse, [Save, CloseTab, FormatDocument]);
+actions!(
+    impulse,
+    [Save, CloseTab, FormatDocument, RenameSymbol, FindReferences]
+);
 
 /// Keys for the workbench's commands: `secondary` is Cmd on macOS and Ctrl
 /// on Linux.
@@ -36,10 +39,12 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-w", CloseTab, None),
         // Monaco's Format Document.
         KeyBinding::new("alt-shift-f", FormatDocument, None),
+        KeyBinding::new("f2", RenameSymbol, None),
+        KeyBinding::new("shift-f12", FindReferences, None),
     ]);
 }
 
-enum Tab {
+pub(crate) enum Tab {
     /// The workspace's terminal (`Workbench::terminal`).
     Terminal,
     Editor(Entity<EditorTab>),
@@ -56,7 +61,7 @@ struct TreeRow {
 pub struct Workbench {
     palette: ChromePalette,
     terminal: Entity<TerminalView>,
-    tabs: Vec<Tab>,
+    pub(crate) tabs: Vec<Tab>,
     active: usize,
     focus: FocusHandle,
     input: String,
@@ -70,7 +75,7 @@ pub struct Workbench {
     /// A message for the status bar, such as why a file didn't open.
     notice: Option<String>,
     /// The trusted folders (shared by every window).
-    trust: Arc<WorkspaceTrust>,
+    pub(crate) trust: Arc<WorkspaceTrust>,
     /// The user kept this folder restricted this session: don't ask again.
     declined: bool,
     /// Language servers, when the folder is trusted.
@@ -365,10 +370,11 @@ impl Workbench {
         if !self.trust.is_trusted(&path) {
             return;
         }
-        let show_document = self.show_document_handler(cx);
-        editor.update(cx, |editor, cx| {
-            editor.start_lsp(&hub, show_document, window, cx)
-        });
+        let hooks = EditorHooks {
+            show_document: self.show_document_handler(cx),
+            apply_edit: self.apply_edit_handler(cx),
+        };
+        editor.update(cx, |editor, cx| editor.start_lsp(&hub, hooks, window, cx));
     }
 
     fn is_restricted(&self) -> bool {
@@ -377,6 +383,15 @@ impl Workbench {
 
     /// Go-to-definition into another file: open it in a tab at the target.
     /// Targets in the same file are left to the editor.
+    fn apply_edit_handler(&self, cx: &mut Context<Self>) -> ApplyEdit {
+        let workbench = cx.entity().downgrade();
+        std::rc::Rc::new(move |pending, window, cx| {
+            let _ = workbench.update(cx, |workbench, cx| {
+                workbench.apply_workspace_edit(pending, window, cx)
+            });
+        })
+    }
+
     fn show_document_handler(&self, cx: &mut Context<Self>) -> ShowDocument {
         let workbench = cx.entity().downgrade();
         std::rc::Rc::new(move |params, window, cx| {
@@ -466,6 +481,18 @@ impl Workbench {
         }
     }
 
+    fn rename_symbol(&mut self, _: &RenameSymbol, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor().cloned() {
+            editor.update(cx, |editor, cx| editor.rename_symbol(window, cx));
+        }
+    }
+
+    fn find_references(&mut self, _: &FindReferences, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor().cloned() {
+            editor.update(cx, |editor, cx| editor.find_references(window, cx));
+        }
+    }
+
     /// Close the active tab. The terminal stays; an editor with unsaved
     /// changes asks first, by needing a second close.
     fn close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -494,6 +521,20 @@ impl Workbench {
             self.active
         };
         self.activate(next, window, cx);
+    }
+
+    /// A message in the status bar.
+    pub(crate) fn set_notice(&mut self, notice: String, cx: &mut Context<Self>) {
+        self.notice = Some(notice);
+        cx.notify();
+    }
+
+    /// Read every listed folder again (files were created, moved or deleted).
+    pub(crate) fn reload_tree(&mut self, cx: &mut Context<Self>) {
+        for (dir, entries) in self.children.iter_mut() {
+            *entries = list_dir(dir);
+        }
+        cx.notify();
     }
 
     fn toggle_dir(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -1012,6 +1053,8 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::close_tab))
             .on_action(cx.listener(Self::format_document))
+            .on_action(cx.listener(Self::rename_symbol))
+            .on_action(cx.listener(Self::find_references))
             .flex()
             .flex_col()
             .size_full()

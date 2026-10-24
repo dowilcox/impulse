@@ -9,6 +9,7 @@ pub mod config;
 pub mod edits;
 pub mod framing;
 pub mod registry;
+pub mod workspace_edit;
 
 pub use client::{path_uri, LspClient, ServerEvent};
 pub use config::{LspConfig, ServerConfig};
