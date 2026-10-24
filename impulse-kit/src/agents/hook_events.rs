@@ -1,0 +1,147 @@
+//! What agents' hook events mean to Impulse: Claude Code's hook events,
+//! Codex's notify, and the events Impulse's opencode plugin sends. An event
+//! may change the agent's state, and Claude Code and the opencode plugin
+//! also read what Impulse answers (a summary of the other tasks, notes about
+//! shared files and dependencies, a question before a risky merge).
+
+use super::state_machine::AgentHook;
+
+/// The state change `event` reports; `None` for events that don't change
+/// it (tools starting, subagents, compaction, a session's summary).
+pub fn hook(
+    agent: Option<&str>,
+    event: &str,
+    tool: Option<&str>,
+    message: Option<&str>,
+) -> Option<AgentHook> {
+    let message = || message.unwrap_or("").to_string();
+    match event {
+        "SessionStart" => return Some(AgentHook::SessionStarted),
+        "UserPromptSubmit" => return Some(AgentHook::PromptSubmitted),
+        "PostToolUse" => return Some(AgentHook::UsedTool(tool.map(String::from))),
+        "Stop" | "agent-turn-complete" => return Some(AgentHook::Stopped),
+        "StopFailure" => return Some(AgentHook::Failed(message())),
+        "Notification" => return Some(AgentHook::Notification(message())),
+        _ => {}
+    }
+    if agent != Some("opencode") {
+        return None;
+    }
+    Some(match event {
+        // The plugin loaded in the terminal: opencode started.
+        "start" => AgentHook::SessionStarted,
+        "session.execution.started" => AgentHook::PromptSubmitted,
+        "permission.asked" => AgentHook::Notification(format!(
+            "opencode needs your permission to use {}",
+            tool.unwrap_or("a tool")
+        )),
+        // opencode's question tool asks with a form.
+        "form.created" => AgentHook::Notification("opencode has a question for you".into()),
+        "tool.execute.after" => AgentHook::UsedTool(tool.map(String::from)),
+        // Answered (or dismissed): back to work, or to the turn's end.
+        "permission.replied" | "form.replied" | "form.cancelled" => AgentHook::UsedTool(None),
+        // An interrupted turn ends like any other.
+        "session.execution.succeeded" | "session.execution.interrupted" => AgentHook::Stopped,
+        "session.execution.failed" => AgentHook::Failed(message()),
+        _ => return None,
+    })
+}
+
+/// What Impulse can answer an event with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// The repository's other workspaces, when a session starts.
+    SessionSummary,
+    /// Whether another workspace changes the file just edited.
+    EditedFile,
+    /// Dependency files a checkout, merge or pull just changed.
+    RanShell,
+    /// A question before a command that merges a branch a task is still on.
+    BeforeShell,
+}
+
+/// Claude Code's tools that edit files.
+pub const CLAUDE_EDIT_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+
+/// opencode's tools that edit files (the plugin reports each file a patch
+/// changes).
+pub const OPENCODE_EDIT_TOOLS: [&str; 3] = ["edit", "write", "patch"];
+
+/// Which answer `event` may get; `None` for events, and agents, that don't
+/// read one.
+pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Reply> {
+    match (agent?, event, tool) {
+        ("claude", "SessionStart", _) => Some(Reply::SessionSummary),
+        ("claude", "PostToolUse", Some(tool)) if CLAUDE_EDIT_TOOLS.contains(&tool) => {
+            Some(Reply::EditedFile)
+        }
+        ("claude", "PostToolUse", Some("Bash")) => Some(Reply::RanShell),
+        ("claude", "PreToolUse", Some("Bash")) => Some(Reply::BeforeShell),
+        ("opencode", "session.start", _) => Some(Reply::SessionSummary),
+        ("opencode", "tool.execute.after", Some(tool)) if OPENCODE_EDIT_TOOLS.contains(&tool) => {
+            Some(Reply::EditedFile)
+        }
+        ("opencode", "tool.execute.after", Some("shell")) => Some(Reply::RanShell),
+        ("opencode", "tool.execute.before", Some("shell")) => Some(Reply::BeforeShell),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_claude_code_and_opencode_get_answers() {
+        assert_eq!(
+            reply(Some("claude"), "SessionStart", None),
+            Some(Reply::SessionSummary)
+        );
+        assert_eq!(
+            reply(Some("claude"), "PostToolUse", Some("MultiEdit")),
+            Some(Reply::EditedFile)
+        );
+        assert_eq!(
+            reply(Some("claude"), "PreToolUse", Some("Bash")),
+            Some(Reply::BeforeShell)
+        );
+        assert_eq!(reply(Some("claude"), "PostToolUse", Some("Read")), None);
+        assert_eq!(
+            reply(Some("opencode"), "session.start", None),
+            Some(Reply::SessionSummary)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "tool.execute.after", Some("patch")),
+            Some(Reply::EditedFile)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "tool.execute.after", Some("shell")),
+            Some(Reply::RanShell)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "tool.execute.before", Some("shell")),
+            Some(Reply::BeforeShell)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "tool.execute.before", Some("edit")),
+            None
+        );
+        assert_eq!(reply(Some("opencode"), "PreToolUse", Some("Bash")), None);
+        assert_eq!(reply(Some("codex"), "agent-turn-complete", None), None);
+        assert_eq!(reply(None, "SessionStart", None), None);
+    }
+
+    #[test]
+    fn opencode_permissions_name_the_tool() {
+        assert_eq!(
+            hook(Some("opencode"), "permission.asked", None, None),
+            Some(AgentHook::Notification(
+                "opencode needs your permission to use a tool".into()
+            ))
+        );
+        assert_eq!(
+            hook(None, "Notification", None, None),
+            Some(AgentHook::Notification(String::new()))
+        );
+    }
+}

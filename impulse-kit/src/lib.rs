@@ -6,11 +6,14 @@
 //! against the golden fixtures the Swift port is checked against
 //! (`impulse-macos/Tests/ImpulseKitTests/Fixtures/`).
 
+pub mod agents;
 pub mod chrome;
 pub mod close_risk;
+pub mod git;
 pub mod glob;
 pub mod line_edits;
 pub mod paths;
+pub mod project;
 pub mod shell_parser;
 pub mod text_file;
 pub mod theme;
