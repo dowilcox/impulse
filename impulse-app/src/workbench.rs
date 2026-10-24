@@ -336,6 +336,7 @@ impl Workbench {
             },
         )
         .detach();
+        self.watch_agent(&terminal, window, cx);
         Surface::Terminal(terminal)
     }
 
@@ -824,6 +825,9 @@ impl Workbench {
             }
             "new_task" | "finish_task" | "archive_task" | "new_task_from_branch" => {
                 self.run_task_command(id, window, cx)
+            }
+            agent if crate::agent_views::AGENT_COMMANDS.contains(&agent) => {
+                self.run_agent_command(agent, window, cx)
             }
             custom if custom.starts_with("custom_") => {
                 self.run_custom(&custom["custom_".len()..], window, cx)

@@ -48,7 +48,7 @@ fn getrandom(bytes: &mut [u8]) -> std::io::Result<()> {
 }
 
 /// The `impulse` tool beside the app's own executable, if it's there.
-fn cli_path() -> Option<PathBuf> {
+pub(crate) fn cli_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     [dir.join("impulse"), dir.join("bin").join("impulse")]
@@ -255,7 +255,7 @@ fn peer(stream: &UnixStream) -> Option<(u32, Option<i32>)> {
 }
 
 /// The parent of a process.
-fn parent_of(pid: i32) -> Option<i32> {
+pub(crate) fn parent_of(pid: i32) -> Option<i32> {
     #[cfg(target_os = "linux")]
     {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;

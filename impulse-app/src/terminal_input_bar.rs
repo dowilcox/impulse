@@ -228,6 +228,7 @@ impl TerminalView {
             // The program gets the line as typed; Return on an empty bar
             // answers "Press Enter to continue".
             self.send_line(&text);
+            self.agent_key(true, cx);
         } else {
             let Some(command) = command_text(&text) else {
                 return;

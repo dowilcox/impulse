@@ -124,7 +124,7 @@ impl Workbench {
         match request.parsed() {
             Command::Review { scope, background } => {
                 if scope == ReviewScope::LastTurn {
-                    // Agent turns aren't recorded in the Rust app yet.
+                    // `agent_hooks` answers this one first.
                     return answer(ControlResponse::failure(
                         "No agent turns recorded yet in this repository.",
                     ));

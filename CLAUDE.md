@@ -171,6 +171,18 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           recent-workspaces.json via
                           impulse_kit::recent_workspaces, Rename Workspace,
                           Workbench::text_prompt for one-field dialogs),
+                          agents (agent_tracker.rs: AgentTracker in each
+                          TerminalView, found from the foreground process by
+                          agent_process.rs and from `impulse hook`, driving
+                          AgentStateMachine and the attention dots;
+                          agent_views.rs: tab glyphs, the inbox, Review Last
+                          Agent Turn, Next Agent; agent_hooks.rs: hook,
+                          status, notify, turns, blocks and review requests
+                          and the hook replies; agent_checkpoints.rs: turns
+                          under refs/impulse/checkpoints/;
+                          agent_integration.rs: the Agent Integration
+                          dialog; agent_notify.rs: desktop notifications by
+                          notify-send or osascript),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys, occurrence and selection
                           highlights as range decorations from document
