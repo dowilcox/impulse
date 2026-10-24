@@ -453,7 +453,8 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   alt+Return the Diff View), Delete discards and Escape goes back to the
   pane; a double click opens the file. A row's menu has Open Changes,
   Open in Diff Editor, Move to New Task… (that file only, with its old
-  path for a rename) and Reveal. Links in the terminal follow Swift's
+  path for a rename) and Reveal. Its ⋯ menu has Swift's Move All Changes
+  to New Task… and Review Uncommitted Changes. Links in the terminal follow Swift's
   rules: web and mailto open, `file:` opens in the editor, other schemes
   ask first.
 - Programs' progress (OSC 9;4) turns the tab's icon and the workspace

@@ -663,6 +663,12 @@ impl Workbench {
         let workbench = cx.entity().downgrade();
         let menu_repo = repo.clone();
         let has_head = snapshot.is_some_and(|s| s.head_oid.is_some());
+        let root = repo.read(cx).root.clone();
+        // Only the main checkout's changes can go to a task (Swift's
+        // `canMoveChangesToTask`).
+        let can_move = crate::tasks::main_checkout_root(&root) == root
+            && snapshot.is_some_and(|s| s.changed_file_count() > 0);
+        let review_root = root.clone();
         div()
             .flex()
             .flex_none()
@@ -749,6 +755,12 @@ impl Workbench {
                         .item(menu_item("Stash All Changes", w, move |wb, window, cx| {
                             wb.git_stash_all(&r3, window, cx)
                         }))
+                        .item(
+                            menu_item("Move All Changes to New Task…", w, |wb, window, cx| {
+                                wb.present_new_task(None, true, window, cx)
+                            })
+                            .disabled(!can_move),
+                        )
                         .item(menu_item("Pop Latest Stash", w, |wb, window, cx| {
                             wb.run_command("git_pop_stash", window, cx)
                         }))
@@ -759,6 +771,17 @@ impl Workbench {
                             .disabled(!has_head),
                         )
                         .separator()
+                        .item(menu_item("Review Uncommitted Changes", w, {
+                            let root = review_root.clone();
+                            move |wb, window, cx| {
+                                wb.open_review_of(
+                                    root.clone(),
+                                    Some(impulse_git::types::DiffScope::Uncommitted),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        }))
                         .item(menu_item(
                             "Refresh",
                             w,
