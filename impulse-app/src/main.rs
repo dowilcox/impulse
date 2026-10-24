@@ -11,12 +11,14 @@ mod control_server;
 mod editor_keys;
 mod editor_tab;
 mod history_view;
+mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
 mod palette;
 mod review_view;
 mod session;
 mod settings_store;
+mod settings_view;
 mod shell_launch;
 mod terminal_view;
 mod workbench;
@@ -150,6 +152,7 @@ fn main() {
                 .expect("bundled fonts");
             let settings = settings_store::SettingsStore::get(cx).clone();
             commands::bind_keys(&settings, cx);
+            commands::rebind_on_change(cx);
             session::init(cx);
             control_server::start(cx, control_commands::dispatch);
             cx.on_app_quit(|_| {

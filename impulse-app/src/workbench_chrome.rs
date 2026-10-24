@@ -625,7 +625,7 @@ impl Workbench {
                     item("square-terminal", crate::workspace::shell_name()).into_any_element(),
                 ]
             }
-            None => Vec::new(),
+            _ => Vec::new(),
         };
         div()
             .flex()

@@ -226,6 +226,14 @@ impl Workbench {
                     let (theme, palette) = (self.theme.clone(), self.palette.clone());
                     history.update(cx, |h, cx| h.set_theme(&theme, &palette, cx))
                 }
+                Surface::Settings(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
+                Surface::Keybindings(view) => view.update(cx, |view, cx| {
+                    view.palette = self.palette.clone();
+                    cx.notify();
+                }),
             }
         }
         cx.notify();
@@ -461,7 +469,11 @@ impl Workbench {
             Surface::Terminal(t) => self
                 .closed
                 .push(Closed::Terminal(PathBuf::from(&t.read(cx).cwd))),
-            Surface::Review(_) | Surface::History(_) => {}
+            // Tools aren't reopened, as they aren't saved with the session.
+            Surface::Review(_)
+            | Surface::History(_)
+            | Surface::Settings(_)
+            | Surface::Keybindings(_) => {}
         }
     }
 
@@ -686,6 +698,8 @@ impl Workbench {
                 }
                 self.open_file(&path, window, cx);
             }
+            "open_settings" => self.open_settings(None, window, cx),
+            "open_keybindings" => self.open_keybindings(window, cx),
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "new_window" => {
@@ -857,6 +871,8 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
         Surface::Editor(e) => e.entity_id(),
         Surface::Review(r) => r.entity_id(),
         Surface::History(h) => h.entity_id(),
+        Surface::Settings(s) => s.entity_id(),
+        Surface::Keybindings(k) => k.entity_id(),
     }
 }
 

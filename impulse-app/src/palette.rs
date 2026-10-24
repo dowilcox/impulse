@@ -1707,18 +1707,8 @@ impl Workbench {
 
     /// The Settings tab isn't in the Rust app yet: open settings.json at
     /// the setting's line when it's there.
+    /// A setting picked in `set:`: the Settings tab, searched for it.
     fn palette_open_setting(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.run_command("open_settings_json", window, cx);
-        let path = impulse_kit::settings::settings_path(cfg!(debug_assertions));
-        let needle = format!("\"{key}\"");
-        let found = std::fs::read_to_string(&path).ok().and_then(|text| {
-            text.lines().enumerate().find_map(|(index, line)| {
-                line.find(&needle)
-                    .map(|byte| (index as u32 + 1, line[..byte].chars().count() as u32 + 1))
-            })
-        });
-        if let Some((line, column)) = found {
-            self.palette_go_to(line, Some(column), window, cx);
-        }
+        self.open_settings(Some(key), window, cx);
     }
 }

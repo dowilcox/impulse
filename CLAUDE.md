@@ -88,7 +88,9 @@ impulse-protocol/         Rust (rust branch): ImpulseProtocol: control-socket
 impulse-cli/              Rust (rust branch): the `impulse` command-line tool
 impulse-lsp/              Rust (rust branch): the language-server client
                           (no UI, any executor), LSPConfig (lsp.json, root
-                          detection), TextEditApplier and WorkspaceEdit; its
+                          detection), TextEditApplier and WorkspaceEdit,
+                          managed (npm-installed servers, the Swift
+                          ManagedServers); its
                           e2e test runs rust-analyzer when installed
 impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           macOS and Linux: workspaces (folder + Scratch)
@@ -115,7 +117,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           modes by prefix, recents in
                           palette-recent-commands.json in the data
                           directory), Markdown preview in or beside the
-                          editor,
+                          editor, Settings and Keyboard Shortcuts tabs
+                          (settings_view.rs, keybindings_view.rs; shortcut
+                          overrides rebind live through
+                          commands::rebind_on_change),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and
