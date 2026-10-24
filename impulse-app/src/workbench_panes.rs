@@ -192,6 +192,7 @@ impl Workbench {
         let body: AnyElement = match surface {
             Surface::Terminal(t) => t.clone().into_any_element(),
             Surface::Editor(e) => e.clone().into_any_element(),
+            Surface::Review(r) => r.clone().into_any_element(),
         };
         div()
             .relative()

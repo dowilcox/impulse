@@ -212,6 +212,10 @@ impl Workbench {
                     let (theme, palette) = (self.theme.clone(), self.palette.clone());
                     terminal.update(cx, |t, cx| t.set_theme(theme, palette, window, cx))
                 }
+                Surface::Review(review) => {
+                    let (theme, palette) = (self.theme.clone(), self.palette.clone());
+                    review.update(cx, |r, cx| r.set_theme(&theme, &palette, cx))
+                }
             }
         }
         cx.notify();
@@ -442,10 +446,13 @@ impl Workbench {
 
     fn remember_closed(&mut self, surface: &Surface, cx: &App) {
         self.editor_closed(surface);
-        self.closed.push(match surface {
-            Surface::Editor(e) => Closed::File(e.read(cx).path.clone()),
-            Surface::Terminal(t) => Closed::Terminal(PathBuf::from(&t.read(cx).cwd)),
-        });
+        match surface {
+            Surface::Editor(e) => self.closed.push(Closed::File(e.read(cx).path.clone())),
+            Surface::Terminal(t) => self
+                .closed
+                .push(Closed::Terminal(PathBuf::from(&t.read(cx).cwd))),
+            Surface::Review(_) => {}
+        }
     }
 
     /// Take a surface out of whichever tab holds it.
@@ -623,6 +630,7 @@ impl Workbench {
                 });
             }
             "fullscreen" => window.toggle_fullscreen(),
+            "review_changes" => self.open_review(None, window, cx),
             "trust_folder" => {
                 let index = self.active;
                 self.workspaces[index].declined = false;
@@ -822,6 +830,7 @@ pub(crate) fn surface_id(surface: &Surface) -> gpui_kit::EntityId {
     match surface {
         Surface::Terminal(t) => t.entity_id(),
         Surface::Editor(e) => e.entity_id(),
+        Surface::Review(r) => r.entity_id(),
     }
 }
 

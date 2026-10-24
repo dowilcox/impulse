@@ -13,6 +13,7 @@ use impulse_kit::layout_tree::{LayoutTree, SplitAxis};
 
 use crate::editor_tab::EditorTab;
 use crate::lsp_hub::LspHub;
+use crate::review_view::ReviewView;
 use crate::terminal_view::TerminalView;
 
 pub type PaneId = u64;
@@ -22,6 +23,7 @@ pub type PaneId = u64;
 pub enum Surface {
     Terminal(Entity<TerminalView>),
     Editor(Entity<EditorTab>),
+    Review(Entity<ReviewView>),
 }
 
 impl Surface {
@@ -37,6 +39,7 @@ impl Surface {
                 }
             }
             Surface::Editor(e) => e.read(cx).title.clone(),
+            Surface::Review(r) => r.read(cx).title(),
         }
     }
 
@@ -44,12 +47,13 @@ impl Surface {
         match self {
             Surface::Terminal(_) => "square-terminal",
             Surface::Editor(_) => "file-code",
+            Surface::Review(_) => "file-diff",
         }
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
         match self {
-            Surface::Terminal(_) => false,
+            Surface::Terminal(_) | Surface::Review(_) => false,
             Surface::Editor(e) => e.read(cx).dirty,
         }
     }
@@ -58,6 +62,7 @@ impl Surface {
         match self {
             Surface::Terminal(t) => t.read(cx).focus_handle().clone(),
             Surface::Editor(e) => e.read(cx).focus_handle(cx),
+            Surface::Review(r) => r.read(cx).focus_handle().clone(),
         }
     }
 
@@ -68,6 +73,10 @@ impl Surface {
                 window.focus(&handle, cx);
             }
             Surface::Editor(e) => e.update(cx, |e, cx| e.focus(window, cx)),
+            Surface::Review(r) => {
+                let handle = r.read(cx).focus_handle().clone();
+                window.focus(&handle, cx);
+            }
         }
     }
 
@@ -80,6 +89,7 @@ impl Surface {
         match self {
             Surface::Terminal(t) => Some(PathBuf::from(&t.read(cx).cwd)),
             Surface::Editor(e) => e.read(cx).path.parent().map(Path::to_path_buf),
+            Surface::Review(r) => Some(PathBuf::from(&r.read(cx).root)),
         }
     }
 

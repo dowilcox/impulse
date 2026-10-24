@@ -148,6 +148,12 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
                 )
             }
         }
+        Surface::Review(r) => SessionSurface {
+            kind: "review".into(),
+            path: Some(r.read(cx).root.clone()),
+            scope: serde_json::to_value(&r.read(cx).scope).ok(),
+            ..Default::default()
+        },
         Surface::Editor(e) => {
             let e = e.read(cx);
             let (line, column) = e.cursor(cx);
@@ -298,6 +304,17 @@ impl Workbench {
                         cx,
                     ))
                 }
+                "review" => surface
+                    .path
+                    .clone()
+                    .filter(|p| std::path::Path::new(p).is_dir())
+                    .map(|root| {
+                        let scope = surface
+                            .scope
+                            .clone()
+                            .and_then(|s| serde_json::from_value(s).ok());
+                        self.make_review(root, scope, window, cx)
+                    }),
                 "file" => surface
                     .path
                     .as_deref()

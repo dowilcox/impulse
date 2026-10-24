@@ -617,6 +617,7 @@ impl Workbench {
                 .flatten()
                 .collect()
             }
+            Some(Surface::Review(_)) => Vec::new(),
             Some(Surface::Terminal(terminal)) => {
                 let terminal = terminal.read(cx);
                 vec![

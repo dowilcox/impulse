@@ -104,7 +104,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           when the structure changed, and at quit), the
                           control socket for `impulse` (control_server.rs,
                           control_commands.rs; Linux keeps it in
-                          $XDG_RUNTIME_DIR),
+                          $XDG_RUNTIME_DIR), Review (review_view.rs:
+                          scopes, navigator, unified and split diffs with
+                          word-level changes, stage/unstage/revert of files
+                          and hunks, viewed marks, the j/k/n/p/s/u/x/v/o
+                          keys),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and
