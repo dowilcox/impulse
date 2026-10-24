@@ -21,6 +21,8 @@ Each shot:
             {files}/<name>
 """
 
+import sys
+
 from make_demo import SERVER_V3, TRAILS_FIXED, session
 
 W, H = 1280, 800
@@ -311,7 +313,9 @@ SHOTS = [
     {"name": "settings-and-themes-harbor", "session": session([trailhead(("file", "trailhead/src/forecast.ts"))]),
      "settings": {"color_scheme": "harbor"}, "delay": 10},
     {"name": "settings-and-themes-keyboard-shortcuts", "session": ONE,
-     "settings": {"keybinding_overrides": {"split_down": "Cmd+D"}}, "actions": ["no-sidebar", "keybindings"],
+     # Split Down rebound onto Split Right's default key, so both show the conflict.
+     "settings": {"keybinding_overrides": {"split_down": "Cmd+D" if sys.platform == "darwin" else "Ctrl+Shift+D"}},
+     "actions": ["no-sidebar", "keybindings"],
      "crop": CONTENT_NO_SIDEBAR},
     {"name": "keyboard-shortcuts-palette", "session": ONE, "actions": ["palette=>"], "crop": "overlay"},
     # The same theme card with Increase Contrast off and on, side by side.

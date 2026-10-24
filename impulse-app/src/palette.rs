@@ -904,8 +904,9 @@ impl Palette {
                             details.push(abbreviate_home(cwd));
                         }
                         if entry.started_at > 0.0 {
-                            details
-                                .push(impulse_kit::history::relative_time(now - entry.started_at));
+                            details.push(impulse_kit::dates::abbreviated_relative(
+                                (now - entry.started_at) as i64,
+                            ));
                         }
                         let failed = entry.exit_code.is_some_and(|c| c != 0);
                         if let Some(code) = entry.exit_code.filter(|c| *c != 0) {

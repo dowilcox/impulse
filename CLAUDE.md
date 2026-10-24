@@ -66,8 +66,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           palette + fuzzy matching, file tree patches,
                           previews (comrak; markdown_blocks for the native
                           preview), Monaco/Markdown theme colors,
-                          dates (History's "2d ago" and "Oct 5, 2026 at
-                          3:27 PM"), tree_expansion (the file tree's open
+                          dates (History's and the palette's h: "2d ago",
+                          and "Oct 5, 2026 at 3:27 PM"), tree_expansion (the file tree's open
                           folders per project, file-tree-expanded.json),
                           problems, review comments, update checker, shell
                           (types, quoting, login shell, integration),
