@@ -44,10 +44,45 @@ fn name_of(path: &str) -> String {
 
 /// The agents in folder workspaces at `folder`, in every window.
 pub fn agents_in_folder(folder: &str, cx: &App) -> Vec<(String, AgentState)> {
+    agent_terminals_in_folder(folder, None, cx)
+        .into_iter()
+        .map(|(_, name, state)| (name, state))
+        .collect()
+}
+
+impl Workbench {
+    /// The names of the agents working in `folder`, in every window, but
+    /// the one in the terminal `excluding`. From inside this window's
+    /// update, which it reads from `self`.
+    pub(crate) fn working_agents_in(
+        &self,
+        folder: &str,
+        excluding: Option<gpui_kit::EntityId>,
+        cx: &Context<Self>,
+    ) -> Vec<String> {
+        agent_terminals_in_folder(folder, Some((cx.entity_id(), self)), cx)
+            .into_iter()
+            .filter(|(id, _, state)| *state == AgentState::Working && Some(*id) != excluding)
+            .map(|(_, name, _)| name)
+            .collect()
+    }
+}
+
+/// The agents in folder workspaces at `folder`, with their terminals.
+/// `current`: a window being updated, which can't be read from the app.
+fn agent_terminals_in_folder(
+    folder: &str,
+    current: Option<(gpui_kit::EntityId, &Workbench)>,
+    cx: &App,
+) -> Vec<(gpui_kit::EntityId, String, AgentState)> {
     let folder = task_registry::canonical(folder);
     let mut agents = Vec::new();
     for (workbench, _) in crate::session::workbenches(cx) {
-        for workspace in &workbench.read(cx).workspaces {
+        let workbench = match current {
+            Some((id, current)) if id == workbench.entity_id() => current,
+            _ => workbench.read(cx),
+        };
+        for workspace in &workbench.workspaces {
             if workspace.kind != Kind::Folder
                 || task_registry::canonical(&workspace.root.to_string_lossy()) != folder
             {
@@ -56,7 +91,7 @@ pub fn agents_in_folder(folder: &str, cx: &App) -> Vec<(String, AgentState)> {
             for terminal in workspace.all_surfaces().filter_map(Surface::terminal) {
                 let tracker = &terminal.read(cx).agent;
                 if let (Some(agent), Some(state)) = (&tracker.agent, tracker.state()) {
-                    agents.push((agent.display_name.clone(), state));
+                    agents.push((terminal.entity_id(), agent.display_name.clone(), state));
                 }
             }
         }

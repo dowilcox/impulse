@@ -277,17 +277,25 @@ impl ProblemsView {
                     ),
             )
             .child(
-                // Sending to an agent's terminal joins this menu once the
-                // Rust app knows its agents.
                 Button::new("fix-with-agent")
                     .ghost()
                     .compact()
                     .icon(gpui_kit::component::Icon::empty().path("icons/bot.svg"))
                     .label("Fix with Agent")
                     .tooltip("Send to an agent or copy as a prompt")
-                    .dropdown_menu(move |menu: PopupMenu, _, _| {
+                    .dropdown_menu(move |menu: PopupMenu, window, cx| {
                         let prompt = prompt.clone();
                         let empty = prompt.is_empty();
+                        let sent = prompt.clone();
+                        let menu = crate::agent_send::agent_menu_items(
+                            menu,
+                            "Send to",
+                            !empty,
+                            std::rc::Rc::new(move |_, _| Some(sent.clone())),
+                            None,
+                            window,
+                            cx,
+                        );
                         menu.item(
                             PopupMenuItem::new("Copy as Prompt")
                                 .disabled(empty)

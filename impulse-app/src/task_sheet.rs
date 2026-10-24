@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::select::Select;
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _};
 use gpui_kit::{
@@ -22,6 +22,7 @@ use gpui_kit::{
 };
 use impulse_git::change_move::{self, Moved};
 use impulse_git::{operations, scoped_diff, snapshot};
+use impulse_kit::agents::task_requests;
 use impulse_kit::chrome::{metrics, ChromePalette};
 use impulse_kit::git::task_registry;
 use impulse_kit::git::worktree_tasks;
@@ -32,6 +33,21 @@ use crate::settings_view::{choice_select, Choice, ChoiceSelect};
 use crate::tasks::{self, toast, ToastKind};
 use crate::workbench::Workbench;
 use crate::workbench_chrome::{abbreviate_home, hsla};
+
+/// The agent that asked for a task (the Swift `AgentTaskRequest`): who,
+/// and from which folder.
+#[derive(Clone, Debug)]
+pub(crate) struct AgentRequest {
+    pub requested_by: String,
+    pub from_path: String,
+}
+
+/// How an agent's request for a task ended; the sender dropped without a
+/// word means the user cancelled.
+pub(crate) enum Outcome {
+    Created { path: String, branch: String },
+    Failed(String),
+}
 
 /// What the sheet knows and what the user chose.
 pub struct TaskSheet {
@@ -77,6 +93,19 @@ pub struct TaskSheet {
     lock_files: Vec<String>,
     /// The title field takes the focus the first time the dialog is built.
     pub initial_focus: bool,
+    /// The agent that asked for the task, when one did.
+    pub(crate) agent_request: Option<AgentRequest>,
+    /// What the task is for, kept with it: the agent's first prompt.
+    brief: Entity<TextareaState>,
+    /// Start chooses this command once the agents are looked up.
+    pub(crate) command: String,
+    /// Who hears how an agent's request ended.
+    pub(crate) outcome: Option<async_channel::Sender<Outcome>>,
+    /// Made without the sheet (`agent_task_creation = trusted_projects`):
+    /// its toast offers Undo.
+    pub(crate) without_asking: bool,
+    /// An agent working in the main checkout: its files can't move mid-turn.
+    pub(crate) move_blocker: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -182,7 +211,7 @@ fn look_up(root: &str) -> Lookups {
 }
 
 impl TaskSheet {
-    fn new(
+    pub(crate) fn new(
         repo_root: String,
         moving: bool,
         palette: ChromePalette,
@@ -194,6 +223,7 @@ impl TaskSheet {
         let title =
             cx.new(|cx| InputState::new(window, cx).placeholder("e.g. Fix the flaky login test"));
         let base = cx.new(|cx| InputState::new(window, cx).placeholder("base branch"));
+        let brief = cx.new(|cx| TextareaState::new(window, cx));
         let subscriptions = vec![
             cx.subscribe_in(
                 &title,
@@ -233,6 +263,12 @@ impl TaskSheet {
             clones: Vec::new(),
             lock_files: Vec::new(),
             initial_focus: true,
+            agent_request: None,
+            brief,
+            command: String::new(),
+            outcome: None,
+            without_asking: false,
+            move_blocker: None,
             _subscriptions: subscriptions,
         };
         sheet.load(window, cx);
@@ -283,7 +319,8 @@ impl TaskSheet {
                 .into_iter()
                 .map(|(name, command)| Choice::new(command, name)),
         );
-        self.agent = Some(choice_select(choices, "", false, window, cx));
+        let command = self.command.clone();
+        self.agent = Some(choice_select(choices, &command, false, window, cx));
         self.is_loading = false;
         // Start from what's on the remote now; creating doesn't wait.
         if self.fetches_on_its_own {
@@ -328,6 +365,36 @@ impl TaskSheet {
         .detach();
     }
 
+    /// An agent's request: its title, base, brief and agent filled in.
+    pub(crate) fn prefill(
+        &mut self,
+        title: &str,
+        base: Option<&str>,
+        brief: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = title.to_string();
+        self.title
+            .update(cx, |input, cx| input.set_value(title, window, cx));
+        if let Some(base) = base.filter(|b| !b.is_empty()) {
+            let base = base.to_string();
+            self.base
+                .update(cx, |input, cx| input.set_value(base, window, cx));
+        }
+        let brief = brief.to_string();
+        self.brief
+            .update(cx, |input, cx| input.set_value(brief, window, cx));
+    }
+
+    pub(crate) fn is_loading(&self) -> bool {
+        self.is_loading
+    }
+
+    fn brief_text(&self, cx: &gpui_kit::App) -> String {
+        self.brief.read(cx).value().trim().to_string()
+    }
+
     fn title_text(&self, cx: &gpui_kit::App) -> String {
         self.title.read(cx).value().trim().to_string()
     }
@@ -365,6 +432,9 @@ impl TaskSheet {
 
     /// Why the files can't move now; `None` when they can.
     fn move_unavailable(&self, cx: &gpui_kit::App) -> Option<String> {
+        if let Some(blocker) = &self.move_blocker {
+            return Some(blocker.clone());
+        }
         let base = self.base_text(cx);
         (!base.is_empty() && !self.head_names.contains(&base)).then(|| {
             format!(
@@ -568,6 +638,25 @@ impl Render for TaskSheet {
                          (or let an agent) without touching your current checkout.",
                     ),
             )
+            .children(self.agent_request.as_ref().map(|request| {
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(6.))
+                    .child(div().pt(px(2.)).child(crate::workbench_chrome::icon("bot", 11., p.accent)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(11.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .whitespace_normal()
+                            .child(format!(
+                                "{} wants to start this task. Check it, change anything, then create it or cancel.",
+                                request.requested_by
+                            )),
+                    )
+            }))
             .child(self.field("Task", div().flex_1().child(Input::new(&self.title).small())))
             .child(self.field("From", base_row))
             .children(
@@ -577,6 +666,39 @@ impl Render for TaskSheet {
                     .map(|note| self.note(note, p.text_tertiary)),
             )
             .child(self.field("Start", start))
+            .when(
+                self.agent_request.is_some() || !self.brief_text(cx).is_empty(),
+                |d| {
+                    let agent_chosen = self
+                        .agent
+                        .as_ref()
+                        .and_then(|a| a.read(cx).selected_value().cloned())
+                        .is_some_and(|c| !c.is_empty());
+                    d.child(
+                        div()
+                            .pl(px(54.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(hsla(p.text_tertiary))
+                                    .child(if agent_chosen {
+                                        "Brief (the agent's first prompt)"
+                                    } else {
+                                        "Brief (kept with the task; no agent starts)"
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .font_family("JetBrains Mono")
+                                    .text_size(px(11.))
+                                    .child(Textarea::new(&self.brief).h(px(110.))),
+                            ),
+                    )
+                },
+            )
             .when(self.offers_move(), |d| {
                 d.child(
                     div()
@@ -595,6 +717,7 @@ impl Render for TaskSheet {
                                 })),
                         )
                         .children(unavailable.clone().map(|reason| {
+                            let blocked = self.move_blocker.is_some();
                             div()
                                 .flex()
                                 .flex_col()
@@ -602,7 +725,7 @@ impl Render for TaskSheet {
                                 .text_size(px(11.))
                                 .text_color(hsla(p.text_tertiary))
                                 .child(div().whitespace_normal().child(reason))
-                                .child(
+                                .when(!blocked, |d| d.child(
                                     Button::new("task-start-from-head")
                                         .ghost()
                                         .small()
@@ -615,7 +738,7 @@ impl Render for TaskSheet {
                                             sheet.moves_changes = true;
                                             cx.notify();
                                         })),
-                                )
+                                ))
                         }))
                         .when(moving, |d| {
                             d.child(
@@ -743,6 +866,20 @@ struct Created {
     slot: Option<i64>,
     moved: Option<Moved>,
     move_failure: Option<String>,
+    /// Where the brief was saved, when there's one.
+    brief_path: Option<String>,
+    /// The commit it started at (Undo deletes the branch only from there).
+    start: Option<String>,
+}
+
+/// The login shell, as task commands are written for it.
+fn login_shell_type() -> task_requests::ShellType {
+    let shell = impulse_kit::shell::login::default_shell_path();
+    match impulse_kit::shell::ShellType::detect(&shell) {
+        impulse_kit::shell::ShellType::Zsh => task_requests::ShellType::Zsh,
+        impulse_kit::shell::ShellType::Fish => task_requests::ShellType::Fish,
+        impulse_kit::shell::ShellType::Bash => task_requests::ShellType::Bash,
+    }
 }
 
 impl Workbench {
@@ -772,8 +909,22 @@ impl Workbench {
             cx.entity().downgrade(),
             self.trust.is_trusted(&root),
         );
-        let sheet =
-            cx.new(|cx| TaskSheet::new(root, moving, palette, workbench, trusted, window, cx));
+        let blocker = self.move_blocker(&root, cx);
+        let sheet = cx.new(|cx| {
+            let mut sheet = TaskSheet::new(root, moving, palette, workbench, trusted, window, cx);
+            sheet.move_blocker = blocker;
+            sheet
+        });
+        self.show_task_sheet(sheet, window, cx);
+    }
+
+    /// Show a New Task sheet made elsewhere (an agent's request).
+    pub(crate) fn show_task_sheet(
+        &mut self,
+        sheet: Entity<TaskSheet>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         window.open_dialog(cx, move |dialog, window, cx| {
             if sheet.update(cx, |s, _| std::mem::replace(&mut s.initial_focus, false)) {
                 let title = sheet.read(cx).title.clone();
@@ -813,13 +964,29 @@ impl Workbench {
                 s.agent
                     .as_ref()
                     .and_then(|a| a.read(cx).selected_value().cloned())
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| s.command.clone()),
                 s.moves_changes && s.offers_move() && s.move_unavailable(cx).is_none(),
             )
         };
+        let (brief, request, without_asking) = {
+            let s = sheet.read(cx);
+            (s.brief_text(cx), s.agent_request.clone(), s.without_asking)
+        };
+        let outcome = sheet.update(cx, |s, _| s.outcome.take());
+        // An agent may have started working there since the sheet opened.
+        if let Some(blocker) = moving.then(|| self.move_blocker(&root, cx)).flatten() {
+            sheet.update(cx, |s, cx| {
+                s.is_creating = false;
+                s.error = Some(blocker);
+                s.outcome = outcome;
+                cx.notify();
+            });
+            return;
+        }
         let work = {
             let (root, branch, path, base) =
                 (root.clone(), branch.clone(), path.clone(), base.clone());
+            let (brief, request) = (brief.clone(), request.clone());
             cx.background_executor().spawn(async move {
                 let failure = if moving
                     && scoped_diff::resolve_commit(&root, if base.is_empty() { "HEAD" } else { &base })
@@ -863,9 +1030,25 @@ impl Workbench {
                     &base,
                     &root,
                     false,
-                    tasks::Provenance::default(),
+                    match request {
+                        Some(request) => tasks::Provenance {
+                            created_by: "agent",
+                            requested_by: Some(request.requested_by),
+                            requested_from: Some(request.from_path),
+                        },
+                        None => tasks::Provenance::default(),
+                    },
                     |slot| tasks::ports_are_free(config.as_ref(), slot),
                 );
+                // Beside the task's other files, outside its folder.
+                let brief_path = (!brief.is_empty())
+                    .then(|| impulse_git::branches::common_git_directory(&root))
+                    .flatten()
+                    .and_then(|common| {
+                        let name = Path::new(&path).file_name()?.to_string_lossy().into_owned();
+                        task_requests::write_brief(&brief, &name, &common).ok()?;
+                        Some(task_requests::brief_path(&name, &common))
+                    });
                 let (mut moved, mut move_failure) = (None, None);
                 if moving {
                     match change_move::move_changes(None, &root, &path) {
@@ -874,9 +1057,11 @@ impl Workbench {
                     }
                 }
                 Ok(Created {
-                    slot: record.and_then(|r| r.slot),
+                    slot: record.as_ref().and_then(|r| r.slot),
                     moved,
                     move_failure,
+                    brief_path,
+                    start: record.and_then(|r| r.start),
                 })
             })
         };
@@ -886,15 +1071,26 @@ impl Workbench {
                 let created = match result {
                     Ok(created) => created,
                     Err(failure) => {
+                        // Without the sheet, this is the only word of it.
+                        if without_asking {
+                            if let Some(outcome) = &outcome {
+                                let _ = outcome.try_send(Outcome::Failed(failure.clone()));
+                            }
+                        }
                         sheet.update(cx, |s, cx| {
                             s.is_creating = false;
                             s.error = Some(failure);
+                            if !without_asking {
+                                s.outcome = outcome;
+                            }
                             cx.notify();
                         });
                         return;
                     }
                 };
-                window.close_dialog(cx);
+                if !without_asking {
+                    window.close_dialog(cx);
+                }
                 // The same repository: a task folder is as trusted as it is.
                 if workbench.trust.is_trusted(&root) {
                     workbench.trust.trust(&path);
@@ -914,14 +1110,74 @@ impl Workbench {
                             window,
                             cx,
                             Box::new(move |workbench, _, window, cx| {
+                                // The agent starts on its brief: as its
+                                // first prompt where its command takes one,
+                                // else typed in once it's up.
+                                let agent = impulse_kit::agents::known_agents::built_in()
+                                    .iter()
+                                    .find(|k| k.names.first() == Some(&command));
+                                let mut start = command.clone();
+                                let mut type_brief = false;
+                                if let (Some(agent), Some(brief_path)) =
+                                    (agent, &created.brief_path)
+                                {
+                                    match task_requests::command(
+                                        agent,
+                                        Some(brief_path),
+                                        login_shell_type(),
+                                    ) {
+                                        Some(with_brief) => start = with_brief,
+                                        None => type_brief = true,
+                                    }
+                                }
                                 let first: Vec<String> =
-                                    [setup, (!command.is_empty()).then_some(command)]
+                                    [setup, (!start.is_empty()).then_some(start)]
                                         .into_iter()
                                         .flatten()
                                         .collect();
                                 let first = (!first.is_empty()).then(|| first.join(" && "));
-                                workbench.open_task_workspace(Path::new(&path), first, window, cx);
-                                workbench.announce_task(&root, &path, &branch, created, window, cx);
+                                let index = workbench.open_task_workspace(
+                                    Path::new(&path),
+                                    first,
+                                    window,
+                                    cx,
+                                );
+                                if type_brief {
+                                    let terminal = workbench.workspaces[index]
+                                        .all_surfaces()
+                                        .find_map(|s| s.terminal().cloned());
+                                    if let Some(terminal) = terminal {
+                                        crate::agent_tasks::type_brief_when_agent_starts(
+                                            brief.clone(),
+                                            terminal,
+                                            cx,
+                                        );
+                                    }
+                                }
+                                if let Some(outcome) = &outcome {
+                                    let _ = outcome.try_send(Outcome::Created {
+                                        path: path.clone(),
+                                        branch: branch.clone(),
+                                    });
+                                }
+                                if without_asking {
+                                    let who = request
+                                        .as_ref()
+                                        .map(|r| r.requested_by.clone())
+                                        .unwrap_or_else(|| "An agent".into());
+                                    workbench.announce_agent_task(
+                                        who,
+                                        &root,
+                                        &path,
+                                        &branch,
+                                        created.start.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                } else {
+                                    workbench
+                                        .announce_task(&root, &path, &branch, created, window, cx);
+                                }
                             }),
                         );
                     }),

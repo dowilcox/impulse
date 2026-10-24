@@ -188,6 +188,95 @@ pub fn turn_list(terminal: &str, limit: usize) -> TurnList {
     TurnList::latest(turns(terminal).iter().map(Turn::listed).collect(), limit)
 }
 
+/// A turn as the session file keeps it (the Swift `SavedTurn`), by its
+/// checkpoint refs.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SavedTurn {
+    pub agent: String,
+    pub repo: String,
+    pub start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+}
+
+/// At most this many of a terminal's latest turns are saved.
+pub const SAVED_TURN_LIMIT: usize = 50;
+
+/// A terminal's turns for the session file (oldest first).
+pub fn saved_turns(terminal: &str) -> Vec<SavedTurn> {
+    let turns = turns(terminal);
+    turns[turns.len().saturating_sub(SAVED_TURN_LIMIT)..]
+        .iter()
+        .map(|turn| SavedTurn {
+            agent: turn.agent_name.clone(),
+            repo: turn.repo_root.clone(),
+            start: turn.start.ref_name.clone(),
+            end: turn.end.as_ref().map(|end| end.ref_name.clone()),
+        })
+        .collect()
+}
+
+/// The saved turns that can still be reviewed, given each repository's
+/// checkpoints (`snapshots`, by repository and ref): ones whose start was
+/// pruned or is old enough to be pruned next, and ones without an end (saved
+/// mid-turn, or the end was pruned: the diff would run to the working tree,
+/// which isn't that turn), are dropped.
+fn restorable(
+    saved: &[SavedTurn],
+    snapshots: &HashMap<(String, String), SafetySnapshot>,
+    cutoff: std::time::SystemTime,
+) -> Vec<(SavedTurn, SafetySnapshot, SafetySnapshot)> {
+    saved
+        .iter()
+        .filter_map(|turn| {
+            let start = snapshots.get(&(turn.repo.clone(), turn.start.clone()))?;
+            let end = snapshots.get(&(turn.repo.clone(), turn.end.clone()?))?;
+            (start.date >= cutoff).then(|| (turn.clone(), start.clone(), end.clone()))
+        })
+        .collect()
+}
+
+/// Give a restored terminal its turns back, off the main thread (after the
+/// snapshots queued before), ahead of any it recorded since.
+pub fn restore(saved: Vec<SavedTurn>, terminal: &str) {
+    if saved.is_empty() {
+        return;
+    }
+    let terminal = terminal.to_string();
+    enqueue(move || {
+        let mut snapshots = HashMap::new();
+        let repos: HashSet<&String> = saved.iter().map(|t| &t.repo).collect();
+        for repo in repos {
+            if !std::path::Path::new(repo).exists() {
+                continue;
+            }
+            for snapshot in safety::list(repo, safety::CHECKPOINT_PREFIX) {
+                snapshots.insert((repo.clone(), snapshot.ref_name.clone()), snapshot);
+            }
+        }
+        let cutoff = std::time::SystemTime::now() - safety::DEFAULT_MAX_AGE;
+        let found = restorable(&saved, &snapshots, cutoff);
+        if found.is_empty() {
+            return;
+        }
+        let mut state = state();
+        let mut restored = Vec::new();
+        for (turn, start, end) in found {
+            state.next_id += 1;
+            restored.push(Turn {
+                id: state.next_id,
+                agent_name: turn.agent,
+                repo_root: turn.repo,
+                start,
+                end: Some(end),
+            });
+        }
+        let turns = state.turns.entry(terminal).or_default();
+        restored.append(turns);
+        *turns = restored;
+    });
+}
+
 /// Prune the checkpoints of `root`'s repository, off the main thread.
 pub fn prune(root: &str) {
     let root = root.to_string();
@@ -282,6 +371,80 @@ mod tests {
         drain();
         assert_eq!(super::turns("T1").len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saved_turns_come_back_in_a_restored_terminal() {
+        let dir = std::env::temp_dir().join(format!("impulse-saved-turns-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-qm", "first"]);
+        let cwd = dir.to_string_lossy().into_owned();
+        turn_started("T4", "Codex", &cwd);
+        std::fs::write(dir.join("a.txt"), "two\n").unwrap();
+        turn_ended("T4");
+        drain();
+
+        let mut saved = saved_turns("T4");
+        assert_eq!(saved.len(), 1);
+        let json = serde_json::to_value(&saved).unwrap();
+        assert_eq!(json[0]["agent"], "Codex");
+        // Saved mid-turn: no end, so it can't be reviewed as that turn.
+        saved.push(SavedTurn {
+            end: None,
+            ..saved[0].clone()
+        });
+        restore(saved, "T5");
+        drain();
+        let restored = turns("T5");
+        assert_eq!(restored.len(), 1);
+        let recorded = &turns("T4")[0];
+        assert_eq!(restored[0].start.ref_name, recorded.start.ref_name);
+        assert_eq!(
+            restored[0].end.as_ref().map(|e| &e.ref_name),
+            recorded.end.as_ref().map(|e| &e.ref_name)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_and_unfinished_turns_stay_behind() {
+        let snapshot = |name: &str, age: u64| SafetySnapshot {
+            ref_name: name.into(),
+            commit: "c".into(),
+            index_tree: None,
+            date: std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(age),
+            reason: String::new(),
+        };
+        let snapshots: HashMap<(String, String), SafetySnapshot> = [
+            (("/r".to_string(), "old".to_string()), snapshot("old", 10)),
+            (("/r".to_string(), "new".to_string()), snapshot("new", 1000)),
+            (("/r".to_string(), "end".to_string()), snapshot("end", 1001)),
+        ]
+        .into_iter()
+        .collect();
+        let turn = |start: &str, end: Option<&str>| SavedTurn {
+            agent: "Codex".into(),
+            repo: "/r".into(),
+            start: start.into(),
+            end: end.map(String::from),
+        };
+        let cutoff = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(500);
+        let kept = restorable(
+            &[
+                turn("old", Some("end")),
+                turn("new", Some("end")),
+                turn("new", None),
+                turn("new", Some("gone")),
+            ],
+            &snapshots,
+            cutoff,
+        );
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].1.ref_name, "new");
     }
 
     #[test]

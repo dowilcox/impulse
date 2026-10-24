@@ -237,6 +237,12 @@ thread_local! {
     static ARCHIVING: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
 }
 
+/// An Archive Task is under way for the workspace `id` (asking, or
+/// removing its folder).
+pub(crate) fn is_archiving(id: u64) -> bool {
+    ARCHIVING.with(|a| a.borrow().contains(&id))
+}
+
 fn set_archiving(id: u64, on: bool) -> bool {
     ARCHIVING.with(|a| {
         let mut a = a.borrow_mut();

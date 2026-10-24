@@ -139,8 +139,12 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
     match surface {
         Surface::Terminal(t) => {
             let t = t.read(cx);
+            let turns = crate::agent_checkpoints::saved_turns(&t.agent.id);
             SessionSurface {
                 transcript: with_scrollback.then(|| t.transcript(SCROLLBACK_ROWS)),
+                agent_turns: (!turns.is_empty())
+                    .then(|| serde_json::to_value(&turns).ok())
+                    .flatten(),
                 ..SessionSurface::terminal(
                     &t.cwd,
                     Some(t.title.clone()).filter(|s| !s.is_empty()),
@@ -313,13 +317,23 @@ impl Workbench {
                         .map(PathBuf::from)
                         .filter(|d| d.is_dir())
                         .unwrap_or_else(|| workspace.default_directory());
-                    Some(self.new_terminal_restoring(
+                    let terminal = self.new_terminal_restoring(
                         cwd,
                         Vec::new(),
                         surface.transcript.clone(),
                         window,
                         cx,
-                    ))
+                    );
+                    // Its agents' turns, for Review Last Agent Turn and the
+                    // toolbelt's Turns.
+                    let saved = surface
+                        .agent_turns
+                        .clone()
+                        .and_then(|turns| serde_json::from_value(turns).ok());
+                    if let (Some(saved), Surface::Terminal(view)) = (saved, &terminal) {
+                        crate::agent_checkpoints::restore(saved, &view.read(cx).agent.id);
+                    }
+                    Some(terminal)
                 }
                 "review" => surface
                     .path

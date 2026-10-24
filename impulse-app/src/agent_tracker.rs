@@ -25,7 +25,19 @@ pub enum AgentSignal {
     /// The agent came, went, or changed state; or the attention mark did.
     Changed,
     /// A desktop notification, shown while the window isn't active.
-    Notify { title: String, body: String },
+    Notify {
+        title: String,
+        body: String,
+    },
+    /// Text for an agent in another terminal (a command block sent with
+    /// Send to Agent): the window picks the agent.
+    SendToAgent(String),
+    /// The toolbelt's Review Turn (`None`: the last turn) and Restore Files
+    /// to Before a turn, by its index among the terminal's turns.
+    ReviewTurn(Option<usize>),
+    RestoreTurn(usize),
+    /// The toolbelt's Compose: the window opens the composer.
+    Compose,
 }
 
 impl gpui_kit::EventEmitter<AgentSignal> for TerminalView {}
@@ -71,6 +83,14 @@ pub(crate) struct AgentTracker {
     tick: Option<(Instant, Task<()>)>,
     progress_shown: bool,
     command_started: Option<Instant>,
+    /// Text waiting for the agent to finish its turn (`agent_send`).
+    pub pending_text: Vec<String>,
+    /// The composer over the program (`agent_composer`), while it's open.
+    pub composer: Option<gpui_kit::Entity<crate::agent_composer::AgentComposer>>,
+    /// Give the composer the keyboard at the next frame.
+    pub composer_focus_pending: bool,
+    /// Redraws the toolbelt's elapsed time while it shows.
+    pub toolbelt_tick: Option<Task<()>>,
 }
 
 impl Default for AgentTracker {
@@ -95,6 +115,10 @@ impl Default for AgentTracker {
             tick: None,
             progress_shown: false,
             command_started: None,
+            pending_text: Vec::new(),
+            composer: None,
+            composer_focus_pending: false,
+            toolbelt_tick: None,
         }
     }
 }
@@ -457,6 +481,8 @@ impl TerminalView {
         tracker.session = None;
         tracker.status_message = None;
         tracker.tick = None;
+        // Text queued for this agent isn't for whatever runs next.
+        tracker.pending_text.clear();
         cx.emit(AgentSignal::Changed);
         cx.notify();
     }
@@ -562,6 +588,18 @@ impl TerminalView {
     ) {
         let state = self.agent.machine.state();
         self.record_turn_boundary(before, state);
+        // Only at a real turn end: a timeout's Idle may be mid-run.
+        if state == AgentState::Done || (state == AgentState::Idle && cause.is_some()) {
+            self.flush_pending_agent_text();
+        }
+        // Opt-in: the agent the user is looking at asks for input.
+        if state == AgentState::NeedsInput
+            && self.agent.watched
+            && self.agent.composer.is_none()
+            && SettingsStore::get(cx).agent_composer_auto_show
+        {
+            self.open_composer(cx);
+        }
         if let (true, Some(agent)) = (state.wants_user(), self.agent.agent.clone()) {
             if self.agent.watched && state == AgentState::Done {
                 // The user saw it finish; nothing to flag.

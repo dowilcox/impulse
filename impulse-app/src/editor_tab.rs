@@ -913,6 +913,17 @@ impl EditorTab {
         (position.line + 1, position.character + 1)
     }
 
+    /// The selected text and its first and last 1-based lines (Send
+    /// Selection to Agent); `None` with nothing selected.
+    pub fn selected_text(&self, cx: &gpui_kit::App) -> Option<(String, u32, u32)> {
+        let state = self.state.read(cx);
+        let range = state.selected_range();
+        let value = state.value();
+        let text = value.get(range.clone()).filter(|t| !t.is_empty())?;
+        let line = |offset: usize| value[..offset].matches('\n').count() as u32 + 1;
+        Some((text.to_string(), line(range.start), line(range.end)))
+    }
+
     /// The file changed on disk (Replace All, a discard): show it, as one
     /// undoable edit, unless there are unsaved edits here, which win.
     pub fn reload_from_disk(&mut self, window: &mut Window, cx: &mut Context<Self>) {

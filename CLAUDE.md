@@ -199,10 +199,25 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Agent Turn, Next Agent; agent_hooks.rs: hook,
                           status, notify, turns, blocks and review requests
                           and the hook replies; agent_checkpoints.rs: turns
-                          under refs/impulse/checkpoints/;
+                          under refs/impulse/checkpoints/, saved in the
+                          session file as agent_turns (SavedTurn);
                           agent_integration.rs: the Agent Integration
                           dialog; agent_notify.rs: desktop notifications by
-                          notify-send or osascript),
+                          notify-send or osascript, a click on one showing
+                          its terminal where notify-send takes --action;
+                          agent_send.rs: text for agents as a paste, queued
+                          while one is mid-turn (AgentTracker::pending_text),
+                          Send Selection to Agent, the agent items of
+                          Problems' Fix with Agent, Review's comments menu,
+                          conflicts' Ask Agent and a block's Send to Agent;
+                          agent_composer.rs: the composer over an agent's
+                          TUI with @ mentions; agent_toolbelt.rs: the
+                          toolbelt under its terminal, Review Turn and the
+                          Turns menu with Restore; agent_tasks.rs: `impulse
+                          tasks` (show, wait, and new, finish and archive as
+                          the user's own flows, task_requests::decide
+                          saying whether New Task asks) and `impulse
+                          project`),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys, occurrence and selection
                           highlights as range decorations from document

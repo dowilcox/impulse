@@ -6,10 +6,14 @@
 //! `impulse-app [--theme <id>] [--cwd <dir>] [--run <command>]... [--open <file>]... [--trust]`
 
 mod agent_checkpoints;
+mod agent_composer;
 mod agent_hooks;
 mod agent_integration;
 mod agent_notify;
 mod agent_process;
+mod agent_send;
+mod agent_tasks;
+mod agent_toolbelt;
 mod agent_tracker;
 mod agent_views;
 mod branch_manager;
