@@ -144,6 +144,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           (search_panel.rs; workbench_search.rs opens
                           results and runs Replace All with Undo, reloading
                           clean editors with EditorTab::reload_from_disk),
+                          workbench_workspaces.rs (recent folders in
+                          recent-workspaces.json via
+                          impulse_kit::recent_workspaces, Rename Workspace,
+                          Workbench::text_prompt for one-field dialogs),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
                           servers (code actions, formatting, rename and

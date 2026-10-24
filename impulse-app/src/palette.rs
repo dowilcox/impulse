@@ -315,6 +315,8 @@ pub(crate) struct Host {
     tabs: Vec<TabInfo>,
     workspaces: Vec<WorkspaceInfo>,
     branch: Option<String>,
+    /// Recent folders not open here, newest first.
+    recents: Vec<String>,
     /// The focused terminal's folder, for history's @here (and @repo).
     terminal_cwd: Option<String>,
     editor: Option<Entity<EditorTab>>,
@@ -1082,13 +1084,42 @@ impl Palette {
                     .trailing(workspace.is_active.then(|| "current".to_string()))
                 })
                 .collect();
-        // Recent folders come with the Rust app's recent workspaces list.
+        for (folder, _) in fuzzy::rank(&self.host.recents, term, usize::MAX, true, |f| f) {
+            let name = file_name(folder);
+            let highlights = fuzzy::fuzzy_match(term, &name, false)
+                .map(|m| m.positions)
+                .unwrap_or_default();
+            let path = PathBuf::from(folder);
+            rows.push(
+                Row::new(
+                    format!("recent:{folder}"),
+                    Some("folder"),
+                    name,
+                    move |w, window, cx| w.open_workspace(&path, window, cx),
+                )
+                .highlights(highlights)
+                .subtitle(Some(abbreviate_home(folder)))
+                .trailing(Some("recent".into())),
+            );
+        }
         rows.push(Row::new(
             "workspace:open",
             Some("folder-open"),
             "Open Folder as Workspace…",
             |w, window, cx| w.run_command("open_workspace", window, cx),
         ));
+        if !self.host.recents.is_empty() {
+            let count = self.host.recents.len();
+            rows.push(
+                Row::new(
+                    "workspace:clear-recents",
+                    Some("trash-2"),
+                    "Clear Recent Workspaces",
+                    |w, window, cx| w.clear_recent_workspaces(window, cx),
+                )
+                .trailing(Some(format!("{count} recent"))),
+            );
+        }
         self.rows = rows;
         self.empty_message = "No matching workspaces".into();
     }
@@ -1705,6 +1736,7 @@ impl Workbench {
                 .map(|t| t.read(cx).cwd.clone())
                 .filter(|cwd| !cwd.is_empty()),
             editor: self.active_editor().cloned(),
+            recents: self.recent_folders(),
             commands: crate::commands::catalog(SettingsStore::get(cx)),
             settings: SettingsStore::get(cx).clone(),
             ..Default::default()

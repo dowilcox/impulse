@@ -36,6 +36,7 @@ pub mod paths;
 pub mod problems;
 pub mod project;
 pub mod project_replace;
+pub mod recent_workspaces;
 pub mod review_comments;
 pub mod save_command;
 pub mod search_result;

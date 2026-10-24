@@ -164,6 +164,10 @@ impl Workbench {
         }
         let home = crate::workspace::home();
         if cwd != home {
+            impulse_kit::recent_workspaces::note(
+                &crate::workbench_workspaces::recents_file(),
+                &cwd.to_string_lossy(),
+            );
             let id = self.next_id();
             self.workspaces
                 .push(Workspace::new(id, Kind::Folder, cwd.clone()));
@@ -758,6 +762,8 @@ impl Workbench {
             "open_keybindings" => self.open_keybindings(window, cx),
             "open_workspace" => self.choose_workspace_folder(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
+            "rename_workspace" => self.rename_workspace(self.active, window, cx),
+            "clear_recent_workspaces" => self.clear_recent_workspaces(window, cx),
             "new_window" => {
                 let args = Args {
                     theme: self.theme_override.clone(),
@@ -874,6 +880,10 @@ impl Workbench {
                     .iter()
                     .position(|w| w.kind == Kind::Scratch)
                     .unwrap_or(self.workspaces.len());
+                impulse_kit::recent_workspaces::note(
+                    &crate::workbench_workspaces::recents_file(),
+                    &folder.to_string_lossy(),
+                );
                 self.workspaces
                     .insert(at, Workspace::new(id, Kind::Folder, folder));
                 at

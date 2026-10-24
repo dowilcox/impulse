@@ -39,6 +39,7 @@ mod workbench_panes;
 mod workbench_review;
 mod workbench_search;
 mod workbench_trust;
+mod workbench_workspaces;
 mod workspace;
 mod workspace_edits;
 
