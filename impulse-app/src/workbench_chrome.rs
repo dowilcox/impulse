@@ -420,6 +420,99 @@ impl Workbench {
         }
     }
 
+    /// The sidebar's current panel has the keyboard.
+    pub(crate) fn panel_has_focus(&self, window: &Window, cx: &gpui_kit::App) -> bool {
+        match self.panel {
+            SidebarPanel::Files => self.tree_focus.contains_focused(window, cx),
+            SidebarPanel::Changes => self.changes_list_focused(window, cx),
+            SidebarPanel::Search => self.search.read(cx).is_focused(window, cx),
+        }
+    }
+
+    /// ⇧⌘E: the tree takes the keyboard, its selection on the open file
+    /// (else its first row).
+    pub(crate) fn focus_tree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.tree_focus, cx);
+        let root = self.tree_root(cx);
+        let rows = tree_rows(self.workspace(), &root);
+        let open = self.active_editor().map(|e| e.read(cx).path.clone());
+        let current = self.tree_selection.clone().or(open);
+        if !rows.iter().any(|r| Some(&r.path) == current.as_ref()) {
+            self.tree_selection = rows.first().map(|r| r.path.clone());
+        } else {
+            self.tree_selection = current;
+        }
+        cx.notify();
+    }
+
+    /// The tree's keys (Swift's file list): ↑↓ move, → expands or steps
+    /// into a folder, ← collapses or goes to the parent, Return opens a
+    /// file or toggles a folder.
+    fn tree_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let root = self.tree_root(cx);
+        let rows = tree_rows(self.workspace(), &root);
+        if rows.is_empty() {
+            return;
+        }
+        let index = rows
+            .iter()
+            .position(|r| Some(&r.path) == self.tree_selection.as_ref());
+        let select = |this: &mut Self, i: usize| {
+            let i = i.min(rows.len() - 1);
+            this.tree_selection = Some(rows[i].path.clone());
+            this.tree_scroll.scroll_to_item(i);
+        };
+        let row = index.map(|i| &rows[i]);
+        let expanded = |path: &PathBuf, this: &Self| this.workspace().expanded_dirs.contains(path);
+        match event.keystroke.key.as_str() {
+            "up" => select(self, index.map_or(0, |i| i.saturating_sub(1))),
+            "down" => select(self, index.map_or(0, |i| i + 1)),
+            "right" => match row {
+                Some(r) if r.is_dir && !expanded(&r.path, self) => {
+                    self.toggle_dir(r.path.clone(), cx)
+                }
+                Some(r) if r.is_dir => {
+                    if let Some(i) =
+                        index.filter(|i| rows.get(i + 1).is_some_and(|n| n.depth > r.depth))
+                    {
+                        select(self, i + 1);
+                    }
+                }
+                _ => return,
+            },
+            "left" => match row {
+                Some(r) if r.is_dir && expanded(&r.path, self) => {
+                    self.toggle_dir(r.path.clone(), cx)
+                }
+                Some(r) => {
+                    if let Some(parent) = rows[..index.unwrap_or(0)]
+                        .iter()
+                        .rposition(|p| p.is_dir && p.depth + 1 == r.depth)
+                    {
+                        select(self, parent);
+                    }
+                }
+                None => return,
+            },
+            "enter" => match row {
+                Some(r) if r.is_dir => self.toggle_dir(r.path.clone(), cx),
+                Some(r) => {
+                    let path = r.path.clone();
+                    self.open_file(&path, window, cx);
+                }
+                None => return,
+            },
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn toggle_dir(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let show_hidden = SettingsStore::get(cx).sidebar_show_hidden;
         let workspace = self.workspace_mut();
@@ -1245,6 +1338,9 @@ impl Workbench {
         let (root_drop, root_external) = (root.clone(), root.clone());
         let mut files = div()
             .id("files")
+            .track_focus(&self.tree_focus)
+            .on_key_down(cx.listener(Self::tree_key))
+            .track_scroll(&self.tree_scroll)
             .on_drop(cx.listener(
                 move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
                     this.tree_drop(vec![dragged.0.clone()], &root_drop, window, cx)
@@ -1279,7 +1375,8 @@ impl Workbench {
             };
             for (index, row) in rows.into_iter().enumerate() {
                 let expanded = workspace.expanded_dirs.contains(&row.path);
-                let selected = open_path.as_deref() == Some(row.path.as_path());
+                let selected = self.tree_selection.as_deref().or(open_path.as_deref())
+                    == Some(row.path.as_path());
                 let path = row.path.clone();
                 let is_dir = row.is_dir;
                 let status = self.git.tree_status(&row.path, p, ignored, cx);
@@ -1301,6 +1398,7 @@ impl Workbench {
                     .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
                     .on_click(
                         cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
+                            this.tree_selection = Some(path.clone());
                             if is_dir {
                                 this.toggle_dir(path.clone(), cx);
                             } else if event.click_count() >= 2 {

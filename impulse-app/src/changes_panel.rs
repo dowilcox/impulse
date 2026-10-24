@@ -1013,6 +1013,11 @@ impl Workbench {
         Some((repo, snapshot))
     }
 
+    /// The file list has the keyboard.
+    pub(crate) fn changes_list_focused(&self, window: &Window, cx: &App) -> bool {
+        self.git.list_focus.contains_focused(window, cx)
+    }
+
     /// Keyboard focus to the file list, with the first row selected if
     /// none is (Show Changes).
     pub(crate) fn focus_changes_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {

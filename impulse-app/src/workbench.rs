@@ -85,6 +85,11 @@ pub struct Workbench {
     /// The trusted folders (shared by every window).
     pub(crate) trust: Arc<WorkspaceTrust>,
     pub(crate) panel: SidebarPanel,
+    /// The file tree's keyboard focus, its selected row (the open file's
+    /// until the keys move it) and its scrolling.
+    pub(crate) tree_focus: gpui_kit::FocusHandle,
+    pub(crate) tree_selection: Option<std::path::PathBuf>,
+    pub(crate) tree_scroll: gpui_kit::ScrollHandle,
     /// Closed tabs and workspaces, newest last, each with its id.
     closed: Vec<(u64, Closed)>,
     /// The last close recorded: its id and what to call it (for the Undo
@@ -190,6 +195,9 @@ impl Workbench {
             notice: None,
             trust: args.trust_store.clone(),
             panel: SidebarPanel::Files,
+            tree_focus: cx.focus_handle(),
+            tree_selection: None,
+            tree_scroll: gpui_kit::ScrollHandle::new(),
             closed: Vec::new(),
             last_closed: None,
             lsp_progress: Vec::new(),
@@ -390,6 +398,9 @@ impl Workbench {
                     }
                 }
                 TerminalViewEvent::RunCommand(id) => workbench.run_command(id, window, cx),
+                TerminalViewEvent::OpenCommit { sha, cwd } => {
+                    workbench.open_commit(sha.clone(), cwd, window, cx)
+                }
                 TerminalViewEvent::Notice(notice) => workbench.set_notice(notice.clone(), cx),
                 // Where the next launch starts (Swift's lastDirectory): the
                 // terminal in front, not one cd-ing in the background.
@@ -1126,6 +1137,7 @@ impl Workbench {
             "new_file" => self.new_untitled(window, cx),
             "install_lsp" => self.install_language_servers(window, cx),
             "paste" => window.dispatch_action(Box::new(crate::menus::MenuPaste), cx),
+            "copy" => window.dispatch_action(Box::new(crate::menus::MenuCopy), cx),
             "import_shell_history" => self.import_shell_history(window, cx),
             "clear_command_history" => self.clear_command_history(window, cx),
             "toggle_sidebar" => {
@@ -1136,18 +1148,29 @@ impl Workbench {
                 self.show_palette(prefix, window, cx)
             }
             "show_files" | "show_changes" | "project_search" => {
-                self.panel = match id {
+                let panel = match id {
                     "show_files" => SidebarPanel::Files,
                     "show_changes" => SidebarPanel::Changes,
                     _ => SidebarPanel::Search,
                 };
+                // Pressed again while the panel has the keyboard: back to
+                // the tab.
+                if self.panel == panel
+                    && SettingsStore::get(cx).sidebar_visible
+                    && self.panel_has_focus(window, cx)
+                {
+                    self.focus_active(window, cx);
+                    cx.notify();
+                    return;
+                }
+                self.panel = panel;
                 SettingsStore::update(cx, |s| s.sidebar_visible = true);
                 match self.panel {
                     SidebarPanel::Search => self
                         .search
                         .update(cx, |search, cx| search.focus(window, cx)),
                     SidebarPanel::Changes => self.focus_changes_list(window, cx),
-                    SidebarPanel::Files => {}
+                    SidebarPanel::Files => self.focus_tree(window, cx),
                 }
                 cx.notify();
             }

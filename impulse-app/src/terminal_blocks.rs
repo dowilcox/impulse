@@ -949,9 +949,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let path = target.path.as_ref().map(|(p, _, _)| p.clone());
-        if copy || target.kind == HintKind::Sha && !insert {
-            // A SHA would open in History, which the Rust app doesn't have
-            // yet: copy it instead.
+        if copy {
             let text = path
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -990,7 +988,10 @@ impl TerminalView {
                     cx.emit(TerminalViewEvent::OpenFile { path, line, column });
                 }
             }
-            HintKind::Sha => {}
+            HintKind::Sha => cx.emit(TerminalViewEvent::OpenCommit {
+                sha: target.text,
+                cwd: self.cwd.clone(),
+            }),
         }
     }
 }

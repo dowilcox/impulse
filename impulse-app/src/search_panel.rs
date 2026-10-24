@@ -127,6 +127,15 @@ impl SearchPanel {
         self.query.update(cx, |q, cx| q.focus(window, cx));
     }
 
+    /// The search field has the keyboard.
+    pub fn is_focused(&self, window: &Window, cx: &gpui_kit::App) -> bool {
+        use gpui_kit::Focusable as _;
+        self.query
+            .read(cx)
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+    }
+
     fn query_text(&self, cx: &gpui_kit::App) -> String {
         self.query.read(cx).value().to_string()
     }

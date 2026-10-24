@@ -403,6 +403,11 @@ pub enum TerminalViewEvent {
     },
     /// Run a window command (Command History from the bar).
     RunCommand(String),
+    /// Show commit `sha` (a hint) in History, for the repository at `cwd`.
+    OpenCommit {
+        sha: String,
+        cwd: String,
+    },
     /// A message for the status bar.
     Notice(String),
     /// A command finished, with its exit status when the shell said.

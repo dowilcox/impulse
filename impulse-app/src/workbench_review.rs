@@ -127,6 +127,40 @@ impl Workbench {
         Surface::Review(review)
     }
 
+    /// A commit SHA picked in a terminal: History of its repository, with
+    /// the commit selected.
+    pub(crate) fn open_commit(
+        &mut self,
+        sha: String,
+        cwd: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dir = if cwd.is_empty() {
+            self.workspace()
+                .default_directory()
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            cwd.to_string()
+        };
+        let Some(root) =
+            impulse_git::branches::repo_root(&dir).map(|r| r.trim_end_matches('/').to_string())
+        else {
+            return crate::toasts::show(
+                window,
+                cx,
+                crate::toasts::Toast::info(format!("{sha} isn't in a git repository here.")),
+            );
+        };
+        let surface = self.make_history(root, None, None, window, cx);
+        if let Surface::History(history) = &surface {
+            history.update(cx, |history, cx| history.reveal(sha, cx));
+        }
+        let active = self.active;
+        self.add_tab(active, surface, window, cx);
+    }
+
     /// Show Git History, or the history of the focused file.
     pub(crate) fn open_history(
         &mut self,

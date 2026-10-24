@@ -491,6 +491,12 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   The terminal's right-click menu is Swift's: the clicked block's
   actions, Copy and Paste, the last command's Copy, Copy Output and
   Rerun, Command History…, block navigation, Select All and Clear.
+  A commit hash in the terminal opens that commit in History, and the
+  palette's Copy copies the terminal's selection as Edit > Copy does.
+  The file tree takes the keyboard as Swift's list does (up and down to
+  move, right to open a folder or step into it, left to close it or go
+  to its parent, Return to open), and Show Files, Changes or Search
+  pressed again while that panel has the keyboard goes back to the tab.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

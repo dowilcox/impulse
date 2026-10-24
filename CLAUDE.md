@@ -238,7 +238,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           every listed folder watched on its own, listed
                           again when its entries change; the open folders
                           remembered per project, Workspace::save_expanded),
-                          the file tree's context menu
+                          the file tree's keys (Workbench::tree_key over
+                          tree_focus and tree_selection) and context menu
                           (file_tree_actions.rs: new file and folder, open
                           to the side, mention in an agent, history,
                           reveal, copy paths, git actions, rename, Trash
