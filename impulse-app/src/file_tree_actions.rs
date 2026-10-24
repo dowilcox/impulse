@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::toasts::Toast;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::{ClipboardItem, Context, Window};
 use impulse_git::{ChangeStatus, FileChange};
 use impulse_kit::layout_tree::SplitAxis;
@@ -17,7 +17,7 @@ use crate::workbench::Workbench;
 type Act = Rc<dyn Fn(&mut Workbench, &mut Window, &mut Context<Workbench>)>;
 
 /// "Reveal in Finder" on the Mac.
-const REVEAL: &str = if cfg!(target_os = "macos") {
+pub(crate) const REVEAL: &str = if cfg!(target_os = "macos") {
     "Reveal in Finder"
 } else {
     "Show in File Manager"
@@ -260,7 +260,7 @@ impl Workbench {
                 let path = dir.join(name);
                 if path.exists() {
                     return this.toast(
-                        Notification::warning(format!("{name} already exists.")),
+                        Toast::warning(format!("{name} already exists.")),
                         window,
                         cx,
                     );
@@ -279,7 +279,7 @@ impl Workbench {
                         }
                     }
                     Err(error) => this.toast(
-                        Notification::warning(format!("Couldn't create {name}: {error}")),
+                        Toast::warning(format!("Couldn't create {name}: {error}")),
                         window,
                         cx,
                     ),
@@ -355,7 +355,7 @@ impl Workbench {
                 let to = from.with_file_name(name);
                 if to.exists() {
                     return this.toast(
-                        Notification::warning(format!("{name} already exists.")),
+                        Toast::warning(format!("{name} already exists.")),
                         window,
                         cx,
                     );
@@ -363,7 +363,7 @@ impl Workbench {
                 match std::fs::rename(&from, &to) {
                     Ok(()) => this.reload_tree(cx),
                     Err(error) => this.toast(
-                        Notification::warning(format!("Couldn't rename: {error}")),
+                        Toast::warning(format!("Couldn't rename: {error}")),
                         window,
                         cx,
                     ),
@@ -381,7 +381,7 @@ impl Workbench {
             .unwrap_or_default();
         if let Err(error) = trash::delete(path) {
             return self.toast(
-                Notification::warning(format!("Couldn't move to the Trash: {error}")),
+                Toast::warning(format!("Couldn't move to the Trash: {error}")),
                 window,
                 cx,
             );
@@ -389,7 +389,7 @@ impl Workbench {
         self.reload_tree(cx);
         let message = format!("Moved {name} to the Trash");
         if !cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return self.toast(Notification::success(message), window, cx);
+            return self.toast(Toast::success(message), window, cx);
         }
         let original = path.to_path_buf();
         self.toast_with_action(
@@ -401,7 +401,7 @@ impl Workbench {
             move |this, window, cx| match restore_from_trash(&original) {
                 Ok(()) => this.reload_tree(cx),
                 Err(error) => this.toast(
-                    Notification::warning(format!("Couldn't put it back: {error}")),
+                    Toast::warning(format!("Couldn't put it back: {error}")),
                     window,
                     cx,
                 ),
@@ -429,7 +429,7 @@ fn restore_from_trash(_: &Path) -> Result<(), String> {
 
 /// Reveal in Finder (the file selected), or open the folder holding it in
 /// the file manager on Linux.
-fn reveal(path: &Path, cx: &mut gpui_kit::App) {
+pub(crate) fn reveal(path: &Path, cx: &mut gpui_kit::App) {
     if cfg!(target_os = "macos") {
         let _ = std::process::Command::new("/usr/bin/open")
             .arg("-R")
@@ -529,7 +529,7 @@ impl Workbench {
                     move |this, window, cx| {
                         if let Err(error) = trash::delete(&destination) {
                             return this.toast(
-                                Notification::warning(format!("Couldn't replace {shown}: {error}")),
+                                Toast::warning(format!("Couldn't replace {shown}: {error}")),
                                 window,
                                 cx,
                             );
@@ -559,7 +559,7 @@ impl Workbench {
         match placed {
             Ok(()) => self.reload_tree(cx),
             Err(error) => self.toast(
-                Notification::warning(format!(
+                Toast::warning(format!(
                     "{}: {error}",
                     if moving { "Move Failed" } else { "Copy Failed" }
                 )),

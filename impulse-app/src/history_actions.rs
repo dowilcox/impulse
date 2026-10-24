@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::notification::Notification;
+use crate::toasts::Toast;
 use gpui_kit::{Context, Entity, Window};
 use impulse_git::operations::{self, ResetMode};
 
@@ -65,7 +65,7 @@ impl Workbench {
                         let name = name.trim().to_string();
                         if !impulse_git::types::is_valid_ref_name(&name) {
                             return this.toast(
-                                Notification::warning(format!(
+                                Toast::warning(format!(
                                     "\u{201c}{name}\u{201d} isn't a valid branch name."
                                 )),
                                 window,
@@ -179,7 +179,7 @@ impl Workbench {
             cx,
             move |this, result, _, window, cx| match result {
                 Ok(()) => this.toast(
-                    Notification::success(format!("Created and switched to {name}")),
+                    Toast::success(format!("Created and switched to {name}")),
                     window,
                     cx,
                 ),
@@ -254,11 +254,7 @@ impl Workbench {
                 Err(error) => {
                     this.present_git_error(&error, &format!("Couldn't delete {name}"), window, cx)
                 }
-                Ok(None) => this.toast(
-                    Notification::success(format!("Deleted tag {name}")),
-                    window,
-                    cx,
-                ),
+                Ok(None) => this.toast(Toast::success(format!("Deleted tag {name}")), window, cx),
                 Ok(Some(object)) => {
                     let repo = repo_undo.clone();
                     this.toast_with_action(
@@ -327,7 +323,7 @@ impl Workbench {
                     cx,
                     move |this, result, _, window, cx| match result {
                         Ok(()) => this.toast(
-                            Notification::success(format!("Deleted {name} from {remote}")),
+                            Toast::success(format!("Deleted {name} from {remote}")),
                             window,
                             cx,
                         ),

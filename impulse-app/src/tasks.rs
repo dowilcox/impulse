@@ -17,8 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{prelude::*, App, Context, Window};
 use impulse_git::{branches, operations, scoped_diff, snapshot};
@@ -1493,9 +1491,6 @@ pub(crate) enum ToastKind {
     Warning,
 }
 
-/// The id type of toasts with an action.
-struct ActionToast;
-
 /// Something to run later with the window (a toast's Undo, say).
 pub(crate) type Run = Rc<dyn Fn(&mut Window, &mut App)>;
 
@@ -1506,7 +1501,7 @@ pub(crate) type ToastAction = (&'static str, Run);
 type Answer = Rc<RefCell<Option<Box<dyn FnOnce(bool, &mut Window, &mut App)>>>>;
 
 /// A toast, as the Swift app's `Toast`: a message, an optional detail and
-/// an optional action, which keeps it up until it's used or closed.
+/// an optional action (`toasts`).
 pub(crate) fn toast(
     window: &mut Window,
     cx: &mut App,
@@ -1515,55 +1510,19 @@ pub(crate) fn toast(
     detail: Option<String>,
     action: Option<ToastAction>,
 ) {
-    #[cfg(debug_assertions)]
-    crate::debug_snapshot::note_toast(
-        match kind {
-            ToastKind::Info => "info",
-            ToastKind::Success => "success",
-            ToastKind::Warning => "warning",
-        },
-        &message,
-        detail.as_deref(),
-        action.as_ref().map(|(label, run)| (*label, run.clone())),
-    );
-    let mut note = match kind {
-        ToastKind::Info => Notification::info(""),
-        ToastKind::Success => Notification::success(""),
-        ToastKind::Warning => Notification::warning(""),
+    let kind = match kind {
+        ToastKind::Info => crate::toasts::Kind::Info,
+        ToastKind::Success => crate::toasts::Kind::Success,
+        ToastKind::Warning => crate::toasts::Kind::Warning,
     };
-    note = match detail {
-        Some(detail) => note.title(message).message(detail),
-        None => note.message(message),
+    let mut note = match detail {
+        Some(detail) => crate::toasts::Toast::new(kind, detail).title(message),
+        None => crate::toasts::Toast::new(kind, message),
     };
     if let Some((label, run)) = action {
-        // Up for 15 seconds, as the Swift app's toasts with an action are
-        // (GPUI Kit keeps one with an action up until it's closed).
-        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let key = NEXT.fetch_add(1, Ordering::Relaxed);
-        note = note.id1::<ActionToast>(("toast", key));
-        window
-            .spawn(cx, async move |cx| {
-                cx.background_executor()
-                    .timer(Duration::from_secs(15))
-                    .await;
-                let _ = cx.update(|window, cx| {
-                    window.remove_notification1::<ActionToast>(("toast", key), cx)
-                });
-            })
-            .detach();
-        note = note.action(move |_, _, cx| {
-            let run = run.clone();
-            let this = cx.entity().downgrade();
-            Button::new("toast-action")
-                .primary()
-                .label(label)
-                .on_click(move |_, window, cx| {
-                    let _ = this.update(cx, |note, cx| note.dismiss(window, cx));
-                    run(window, cx)
-                })
-        });
+        note = note.action(label, run);
     }
-    window.push_notification(note, cx);
+    crate::toasts::show(window, cx, note);
 }
 
 /// Ask a yes-or-no question in a dialog; `answer` hears it once.

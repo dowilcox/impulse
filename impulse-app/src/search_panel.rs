@@ -18,7 +18,7 @@ use impulse_git::search::SearchResult;
 use impulse_kit::chrome::{metrics, ChromePalette};
 use impulse_kit::project_replace::{self, Segment};
 
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{hsla, icon, system_secondary, system_tertiary};
 
 /// How many results the list shows (the Swift content search limit).
 const LIMIT: usize = 500;
@@ -179,6 +179,7 @@ impl SearchPanel {
     /// The line with each match struck through and the replacement after it.
     fn preview(&self, line: &str, replacement: &str) -> StyledText {
         let p = &self.palette;
+        let secondary = system_secondary(p.is_light);
         let segments =
             project_replace::preview(line, &self.searched, replacement, self.case_sensitive);
         let mut text = String::new();
@@ -186,7 +187,7 @@ impl SearchPanel {
         let font = gpui_kit::font("JetBrains Mono");
         for segment in segments {
             let (part, color, strike) = match segment {
-                Segment::Same(part) => (part, p.text_secondary, false),
+                Segment::Same(part) => (part, secondary, false),
                 Segment::Removed(part) => (part, p.danger, true),
                 Segment::Added(part) => (part, p.success, false),
             };
@@ -210,6 +211,9 @@ impl SearchPanel {
 impl Render for SearchPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette.clone();
+        // The Swift panel's `.secondary` and `.tertiary`: the system's label
+        // colors, not the chrome's.
+        let (secondary, tertiary) = (system_secondary(p.is_light), system_tertiary(p.is_light));
         let replacing = self.replace_visible;
         let replacement = self.replacement.read(cx).value().to_string();
         let has_content = self.results.iter().any(|r| r.match_type == "content");
@@ -223,7 +227,7 @@ impl Render for SearchPanel {
                 .text_size(px(11.))
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
-                .text_color(hsla(if on { p.accent } else { p.text_secondary }))
+                .text_color(hsla(if on { p.accent } else { secondary }))
                 .when(on, |d| d.bg(hsla(p.accent.opacity(0.15))))
         };
         let mut list = div()
@@ -238,7 +242,7 @@ impl Render for SearchPanel {
                 div()
                     .p(px(12.))
                     .text_size(px(12.))
-                    .text_color(hsla(p.text_tertiary))
+                    .text_color(hsla(tertiary))
                     .child("Searching…"),
             );
         } else if self.results.is_empty() && !self.searched.is_empty() {
@@ -248,7 +252,7 @@ impl Render for SearchPanel {
                     .justify_center()
                     .p(px(16.))
                     .text_size(px(12.))
-                    .text_color(hsla(p.text_secondary))
+                    .text_color(hsla(secondary))
                     .child("No results"),
             );
         } else if !self.results.is_empty() {
@@ -257,7 +261,7 @@ impl Render for SearchPanel {
                     .px(px(10.))
                     .py(px(4.))
                     .text_size(px(11.))
-                    .text_color(hsla(p.text_tertiary))
+                    .text_color(hsla(tertiary))
                     .child(format!("{} results", self.results.len())),
             );
             for (index, result) in self.results.iter().enumerate() {
@@ -294,7 +298,7 @@ impl Render for SearchPanel {
                                     d.child(
                                         div()
                                             .text_size(px(11.))
-                                            .text_color(hsla(p.text_secondary))
+                                            .text_color(hsla(secondary))
                                             .child(format!(":{line}")),
                                     )
                                 }),
@@ -309,7 +313,7 @@ impl Render for SearchPanel {
                                     .font_features(gpui_kit::FontFeatures::disable_ligatures())
                                     .text_size(px(11.))
                                     .line_height(px(13.))
-                                    .text_color(hsla(p.text_secondary))
+                                    .text_color(hsla(secondary))
                                     .child(if replacing {
                                         self.preview(content, &replacement).into_any_element()
                                     } else {
@@ -348,10 +352,10 @@ impl Render for SearchPanel {
                                     "chevron-right"
                                 },
                                 metrics::ICON_SMALL,
-                                p.text_secondary,
+                                secondary,
                             )),
                     )
-                    .child(icon("search", 11., p.text_secondary))
+                    .child(icon("search", 11., secondary))
                     // Borderless fields, as Swift's plain text fields.
                     .child(
                         div()
@@ -376,7 +380,7 @@ impl Render for SearchPanel {
                                 panel.schedule(Duration::ZERO, cx);
                                 cx.emit(SearchPanelEvent::Close);
                             }))
-                            .child(icon("circle-x", 12., p.text_tertiary)),
+                            .child(icon("circle-x", 12., tertiary)),
                     ),
             )
             .when(replacing, |d| {
@@ -387,7 +391,7 @@ impl Render for SearchPanel {
                         .gap(px(6.))
                         .px(px(10.))
                         .pb(px(6.))
-                        .child(icon("repeat-2", 10., p.text_secondary))
+                        .child(icon("repeat-2", 10., secondary))
                         .child(
                             div().flex_1().min_w_0().child(
                                 Input::new(&self.replacement)
@@ -402,11 +406,7 @@ impl Render for SearchPanel {
                                 .text_size(px(11.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .cursor_pointer()
-                                .text_color(hsla(if has_content {
-                                    p.accent
-                                } else {
-                                    p.text_tertiary
-                                }))
+                                .text_color(hsla(if has_content { p.accent } else { tertiary }))
                                 .on_click(cx.listener(|panel, _, _, cx| panel.replace_all(cx)))
                                 .child("Replace All"),
                         ),

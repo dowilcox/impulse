@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
     anchored, deferred, div, prelude::*, px, AnyElement, ClipboardItem, Context, KeyDownEvent,
     MouseButton, Pixels, Point, Window,
@@ -668,11 +669,50 @@ impl TerminalView {
         })
     }
 
-    pub(crate) fn open_link(&mut self, target: LinkTarget, cx: &mut Context<Self>) {
-        match target {
-            LinkTarget::Url(url) => cx.open_url(&url),
+    /// Open a link as the Swift terminal does: web and mail links in the
+    /// browser, a `file:` link's file in the editor (its folder revealed),
+    /// and any other scheme only once asked, since the program in the
+    /// terminal chose it.
+    pub(crate) fn open_link(
+        &mut self,
+        target: LinkTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let url = match target {
             LinkTarget::File { path, line, column } => {
-                cx.emit(TerminalViewEvent::OpenFile { path, line, column })
+                return cx.emit(TerminalViewEvent::OpenFile { path, line, column })
+            }
+            LinkTarget::Url(url) => url,
+        };
+        let scheme = url
+            .split_once(':')
+            .map(|(scheme, _)| scheme.to_ascii_lowercase())
+            .unwrap_or_default();
+        match scheme.as_str() {
+            "http" | "https" | "mailto" => cx.open_url(&url),
+            "file" => {
+                let path = PathBuf::from(impulse_kit::uri::uri_to_file_path(&url));
+                if path.is_file() {
+                    cx.emit(TerminalViewEvent::OpenFile {
+                        path,
+                        line: None,
+                        column: None,
+                    })
+                } else if path.exists() {
+                    crate::file_tree_actions::reveal(&path, cx)
+                }
+            }
+            _ => {
+                let open = url.clone();
+                crate::alert::Alert::new("Open this link?")
+                    .message(format!("A program in this terminal linked to:\n\n{url}"))
+                    .button("Open", move |window, cx| {
+                        window.close_dialog(cx);
+                        cx.open_url(&open);
+                    })
+                    .button("Cancel", |window, cx| window.close_dialog(cx))
+                    .show(window, cx);
             }
         }
     }

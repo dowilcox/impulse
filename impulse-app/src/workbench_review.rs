@@ -72,6 +72,28 @@ impl Workbench {
         self.add_tab(active, surface, window, cx);
     }
 
+    /// The file at `path` in an editor showing its Diff View.
+    pub(crate) fn open_diff_editor(
+        &mut self,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_file(path, window, cx);
+        if let Some(editor) = self.active_editor().cloned() {
+            let result = editor.update(cx, |editor, cx| {
+                if editor.diff.is_some() {
+                    Ok(())
+                } else {
+                    editor.toggle_diff_view(window, cx)
+                }
+            });
+            if let Err(message) = result {
+                self.set_notice(message, cx);
+            }
+        }
+    }
+
     /// Review of `scope`, scrolled to the file at `path`.
     pub(crate) fn open_review_at(
         &mut self,
@@ -176,21 +198,7 @@ impl Workbench {
                     editor.update(cx, |editor, cx| editor.go_to(position, window, cx));
                 }
             }
-            ReviewEvent::OpenDiff(path) => {
-                self.open_file(path, window, cx);
-                if let Some(editor) = self.active_editor().cloned() {
-                    let result = editor.update(cx, |editor, cx| {
-                        if editor.diff.is_some() {
-                            Ok(())
-                        } else {
-                            editor.toggle_diff_view(window, cx)
-                        }
-                    });
-                    if let Err(message) = result {
-                        self.set_notice(message, cx);
-                    }
-                }
-            }
+            ReviewEvent::OpenDiff(path) => self.open_diff_editor(path, window, cx),
             ReviewEvent::ShowChanges => self.run_command("show_changes", window, cx),
         }
     }

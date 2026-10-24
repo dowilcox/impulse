@@ -1135,9 +1135,12 @@ impl Workbench {
                     _ => SidebarPanel::Search,
                 };
                 SettingsStore::update(cx, |s| s.sidebar_visible = true);
-                if self.panel == SidebarPanel::Search {
-                    self.search
-                        .update(cx, |search, cx| search.focus(window, cx));
+                match self.panel {
+                    SidebarPanel::Search => self
+                        .search
+                        .update(cx, |search, cx| search.focus(window, cx)),
+                    SidebarPanel::Changes => self.focus_changes_list(window, cx),
+                    SidebarPanel::Files => {}
                 }
                 cx.notify();
             }
@@ -1228,11 +1231,7 @@ impl Workbench {
                 } else {
                     "New terminals keep your own $EDITOR."
                 };
-                self.toast(
-                    gpui_kit::component::notification::Notification::success(message),
-                    window,
-                    cx,
-                );
+                self.toast(crate::toasts::Toast::success(message), window, cx);
             }
             "rename_workspace" => self.rename_workspace(self.active, window, cx),
             "clear_recent_workspaces" => self.clear_recent_workspaces(window, cx),
@@ -1475,6 +1474,7 @@ impl Render for Workbench {
             .on_action(cx.listener(Self::find_references))
             .on_mouse_move(cx.listener(Self::drag_divider))
             .on_mouse_up(gpui_kit::MouseButton::Left, cx.listener(Self::end_drag))
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -1487,16 +1487,18 @@ impl Render for Workbench {
             // Mono); the editor sets its own.
             .font_features(gpui_kit::FontFeatures::disable_ligatures())
             .text_color(crate::workbench_chrome::hsla(p.text))
+            .child(crate::overlays::frame_start())
             .child(self.titlebar(window, cx))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .when(sidebar, |row| row.child(self.sidebar(cx)))
+                    .when(sidebar, |row| row.child(self.sidebar(window, cx)))
                     .child(self.content(window, cx)),
             )
             .child(self.status_bar(cx))
             .child(gpui_kit::deferred(self.command_palette.clone()).with_priority(1))
+            .children(crate::toasts::layer(&self.palette, window, cx))
     }
 }

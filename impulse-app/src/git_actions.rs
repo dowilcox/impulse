@@ -11,13 +11,10 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::button::Button;
+use crate::toasts::Toast;
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{
-    div, prelude::*, px, App, ClipboardItem, Context, ElementId, Entity, SharedString, Window,
-};
+use gpui_kit::{div, prelude::*, px, App, ClipboardItem, Context, Entity, Window};
 use impulse_git::cli::ErrorKind;
 use impulse_git::operations::{
     self, CommitOptions, GitResult, OperationAction, OperationError, PullMode, PushOptions,
@@ -53,12 +50,6 @@ type Then = Rc<dyn Fn(&mut Workbench, &mut Window, &mut Context<Workbench>)>;
 type Create = Rc<dyn Fn(&mut Window, &mut App)>;
 /// What happens after a commit: `true` when it was made.
 type Done = Rc<dyn Fn(&mut Workbench, bool, &mut Window, &mut Context<Workbench>)>;
-
-/// Notifications with a button (Undo, …), told apart for removal.
-struct ActionToast;
-
-/// How long a notification with a button stays up.
-const ACTION_TOAST_SECONDS: u64 = 15;
 
 /// Both paths of a rename.
 fn paths_of(changes: &[FileChange]) -> Vec<String> {
@@ -154,18 +145,13 @@ impl Workbench {
         .show(window, cx);
     }
 
-    /// A notification (the Swift app's toast).
-    pub(crate) fn toast(
-        &mut self,
-        note: Notification,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        window.push_notification(note, cx);
+    /// A toast (`toasts`).
+    pub(crate) fn toast(&mut self, note: Toast, window: &mut Window, cx: &mut Context<Self>) {
+        crate::toasts::show(window, cx, note);
     }
 
-    /// A success notification with a button (Undo, Pop Stash, …); `detail`
-    /// goes under the message.
+    /// A success toast with a button (Undo, Pop Stash, …); `detail` goes
+    /// under the message.
     pub(crate) fn toast_with_action(
         &mut self,
         message: String,
@@ -177,47 +163,15 @@ impl Workbench {
     ) {
         let action: Then = Rc::new(action);
         let workbench = cx.entity().downgrade();
-        #[cfg(debug_assertions)]
-        {
-            let (action, workbench) = (action.clone(), workbench.clone());
-            let press: crate::debug_snapshot::Press = Rc::new(move |window, cx| {
-                let action = action.clone();
-                let _ = workbench.update(cx, |workbench, cx| action(workbench, window, cx));
-            });
-            crate::debug_snapshot::note_toast(
-                "success",
-                &message,
-                detail.as_deref(),
-                Some((action_title, press)),
-            );
-        }
-        let note = match detail {
-            Some(detail) => Notification::success(detail).title(message),
-            None => Notification::success(message),
-        };
-        let note = note.action(move |_, _, cx| {
-            let (action, workbench) = (action.clone(), workbench.clone());
-            let note = cx.entity();
-            Button::new("toast-action")
-                .label(action_title)
-                .on_click(move |_, window, cx| {
-                    note.update(cx, |note, cx| note.dismiss(window, cx));
-                    let action = action.clone();
-                    let _ = workbench.update(cx, |workbench, cx| action(workbench, window, cx));
-                })
+        let run: crate::tasks::Run = Rc::new(move |window, cx| {
+            let action = action.clone();
+            let _ = workbench.update(cx, |workbench, cx| action(workbench, window, cx));
         });
-        // Up long enough to reach the button (GPUI Kit's own autohide is
-        // 5 seconds), as the Swift app's toasts with an action are.
-        let key = ElementId::from(SharedString::from(format!("git-toast-{}", self.next_id())));
-        let note = note.id1::<ActionToast>(key.clone());
-        window.push_notification(note, cx);
-        cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(ACTION_TOAST_SECONDS))
-                .await;
-            let _ = cx.update(|window, cx| window.remove_notification1::<ActionToast>(key, cx));
-        })
-        .detach();
+        let note = match detail {
+            Some(detail) => Toast::success(detail).title(message),
+            None => Toast::success(message),
+        };
+        crate::toasts::show(window, cx, note.action(action_title, run));
     }
 
     // MARK: Running
@@ -262,7 +216,7 @@ impl Workbench {
     ) -> Option<Entity<RepositoryState>> {
         let repo = self.git.active.clone();
         if repo.is_none() {
-            self.toast(Notification::info("Not in a git repository."), window, cx);
+            self.toast(Toast::info("Not in a git repository."), window, cx);
         }
         repo
     }
@@ -757,8 +711,8 @@ impl Workbench {
                 };
                 if aborted.undo.is_none() {
                     let note = match detail {
-                        Some(detail) => Notification::success(detail).title(message),
-                        None => Notification::success(message),
+                        Some(detail) => Toast::success(detail).title(message),
+                        None => Toast::success(message),
                     };
                     return this.toast(note, window, cx);
                 }
@@ -812,7 +766,7 @@ impl Workbench {
         if snapshot.staged.is_empty() && !options.amend {
             if snapshot.unstaged.is_empty() {
                 self.toast(
-                    Notification::warning("Stage the files you want to commit first."),
+                    Toast::warning("Stage the files you want to commit first."),
                     window,
                     cx,
                 );
@@ -889,7 +843,7 @@ impl Workbench {
                         this.git.record_message(&root, &recorded);
                         if options.amend {
                             this.toast(
-                                Notification::success(format!("Amended {}", short(&sha))),
+                                Toast::success(format!("Amended {}", short(&sha))),
                                 window,
                                 cx,
                             );
@@ -1067,7 +1021,7 @@ impl Workbench {
                 } else {
                     "Fetched: nothing new for this branch".into()
                 };
-                this.toast(Notification::success(message), window, cx);
+                this.toast(Toast::success(message), window, cx);
             },
         );
     }
@@ -1114,7 +1068,7 @@ impl Workbench {
                     }
                 };
                 if before == after {
-                    return this.toast(Notification::success("Already up to date"), window, cx);
+                    return this.toast(Toast::success("Already up to date"), window, cx);
                 }
                 let message = count
                     .map(|n| format!("Pulled {}", plural(n, "commit")))
@@ -1132,7 +1086,7 @@ impl Workbench {
                             cx,
                         )
                     }
-                    _ => this.toast(Notification::success(message), window, cx),
+                    _ => this.toast(Toast::success(message), window, cx),
                 }
             },
         );
@@ -1275,8 +1229,8 @@ impl Workbench {
                     ),
                     None => {
                         let note = match detail {
-                            Some(detail) => Notification::success(detail).title(message),
-                            None => Notification::success(message),
+                            Some(detail) => Toast::success(detail).title(message),
+                            None => Toast::success(message),
                         };
                         this.toast(note, window, cx)
                     }
@@ -1298,11 +1252,7 @@ impl Workbench {
             s.branch
                 .map(|b| (b, s.upstream.unwrap_or_else(|| "the remote".into())))
         }) else {
-            return self.toast(
-                Notification::info("Check out a branch to push."),
-                window,
-                cx,
-            );
+            return self.toast(Toast::info("Check out a branch to push."), window, cx);
         };
         let repo = repo.clone();
         self.git_confirm(
@@ -1338,20 +1288,16 @@ impl Workbench {
             let url = lookup.await;
             let _ = workbench.update_in(cx, |this, window, cx| {
                 let Some(url) = url else {
-                    return this.toast(
-                        Notification::info("This repository has no remote."),
-                        window,
-                        cx,
-                    );
+                    return this.toast(Toast::info("This repository has no remote."), window, cx);
                 };
                 if !open {
                     cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
-                    return this.toast(Notification::success(format!("Copied {url}")), window, cx);
+                    return this.toast(Toast::success(format!("Copied {url}")), window, cx);
                 }
                 match impulse_kit::git::refs::RemoteWebUrl::parse(&url) {
                     Some(web) => cx.open_url(&web.base),
                     None => this.toast(
-                        Notification::info(format!("{url} isn't a web address.")),
+                        Toast::info(format!("{url} isn't a web address.")),
                         window,
                         cx,
                     ),
@@ -1461,7 +1407,7 @@ impl Workbench {
                 let _ = workbench.update(cx, |this, cx| {
                     if !impulse_git::types::is_valid_ref_name(&tag) {
                         return this.toast(
-                            Notification::warning(format!(
+                            Toast::warning(format!(
                                 "\u{201c}{tag}\u{201d} isn't a valid tag name."
                             )),
                             window,
@@ -1655,7 +1601,7 @@ impl Workbench {
                         "Pushed"
                     };
                     this.toast(
-                        Notification::success(format!("{verb} {name} to {remote}")),
+                        Toast::success(format!("{verb} {name} to {remote}")),
                         window,
                         cx,
                     )
@@ -1693,7 +1639,7 @@ impl Workbench {
             cx,
             |this, result, _, window, cx| match result {
                 Ok(remote) => this.toast(
-                    Notification::success(format!("Pushed tags to {remote}")),
+                    Toast::success(format!("Pushed tags to {remote}")),
                     window,
                     cx,
                 ),
@@ -1827,7 +1773,7 @@ impl Workbench {
             cx,
             move |this, result, _, window, cx| match result {
                 Ok(()) => this.toast(
-                    Notification::success(format!("Created and switched to {name}")),
+                    Toast::success(format!("Created and switched to {name}")),
                     window,
                     cx,
                 ),
@@ -1863,7 +1809,7 @@ impl Workbench {
             |this, result, _, window, cx| match result {
                 Ok(()) => {
                     this.reload_tree(cx);
-                    this.toast(Notification::success("Stashed your changes"), window, cx)
+                    this.toast(Toast::success("Stashed your changes"), window, cx)
                 }
                 Err(error) => this.present_git_error(&error, "Couldn't stash", window, cx),
             },
@@ -1886,7 +1832,7 @@ impl Workbench {
                 Some(latest) => {
                     this.git_apply_stash(&repo, 0, Some(latest.commit), true, window, cx)
                 }
-                None => this.toast(Notification::info("There are no stashes."), window, cx),
+                None => this.toast(Toast::info("There are no stashes."), window, cx),
             });
         })
         .detach();

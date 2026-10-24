@@ -369,10 +369,11 @@ pub(crate) fn field(
         .rounded(px(7.))
         .border_1()
         .border_color(hsla(ink.opacity(0.1)))
+        // NSTextField's fill: opaque, not a tint of what's behind.
         .bg(if light {
             gpui_kit::white()
         } else {
-            hsla(Rgba::BLACK.opacity(0.2))
+            hsla(Rgba::from_hex("#171717"))
         })
         .text_size(px(13.))
         .child(

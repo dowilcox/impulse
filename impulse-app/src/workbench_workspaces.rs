@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use crate::toasts::Toast;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{prelude::*, Context, Window};
 use impulse_kit::recent_workspaces;
@@ -40,11 +40,7 @@ impl Workbench {
         let file = recents_file();
         let cleared = recent_workspaces::clear(&file);
         if cleared.is_empty() {
-            self.toast(
-                Notification::info("No recent workspaces to clear"),
-                window,
-                cx,
-            );
+            self.toast(Toast::info("No recent workspaces to clear"), window, cx);
             return;
         }
         let count = cleared.len();

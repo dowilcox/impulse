@@ -186,7 +186,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           operations serialized with safety snapshots, CLI
                           reads through RepositoryState::read_git, restricted
                           in untrusted folders; changes_panel.rs: the Changes
-                          panel and commit composer, rows opening Review;
+                          panel and commit composer, rows opening Review,
+                          the list's keys (Show Changes focuses it, the
+                          first row selected) and Move to New Task for one
+                          file (TaskSheet::move_paths);
                           git_actions.rs: GitActions/GitPrompts and the git
                           commands; branch_switcher.rs; branch_manager.rs:
                           Manage Branches, with merge, rebase, delete
@@ -199,7 +202,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           history.sqlite3 and backs the palette's h:
                           mode, Import Shell History and Clear Command
                           History), find (terminal_find_bar.rs), and
-                          block commands, hints and links
+                          block commands, hints and links (web and mailto
+                          links open, file: ones in the editor, any other
+                          scheme asks first: open_link)
                           (terminal_blocks.rs, reached through
                           TerminalView::perform_block_command), the sticky
                           block header (Frame::paint_sticky_header), the
@@ -262,7 +267,12 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           and checkboxes; trust prompts, confirmations,
                           unsaved changes, git errors, name and tag
                           prompts), overlays.rs (every dialog opens there,
-                          so debug builds report where it is),
+                          so debug builds report where it is; the palette,
+                          the agents inbox and toasts carry the same probe,
+                          and overlays::frame_start forgets one closed
+                          since the last frame), toasts.rs (the Swift
+                          ToastCenter: bottom-center over the status bar,
+                          up to three, ChromeButton actions),
                           workbench_workspaces.rs (recent folders in
                           recent-workspaces.json via
                           impulse_kit::recent_workspaces, Rename Workspace,
@@ -342,7 +352,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           editor_vim.rs over impulse_kit::vim, its keys
                           taken ahead of GPUI Kit's in the VimNormal
                           context, the mode in the status bar), workspace trust, language
-                          servers (code actions, formatting, rename and
+                          servers (code actions, formatting, rename in
+                          Monaco's inline box (EditorTab's RenameBox) and
                           references with edits across files), the
                           headless snapshot mode of debug builds
                           (debug_snapshot.rs: the Swift DebugSnapshot's
@@ -458,7 +469,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `FileIcons.swift`) from upstream material-icon-theme.
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg).
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
-- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`, and cropping to dialogs and the palette from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the Rust app draws them inside its window.
+- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`, and cropping to dialogs, the palette, the agents inbox and toasts from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the Rust app draws them inside its window.
 - **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
 - **scripts/package-linux.sh [--no-build]**: (rust branch) builds `impulse-app` and the `impulse` CLI in release mode and packages them for Linux into `dist/`: a tarball (`bin/`, and `share/impulse/` with the lucide and material icons and the bundled fonts the app reads at run time, plus a desktop entry and icon) and, with `dpkg-deb`, a `.deb` of the same tree under `/usr`. The app finds those files through `impulse-app/src/resources.rs` (`$IMPULSE_RESOURCES`, `../share/impulse` or a bundle's `../Resources` beside the executable, else the source tree).
 - **scripts/check-macos.sh [cargo check args…]** — (rust branch) type-checks `impulse-app` for `aarch64-apple-darwin` from Linux, so code behind `cfg(target_os = "macos")` compiles before anyone builds on a Mac: stand-in `cc`/`ar` make the files C build scripts expect (nothing is linked) and an empty shader file stands in for GPUI's Mac-only shader step. Needs `rustup target add aarch64-apple-darwin`.

@@ -1059,7 +1059,7 @@ impl TerminalView {
             // block it adds the block to the selection or drops it.
             if SettingsStore::get(cx).terminal_allow_hyperlink {
                 if let Some(link) = self.link_at(col, row) {
-                    self.open_link(link.target, cx);
+                    self.open_link(link.target, window, cx);
                     return;
                 }
             }

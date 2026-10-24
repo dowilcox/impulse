@@ -8,7 +8,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, ClipboardItem, Context, FontWeight, Window};
 use impulse_kit::agents::hook_installer::{self as hooks, InstallError, OpencodePlugin, Status};
@@ -656,7 +655,7 @@ impl AgentIntegration {
     fn close(&mut self, message: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         window.close_dialog(cx);
         if let Some(message) = message {
-            window.push_notification(Notification::success(message), cx);
+            crate::toasts::show(window, cx, crate::toasts::Toast::success(message));
         }
         let _ = self.workbench.update(cx, |_, cx| cx.notify());
     }

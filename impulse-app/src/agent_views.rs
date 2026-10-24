@@ -794,12 +794,14 @@ fn inbox(
     }
     let hooks_workbench = workbench.clone();
     div()
+        .relative()
         .flex()
         .flex_col()
         .w(px(340.))
         .bg(hsla(p.overlay))
         .text_color(hsla(p.text))
         .font_family(crate::workbench::UI_FONT)
+        .child(crate::overlays::probe())
         .child(
             div()
                 .flex()

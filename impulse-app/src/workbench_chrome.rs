@@ -1203,7 +1203,7 @@ impl Workbench {
         column.into_any_element()
     }
 
-    pub(crate) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(crate) fn sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let settings = SettingsStore::get(cx).clone();
         let open_path = self.active_editor().map(|e| e.read(cx).path.clone());
@@ -1553,7 +1553,7 @@ impl Workbench {
                     }),
             )
             .child(match self.panel {
-                SidebarPanel::Changes => self.changes_panel(cx),
+                SidebarPanel::Changes => self.changes_panel(window, cx),
                 SidebarPanel::Search => self.search.clone().into_any_element(),
                 SidebarPanel::Files => files.into_any_element(),
             })
@@ -1805,4 +1805,72 @@ impl Workbench {
 pub(crate) struct DraggedTab {
     index: usize,
     title: String,
+}
+
+/// AppKit's `secondaryLabelColor` (SwiftUI's `.secondary`), for views that
+/// use it rather than the chrome's text colors.
+pub(crate) fn system_secondary(light: bool) -> KitRgba {
+    if light {
+        KitRgba::BLACK.opacity(0.5)
+    } else {
+        KitRgba::WHITE.opacity(0.55)
+    }
+}
+
+/// AppKit's `tertiaryLabelColor` (SwiftUI's `.tertiary`).
+pub(crate) fn system_tertiary(light: bool) -> KitRgba {
+    if light {
+        KitRgba::BLACK.opacity(0.26)
+    } else {
+        KitRgba::WHITE.opacity(0.25)
+    }
+}
+
+/// The kinds of Swift's `ChromeButton`.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ButtonKind {
+    Primary,
+    Secondary,
+    Ghost,
+    Danger,
+}
+
+/// Swift's `ChromeButton`: 22 high, 11.5 medium, the kind's colors; the
+/// caller adds its click when it isn't `disabled`.
+pub(crate) fn chrome_button(
+    id: impl Into<gpui_kit::ElementId>,
+    title: impl Into<gpui_kit::SharedString>,
+    icon_name: Option<&str>,
+    kind: ButtonKind,
+    disabled: bool,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let (fg, bg, hover) = match kind {
+        ButtonKind::Primary => (p.text_on_accent, Some(p.accent), p.accent.opacity(0.88)),
+        ButtonKind::Secondary => (p.text, Some(p.raised), p.raised.opacity(0.9)),
+        ButtonKind::Ghost => (p.text, None, p.hover),
+        ButtonKind::Danger => (p.danger, None, p.hover),
+    };
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(5.))
+        .px(px(9.))
+        .h(px(22.))
+        .rounded(px(metrics::RADIUS - 1.))
+        .text_size(px(11.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(hsla(fg))
+        .when_some(bg, |d, bg| d.bg(hsla(bg)))
+        .when(kind == ButtonKind::Secondary, |d| {
+            d.border_1().border_color(hsla(p.hairline_strong))
+        })
+        .when(disabled, |d| d.opacity(0.45))
+        .when(!disabled, |d| {
+            d.cursor_pointer().hover(|s| s.bg(hsla(hover)))
+        })
+        .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
+        .child(div().whitespace_nowrap().child(title.into()))
 }

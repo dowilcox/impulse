@@ -1622,13 +1622,6 @@ impl Palette {
     }
 }
 
-impl Palette {
-    #[cfg(debug_assertions)]
-    pub(crate) fn is_visible(&self) -> bool {
-        self.visible
-    }
-}
-
 impl Render for Palette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.visible {

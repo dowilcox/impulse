@@ -1843,8 +1843,9 @@ impl ReviewView {
                         .child(div().w(px(3.)).h_full().bg(hsla(colors.accent))),
                 );
             }
+            // `ReviewMetrics.codeTrailing`: 12 after the code on each side.
             column = column.child(gutter).child(
-                div().flex_1().min_w_0().child(code_text(
+                div().flex_1().min_w_0().pr(px(12.)).child(code_text(
                     line,
                     colors.text,
                     word,
@@ -1905,7 +1906,7 @@ enum Side {
 
 /// A line's code: syntax colors (byte ranges of its content), its
 /// word-level changes highlighted (spans are UTF-16 offsets) unless they
-/// cover most of it, tabs as four spaces.
+/// cover most of it, tabs as four spaces, free to wrap at any character.
 fn code_text(
     line: &DiffLine,
     text: KitRgba,
@@ -1939,6 +1940,12 @@ fn code_text(
         let background = changed.then(|| hsla(word));
         units += ch.len_utf16() as u32;
         let before = shown.len();
+        // A zero-width space between characters lets a long line break
+        // anywhere, as Swift's character-wrapped rows do (GPUI wraps at
+        // words).
+        if !shown.is_empty() {
+            shown.push('\u{200B}');
+        }
         if ch == '\t' {
             shown.push_str("    ");
         } else {

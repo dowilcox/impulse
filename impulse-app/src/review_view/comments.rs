@@ -30,6 +30,8 @@ use crate::workbench_chrome::{hsla, icon};
 
 /// Space after the code in a comment card's row, as `ReviewMetrics`.
 const CODE_TRAILING: f32 = 12.0;
+/// The composer's card (Swift's 136 row less its 4 and 8 margins).
+const COMPOSER_CARD: f32 = 124.0;
 
 /// A comment being written, anchored after one line of a hunk.
 pub(super) struct Composer {
@@ -818,17 +820,24 @@ impl ReviewView {
         } else {
             format!("{}{} {range}", lines[..1].to_uppercase(), &lines[1..])
         };
+        // Swift's composer row is a fixed 136 (`ReviewMetrics.composerHeight`):
+        // a 124 card whose editor scrolls, its text 5 in from the padding.
         let content = div()
+            .h(px(COMPOSER_CARD - 18.))
             .child(
                 div()
                     .id("composer")
+                    .flex_1()
+                    .min_h_0()
+                    .ml(px(-6.))
+                    .mt(px(-3.))
                     .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                         if event.keystroke.key == "escape" {
                             view.cancel_composer(window, cx);
                             cx.stop_propagation();
                         }
                     }))
-                    .child(Textarea::new(&composer.input).appearance(false)),
+                    .child(Textarea::new(&composer.input).appearance(false).h_full()),
             )
             .child(
                 div()

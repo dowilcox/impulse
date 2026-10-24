@@ -11,10 +11,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Sizable as _, WindowExt as _};
-use gpui_kit::{div, prelude::*, px, Context, ElementId, SharedString, Window};
+use gpui_kit::{Context, Window};
+
+use crate::toasts::Toast;
 use impulse_kit::project::config::ProjectConfig;
 use impulse_kit::project::dependency_changes::{self, Move};
 
@@ -39,9 +38,6 @@ struct Steps {
 
 /// What a toast's button runs, picked from the trusted settings.
 type Pick = Box<dyn FnOnce(&ProjectConfig) -> Option<String>>;
-
-/// The id type of the toasts.
-struct DependencyToast;
 
 /// What brings the checkout up to date after `changed`: the `[on_change]`
 /// commands for the files that changed, else the setup script when a known
@@ -241,43 +237,21 @@ impl Workbench {
                 }),
             ));
         }
-        let key = ElementId::from(SharedString::from(format!(
-            "dependency-toast-{}",
-            self.next_id()
-        )));
         let workbench = cx.entity().downgrade();
-        let note = Notification::info("")
+        let mut note = Toast::info(detail)
             .title(format!("{} changed", listed_files(&files)))
-            .message(detail)
-            .id1::<DependencyToast>(key.clone())
-            .autohide(false)
-            .when(!buttons.is_empty(), |note| {
-                note.content(move |_, _, cx| {
-                    let this = cx.entity().downgrade();
-                    let mut row = div().flex().gap(px(6.)).pt(px(6.));
-                    for (i, (label, run)) in buttons.iter().enumerate() {
-                        let (run, this, workbench) = (run.clone(), this.clone(), workbench.clone());
-                        let button = Button::new(("dependency-step", i))
-                            .small()
-                            .label(*label)
-                            .on_click(move |_, window, cx| {
-                                let _ = this.update(cx, |note, cx| note.dismiss(window, cx));
-                                let run = run.clone();
-                                let _ = workbench.update(cx, |w, cx| run(w, window, cx));
-                            });
-                        row = row.child(if i == 0 { button.primary() } else { button });
-                    }
-                    row.into_any_element()
-                })
-            });
-        window.push_notification(note, cx);
-        cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(Duration::from_secs(TOAST_SECONDS))
-                .await;
-            let _ = cx.update(|window, cx| window.remove_notification1::<DependencyToast>(key, cx));
-        })
-        .detach();
+            .lifetime(Some(Duration::from_secs(TOAST_SECONDS)));
+        for (label, run) in buttons {
+            let workbench = workbench.clone();
+            note = note.action(
+                label,
+                Rc::new(move |window, cx| {
+                    let run = run.clone();
+                    let _ = workbench.update(cx, |w, cx| run(w, window, cx));
+                }),
+            );
+        }
+        crate::toasts::show(window, cx, note);
     }
 
     /// Run a command from the project settings in a new terminal tab of

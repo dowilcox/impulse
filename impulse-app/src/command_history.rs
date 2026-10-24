@@ -294,12 +294,10 @@ impl crate::workbench::Workbench {
         window: &mut gpui_kit::Window,
         cx: &mut gpui_kit::Context<Self>,
     ) {
-        use gpui_kit::component::notification::Notification;
+        use crate::toasts::Toast;
         if !enabled(cx) {
             self.toast(
-                Notification::info(
-                    "Command history is off. Turn on Keep command history in Settings.",
-                ),
+                Toast::info("Command history is off. Turn on Keep command history in Settings."),
                 window,
                 cx,
             );
@@ -320,9 +318,9 @@ impl crate::workbench::Workbench {
             };
             let _ = this.update_in(cx, |this, window, cx| {
                 let note = if found == 0 {
-                    Notification::info(message)
+                    Toast::info(message)
                 } else {
-                    Notification::success(message)
+                    Toast::success(message)
                 };
                 this.toast(note, window, cx);
             });

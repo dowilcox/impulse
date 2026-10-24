@@ -11,9 +11,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::{Disableable as _, Icon, Sizable as _};
+use gpui_kit::component::Disableable as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FocusHandle, FontWeight, Subscription,
     WeakEntity, Window,
@@ -29,7 +28,7 @@ use crate::task_cleanup::{ignored_files_warning, nested_repository_message, remo
 use crate::tasks::{self, confirm, toast, ToastKind};
 use crate::terminal_view::TerminalViewEvent;
 use crate::workbench::{surface_id, Workbench};
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
 use crate::workspace::{Kind, Surface};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -330,33 +329,42 @@ impl TaskFinishView {
                     Remedy::SkipCheck => ("Skip Check", None),
                     Remedy::PushForReview => ("Push for Review Instead", Some("upload")),
                 };
-                let mut button = Button::new(("finish-remedy", step as usize))
-                    .small()
-                    .label(label)
+                let kind = if remedy == Remedy::SkipCheck {
+                    ButtonKind::Ghost
+                } else {
+                    ButtonKind::Secondary
+                };
+                buttons = buttons.child(
+                    chrome_button(
+                        ("finish-remedy", step as usize),
+                        label,
+                        icon_name,
+                        kind,
+                        false,
+                        &self.palette,
+                    )
                     .on_click(self.act(move |w, view, window, cx| {
                         w.apply_finish_remedy(remedy, view, window, cx)
-                    }));
-                if let Some(name) = icon_name {
-                    button = button.icon(Icon::empty().path(format!("icons/{name}.svg")));
-                }
-                if remedy == Remedy::SkipCheck {
-                    button = button.ghost();
-                }
-                buttons = buttons.child(button);
+                    })),
+                );
             }
         }
         if step == Step::Check && self.check_script.is_none() {
             any = true;
             let workspace = self.workspace_id;
             buttons = buttons.child(
-                Button::new("finish-set-up-check")
-                    .small()
-                    .ghost()
-                    .label("Set Up a Check…")
-                    .on_click(self.act(move |w, _, window, cx| {
-                        let index = w.workspaces.iter().position(|ws| ws.id == workspace);
-                        w.open_project_setup(index, Some("scripts"), window, cx)
-                    })),
+                chrome_button(
+                    "finish-set-up-check",
+                    "Set Up a Check…",
+                    None,
+                    ButtonKind::Ghost,
+                    false,
+                    &self.palette,
+                )
+                .on_click(self.act(move |w, _, window, cx| {
+                    let index = w.workspaces.iter().position(|ws| ws.id == workspace);
+                    w.open_project_setup(index, Some("scripts"), window, cx)
+                })),
             );
         }
         let _ = cx;
@@ -541,12 +549,15 @@ impl TaskFinishView {
                     .clone()
                     .map(|c| format!("Open: {c}"))
                     .unwrap_or_else(|| "Open Link".into());
-                Button::new("finish-open-link")
-                    .primary()
-                    .small()
-                    .icon(Icon::empty().path("icons/external-link.svg"))
-                    .label(caption)
-                    .on_click(move |_, _, cx| cx.open_url(&link))
+                chrome_button(
+                    "finish-open-link",
+                    caption,
+                    Some("external-link"),
+                    ButtonKind::Primary,
+                    false,
+                    &self.palette,
+                )
+                .on_click(move |_, _, cx| cx.open_url(&link))
             }))
             .into_any_element()
     }
@@ -589,23 +600,33 @@ impl Render for TaskFinishView {
                     ),
             )
             .child(
-                Button::new("finish-close")
-                    .label("Close")
-                    .small()
-                    .on_click(self.act(|w, view, window, cx| {
-                        let surface = Surface::TaskFinish(view);
-                        w.close_surface(&surface, window, cx)
-                    })),
+                chrome_button(
+                    "finish-close",
+                    "Close",
+                    None,
+                    ButtonKind::Secondary,
+                    false,
+                    &p,
+                )
+                .on_click(self.act(|w, view, window, cx| {
+                    let surface = Surface::TaskFinish(view);
+                    w.close_surface(&surface, window, cx)
+                })),
             )
             .when(self.unavailable.is_none(), |d| {
+                let disabled = self.is_running || self.is_loading;
                 d.child(
-                    Button::new("finish-run")
-                        .primary()
-                        .small()
-                        .icon(Icon::empty().path("icons/git-merge.svg"))
-                        .label(self.finish_title())
-                        .disabled(self.is_running || self.is_loading)
-                        .on_click(self.act(|w, view, window, cx| w.start_finish(view, window, cx))),
+                    chrome_button(
+                        "finish-run",
+                        self.finish_title(),
+                        Some("git-merge"),
+                        ButtonKind::Primary,
+                        disabled,
+                        &p,
+                    )
+                    .when(!disabled, |b| {
+                        b.on_click(self.act(|w, view, window, cx| w.start_finish(view, window, cx)))
+                    }),
                 )
             });
         // Swift's 720-point frame holds the 28-point margins too.

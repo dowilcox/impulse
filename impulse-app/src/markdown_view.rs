@@ -294,7 +294,23 @@ fn inline_text(text: &Inlines, page: &mut Page, color: Hsla, bold: bool) -> AnyE
     let mut string = String::new();
     let mut runs = Vec::new();
     let mut links: Vec<(Range<usize>, String)> = Vec::new();
+    // Swift's `code` padding (0.4em each side), as a space of the page's
+    // font in the code's background: runs take no padding of their own.
+    let pad = |string: &mut String, runs: &mut Vec<TextRun>| {
+        string.push(' ');
+        runs.push(TextRun {
+            len: 1,
+            font: gpui_kit::font(page.font),
+            color,
+            background_color: Some(c.code_bg),
+            underline: None,
+            strikethrough: None,
+        });
+    };
     for span in text {
+        if span.code {
+            pad(&mut string, &mut runs);
+        }
         let start = string.len();
         string.push_str(&span.text);
         let mut font = gpui_kit::font(if span.code { MONO } else { page.font });
@@ -319,6 +335,9 @@ fn inline_text(text: &Inlines, page: &mut Page, color: Hsla, bold: bool) -> AnyE
         });
         if let Some(link) = &span.link {
             links.push((start..string.len(), link.clone()));
+        }
+        if span.code {
+            pad(&mut string, &mut runs);
         }
     }
     let styled = StyledText::new(SharedString::from(string)).with_runs(runs);

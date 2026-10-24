@@ -22,6 +22,7 @@
 //! transparent and letting clicks through until then.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -160,9 +161,10 @@ struct State {
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
-    /// Where the last dialog or palette painted (`overlay_probe`).
-    static OVERLAY: std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>> =
-        const { std::cell::Cell::new(None) };
+    /// Where each window's open dialog, palette or popover painted in its
+    /// last frame (`overlay_probe`, cleared by `frame_start`).
+    static OVERLAY: RefCell<HashMap<gpui_kit::WindowId, gpui_kit::Bounds<gpui_kit::Pixels>>> =
+        RefCell::new(HashMap::new());
 }
 
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
@@ -357,7 +359,7 @@ async fn perform(action: &str, cx: &mut AsyncApp) {
     }
     if let Some(title) = action.strip_prefix("task=") {
         let title = title.to_string();
-        cx.update(|cx| present_task_sheet(&title, None, cx));
+        cx.update(|cx| present_task_sheet(&title, None, None, cx));
         // Created once the sheet has looked up the branches and copies.
         let path = cx.update(|cx| {
             let sheet = with_state(|s| s.task_sheet.clone()).and_then(|s| s.upgrade())?;
@@ -406,8 +408,9 @@ async fn perform(action: &str, cx: &mut AsyncApp) {
     if let Some(spec) = action.strip_prefix("task-sheet=") {
         let mut parts = spec.split('|');
         let title = parts.next().unwrap_or_default().to_string();
-        let base = parts.nth(1).map(str::to_string);
-        return cx.update(|cx| present_task_sheet(&title, base.as_deref(), cx));
+        let command = parts.next().map(str::to_string);
+        let base = parts.next().map(str::to_string);
+        return cx.update(|cx| present_task_sheet(&title, command.as_deref(), base.as_deref(), cx));
     }
     if action == "task-sheet-create" {
         if !cx.update(task_sheet_create) {
@@ -1138,7 +1141,7 @@ fn set_setting(key: &str, value: Value, cx: &mut App) {
     }
 }
 
-fn present_task_sheet(title: &str, base: Option<&str>, cx: &mut App) {
+fn present_task_sheet(title: &str, command: Option<&str>, base: Option<&str>, cx: &mut App) {
     with_state(|s| s.task_sheet = None);
     with_workbench(cx, |workbench, window, cx| {
         workbench.present_new_task(None, false, window, cx)
@@ -1147,10 +1150,14 @@ fn present_task_sheet(title: &str, base: Option<&str>, cx: &mut App) {
     let Some(sheet) = sheet else {
         return fail(format!("task-sheet={title}: no New Task sheet opened"));
     };
-    let (title, base) = (title.to_string(), base.map(str::to_string));
+    let (title, command, base) = (
+        title.to_string(),
+        command.map(str::to_string),
+        base.map(str::to_string),
+    );
     with_workbench(cx, |_, window, cx| {
         sheet.update(cx, |sheet, cx| {
-            sheet.debug_fill(&title, base.as_deref(), window, cx)
+            sheet.debug_fill(&title, command.as_deref(), base.as_deref(), window, cx)
         })
     });
 }
@@ -1442,11 +1449,32 @@ fn hide(window: &Window) {
 /// crop (Swift's are windows of their own; GPUI Kit's are drawn inside).
 pub(crate) fn overlay_probe() -> impl gpui_kit::IntoElement {
     use gpui_kit::Styled as _;
-    gpui_kit::canvas(|bounds, _, _| OVERLAY.set(Some(bounds)), |_, _, _, _| {})
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
+    gpui_kit::canvas(
+        |bounds, window, _| {
+            let id = window.window_handle().window_id();
+            OVERLAY.with(|o| o.borrow_mut().insert(id, bounds));
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// Painted first in a window's frame: forgets the overlay its last frame
+/// drew, so only one painted in this frame (after it) is reported.
+pub(crate) fn frame_start() -> impl gpui_kit::IntoElement {
+    use gpui_kit::Styled as _;
+    gpui_kit::canvas(
+        |_, window, _| {
+            let id = window.window_handle().window_id();
+            OVERLAY.with(|o| o.borrow_mut().remove(&id));
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_0()
 }
 
 /// Writes `window-<n>.png` for every open window and `snapshot.log`.
@@ -1483,16 +1511,9 @@ fn capture(cx: &mut App) {
             let mut frame = format!(
                 "frame window-{index} x={x} y={y_up} w={w} h={h} level=0 sheet=false class={class}\n"
             );
-            // An open dialog or palette, inside its frame, from the window's
-            // top left.
-            let palette = crate::session::workbenches(cx)
-                .iter()
-                .find(|(_, h)| h.window_id() == handle.window_id())
-                .is_some_and(|(w, _)| w.read(cx).command_palette.read(cx).is_visible());
-            if let Some(o) = OVERLAY
-                .get()
-                .filter(|_| palette || window.has_active_dialog(cx))
-            {
+            // An open dialog, palette or popover, inside its frame, from the
+            // window's top left.
+            if let Some(o) = OVERLAY.with(|o| o.borrow().get(&handle.window_id()).copied()) {
                 frame.push_str(&format!(
                     "overlay window-{index} x={} y={} w={} h={}\n",
                     f32::from(o.origin.x),

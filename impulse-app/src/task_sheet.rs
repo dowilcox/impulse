@@ -14,8 +14,7 @@ use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
-use gpui_kit::component::select::Select;
+use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{Disableable as _, Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
@@ -32,7 +31,7 @@ use impulse_kit::project::{detector, folder_clone, task_environment};
 use crate::settings_view::{choice_select, Choice, ChoiceSelect};
 use crate::tasks::{self, toast, ToastKind};
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{abbreviate_home, hsla};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, ButtonKind};
 
 /// The agent that asked for a task (the Swift `AgentTaskRequest`): who,
 /// and from which folder.
@@ -58,6 +57,8 @@ pub struct TaskSheet {
     base: Entity<InputState>,
     /// "Just a terminal" or an agent found on PATH, once they're looked up.
     agent: Option<ChoiceSelect>,
+    /// The agents found, as (name, command).
+    agent_names: Vec<(String, String)>,
     taken: HashSet<String>,
     /// Files `.worktreeinclude` (or the defaults) would copy.
     copies: Vec<String>,
@@ -79,6 +80,9 @@ pub struct TaskSheet {
     /// The main checkout's uncommitted files, which can move into the task.
     movable_count: usize,
     moves_changes: bool,
+    /// Just these files move (the Changes panel's Move to New Task...),
+    /// not every uncommitted one.
+    pub(crate) move_paths: Option<Vec<String>>,
     /// What From can say for the commit the changes were made on.
     head_names: HashSet<String>,
     /// The main checkout's branch (or HEAD), for "Start from main".
@@ -242,6 +246,7 @@ impl TaskSheet {
             title,
             base,
             agent: None,
+            agent_names: Vec::new(),
             taken: HashSet::new(),
             copies: Vec::new(),
             is_loading: true,
@@ -255,6 +260,7 @@ impl TaskSheet {
             default_base: None,
             movable_count: 0,
             moves_changes: moving,
+            move_paths: None,
             head_names: HashSet::new(),
             head_name: "HEAD".into(),
             settings: None,
@@ -316,9 +322,10 @@ impl TaskSheet {
         choices.extend(
             found
                 .agents
-                .into_iter()
-                .map(|(name, command)| Choice::new(command, name)),
+                .iter()
+                .map(|(name, command)| Choice::new(command.clone(), name.clone())),
         );
+        self.agent_names = found.agents;
         let command = self.command.clone();
         self.agent = Some(choice_select(choices, &command, false, window, cx));
         self.is_loading = false;
@@ -426,8 +433,36 @@ impl TaskSheet {
             .unwrap_or_default()
     }
 
+    /// What Start shows for `command`.
+    fn agent_title(&self, command: &str) -> Option<String> {
+        if command.is_empty() {
+            return Some("Just a terminal".into());
+        }
+        self.agent_names
+            .iter()
+            .find(|(_, c)| c == command)
+            .map(|(name, _)| name.clone())
+    }
+
     fn offers_move(&self) -> bool {
-        self.movable_count > 0
+        self.movable_count > 0 || self.move_paths.is_some()
+    }
+
+    /// "Move trailhead's 12 uncommitted files into this task".
+    fn move_label(&self) -> String {
+        match self.move_paths.as_deref() {
+            Some([one]) => format!(
+                "Move {} into this task",
+                one.rsplit('/').next().unwrap_or(one)
+            ),
+            Some(paths) => format!("Move the {} chosen files into this task", paths.len()),
+            None => format!(
+                "Move {}'s {} uncommitted file{} into this task",
+                self.main_name(),
+                self.movable_count,
+                if self.movable_count == 1 { "" } else { "s" }
+            ),
+        }
     }
 
     /// Why the files can't move now; `None` when they can.
@@ -498,12 +533,13 @@ impl TaskSheet {
         });
     }
 
-    /// For the headless snapshots (`debug_snapshot`): fill in the title
-    /// and From, as typing does.
+    /// For the headless snapshots (`debug_snapshot`): fill in the title,
+    /// what to start and From, as typing and choosing do.
     #[cfg(debug_assertions)]
     pub(crate) fn debug_fill(
         &mut self,
         title: &str,
+        command: Option<&str>,
         base: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -511,6 +547,16 @@ impl TaskSheet {
         let title = title.to_string();
         self.title
             .update(cx, |input, cx| input.set_value(title, window, cx));
+        if let Some(command) = command {
+            // The agent list may still be loading; it starts on `command`.
+            self.command = command.to_string();
+            if let Some(agent) = &self.agent {
+                let command = command.to_string();
+                agent.update(cx, |state, cx| {
+                    state.set_selected_value(&command, window, cx)
+                });
+            }
+        }
         if let Some(base) = base.filter(|b| !b.is_empty()) {
             let base = base.to_string();
             self.default_base = None;
@@ -556,6 +602,7 @@ impl TaskSheet {
         div()
             .flex()
             .gap(px(8.))
+            .line_height(px(14.))
             .child(
                 div()
                     .w(px(44.))
@@ -590,15 +637,26 @@ impl TaskSheet {
     }
 }
 
+/// A `.roundedBorder` TextField: its bezel 26 high around the 22 the
+/// row lays out.
+fn ns_field(state: &Entity<InputState>, width: f32, light: bool) -> impl IntoElement {
+    div()
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .child(crate::alert::field(state, width, 26., light))
+}
+
 impl Render for TaskSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette.clone();
+        let light = p.is_light;
         let titled = !self.title_text(cx).is_empty();
         let base_row = div()
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(div().w(px(220.)).child(Input::new(&self.base).small()))
+            .child(ns_field(&self.base, 220., light))
             .when(self.is_fetching, |d| {
                 d.child(
                     div()
@@ -622,10 +680,38 @@ impl Render for TaskSheet {
                 },
             );
         let start = match &self.agent {
-            Some(state) => div()
-                .w(px(220.))
-                .child(Select::new(state).small().menu_width(px(220.)))
-                .into_any_element(),
+            // An NSPopUpButton as wide as its title, centered in the
+            // Picker's 220 frame.
+            Some(state) => {
+                let title = state
+                    .read(cx)
+                    .selected_value()
+                    .and_then(|v| self.agent_title(v))
+                    .unwrap_or_else(|| "Just a terminal".into());
+                let run = gpui_kit::TextRun {
+                    len: title.len(),
+                    font: gpui_kit::font(crate::workbench::UI_FONT),
+                    color: hsla(p.text),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let width = window
+                    .text_system()
+                    .shape_line(title.into(), px(13.), &[run], None)
+                    .width;
+                div()
+                    .w(px(220.))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        crate::settings_view::popup_frame(&p)
+                            .h(px(24.))
+                            .w(width + px(60.))
+                            .child(crate::settings_view::popup(state).menu_width(px(220.))),
+                    )
+                    .into_any_element()
+            }
             None => div()
                 .text_size(px(12.))
                 .text_color(hsla(p.text_tertiary))
@@ -635,11 +721,7 @@ impl Render for TaskSheet {
         let unavailable = self.move_unavailable(cx);
         let moving = self.moves_changes && unavailable.is_none();
         let main_name = self.main_name();
-        let move_label = format!(
-            "Move {main_name}'s {} uncommitted file{} into this task",
-            self.movable_count,
-            if self.movable_count == 1 { "" } else { "s" }
-        );
+        let move_label = self.move_label();
         let copies = if self.is_loading {
             "…".to_string()
         } else if self.copies.is_empty() {
@@ -650,11 +732,11 @@ impl Render for TaskSheet {
         let creating = self.is_creating;
         let can_create = self.can_create(cx);
         let head = self.head_name.clone();
-        let _ = window;
         div()
             .flex()
             .flex_col()
             .gap(px(14.))
+            .line_height(gpui_kit::relative(crate::workbench::UI_LINE_HEIGHT))
             .text_color(hsla(p.text))
             .child(
                 div()
@@ -691,7 +773,7 @@ impl Render for TaskSheet {
                             )),
                     )
             }))
-            .child(self.field("Task", div().flex_1().child(Input::new(&self.title).small())))
+            .child(self.field("Task", ns_field(&self.title, 386., light)))
             .child(self.field("From", base_row))
             .children(
                 self.fetch_error
@@ -760,16 +842,19 @@ impl Render for TaskSheet {
                                 .text_color(hsla(p.text_tertiary))
                                 .child(div().whitespace_normal().child(reason))
                                 .when(!blocked, |d| d.child(
-                                    // A plain button, as the Swift sheet's.
-                                    div()
-                                        .id("task-start-from-head")
+                                    // A ghost ChromeButton, its padding
+                                    // outside the column, as the Swift
+                                    // sheet's.
+                                    chrome_button(
+                                        "task-start-from-head",
+                                        format!("Start from {head}"),
+                                        None,
+                                        ButtonKind::Ghost,
+                                        false,
+                                        &p,
+                                    )
                                         .self_start()
-                                        .cursor_pointer()
-                                        .text_size(px(11.5))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(hsla(p.text))
-                                        .hover(|s| s.opacity(0.8))
-                                        .child(format!("Start from {head}"))
+                                        .ml(px(-9.))
                                         .on_click(cx.listener(move |sheet, _, window, cx| {
                                             let head = sheet.head_name.clone();
                                             sheet.base.update(cx, |input, cx| {
@@ -884,18 +969,23 @@ impl Render for TaskSheet {
                     .justify_end()
                     .gap(px(8.))
                     .child(
-                        Button::new("task-cancel")
-                            .label("Cancel")
-                            .disabled(creating)
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                        chrome_button("task-cancel", "Cancel", None, ButtonKind::Secondary, creating, &p)
+                            .when(!creating, |d| {
+                                d.on_click(|_, window, cx| window.close_dialog(cx))
+                            }),
                     )
                     .child(
-                        Button::new("task-create")
-                            .primary()
-                            .icon(gpui_kit::component::Icon::empty().path("icons/git-branch-plus.svg"))
-                            .label(if creating { "Creating…" } else { "Create Task" })
-                            .disabled(!can_create)
-                            .on_click(cx.listener(|sheet, _, window, cx| sheet.create(window, cx))),
+                        chrome_button(
+                            "task-create",
+                            if creating { "Creating…" } else { "Create Task" },
+                            Some("git-branch-plus"),
+                            ButtonKind::Primary,
+                            !can_create,
+                            &p,
+                        )
+                        .when(can_create, |d| {
+                            d.on_click(cx.listener(|sheet, _, window, cx| sheet.create(window, cx)))
+                        }),
                     ),
             )
     }
@@ -934,6 +1024,18 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.present_moving_task(index, moving, None, window, cx)
+    }
+
+    /// New Task, moving just `paths` (with a rename's old path) when given.
+    pub(crate) fn present_moving_task(
+        &mut self,
+        index: Option<usize>,
+        moving: bool,
+        paths: Option<Vec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(root) = self.task_repository(index) else {
             return toast(
                 window,
@@ -953,6 +1055,7 @@ impl Workbench {
         let sheet = cx.new(|cx| {
             let mut sheet = TaskSheet::new(root, moving, palette, workbench, trusted, window, cx);
             sheet.move_blocker = blocker;
+            sheet.move_paths = paths;
             sheet
         });
         self.show_task_sheet(sheet, window, cx);
@@ -976,6 +1079,8 @@ impl Workbench {
             let on_enter = sheet.clone();
             dialog
                 .w(px(480.))
+                // The Swift sheet's 20 all round.
+                .p(px(20.))
                 .close_button(false)
                 .keyboard(!creating)
                 .overlay_closable(false)
@@ -995,6 +1100,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let move_paths = sheet.read(cx).move_paths.clone();
         let (root, branch, path, base, copies, command, moving) = {
             let s = sheet.read(cx);
             (
@@ -1093,7 +1199,9 @@ impl Workbench {
                     });
                 let (mut moved, mut move_failure) = (None, None);
                 if moving {
-                    match change_move::move_changes(None, &root, &path) {
+                    let paths: Option<Vec<&str>> =
+                        move_paths.as_ref().map(|p| p.iter().map(String::as_str).collect());
+                    match change_move::move_changes(paths.as_deref(), &root, &path) {
                         Ok(result) => moved = Some(result),
                         Err(error) => move_failure = Some(error.message()),
                     }

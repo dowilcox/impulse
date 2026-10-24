@@ -31,6 +31,13 @@ pub type ApplyEdit = Rc<dyn Fn(crate::workspace_edits::PendingEdit, &mut Window,
 /// A dialog's submit, shared by its button and the Return key.
 type Submit = Rc<dyn Fn(&mut Window, &mut App)>;
 
+/// Rename Symbol's field, and where the symbol starts.
+struct RenameBox {
+    input: Entity<gpui_kit::component::input::InputState>,
+    at: usize,
+    _subscription: Subscription,
+}
+
 /// What an editor's language features call back into the workbench for.
 #[derive(Clone)]
 pub struct EditorHooks {
@@ -99,6 +106,8 @@ pub struct EditorTab {
     pub(crate) peek: Option<crate::editor_peek::Peek>,
     /// The call's signature over the cursor (Monaco's parameter hints).
     signature: Option<lsp_types::SignatureHelp>,
+    /// Rename Symbol's box over the editor (`rename_box`).
+    rename: Option<RenameBox>,
     _signature_request: Option<gpui_kit::Task<()>>,
     /// The selection the marks were worked out for.
     marked_at: Option<std::ops::Range<usize>>,
@@ -252,6 +261,7 @@ impl EditorTab {
             marks: None,
             diff: None,
             signature: None,
+            rename: None,
             _signature_request: None,
             marked_at: None,
             vim,
@@ -475,20 +485,17 @@ impl EditorTab {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_kit::component::button::{Button, ButtonVariants as _};
-        use gpui_kit::component::input::{Input, InputState};
-        use gpui_kit::component::WindowExt as _;
+        use gpui_kit::component::input::InputState;
 
         let input = cx.new(|cx| InputState::new(window, cx).default_value(current.clone()));
-        // The dialog focuses itself when it opens: the field takes the focus
-        // (with the name selected) the first time the dialog is built.
-        let initial_focus = std::cell::Cell::new(true);
         let tab = cx.entity().downgrade();
+        // Under the symbol's first character, as Monaco's rename box.
+        let at = text.word_range(offset).map_or(offset, |range| range.start);
         let submit: Submit = Rc::new({
             let (input, tab) = (input.clone(), tab.clone());
             move |window, cx| {
                 let new_name = input.read(cx).value().trim().to_string();
-                window.close_dialog(cx);
+                let _ = tab.update(cx, |tab, cx| tab.close_rename(window, cx));
                 if new_name.is_empty() || new_name == current {
                     return;
                 }
@@ -516,49 +523,26 @@ impl EditorTab {
                     .detach();
             }
         });
-        let on_enter = submit.clone();
-        cx.subscribe_in(
+        // Return renames; leaving the box (Escape, a click elsewhere) doesn't.
+        let subscription = cx.subscribe_in(
             &input,
             window,
-            move |_, _, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    on_enter(window, cx);
-                }
+            move |tab, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { .. } => submit(window, cx),
+                InputEvent::Blur => tab.close_rename(window, cx),
+                _ => {}
             },
-        )
-        .detach();
-        let field = input.clone();
-        crate::overlays::open_dialog(window, cx, move |dialog, window, cx| {
-            if initial_focus.replace(false) {
-                field.update(cx, |field, cx| {
-                    field.focus(window, cx);
-                    field.select_all(window, cx);
-                });
-            }
-            let submit = submit.clone();
-            dialog
-                .title("Rename Symbol")
-                .w(px(420.))
-                .close_button(false)
-                .child(Input::new(&input))
-                .footer(
-                    gpui_kit::div()
-                        .flex()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("rename-cancel")
-                                .label("Cancel")
-                                .on_click(|_, window, cx| window.close_dialog(cx)),
-                        )
-                        .child(
-                            Button::new("rename-ok")
-                                .primary()
-                                .label("Rename")
-                                .on_click(move |_, window, cx| submit(window, cx)),
-                        ),
-                )
+        );
+        input.update(cx, |field, cx| {
+            field.focus(window, cx);
+            field.select_all(window, cx);
         });
+        self.rename = Some(RenameBox {
+            input,
+            at,
+            _subscription: subscription,
+        });
+        cx.notify();
     }
 
     /// Find References (⇧F12): every place the symbol is used, each with its
@@ -1403,6 +1387,7 @@ impl Render for EditorTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_inline_text(window, cx);
         let signature = self.signature_popup(cx);
+        let rename = self.rename_box(cx);
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
         let (family, size) = (settings.font_family.clone(), settings.font_size as f32);
         let line_height = settings.editor_line_height;
@@ -1469,6 +1454,7 @@ impl Render for EditorTab {
                 }),
             )
             .children(signature)
+            .children(rename)
             .on_action(
                 cx.listener(|tab, _: &crate::editor_keys::ShowLineCommit, _, cx| {
                     tab.show_line_commit(cx)
@@ -1817,6 +1803,79 @@ impl EditorTab {
 
     /// The signature over the caret: the active parameter in bold, its
     /// documentation and the signature's under it, and which of several.
+    /// Take Rename Symbol's box away and give the editor the keyboard back.
+    fn close_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.rename.take().is_some() {
+            self.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    /// Monaco's rename box: the name in a field under the symbol, and how
+    /// to answer it.
+    fn rename_box(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        use gpui_kit::component::input::Input;
+        use gpui_kit::component::ActiveTheme as _;
+        let rename = self.rename.as_ref()?;
+        let at = self
+            .state
+            .read(cx)
+            .range_to_bounds(&(rename.at..rename.at))?;
+        let theme = cx.theme();
+        let widget = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(theme.popover, |b| b.widget);
+        let settings = crate::settings_store::SettingsStore::get(cx);
+        let font = gpui_kit::SharedString::from(settings.font_family.clone());
+        let size = px(settings.font_size as f32);
+        let field = gpui_kit::div()
+            .h(px(26.))
+            .px(px(4.))
+            .flex()
+            .items_center()
+            .border_1()
+            .border_color(theme.ring)
+            .bg(theme.background)
+            .child(
+                Input::new(&rename.input)
+                    .appearance(false)
+                    .px_0()
+                    .font_family(font)
+                    .text_size(size),
+            );
+        let tab = cx.entity().downgrade();
+        let popup = gpui_kit::div()
+            .occlude()
+            .w(px(260.))
+            .p(px(4.))
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .bg(widget)
+            .border_1()
+            .border_color(theme.border)
+            .shadow_md()
+            .on_key_down(move |event, window, cx| {
+                if event.keystroke.key == "escape" {
+                    let _ = tab.update(cx, |tab, cx| tab.close_rename(window, cx));
+                    cx.stop_propagation();
+                }
+            })
+            .child(field)
+            .child(
+                gpui_kit::div()
+                    .text_size(px(11.))
+                    .text_color(theme.muted_foreground)
+                    .child("Enter to Rename"),
+            );
+        Some(gpui_kit::deferred(
+            gpui_kit::anchored()
+                .position(gpui_kit::point(at.left(), at.bottom()))
+                .anchor(gpui_kit::Anchor::TopLeft)
+                .child(popup),
+        ))
+    }
+
     fn signature_popup(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         use gpui_kit::component::ActiveTheme as _;
         use impulse_lsp::signature::{active_parameter_range, active_signature};

@@ -103,7 +103,7 @@ for:
 | Find and replace widget | yes (replace is a toggle in its panel) | **themed**; first keystroke into it is lost under Xvfb (below) |
 | LSP: completion, hover, diagnostics, definition | yes | **done**: wired to `impulse-lsp`, checked against rust-analyzer, definition into another file included |
 | LSP: code actions, Format Document (⌥⇧F) | yes | **done**: every server's actions (⌘. or Ctrl+.), resolved when picked; formatting as one undo step |
-| Rename (F2), Find References (⇧F12), edits across files | no | **done**: rename through `prepareRename`; workspace edits applied across open tabs and files on disk, asking first as `LSPWorkspaceEdits` does; references in a peek (below) |
+| Rename (F2), Find References (⇧F12), edits across files | no | **done**: rename through `prepareRename`, the new name typed in Monaco's inline box under the symbol ("Enter to Rename", Escape or a click away closing it); workspace edits applied across open tabs and files on disk, asking first as `LSPWorkspaceEdits` does; references in a peek (below) |
 | LSP: document highlight, type definition, implementation, declaration | no | **done**: occurrences as range decorations (with Monaco's word fallback), the three Go to commands (⌘F12/Ctrl+F12 for implementations) |
 | LSP: signature help, inlay hints | no | signature help **done** (on `(` and `,`, following the active parameter, Escape or `)` to close, `impulse_lsp::signature`); inlay hints need text injected into the editor's line layout, which GPUI Kit's editor doesn't have (only one ghost-text completion at the caret), so they wait on a change upstream or in a fork |
 | Peek views (definition, references, git peek), view zones | no | **done** (`editor_peek.rs`): Peek Definition (⌥F12, Ctrl+Shift+F10 on Linux), Go to References and the Go to commands with several answers open a peek: the selected place previewed read-only with its range marked, the places listed by file, a double click, Enter or Open going there, Escape closing. Docked under the editor rather than in a view zone under the line, as the git peek is |
@@ -447,6 +447,28 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   handler (so input methods work), selects by word, line or block, reports
   the mouse to programs that ask, and starts the login shell with Impulse's
   integration as `TerminalTab` does.
+- The Changes list takes the keyboard as Swift's does: Show Changes
+  focuses it with the first row selected and ringed, ↑↓ move, Space
+  stages or unstages, Return opens Review (secondary+Return the file,
+  alt+Return the Diff View), Delete discards and Escape goes back to the
+  pane; a double click opens the file. A row's menu has Open Changes,
+  Open in Diff Editor, Move to New Task… (that file only, with its old
+  path for a rename) and Reveal. Links in the terminal follow Swift's
+  rules: web and mailto open, `file:` opens in the editor, other schemes
+  ask first.
+- The New Task sheet uses the Swift sheet's controls: rounded-border
+  fields, a pop-up button as wide as its title, `ChromeButton`s
+  (`workbench_chrome::chrome_button`), 20 of padding and the UI line
+  height. The Search panel's secondary and tertiary text are the system
+  label colors, as SwiftUI's `.secondary` and `.tertiary` are there.
+  Review's comment composer is a fixed 136, as `ReviewMetrics` has it.
+- Toasts are Swift's own (`toasts.rs`), not GPUI Kit's notifications:
+  bottom-center over the status bar, up to three, the kind's icon, the
+  message and its detail, secondary `ChromeButton` actions and an x, six
+  seconds (fifteen with an action). Review's lines wrap at any character
+  as Swift's rows do (a zero-width space between characters), with
+  `codeTrailing`'s 12 after the code. Inline code in the Markdown preview
+  has Swift's padding; GPUI's text runs can't take its 0.9em size.
 - `scripts/spike/linux-shot.sh` screenshots the app under Xvfb with software
   Vulkan, so CI can check the UI without a GPU.
 - The headless snapshot mode (`debug_snapshot.rs`, debug builds only, as

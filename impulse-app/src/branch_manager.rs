@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
+use crate::toasts::Toast;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Icon, Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
@@ -553,11 +553,7 @@ impl Workbench {
                             window,
                             cx,
                         ),
-                    Ok(_) => this.toast(
-                        Notification::info(nothing.replace("{}", &label)),
-                        window,
-                        cx,
-                    ),
+                    Ok(_) => this.toast(Toast::info(nothing.replace("{}", &label)), window, cx),
                 }
             },
         );
@@ -596,7 +592,7 @@ impl Workbench {
                     Ok(sha) => {
                         let Some(sha) = sha else {
                             return this.toast(
-                                Notification::success(format!("Deleted {name}")),
+                                Toast::success(format!("Deleted {name}")),
                                 window,
                                 cx,
                             );
@@ -693,7 +689,7 @@ impl Workbench {
                 }
                 if !impulse_kit::git::refs::is_valid_ref_name(&new_name) {
                     return this.toast(
-                        Notification::warning(format!("“{new_name}” isn't a valid branch name.")),
+                        Toast::warning(format!("“{new_name}” isn't a valid branch name.")),
                         window,
                         cx,
                     );
@@ -748,7 +744,7 @@ impl Workbench {
             move |this, result, _, window, cx| {
                 match result {
                     Ok(()) => this.toast(
-                        Notification::success(format!("Published {name} to {remote}")),
+                        Toast::success(format!("Published {name} to {remote}")),
                         window,
                         cx,
                     ),

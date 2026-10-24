@@ -3,7 +3,10 @@
 //! fetch; the operation in progress with Continue, Skip and Abort; the
 //! Conflicts, Staged, Changes, Untracked and Stashes sections with the
 //! status letter of each file in git's colors (`ChromePalette::git_*`);
-//! staging, unstaging and discarding a file or all of them; and the commit
+//! staging, unstaging and discarding a file or all of them; the list's
+//! keys (arrows, Space to stage or unstage, Return for Review, secondary+
+//! Return for the file, alt+Return for the Diff View, Delete to discard,
+//! Escape back to the pane); and the commit
 //! message composer, whose button commits (and pushes, with
 //! `git_commit_and_push`; secondary+shift+Enter does the other one).
 //!
@@ -21,7 +24,8 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Icon;
 use gpui_kit::{
     actions, div, img, prelude::*, px, AnyElement, App, ClipboardItem, Context, ElementId, Entity,
-    FontWeight, KeyBinding, SharedString, Subscription, WeakEntity, Window,
+    FocusHandle, FontWeight, KeyBinding, KeyDownEvent, ScrollHandle, SharedString, Subscription,
+    WeakEntity, Window,
 };
 use impulse_git::operations::{self, CommitOptions, OperationAction, StashEntry};
 use impulse_git::{ChangeStatus, FileChange, RepoSnapshot};
@@ -30,7 +34,7 @@ use impulse_kit::chrome::{metrics, Rgba};
 use crate::repository_state::{RepositoryEvent, RepositoryState, RepositoryStore};
 use crate::settings_store::SettingsStore;
 use crate::workbench::Workbench;
-use crate::workbench_chrome::{hsla, icon};
+use crate::workbench_chrome::{hsla, icon, ButtonKind};
 use crate::workspace::Kind;
 
 actions!(changes, [CommitDefault, CommitOther]);
@@ -53,6 +57,36 @@ enum Section {
     Staged,
     Unstaged,
     Untracked,
+}
+
+impl Section {
+    /// The working copy differs from the index (what the Diff View shows).
+    fn has_working_copy_diff(self) -> bool {
+        matches!(self, Section::Unstaged | Section::Untracked)
+    }
+
+    /// The Review a change in this section opens in.
+    fn review_scope(self) -> impulse_git::types::DiffScope {
+        use impulse_git::types::DiffScope;
+        match self {
+            Section::Staged => DiffScope::Staged,
+            Section::Conflicted => DiffScope::Uncommitted,
+            Section::Unstaged | Section::Untracked => DiffScope::Unstaged,
+        }
+    }
+}
+
+/// A file row as listed: its selection key, its change and section, and
+/// its index among the list's children (headers included).
+struct ListedRow {
+    key: String,
+    change: FileChange,
+    section: Section,
+    child: usize,
+}
+
+fn row_key(section: Section, path: &str) -> String {
+    format!("{section:?}-{path}")
 }
 
 struct Held {
@@ -81,6 +115,9 @@ pub(crate) struct GitPanel {
     history_index: Option<usize>,
     recalled: String,
     selection: Option<String>,
+    /// The file list's keyboard focus (Swift's `listFocused`).
+    list_focus: FocusHandle,
+    list_scroll: ScrollHandle,
     _message_events: Subscription,
 }
 
@@ -121,6 +158,8 @@ impl GitPanel {
             history_index: None,
             recalled: String::new(),
             selection: None,
+            list_focus: cx.focus_handle(),
+            list_scroll: ScrollHandle::new(),
             _message_events: events,
         }
     }
@@ -194,14 +233,6 @@ fn menu_item(
     PopupMenuItem::new(label.to_string()).on_click(move |_, window, cx| {
         let _ = workbench.update(cx, |workbench, cx| act(workbench, window, cx));
     })
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum ButtonKind {
-    Primary,
-    Secondary,
-    Ghost,
-    Danger,
 }
 
 impl Workbench {
@@ -468,40 +499,13 @@ impl Workbench {
         cx: &mut Context<Self>,
         act: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
     ) -> AnyElement {
-        let p = &self.palette;
-        let (fg, bg, hover) = match kind {
-            ButtonKind::Primary => (p.text_on_accent, Some(p.accent), p.accent.opacity(0.88)),
-            ButtonKind::Secondary => (p.text, Some(p.raised), p.raised.opacity(0.9)),
-            ButtonKind::Ghost => (p.text, None, p.hover),
-            ButtonKind::Danger => (p.danger, None, p.hover),
-        };
-        div()
-            .id(id)
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(5.))
-            .px(px(9.))
-            .h(px(22.))
-            .rounded(px(metrics::RADIUS - 1.))
-            .text_size(px(11.5))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(hsla(fg))
-            .when_some(bg, |d, bg| d.bg(hsla(bg)))
-            .when(kind == ButtonKind::Secondary, |d| {
-                d.border_1().border_color(hsla(p.hairline_strong))
-            })
-            .when(disabled, |d| d.opacity(0.45))
+        crate::workbench_chrome::chrome_button(id, title, icon_name, kind, disabled, &self.palette)
             .when(!disabled, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(hsla(hover)))
-                    .on_click(cx.listener(move |workbench, _, window, cx| {
-                        cx.stop_propagation();
-                        act(workbench, window, cx)
-                    }))
+                d.on_click(cx.listener(move |workbench, _, window, cx| {
+                    cx.stop_propagation();
+                    act(workbench, window, cx)
+                }))
             })
-            .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
-            .child(div().whitespace_nowrap().child(title))
             .into_any_element()
     }
 
@@ -564,7 +568,7 @@ impl Workbench {
     }
 
     /// The panel, below the sidebar's panel selector.
-    pub(crate) fn changes_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn changes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(repo) = self.git.active.clone() else {
             return self.empty_state(
                 "git-branch",
@@ -577,19 +581,23 @@ impl Workbench {
         let snapshot = state.snapshot.clone();
         let activity = state.activity.clone();
         let detail = state.activity_detail.clone();
+        let focused = self.git.list_focus.is_focused(window);
         let mut list = div()
             .id("changes-list")
+            .track_focus(&self.git.list_focus)
+            .on_key_down(cx.listener(Self::changes_key))
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.git.list_scroll)
             .pb(px(8.));
         let clean = snapshot
             .as_ref()
             .is_some_and(|s| !s.has_changes() && s.operation.is_none());
         if let Some(snapshot) = &snapshot {
-            for element in self.sections(&repo, snapshot, cx) {
+            for element in self.sections(&repo, snapshot, focused, cx) {
                 list = list.child(element);
             }
         }
@@ -967,10 +975,135 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// The file rows in the order shown (collapsed sections left out), as
+    /// `sections` lays them out.
+    fn listed_rows(&self, snapshot: &RepoSnapshot) -> Vec<ListedRow> {
+        let mut rows = Vec::new();
+        let mut child = 0;
+        let groups = [
+            (Section::Conflicted, &snapshot.conflicted),
+            (Section::Staged, &snapshot.staged),
+            (Section::Unstaged, &snapshot.unstaged),
+            (Section::Untracked, &snapshot.untracked),
+        ];
+        for (section, changes) in groups {
+            if changes.is_empty() {
+                continue;
+            }
+            child += 1;
+            if self.git.collapsed.contains(&section) {
+                continue;
+            }
+            for change in changes {
+                rows.push(ListedRow {
+                    key: row_key(section, &change.path),
+                    change: change.clone(),
+                    section,
+                    child,
+                });
+                child += 1;
+            }
+        }
+        rows
+    }
+
+    fn active_snapshot(&self, cx: &App) -> Option<(Entity<RepositoryState>, RepoSnapshot)> {
+        let repo = self.git.active.clone()?;
+        let snapshot = repo.read(cx).snapshot.clone()?;
+        Some((repo, snapshot))
+    }
+
+    /// Keyboard focus to the file list, with the first row selected if
+    /// none is (Show Changes).
+    pub(crate) fn focus_changes_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.git.list_focus, cx);
+        let Some((_, snapshot)) = self.active_snapshot(cx) else {
+            return;
+        };
+        let rows = self.listed_rows(&snapshot);
+        let current = self.git.selection.as_deref();
+        if !rows.iter().any(|r| Some(r.key.as_str()) == current) {
+            self.git.selection = rows.first().map(|r| r.key.clone());
+        }
+        cx.notify();
+    }
+
+    /// The list's keys, as the Swift panel's `handleKey`.
+    fn changes_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((repo, snapshot)) = self.active_snapshot(cx) else {
+            return;
+        };
+        let rows = self.listed_rows(&snapshot);
+        if rows.is_empty() {
+            return;
+        }
+        let index = rows
+            .iter()
+            .position(|r| Some(r.key.as_str()) == self.git.selection.as_deref());
+        let modifiers = event.keystroke.modifiers;
+        let select = |panel: &mut Self, i: isize| {
+            let row = &rows[i.clamp(0, rows.len() as isize - 1) as usize];
+            panel.git.selection = Some(row.key.clone());
+            panel.git.list_scroll.scroll_to_item(row.child);
+        };
+        match event.keystroke.key.as_str() {
+            "up" => select(self, index.map_or(rows.len() as isize, |i| i as isize) - 1),
+            "down" => select(self, index.map_or(-1, |i| i as isize) + 1),
+            "space" => {
+                let Some(row) = index.map(|i| &rows[i]) else {
+                    return;
+                };
+                let one = vec![row.change.clone()];
+                match row.section {
+                    Section::Staged => {
+                        self.git_unstage(&repo, &one, window, cx);
+                        self.git.selection = Some(row_key(Section::Unstaged, &row.change.path));
+                    }
+                    Section::Unstaged | Section::Untracked => {
+                        self.git_stage(&repo, &one, window, cx);
+                        self.git.selection = Some(row_key(Section::Staged, &row.change.path));
+                    }
+                    Section::Conflicted => self.git_mark_resolved(&repo, &one, window, cx),
+                }
+            }
+            "enter" => {
+                let Some(row) = index.map(|i| &rows[i]) else {
+                    return;
+                };
+                let absolute = std::path::Path::new(&repo.read(cx).root).join(&row.change.path);
+                if modifiers.secondary() {
+                    self.open_file(&absolute, window, cx);
+                } else if modifiers.alt
+                    && row.section.has_working_copy_diff()
+                    && row.change.status != ChangeStatus::Deleted
+                {
+                    self.open_diff_editor(&absolute, window, cx);
+                } else {
+                    self.open_review_at(row.section.review_scope(), &absolute, window, cx);
+                }
+            }
+            "backspace" | "delete" => {
+                let Some(row) = index.map(|i| &rows[i]) else {
+                    return;
+                };
+                if row.section == Section::Conflicted {
+                    return;
+                }
+                let staged = row.section == Section::Staged;
+                self.git_discard(&repo, vec![row.change.clone()], staged, window, cx);
+            }
+            "escape" => self.focus_active(window, cx),
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
     fn sections(
         &self,
         repo: &Entity<RepositoryState>,
         snapshot: &RepoSnapshot,
+        focused: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let mut out = Vec::new();
@@ -1068,7 +1201,7 @@ impl Workbench {
             ));
             if expanded {
                 for change in changes {
-                    out.push(self.change_row(repo, change, section, cx));
+                    out.push(self.change_row(repo, change, section, focused, cx));
                 }
             }
         }
@@ -1097,10 +1230,11 @@ impl Workbench {
         repo: &Entity<RepositoryState>,
         change: &FileChange,
         section: Section,
+        focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = &self.palette;
-        let key = format!("{section:?}-{}", change.path);
+        let key = row_key(section, &change.path);
         let group: SharedString = format!("row-{key}").into();
         let selected = self.git.selection.as_deref() == Some(key.as_str());
         let (dir, name) = match change.path.rsplit_once('/') {
@@ -1232,6 +1366,18 @@ impl Workbench {
                     .pr(px(4.))
                     .rounded(px(metrics::RADIUS_SMALL + 1.))
                     .when(selected, |d| d.bg(hsla(p.selection)))
+                    // Swift's ring is a stroke over the row, not a border
+                    // that moves its content.
+                    .when(selected && focused, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .rounded(px(metrics::RADIUS_SMALL + 1.))
+                                .border(px(1.5))
+                                .border_color(hsla(p.focus_ring)),
+                        )
+                    })
                     .when(!selected, |d| d.hover(|s| s.bg(hsla(p.hover))))
                     .child(
                         img(crate::file_icons::icon_path(&name, false, false))
@@ -1294,30 +1440,39 @@ impl Workbench {
                     )
                     .relative(),
             )
-            .on_click(cx.listener(move |workbench, _, window, cx| {
-                workbench.git.selection = Some(click_key.clone());
-                // A change opens in Review at the file, as in the Swift app;
-                // a conflict opens the file to resolve it.
-                let scope = match section {
-                    Section::Staged => Some(impulse_git::types::DiffScope::Staged),
-                    Section::Unstaged | Section::Untracked => {
-                        Some(impulse_git::types::DiffScope::Unstaged)
+            .on_click(
+                cx.listener(move |workbench, event: &gpui_kit::ClickEvent, window, cx| {
+                    // A double click opens the file; one click selects the row
+                    // and opens the change in Review, as in the Swift app.
+                    if event.click_count() >= 2 {
+                        if !deleted {
+                            workbench.open_file(&click_path, window, cx);
+                        }
+                    } else {
+                        workbench.git.selection = Some(click_key.clone());
+                        window.focus(&workbench.git.list_focus, cx);
+                        workbench.open_review_at(section.review_scope(), &click_path, window, cx);
                     }
-                    Section::Conflicted => None,
-                };
-                match scope {
-                    Some(scope) => workbench.open_review_at(scope, &click_path, window, cx),
-                    None if !deleted => workbench.open_file(&click_path, window, cx),
-                    None => {}
-                }
-                cx.notify();
-            }))
+                    cx.notify();
+                }),
+            )
             .context_menu(move |menu: PopupMenu, window, cx| {
                 let w = &workbench;
                 let (repo, change, path) =
                     (menu_repo.clone(), menu_change.clone(), menu_path.clone());
                 let one = vec![change.clone()];
-                let open_path = path.clone();
+                let (review_path, diff_path, open_path) =
+                    (path.clone(), path.clone(), path.clone());
+                let mut menu = menu.item(menu_item("Open Changes", w, move |wb, window, cx| {
+                    wb.open_review_at(section.review_scope(), &review_path, window, cx)
+                }));
+                if section.has_working_copy_diff() && change.status != ChangeStatus::Deleted {
+                    menu = menu.item(menu_item(
+                        "Open in Diff Editor",
+                        w,
+                        move |wb, window, cx| wb.open_diff_editor(&diff_path, window, cx),
+                    ));
+                }
                 let mut menu = menu
                     .item(menu_item("Open File", w, move |wb, window, cx| {
                         wb.open_file(&open_path, window, cx)
@@ -1373,11 +1528,31 @@ impl Workbench {
                         })
                     }
                 };
+                let root = repo.read(cx).root.clone();
+                if section != Section::Conflicted && crate::tasks::main_checkout_root(&root) == root
+                {
+                    let paths: Vec<String> = std::iter::once(change.path.clone())
+                        .chain(change.old_path.clone())
+                        .collect();
+                    menu = menu.item(menu_item(
+                        "Move to New Task…",
+                        w,
+                        move |wb, window, cx| {
+                            wb.present_moving_task(None, true, Some(paths.clone()), window, cx)
+                        },
+                    ));
+                }
                 let relative = change.path.clone();
+                let reveal_path = path.clone();
                 menu.separator()
                     .item(menu_item("Copy Path", w, move |_, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(relative.clone()))
                     }))
+                    .item(menu_item(
+                        crate::file_tree_actions::REVEAL,
+                        w,
+                        move |_, _, cx| crate::file_tree_actions::reveal(&reveal_path, cx),
+                    ))
             })
             .into_any_element()
     }
