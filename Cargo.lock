@@ -3373,6 +3373,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "impulse-cli"
+version = "0.36.0"
+dependencies = [
+ "impulse-protocol",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "impulse-ffi"
 version = "0.36.0"
 dependencies = [
@@ -3410,6 +3419,16 @@ dependencies = [
  "impulse-kit",
  "log",
  "lsp-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "impulse-protocol"
+version = "0.36.0"
+dependencies = [
+ "base64",
  "serde",
  "serde_json",
  "tempfile",
