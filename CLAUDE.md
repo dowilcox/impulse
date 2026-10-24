@@ -123,7 +123,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           impulse_kit::kitty_keyboard), input methods,
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged),
-                          session restore (session.rs: autosave every 15 s
+                          session restore (session.rs, with an agent's resume command
+                          typed into its terminal's bar: autosave every 15 s
                           when the structure changed, and at quit; a
                           restored terminal shows its old output down to
                           the "restored" rule before its first command),

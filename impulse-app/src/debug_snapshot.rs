@@ -1402,6 +1402,7 @@ fn describe(surface: &Surface, cx: &App) -> Value {
                 "resume": tracker.session.as_ref().and_then(|(agent, session)| {
                     impulse_kit::agents::known_agents::resume_command(agent, session)
                 }),
+                "input": t.editor_text(cx),
                 "blocks": blocks,
                 "transcript": t.backend.transcript(400, false),
             })

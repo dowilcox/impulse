@@ -140,8 +140,18 @@ fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionS
         Surface::Terminal(t) => {
             let t = t.read(cx);
             let turns = crate::agent_checkpoints::saved_turns(&t.agent.id);
+            // An agent that told its session: the command that resumes it.
+            let resume = t
+                .agent
+                .agent
+                .as_ref()
+                .and(t.agent.session.as_ref())
+                .and_then(|(agent, session)| {
+                    impulse_kit::agents::known_agents::resume_command(agent, session)
+                });
             SessionSurface {
                 transcript: with_scrollback.then(|| t.transcript(SCROLLBACK_ROWS)),
+                resume,
                 agent_turns: (!turns.is_empty())
                     .then(|| serde_json::to_value(&turns).ok())
                     .flatten(),
@@ -398,6 +408,11 @@ impl Workbench {
                         .and_then(|turns| serde_json::from_value(turns).ok());
                     if let (Some(saved), Surface::Terminal(view)) = (saved, &terminal) {
                         crate::agent_checkpoints::restore(saved, &view.read(cx).agent.id);
+                    }
+                    // An agent was running here: offer to pick its session
+                    // back up.
+                    if let (Some(resume), Surface::Terminal(view)) = (&surface.resume, &terminal) {
+                        view.update(cx, |view, cx| view.set_draft(resume, cx));
                     }
                     Some(terminal)
                 }

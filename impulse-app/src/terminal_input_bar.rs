@@ -149,7 +149,13 @@ impl TerminalView {
         }
     }
 
-    fn editor_text(&self, cx: &gpui_kit::App) -> String {
+    /// Text waiting in the bar for the user (a restored agent's resume
+    /// command): typed, not run, and the keyboard stays where it is.
+    pub(crate) fn set_draft(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.set_bar_text(text.to_string(), cx);
+    }
+
+    pub(crate) fn editor_text(&self, cx: &gpui_kit::App) -> String {
         self.editor.read(cx).text().to_string()
     }
 
