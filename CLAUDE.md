@@ -122,7 +122,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           protocol once a program pushes its flags,
                           impulse_kit::kitty_keyboard), input methods,
                           selection, mouse reporting,
-                          settings.json (SettingsStore, watched and merged),
+                          settings.json (SettingsStore, watched and merged;
+                          Workbench::settings_banner while it doesn't
+                          load), Increase Contrast (increase_contrast.rs:
+                          macOS's display option or GNOME's high-contrast
+                          key, followed while running),
                           session restore (session.rs, with an agent's resume command
                           typed into its terminal's bar: autosave every 15 s
                           when the structure changed, and at quit; a

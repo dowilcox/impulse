@@ -199,6 +199,18 @@ pub(crate) fn layer(p: &ChromePalette, window: &Window, cx: &App) -> Option<AnyE
     )
 }
 
+/// At most `max` of `text`'s lines, as SwiftUI's `lineLimit` shows (GPUI's
+/// `line_clamp` counts only wrapped lines, not the text's own newlines).
+fn clamp_lines(text: &str, max: usize) -> String {
+    let mut lines = text.lines();
+    let kept: Vec<&str> = lines.by_ref().take(max).collect();
+    let mut clamped = kept.join("\n");
+    if lines.next().is_some() {
+        clamped.push('…');
+    }
+    clamped
+}
+
 fn view(shown: &Shown, p: &ChromePalette) -> AnyElement {
     let toast = &shown.toast;
     let id = shown.id;
@@ -249,14 +261,14 @@ fn view(shown: &Shown, p: &ChromePalette) -> AnyElement {
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(hsla(p.text))
                         .line_clamp(2)
-                        .child(message),
+                        .child(clamp_lines(&message, 2)),
                 )
                 .children(detail.map(|detail| {
                     div()
                         .text_size(px(11.))
                         .text_color(hsla(p.text_secondary))
                         .line_clamp(3)
-                        .child(detail)
+                        .child(clamp_lines(&detail, 3))
                 })),
         );
     for (index, (title, run)) in toast.actions.iter().enumerate() {
@@ -297,4 +309,16 @@ fn view(shown: &Shown, p: &ChromePalette) -> AnyElement {
     )
     .child(crate::overlays::probe())
     .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_lines;
+
+    #[test]
+    fn clamps_the_texts_own_lines() {
+        assert_eq!(clamp_lines("one line", 3), "one line");
+        assert_eq!(clamp_lines("a\nb\nc", 3), "a\nb\nc");
+        assert_eq!(clamp_lines("a\nb\nc\nd", 3), "a\nb\nc…");
+    }
 }

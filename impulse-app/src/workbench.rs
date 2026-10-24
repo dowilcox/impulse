@@ -89,6 +89,8 @@ pub struct Workbench {
     /// until the keys move it) and its scrolling.
     pub(crate) tree_focus: gpui_kit::FocusHandle,
     pub(crate) tree_selection: Option<std::path::PathBuf>,
+    /// The settings.json warning dismissed (`SettingsStore::warning`'s count).
+    pub(crate) dismissed_settings_warning: Option<u64>,
     pub(crate) tree_scroll: gpui_kit::ScrollHandle,
     /// Closed tabs and workspaces, newest last, each with its id.
     closed: Vec<(u64, Closed)>,
@@ -110,9 +112,12 @@ pub struct Workbench {
     /// `--theme`, which wins over `color_scheme` for this run.
     theme_override: Option<String>,
     theme_id: String,
+    /// The Increase Contrast the palette was made with.
+    contrast: bool,
     /// The command palette and quick open (`palette.rs`).
     pub(crate) command_palette: Entity<crate::palette::Palette>,
     _settings: gpui_kit::Subscription,
+    _contrast: gpui_kit::Subscription,
     /// Repositories and the Changes panel (`changes_panel`, `git_actions`).
     pub(crate) git: crate::changes_panel::GitPanel,
     /// Every language server's diagnostics (`problems_view`).
@@ -149,7 +154,9 @@ impl Workbench {
         // Once the window (and its dialog layer) exists: language servers if
         // the folder is trusted, otherwise ask.
         cx.defer_in(window, |workbench, window, cx| {
-            workbench.request_trust(workbench.active, window, cx)
+            workbench.request_trust(workbench.active, window, cx);
+            let theme = workbench.theme_id.clone();
+            workbench.report_theme_problem(&theme, window, cx);
         });
         workbench.start_task_monitor(window, cx);
         workbench.start_port_scan(window, cx);
@@ -172,12 +179,18 @@ impl Workbench {
             .clone()
             .unwrap_or_else(|| settings.color_scheme.clone());
         let theme = impulse_kit::theme::get_theme(&theme_id);
-        let palette = ChromePalette::new(&theme, false);
+        let contrast = crate::increase_contrast::get(cx);
+        let palette = ChromePalette::new(&theme, contrast);
         crate::kit_theme::apply(&theme, &palette, &settings, cx);
         let settings_subscription = cx
             .observe_global_in::<SettingsStore>(window, |workbench, window, cx| {
                 workbench.apply_settings(window, cx)
             });
+        let contrast_subscription = cx
+            .observe_global_in::<crate::increase_contrast::IncreaseContrast>(
+                window,
+                |workbench, window, cx| workbench.apply_settings(window, cx),
+            );
         let search =
             cx.new(|cx| crate::search_panel::SearchPanel::new(palette.clone(), window, cx));
         cx.subscribe_in(&search, window, |workbench, panel, event, window, cx| {
@@ -198,6 +211,7 @@ impl Workbench {
             tree_focus: cx.focus_handle(),
             tree_selection: None,
             tree_scroll: gpui_kit::ScrollHandle::new(),
+            dismissed_settings_warning: None,
             closed: Vec::new(),
             last_closed: None,
             lsp_progress: Vec::new(),
@@ -207,11 +221,13 @@ impl Workbench {
             pending_edits: Vec::new(),
             theme_override: args.theme.clone(),
             theme_id,
+            contrast,
             command_palette: {
                 let (workbench, colors) = (cx.weak_entity(), palette.clone());
                 cx.new(|cx| crate::palette::Palette::new(workbench, colors, window, cx))
             },
             _settings: settings_subscription,
+            _contrast: contrast_subscription,
             git: crate::changes_panel::GitPanel::new(window, cx),
             problems: cx.new(|_| Default::default()),
             editor_watch: crate::editor_watch::EditorWatch::new(),
@@ -273,6 +289,39 @@ impl Workbench {
         self.focused_surface().and_then(Surface::terminal)
     }
 
+    /// A theme file that doesn't load falls back to a built-in theme: say
+    /// which file and why rather than switching colors without a word, as
+    /// the Swift `reportThemeProblem` does.
+    fn report_theme_problem(
+        &mut self,
+        theme_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((path, message)) = impulse_kit::theme::load_problem(theme_id) else {
+            return;
+        };
+        let file = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let workbench = cx.entity().downgrade();
+        let open: crate::tasks::Run = Rc::new(move |window, cx| {
+            let _ = workbench.update(cx, |w, cx| w.open_file(&path, window, cx));
+        });
+        crate::toasts::show(
+            window,
+            cx,
+            crate::toasts::Toast::warning(message)
+                .title(format!(
+                    "Couldn't load the theme {file}; using {} instead",
+                    impulse_kit::theme::get_theme(theme_id).name
+                ))
+                .action("Open File", open)
+                .lifetime(Some(std::time::Duration::from_secs(15))),
+        );
+    }
+
     /// Settings changed: the theme, the editor's and terminals' fonts.
     fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = SettingsStore::get(cx).clone();
@@ -281,10 +330,15 @@ impl Workbench {
             .theme_override
             .clone()
             .unwrap_or_else(|| settings.color_scheme.clone());
-        if theme_id != self.theme_id {
+        let contrast = crate::increase_contrast::get(cx);
+        if theme_id != self.theme_id || contrast != self.contrast {
+            if theme_id != self.theme_id && window.is_window_active() {
+                self.report_theme_problem(&theme_id, window, cx);
+            }
             self.theme_id = theme_id.clone();
+            self.contrast = contrast;
             self.theme = impulse_kit::theme::get_theme(&theme_id);
-            self.palette = ChromePalette::new(&self.theme, false);
+            self.palette = ChromePalette::new(&self.theme, contrast);
             let palette = self.palette.clone();
             self.search
                 .update(cx, |search, cx| search.set_palette(palette, cx));
@@ -1549,6 +1603,7 @@ impl Render for Workbench {
             .text_color(crate::workbench_chrome::hsla(p.text))
             .child(crate::overlays::frame_start())
             .child(self.titlebar(window, cx))
+            .children(self.settings_banner(cx))
             .child(
                 div()
                     .flex()

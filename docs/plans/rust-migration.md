@@ -503,6 +503,11 @@ new --agent claude --brief -`), prefilled with who asked and the brief.*
   about an unsaved editor in Swift's words (Save & Close, Don't Save,
   Cancel); closing the window or quitting asks as a document does (Save,
   Cancel, Don't Save).
+  A settings.json that doesn't load shows Swift's banner under the
+  titlebar (Open Settings File, dismiss), gone once the file loads again;
+  a user theme that doesn't parse says so in a toast with Open File. The
+  chrome follows Increase Contrast: macOS's display option, or on Linux
+  GNOME's high-contrast setting, read with `gsettings`.
   Checkboxes are SwiftUI's untinted `.checkbox` (`ChromeCheckbox`: a
   16-point box in the system blue when on), not GPUI Kit's, which takes
   the theme's accent.

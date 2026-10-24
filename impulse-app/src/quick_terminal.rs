@@ -239,7 +239,7 @@ impl QuickTerminalView {
     ) -> Self {
         let settings = SettingsStore::get(cx).clone();
         let theme = impulse_kit::theme::get_theme(&settings.color_scheme);
-        let palette = ChromePalette::new(&theme, false);
+        let palette = ChromePalette::new(&theme, crate::increase_contrast::get(cx));
         // The shell exited (exit, Ctrl+D): start a fresh one rather than
         // show a dead terminal.
         let terminal = match existing.filter(|t| t.read(cx).exited.is_none()) {

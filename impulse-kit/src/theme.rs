@@ -731,6 +731,18 @@ pub fn get_theme(name: &str) -> ResolvedTheme {
     builtin_theme("nord").expect("Nord theme must always be available")
 }
 
+/// The user theme file for `name` and why it couldn't be used, when one
+/// exists and doesn't load (the theme then falls back to a built-in one),
+/// as the Swift `ThemeStore.loadProblem`.
+pub fn load_problem(name: &str) -> Option<(std::path::PathBuf, String)> {
+    let normalized = normalize_theme_id(name);
+    let (_, path) = discover_user_themes()
+        .into_iter()
+        .find(|(id, _)| *id == normalized)?;
+    let message = load_user_theme(&path).err()?;
+    Some((path, message))
+}
+
 /// Convert a theme ID like `"tokyo-night-storm"` to a display name like `"Tokyo Night Storm"`.
 pub fn theme_display_name(id: &str) -> String {
     match id {

@@ -7,13 +7,16 @@
 use std::time::Duration;
 
 use gpui_kit::{App, Global};
-use impulse_kit::settings::{SaveOutcome, Settings, SettingsFile};
+use impulse_kit::settings::{LoadWarning, SaveOutcome, Settings, SettingsFile};
 
 pub struct SettingsStore {
     pub settings: Settings,
     file: SettingsFile,
     /// The settings as the file last held them, for merging.
     base: Settings,
+    /// Counts the loads that failed, so a banner dismissed for one comes
+    /// back when the file breaks again.
+    warning_serial: u64,
 }
 
 impl Global for SettingsStore {}
@@ -33,10 +36,12 @@ impl SettingsStore {
                 warning.message
             );
         }
+        let warning_serial = u64::from(file.warning.is_some());
         cx.set_global(SettingsStore {
             base: settings.clone(),
             settings,
             file,
+            warning_serial,
         });
         cx.spawn(async move |cx| loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -53,14 +58,34 @@ impl SettingsStore {
         &cx.global::<SettingsStore>().settings
     }
 
+    /// Why settings.json didn't load, with the count of failed loads so
+    /// far, while it doesn't.
+    pub fn warning(cx: &App) -> Option<(u64, &LoadWarning)> {
+        let store = cx.global::<SettingsStore>();
+        store
+            .file
+            .warning
+            .as_ref()
+            .map(|warning| (store.warning_serial, warning))
+    }
+
     /// The file changed outside Impulse: take its settings, unless it no
-    /// longer parses (then keep what Impulse has).
+    /// longer parses (then keep what Impulse has and say so).
     fn reload(cx: &mut App) {
         let store = cx.global_mut::<SettingsStore>();
-        if let Some(settings) = store.file.load(true) {
-            store.base = settings.clone();
-            if settings != store.settings {
-                store.settings = settings;
+        let had_warning = store.file.warning.is_some();
+        match store.file.load(true) {
+            Some(settings) => {
+                store.base = settings.clone();
+                if settings != store.settings || had_warning {
+                    store.settings = settings;
+                    cx.refresh_windows();
+                }
+            }
+            None => {
+                if store.file.warning.is_some() {
+                    store.warning_serial += 1;
+                }
                 cx.refresh_windows();
             }
         }

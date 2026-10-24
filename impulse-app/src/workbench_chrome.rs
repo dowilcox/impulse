@@ -2045,6 +2045,125 @@ pub(crate) fn chrome_button(
         .child(div().whitespace_nowrap().child(title.into()))
 }
 
+/// Swift's `ChromeIconButton`: a 24-point square, the icon in the
+/// secondary text color, the hover tint and `help` as its tooltip; the
+/// caller adds its click.
+pub(crate) fn chrome_icon_button(
+    id: impl Into<gpui_kit::ElementId>,
+    icon_name: &str,
+    help: impl Into<gpui_kit::SharedString>,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let help = help.into();
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .size(px(24.))
+        .rounded(px(metrics::RADIUS_SMALL + 1.))
+        .cursor_pointer()
+        .hover(|s| s.bg(hsla(p.hover)))
+        .tooltip(move |window, cx| {
+            gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
+        })
+        .child(icon(icon_name, metrics::ICON, p.text_secondary))
+}
+
+/// The banner under the titlebar while settings.json doesn't load (Swift's
+/// `WorkbenchBanner`), until it loads again or is dismissed.
+impl Workbench {
+    pub(crate) fn settings_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let (serial, warning) = SettingsStore::warning(cx)?;
+        if self.dismissed_settings_warning == Some(serial) {
+            return None;
+        }
+        let p = &self.palette;
+        let mut detail = if warning.using_defaults {
+            "Using the default settings; changes aren't saved until the file is fixed.".to_string()
+        } else {
+            "Keeping the settings Impulse already had; changes aren't saved until the file is fixed."
+                .to_string()
+        };
+        if let Some(backup) = &warning.backup_path {
+            detail.push_str(&format!(
+                " A copy of the broken file is at {}.",
+                abbreviate_home(&backup.to_string_lossy())
+            ));
+        }
+        let message: gpui_kit::SharedString = warning.message.clone().into();
+        Some(
+            div()
+                .id("settings-banner")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(10.))
+                .px(px(12.))
+                .py(px(8.))
+                .bg(hsla(p.window))
+                .child(
+                    // The tint over the window's color, as SwiftUI lays it.
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(hsla(p.warning.opacity(0.12)))
+                        .border_b_1()
+                        .border_color(hsla(p.hairline)),
+                )
+                .relative()
+                .tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(message.clone()).build(window, cx)
+                })
+                .child(icon("triangle-alert", 14., p.warning))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(hsla(p.text))
+                                .child("Settings file could not be loaded"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(hsla(p.text_secondary))
+                                .line_clamp(2)
+                                .child(detail),
+                        ),
+                )
+                .child(
+                    chrome_button(
+                        "settings-banner-open",
+                        "Open Settings File",
+                        Some("external-link"),
+                        ButtonKind::Secondary,
+                        false,
+                        p,
+                    )
+                    .on_click(cx.listener(|w, _, window, cx| {
+                        w.run_command("open_settings_json", window, cx)
+                    })),
+                )
+                .child(
+                    chrome_icon_button("settings-banner-dismiss", "x", "Dismiss", p).on_click(
+                        cx.listener(move |w, _, _, cx| {
+                            w.dismissed_settings_warning = Some(serial);
+                            cx.notify();
+                        }),
+                    ),
+                ),
+        )
+    }
+}
+
 /// SwiftUI's `.checkbox` toggle (an `NSButton` checkbox): a 16-point box,
 /// rounded 4, in the system blue with a white check when on (the sheets
 /// don't tint it), its label (12, or as `label_style` says) 6.5 after.
