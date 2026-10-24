@@ -59,15 +59,30 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           glob, close risk, shell parser, themes, file URIs
                           and language ids revived from v0.29.0;
                           ChromePalette, TextFile, WorkspaceTrust, AppPaths,
-                          Settings + SettingsCatalog (settings.json) and
-                          Monaco's line commands ported; tested against
-                          the shared golden fixtures
+                          Settings + SettingsCatalog (settings.json),
+                          keybindings (Mac and Linux defaults), KeyEncoder
+                          (key_encoder), Monaco's line commands, LayoutTree,
+                          palette + fuzzy matching, file tree patches,
+                          previews (comrak), Monaco/Markdown theme colors,
+                          problems, review comments, update checker, shell
+                          (types, quoting, login shell, integration),
+                          completion, command history (SQLite), kitty
+                          keyboard, terminal hints/paths/find and
+                          ChildProcess ported; tested against the shared
+                          golden fixtures
+impulse-protocol/         Rust (rust branch): ImpulseProtocol: control-socket
+                          messages (byte-compatible with the Swift app), the
+                          socket client, the MCP server and tool catalog,
+                          and the agents' tool answers (TaskListing, …)
+impulse-cli/              Rust (rust branch): the `impulse` command-line tool
 impulse-lsp/              Rust (rust branch): the language-server client
                           (no UI, any executor), LSPConfig (lsp.json, root
                           detection), TextEditApplier and WorkspaceEdit; its
                           e2e test runs rust-analyzer when installed
 impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
-                          macOS and Linux: workbench chrome, live terminal,
+                          macOS and Linux: workbench chrome, the terminal
+                          (its own painted grid, keys, input methods,
+                          selection, mouse reporting),
                           settings.json (SettingsStore, watched and merged),
                           editor tabs (GPUI Kit's Editor, themed, file tree,
                           save, Monaco's keys), workspace trust, language
@@ -89,7 +104,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-lsp` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-lsp`, `impulse-protocol`, `impulse-cli` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 
@@ -126,6 +141,7 @@ cargo build -p impulse-ffi           # staticlib the Swift app links
 cargo test -p impulse-terminal       # block/OSC/history tests
 cargo test -p impulse-kit            # rust branch: ported logic vs the golden fixtures
 cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
+cargo test -p impulse-protocol -p impulse-cli   # rust branch: control protocol, MCP, CLI
 cargo run -p impulse-app -- --cwd <folder> --open <file>   # rust branch: the GPUI app
 cargo fmt && cargo clippy
 
