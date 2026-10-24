@@ -245,6 +245,8 @@ struct Row {
     id: String,
     /// A lucide icon name.
     icon: Option<&'static str>,
+    /// A file's own (material) icon, in place of `icon`.
+    image: Option<String>,
     title: String,
     /// Byte offsets in `title` to emphasize (fuzzy match positions).
     highlights: Vec<usize>,
@@ -263,6 +265,7 @@ impl Row {
         Row {
             id: id.into(),
             icon,
+            image: None,
             title: title.into(),
             highlights: Vec::new(),
             subtitle: None,
@@ -273,6 +276,11 @@ impl Row {
 
     fn highlights(mut self, positions: Vec<usize>) -> Self {
         self.highlights = positions;
+        self
+    }
+
+    fn image(mut self, path: String) -> Self {
+        self.image = Some(path);
         self
     }
 
@@ -1538,7 +1546,12 @@ impl Palette {
                             .items_center()
                             .justify_center()
                             .size(px(18.))
-                            .children(row.icon.map(|name| icon(name, 15., p.text_secondary))),
+                            .map(|d| match &row.image {
+                                Some(path) => d.child(gpui_kit::img(path.clone()).size(px(15.))),
+                                None => d.children(
+                                    row.icon.map(|name| icon(name, 15., p.text_secondary)),
+                                ),
+                            }),
                     )
                     .child(
                         div()
@@ -1721,12 +1734,14 @@ fn file_row(path: &Path, root: &str, positions: &[usize]) -> Row {
         .map(|p| p - name_start)
         .collect();
     let path = path.to_path_buf();
+    let image = crate::file_icons::icon_path(&name, false, false);
     Row::new(
         format!("file:{absolute}"),
         Some("file"),
         name,
         move |w, window, cx| w.palette_open_file(&path, None, None, window, cx),
     )
+    .image(image)
     .highlights(highlights)
     .subtitle(Some(dir))
 }
