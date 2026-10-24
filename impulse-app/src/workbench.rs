@@ -384,6 +384,18 @@ impl Workbench {
                 }
                 TerminalViewEvent::RunCommand(id) => workbench.run_command(id, window, cx),
                 TerminalViewEvent::Notice(notice) => workbench.set_notice(notice.clone(), cx),
+                // Where the next launch starts (Swift's lastDirectory): the
+                // terminal in front, not one cd-ing in the background.
+                TerminalViewEvent::DirectoryChanged(dir) => {
+                    let in_front = matches!(
+                        workbench.focused_surface(),
+                        Some(Surface::Terminal(t)) if t == terminal
+                    );
+                    if in_front && SettingsStore::get(cx).last_directory != *dir {
+                        let dir = dir.clone();
+                        SettingsStore::update(cx, |s| s.last_directory = dir);
+                    }
+                }
                 _ => {}
             },
         )

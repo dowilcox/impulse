@@ -398,6 +398,8 @@ pub enum TerminalViewEvent {
     Notice(String),
     /// A command finished, with its exit status when the shell said.
     CommandEnded(Option<i32>),
+    /// The shell's directory changed (OSC 7).
+    DirectoryChanged(String),
 }
 
 impl gpui_kit::EventEmitter<TerminalViewEvent> for TerminalView {}
@@ -695,8 +697,9 @@ impl TerminalView {
             match event {
                 TerminalEvent::CwdChanged(path) => {
                     if path != self.cwd {
-                        self.cwd = path;
+                        self.cwd = path.clone();
                         self.refresh_branch(cx);
+                        cx.emit(TerminalViewEvent::DirectoryChanged(path));
                     }
                 }
                 TerminalEvent::PromptStart => {
