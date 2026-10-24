@@ -1137,19 +1137,79 @@ impl TerminalView {
         }
     }
 
+    /// Paste text (its trailing line breaks dropped), else an image saved
+    /// as a temporary file, else copied files: their paths. An image's path
+    /// goes as it is, inside a bracketed paste, which is how TUI agents
+    /// (Claude Code) recognize an attached image.
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-            // The bar owns input: what's pasted belongs in it. In the
-            // shell's line it would sit unseen and run with the next command.
-            if self.bar_shown(cx) {
-                return self.insert_into_bar(&text, window, cx);
-            }
-            let bracketed = self.backend.mode().contains(TerminalMode::BRACKETED_PASTE);
-            self.backend
-                .write(&key_encoder::paste_bytes(&text, bracketed));
-            self.typed();
-            cx.notify();
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let payload = match item.text() {
+            Some(text) => text.trim_end_matches(['\n', '\r']).to_string(),
+            None => match item.entries().first() {
+                Some(gpui_kit::ClipboardEntry::Image(image)) => {
+                    let millis = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0);
+                    let path = std::env::temp_dir().join(format!(
+                        "impulse-clipboard-{millis}.{}",
+                        image.format.extension()
+                    ));
+                    if let Err(error) =
+                        impulse_kit::settings::write_private_file(&path, &image.bytes)
+                    {
+                        log::error!("couldn't save the clipboard's image: {error}");
+                        return;
+                    }
+                    path.to_string_lossy().into_owned()
+                }
+                Some(gpui_kit::ClipboardEntry::ExternalPaths(paths)) => {
+                    self.quoted_paths(paths.paths())
+                }
+                _ => return,
+            },
+        };
+        if !payload.is_empty() {
+            self.paste_payload(&payload, window, cx);
         }
+    }
+
+    /// Paths for the shell's line, quoted for this terminal's shell, with a
+    /// space after (files dropped on the terminal, or copied ones pasted).
+    fn quoted_paths(&self, paths: &[std::path::PathBuf]) -> String {
+        let quoted: Vec<String> = paths
+            .iter()
+            .map(|p| impulse_kit::shell::quoting::escaped(&p.to_string_lossy(), self.shell))
+            .collect();
+        format!("{} ", quoted.join(" "))
+    }
+
+    /// Text pasted or dropped: into the bar when it owns input (in the
+    /// shell's line it would sit unseen and run with the next command),
+    /// else to the program, bracketed when it asked for that.
+    fn paste_payload(&mut self, payload: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.bar_shown(cx) {
+            return self.insert_into_bar(payload, window, cx);
+        }
+        let bracketed = self.backend.mode().contains(TerminalMode::BRACKETED_PASTE);
+        self.backend
+            .write(&key_encoder::paste_bytes(payload, bracketed));
+        self.typed();
+        cx.notify();
+    }
+
+    /// Files dropped on the terminal: their quoted paths, as typed.
+    fn drop_paths(
+        &mut self,
+        paths: &gpui_kit::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let payload = self.quoted_paths(paths.paths());
+        self.paste_payload(&payload, window, cx);
+        self.focus(window, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -2276,6 +2336,7 @@ impl Render for TerminalView {
             .flex_col()
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste))
+            .on_drop(cx.listener(Self::drop_paths))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear))
             .on_action(cx.listener(Self::page_up))

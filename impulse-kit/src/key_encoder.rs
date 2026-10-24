@@ -166,15 +166,28 @@ pub fn encode(press: &KeyPress, app_cursor: bool, alt_is_meta: bool) -> Option<V
     Some(bytes)
 }
 
+/// Text with no control characters but tab and line ends (the Swift
+/// `withoutControlCharacters`): the line editor would act on them as keys
+/// (^U clears what's typed, ESC starts a sequence).
+pub fn without_control_characters(text: &str) -> String {
+    text.chars()
+        .filter(|c| matches!(c, '\t' | '\n' | '\r') || !c.is_control())
+        .collect()
+}
+
 /// Text for the terminal from text input (typing, an input method, a
-/// paste): `\n` becomes `\r` as a typed Return would send; a paste is
-/// wrapped in bracketed-paste marks when the program asked for them, with
-/// any end mark inside it removed so it can't end the paste early.
+/// paste): control characters but tab and line ends are dropped, `\n`
+/// becomes `\r` as a typed Return would send, and a paste is wrapped in
+/// bracketed-paste marks when the program asked for them. With no ESC left
+/// inside, nothing in a poisoned clipboard can end the paste early and run
+/// what follows (removing only the end mark isn't enough: "ESC[20" +
+/// "ESC[201~" + "1~" rejoins into one).
 pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
-    let text = text.replace("\r\n", "\r").replace('\n', "\r");
+    let text = without_control_characters(text)
+        .replace("\r\n", "\r")
+        .replace('\n', "\r");
     if bracketed {
-        let inner = text.replace("\x1b[201~", "");
-        format!("\x1b[200~{inner}\x1b[201~").into_bytes()
+        format!("\x1b[200~{text}\x1b[201~").into_bytes()
     } else {
         text.into_bytes()
     }
@@ -183,6 +196,16 @@ pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pastes_carry_no_control_characters() {
+        let poisoned = "ls\x1b[20\x1b[201~1~; echo pwned\x15\x03\n";
+        let bracketed = String::from_utf8(paste_bytes(poisoned, true)).unwrap();
+        assert_eq!(bracketed, "\x1b[200~ls[20[201~1~; echo pwned\r\x1b[201~");
+        assert_eq!(bracketed.matches('\x1b').count(), 2);
+        let plain = String::from_utf8(paste_bytes("a\tb\x1bc\u{9b}d\r\n", false)).unwrap();
+        assert_eq!(plain, "a\tbcd\r");
+    }
 
     fn key(key: &str) -> KeyPress<'_> {
         KeyPress {
@@ -347,7 +370,7 @@ mod tests {
         assert_eq!(paste_bytes("a\nb", false), b"a\rb".to_vec());
         assert_eq!(
             paste_bytes("x\x1b[201~y", true),
-            b"\x1b[200~xy\x1b[201~".to_vec()
+            b"\x1b[200~x[201~y\x1b[201~".to_vec()
         );
     }
 }
