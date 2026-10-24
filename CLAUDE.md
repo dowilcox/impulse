@@ -74,7 +74,10 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           worktree tasks, commit graph, git helpers, agent
                           state machine, hook events + installers, MCP
                           installer, JSONC edits and task policy/briefs
-                          ported; tested against the shared
+                          ported; Vim mode's state machine (vim/: modes,
+                          counts, motions, operators, text objects,
+                          registers, `.`, search, `:` commands); tested
+                          against the shared
                           golden fixtures
 impulse-git/              Rust (rust branch): ImpulseGit: libgit2 (git2,
                           vendored 1.9.7, no network transports) for reads,
@@ -241,7 +244,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           the Diff View: HEAD read-only beside the buffer,
                           lines marked by impulse_git::buffer_diff,
                           signature help over the caret with
-                          impulse_lsp::signature), workspace trust, language
+                          impulse_lsp::signature; Vim mode in
+                          editor_vim.rs over impulse_kit::vim, its keys
+                          taken ahead of GPUI Kit's in the VimNormal
+                          context, the mode in the status bar), workspace trust, language
                           servers (code actions, formatting, rename and
                           references with edits across files);
                           scripts/spike/linux-shot.sh screenshots it on Linux

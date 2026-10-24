@@ -814,6 +814,12 @@ impl Workbench {
                 let editor = editor.read(cx);
                 let (line, column) = editor.cursor(cx);
                 [
+                    editor.vim_status(cx).map(|status| {
+                        div()
+                            .font_family("JetBrains Mono")
+                            .child(status)
+                            .into_any_element()
+                    }),
                     editor.notice.clone().map(|n| {
                         div()
                             .text_color(hsla(p.warning))

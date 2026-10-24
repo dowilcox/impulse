@@ -55,3 +55,4 @@ pub mod theme;
 pub mod trust;
 pub mod update_checker;
 pub mod uri;
+pub mod vim;

@@ -108,7 +108,7 @@ for:
 | LSP: signature help, inlay hints | no | signature help **done** (on `(` and `,`, following the active parameter, Escape or `)` to close, `impulse_lsp::signature`); inlay hints need text injected into the editor's line layout, which GPUI Kit's editor doesn't have (only one ghost-text completion at the caret), so they wait on a change upstream or in a fork |
 | Peek views (definition, references, git peek), view zones | no | build on its decorations and overlay hooks |
 | Diff editor (side by side and inline) | diff component exists | **done** side by side (Toggle Diff View: HEAD read-only beside the live buffer, changed lines tinted); not yet padded to line up, no inline mode |
-| Vim mode (monaco-vim) | no | port: a modal layer over the editor's actions |
+| Vim mode (monaco-vim) | no | **done**: `impulse_kit::vim`, a state machine on plain text (Normal, Insert, Visual, Visual Line and Replace; counts, motions, `d c y > < gu gU g~` with motions and text objects, registers with `+`/`*` as the clipboard, `.`, `/ ? n N * #`, `:w :q :wq :x :{line} :s :d :y :noh`), over the editor in `editor_vim.rs`; the mode in the status bar, an inverted character as the block cursor; not yet macros, marks, Visual Block or incremental search |
 | Sticky scroll, minimap, bracket pair colors | no | sticky scroll and bracket colors first; minimap last |
 | Context menu with Impulse's items | menus yes | **done**: Monaco's items (navigation, rename, Change All Occurrences, format, code actions, clipboard, Command Palette) |
 | Save pipeline and files changed on disk | n/a (ours) | **done**: a "changed on disk" question (Save Anyway, Reload from Disk), formatter and commands on save in trusted folders, their results adopted as one edit; open files' folders watched, clean editors reloading what agents and git write |
@@ -202,11 +202,11 @@ The shipped Swift app keeps working through every phase.
    definition, code actions, Format Document, rename, references), edits
    across files with the Swift app's confirmation rules, and Monaco's keymap.
    Since: occurrence highlights, Go to Type Definition, Implementations and
-   Declaration, Monaco's context menu, the Diff View and signature help.
-   Since then too: Undo for a whole edit across files (a toast, as in
-   Swift), `workspace/applyEdit` from servers, and the Swift client's
-   capabilities (resource operations, so rust-analyzer renames a module's
-   file). Next: peek views and Vim mode. Exit:
+   Declaration, Monaco's context menu, the Diff View, signature help and
+   Vim mode. Since then too: Undo for a whole edit across files (a toast,
+   as in Swift), `workspace/applyEdit` from servers, and the Swift
+   client's capabilities (resource operations, so rust-analyzer renames a
+   module's file). Next: peek views. Exit:
    daily-drivable on a real project, on both platforms.
 2. **Logic crates, with parity** (done). Port ImpulseKit, ImpulseGit, ImpulseLSP and
    ImpulseProtocol: revive the `v0.29.0` Rust where it exists, pass the golden
@@ -452,8 +452,8 @@ Known issues:
 
 ## Risks
 
-- **The editor gap** (table above): peek views, the diff editor and Vim mode
-  are ours to build.
+- **The editor gap** (table above): peek views and the diff editor are
+  ours to build.
 - **Two young dependencies**: GPUI is pre-1.0 and GPUI Kit pins its own GPUI
   snapshots. Exact pins plus `impulse-ui` contain the churn; the fallback for
   either is the code itself (both are open source).

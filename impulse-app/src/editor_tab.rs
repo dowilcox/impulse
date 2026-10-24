@@ -87,6 +87,8 @@ pub struct EditorTab {
     _signature_request: Option<gpui_kit::Task<()>>,
     /// The selection the marks were worked out for.
     marked_at: Option<std::ops::Range<usize>>,
+    /// Vim mode, with `editor_vim_mode` on (`editor_vim`).
+    pub(crate) vim: Option<crate::editor_vim::Attached>,
     _marking: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
     _observe_state: Subscription,
@@ -167,6 +169,7 @@ impl EditorTab {
             }
         });
         let observe_state = cx.observe(&state, |tab, _, cx| tab.selection_moved(cx));
+        let vim = crate::editor_vim::Attached::new(settings.editor_vim_mode, &state, cx);
         Self {
             title: path
                 .file_name()
@@ -198,6 +201,7 @@ impl EditorTab {
             signature: None,
             _signature_request: None,
             marked_at: None,
+            vim,
             _marking: None,
             _subscription: subscription,
             _observe_state: observe_state,
@@ -227,6 +231,12 @@ impl EditorTab {
             state.set_show_whitespaces(settings.render_whitespace == "all", window, cx);
             state.set_tab_size(tab, cx);
         });
+        crate::editor_vim::Attached::update(
+            &mut self.vim,
+            settings.editor_vim_mode,
+            &self.state,
+            cx,
+        );
         cx.notify();
     }
 
@@ -1152,6 +1162,7 @@ impl Render for EditorTab {
             self.primary_link().is_some(),
             !self.read_only,
         ));
+        let editor = crate::editor_vim::wrap(self.vim.as_ref(), editor, cx);
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()
