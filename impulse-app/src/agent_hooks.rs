@@ -343,7 +343,7 @@ fn dependency_change(cwd: &str) -> Option<(String, Vec<String>)> {
 
 /// A task with `branch` checked out, still moving: what to ask before
 /// merging it (`agents`: the busy agents in it).
-fn merge_question(
+pub(crate) fn merge_question(
     branch: &str,
     path: &str,
     commit: &str,
@@ -852,17 +852,17 @@ fn apply_hook(request: &ControlRequest, terminal: &Entity<TerminalView>, cx: &mu
 }
 
 /// A task branch a command would merge.
-struct MergeCandidate {
-    branch: String,
-    path: String,
-    commit: String,
-    uncommitted: usize,
-    last_commit: Option<SystemTime>,
+pub(crate) struct MergeCandidate {
+    pub branch: String,
+    pub path: String,
+    pub commit: String,
+    pub uncommitted: usize,
+    pub last_commit: Option<SystemTime>,
 }
 
 /// The tasks (other than the caller's) whose branches `refs` name, with
 /// what they have in progress. Off the main thread.
-fn merge_candidates(refs: &[String], cwd: &str) -> Vec<MergeCandidate> {
+pub(crate) fn merge_candidates(refs: &[String], cwd: &str) -> Vec<MergeCandidate> {
     let Some(root) = repo_root(cwd) else {
         return Vec::new();
     };

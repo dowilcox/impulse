@@ -451,6 +451,17 @@ impl ReviewView {
         let settings = crate::settings_store::SettingsStore::get(cx);
         self.font_family = crate::fonts::family(&settings.font_family);
         self.font_size = (settings.font_size as f32 * 6.0 / 7.0).round().max(8.0);
+        // A new `review_context_lines`, unless this review was given its own.
+        let context = settings.review_context_lines as i32;
+        if context != self.default_context {
+            if self.options.context_lines == self.default_context {
+                self.options.context_lines = context;
+                self.default_context = context;
+                self.refresh(cx);
+            } else {
+                self.default_context = context;
+            }
+        }
         cx.notify();
     }
 
@@ -521,9 +532,13 @@ impl ReviewView {
     /// The live scopes read again in the background once the repository
     /// changed; fixed ones (a commit) never change.
     fn refresh_if_stale(&mut self, cx: &mut Context<Self>) {
+        // "Last commit" follows HEAD as it moves.
+        let follows_head = matches!(&self.scope, DiffScope::Commit { sha } if sha == "HEAD");
         if self.stale
             && !self.loading
-            && (self.scope.includes_working_tree() || self.scope.supports_staging())
+            && (self.scope.includes_working_tree()
+                || self.scope.supports_staging()
+                || follows_head)
         {
             self.stale = false;
             self.refresh_quietly(cx);
@@ -1438,6 +1453,8 @@ impl ReviewView {
                         // Swift's ChromeButton: secondary (raised, bordered) for
                         // the main action, ghost for the others.
                         .text_color(hsla(p.text))
+                        // Revert is Swift's danger kind: red.
+                        .when(id.starts_with("revert"), |d| d.text_color(hsla(p.danger)))
                         .when(primary, |d| {
                             d.bg(hsla(p.raised))
                                 .border_1()
@@ -1556,10 +1573,7 @@ impl ReviewView {
         let viewed = file.viewed;
         let expanded = file.expanded;
         let can_edit_diff = stage && file.change.status != ChangeStatus::Deleted;
-        let full_path = PathBuf::from(&self.root)
-            .join(&file.change.path)
-            .to_string_lossy()
-            .into_owned();
+        let relative_path = file.change.path.clone();
         let view = cx.entity().downgrade();
         let plain = |id: &'static str, label: &'static str| {
             div()
@@ -1588,6 +1602,7 @@ impl ReviewView {
                 // Swift's ChromeButton: secondary for the main action, ghost
                 // for the others.
                 .text_color(hsla(p.text))
+                .when(id.starts_with("revert"), |d| d.text_color(hsla(p.danger)))
                 .when(primary, |d| {
                     d.bg(hsla(p.raised))
                         .border_1()
@@ -1745,7 +1760,8 @@ impl ReviewView {
                         },
                     )
                 };
-                let copied = full_path.clone();
+                // The repository-relative path, as Swift's review copies it.
+                let copied = relative_path.clone();
                 let mut menu = menu
                     .item(item(
                         "Copy Path",

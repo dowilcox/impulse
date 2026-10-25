@@ -215,6 +215,12 @@ impl RepositoryState {
         }));
     }
 
+    /// A fetch the user asked for: the background fetch waits its full
+    /// interval again.
+    pub fn fetched(&mut self) {
+        self.last_fetch = Some(std::time::Instant::now());
+    }
+
     /// Run a git operation off the main thread (one at a time per
     /// repository), with a safety snapshot first when `snapshot_reason` is
     /// given, then refresh. With `require_snapshot` the operation doesn't

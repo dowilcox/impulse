@@ -135,7 +135,15 @@ sticky scroll copies out only the lines it looks at; Vim copies the
 document once per key, not three times; word suggestions copy ropes;
 hovers reuse the terminal's cached grid). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
-(refreshes take the repository's operation lock).
+(refreshes take the repository's operation lock), G8 (merging a task's
+branch that's still moving asks first and merges the commit it has, as
+Swift's `TaskActivity`), G9 (a stash opens in Review from its row) and
+G10 (a partly aborted operation is a warning that stays; commit messages
+are kept between launches in `commit-messages.json`; a file's History
+shows that file in each commit; Review follows `review_context_lines`
+and "Last commit" follows HEAD; a manual fetch restarts the background
+fetch's interval; merging a commit shows its short SHA; Review's Copy
+Path copies the repository-relative path; Revert buttons are red).
 
 ## What to fix first
 

@@ -629,8 +629,17 @@ impl HistoryView {
     fn show_commit(&mut self, sha: String, cx: &mut Context<Self>) {
         self.selected = Some(sha.clone());
         self.expanded = false;
+        // A file's history shows that file in each commit (Swift's
+        // `focusPath`).
+        let focus = self
+            .path
+            .as_ref()
+            .map(|path| std::path::Path::new(&self.root).join(path));
         self.review.update(cx, |review, cx| {
-            review.set_scope(DiffScope::Commit { sha: sha.clone() }, cx)
+            review.set_scope(DiffScope::Commit { sha: sha.clone() }, cx);
+            if let Some(path) = &focus {
+                review.reveal_path(path, cx);
+            }
         });
         let root = self.root.clone();
         let task = cx.background_spawn(async move { impulse_git::log::details(&root, &sha) });

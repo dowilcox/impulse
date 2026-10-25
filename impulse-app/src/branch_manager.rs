@@ -457,11 +457,96 @@ impl Workbench {
         });
     }
 
-    /// Merge `revision` into the current branch, with Undo.
+    /// Merge `revision` into the current branch, with Undo. A task's
+    /// branch that's still moving (an agent busy there, files not committed)
+    /// asks first, and merges the commit it has now (Swift's
+    /// `TaskActivity`).
     pub(crate) fn git_merge(
         &mut self,
         repo: &Entity<RepositoryState>,
         revision: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let root = repo.read(cx).root.clone();
+        let wanted = vec![revision.clone()];
+        let find = cx.background_spawn(async move {
+            crate::agent_hooks::merge_candidates(&wanted, &root)
+                .into_iter()
+                .next()
+        });
+        let repo = repo.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let candidate = find.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(task) = candidate else {
+                    return this.merge_now(&repo, revision, window, cx);
+                };
+                let agents: Vec<_> = crate::agent_hooks::agents_in_folder(&task.path, cx)
+                    .into_iter()
+                    .filter(|(_, s)| {
+                        matches!(
+                            s,
+                            impulse_kit::agents::state_machine::AgentState::Working
+                                | impulse_kit::agents::state_machine::AgentState::NeedsInput
+                        )
+                    })
+                    .collect();
+                let Some(question) = crate::agent_hooks::merge_question(
+                    &task.branch,
+                    &task.path,
+                    &task.commit,
+                    task.uncommitted,
+                    task.last_commit,
+                    &agents,
+                ) else {
+                    return this.merge_now(&repo, revision, window, cx);
+                };
+                let title = format!("{} is still being worked on", task.branch);
+                let message = question
+                    .strip_prefix(&format!("{title}: "))
+                    .unwrap_or(&question)
+                    .to_string();
+                let short: String = task.commit.chars().take(7).collect();
+                let workbench = cx.entity().downgrade();
+                let (commit, label) = (task.commit.clone(), format!("{revision} at {short}"));
+                crate::alert::Alert::new(title)
+                    .message(message)
+                    .button(format!("Merge {short}"), move |window, cx| {
+                        window.close_dialog(cx);
+                        let _ = workbench.update(cx, |w, cx| {
+                            w.merge_now_labelled(&repo, commit.clone(), label.clone(), window, cx)
+                        });
+                    })
+                    .button("Cancel", |window, cx| window.close_dialog(cx))
+                    .show(window, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn merge_now(
+        &mut self,
+        repo: &Entity<RepositoryState>,
+        revision: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // A commit reads by its short SHA, as Swift labels it.
+        let is_sha = revision.len() >= 40 && revision.chars().all(|c| c.is_ascii_hexdigit());
+        let label = if is_sha {
+            revision.chars().take(7).collect()
+        } else {
+            revision.clone()
+        };
+        self.merge_now_labelled(repo, revision, label, window, cx)
+    }
+
+    fn merge_now_labelled(
+        &mut self,
+        repo: &Entity<RepositoryState>,
+        revision: String,
+        label: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -473,9 +558,9 @@ impl Workbench {
             .unwrap_or_else(|| "HEAD".into());
         self.git_move_head(
             repo,
-            revision.clone(),
-            format!("Merging {revision}…"),
-            format!("merge {revision}"),
+            label.clone(),
+            format!("Merging {label}…"),
+            format!("merge {label}"),
             move |root| operations::merge(&revision, false, root),
             (
                 format!("Merged {{}} into {into}"),

@@ -161,16 +161,28 @@ impl Workbench {
         cx: &mut Context<Self>,
         action: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
     ) {
+        let note = match detail {
+            Some(detail) => Toast::success(detail).title(message),
+            None => Toast::success(message),
+        };
+        self.note_with_action(note, action_title, window, cx, action);
+    }
+
+    /// `note` with a button that runs `action` on the workbench.
+    pub(crate) fn note_with_action(
+        &mut self,
+        note: Toast,
+        action_title: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
+    ) {
         let action: Then = Rc::new(action);
         let workbench = cx.entity().downgrade();
         let run: crate::tasks::Run = Rc::new(move |window, cx| {
             let action = action.clone();
             let _ = workbench.update(cx, |workbench, cx| action(workbench, window, cx));
         });
-        let note = match detail {
-            Some(detail) => Toast::success(detail).title(message),
-            None => Toast::success(message),
-        };
         crate::toasts::show(window, cx, note.action(action_title, run));
     }
 
@@ -776,17 +788,20 @@ impl Workbench {
                     }
                     _ => None,
                 };
+                // Only partly aborted: a warning that stays up (Swift's).
+                let partly = aborted.problem.is_some();
+                let note = match (detail, partly) {
+                    (Some(detail), true) => Toast::warning(detail).title(message).lifetime(None),
+                    (None, true) => Toast::warning(message).lifetime(None),
+                    (Some(detail), false) => Toast::success(detail).title(message),
+                    (None, false) => Toast::success(message),
+                };
                 if aborted.undo.is_none() {
-                    let note = match detail {
-                        Some(detail) => Toast::success(detail).title(message),
-                        None => Toast::success(message),
-                    };
                     return this.toast(note, window, cx);
                 }
                 let repo = repo_for_undo.clone();
-                this.toast_with_action(
-                    message,
-                    detail,
+                this.note_with_action(
+                    note,
                     "Undo",
                     window,
                     cx,
@@ -1045,6 +1060,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        repo.update(cx, |repo, _| repo.fetched());
         let before = repo
             .read(cx)
             .snapshot

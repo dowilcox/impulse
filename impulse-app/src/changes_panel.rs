@@ -138,7 +138,7 @@ pub(crate) struct GitPanel {
     /// The repository root and stash count the list was read for.
     stashes_for: Option<(String, usize)>,
     /// Recently used commit messages per repository, newest first (↑ in an
-    /// empty composer), for this session.
+    /// empty composer), kept between launches.
     history: HashMap<String, Vec<String>>,
     history_index: Option<usize>,
     recalled: String,
@@ -184,7 +184,7 @@ impl GitPanel {
             stashes_expanded: false,
             stashes: Vec::new(),
             stashes_for: None,
-            history: HashMap::new(),
+            history: load_messages(),
             history_index: None,
             recalled: String::new(),
             selection: None,
@@ -204,6 +204,7 @@ impl GitPanel {
         list.retain(|m| m != trimmed);
         list.insert(0, trimmed.to_string());
         list.truncate(25);
+        save_messages(&self.history);
     }
 
     /// The status letter and color of a path in the file tree.
@@ -253,6 +254,28 @@ fn branch_label(snapshot: Option<&RepoSnapshot>) -> String {
 }
 
 type Act = Rc<dyn Fn(&mut Workbench, &mut Window, &mut Context<Workbench>)>;
+
+/// Recent commit messages per repository, kept between launches (Swift's
+/// `CommitMessageHistory`): `commit-messages.json` in the data directory.
+fn messages_file() -> std::path::PathBuf {
+    impulse_kit::paths::data_dir(cfg!(debug_assertions)).join("commit-messages.json")
+}
+
+fn load_messages() -> HashMap<String, Vec<String>> {
+    std::fs::read(messages_file())
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default()
+}
+
+fn save_messages(history: &HashMap<String, Vec<String>>) {
+    if std::env::var_os("IMPULSE_NO_PERSISTENCE").is_some() {
+        return;
+    }
+    if let Ok(data) = serde_json::to_vec_pretty(history) {
+        let _ = impulse_kit::settings::write_private_file(&messages_file(), &data);
+    }
+}
 
 /// A menu item that runs `act` on the workbench.
 fn menu_item(
@@ -1705,11 +1728,15 @@ impl Workbench {
                 move |wb, window, cx| wb.git_drop_stash(&r3, index, Some(c3.clone()), window, cx),
             ),
         ];
+        // A click shows the stash in Review (its changes against where it
+        // was made).
+        let root = repo.read(cx).root.clone();
         div()
             .flex_none()
             .px(px(6.))
             .child(
                 div()
+                    .id(SharedString::from(format!("stash-row-{index}")))
                     .group(group.clone())
                     .relative()
                     .flex()
@@ -1719,7 +1746,16 @@ impl Workbench {
                     .pl(px(8.))
                     .pr(px(4.))
                     .rounded(px(metrics::RADIUS_SMALL + 1.))
+                    .cursor_pointer()
                     .hover(|s| s.bg(hsla(p.hover)))
+                    .on_click(cx.listener(move |wb, _, window, cx| {
+                        wb.open_review_of(
+                            root.clone(),
+                            Some(impulse_git::types::DiffScope::Stash { index }),
+                            window,
+                            cx,
+                        )
+                    }))
                     .child(icon("package", 12., p.text_tertiary))
                     .child(
                         div()
