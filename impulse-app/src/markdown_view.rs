@@ -7,7 +7,11 @@
 //! `run_button_script` adds. Web and mail links open in the browser,
 //! links to files open in the editor and `#anchors` scroll to the heading.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::highlighter::SyntaxHighlighter;
@@ -418,6 +422,14 @@ fn grammar(language: &str) -> &str {
     }
 }
 
+type BlockStyles = Rc<Vec<(std::ops::Range<usize>, Option<gpui_kit::Hsla>, bool)>>;
+
+thread_local! {
+    /// Highlighted code blocks by grammar, theme and text.
+    static HIGHLIGHTS: RefCell<HashMap<(String, usize, SharedString), BlockStyles>> =
+        RefCell::default();
+}
+
 fn code_block(
     language: &str,
     text: &str,
@@ -451,10 +463,37 @@ fn code_block(
     };
     let grammar = grammar(language);
     if let (Some(theme), false) = (theme, grammar.is_empty() || text.len() > 200_000) {
-        let mut highlighter = SyntaxHighlighter::new(grammar);
-        highlighter.update(None, &Rope::from(text), None);
+        // Highlighting compiles the grammar's queries and parses the
+        // block: done once per block text and theme, not every frame.
+        let key = (
+            grammar.to_string(),
+            Arc::as_ptr(&theme) as usize,
+            SharedString::from(text.to_string()),
+        );
+        let styles = HIGHLIGHTS.with(|cache| cache.borrow().get(&key).cloned());
+        let styles = styles.unwrap_or_else(|| {
+            let mut highlighter = SyntaxHighlighter::new(grammar);
+            highlighter.update(None, &Rope::from(text), None);
+            let styles: Rc<Vec<_>> = Rc::new(
+                highlighter
+                    .styles(&(0..text.len()), &*theme)
+                    .into_iter()
+                    .map(|(range, style)| {
+                        (range, style.color, style.font_style == Some(FontStyle::Italic))
+                    })
+                    .collect(),
+            );
+            HIGHLIGHTS.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                if cache.len() >= 256 {
+                    cache.clear();
+                }
+                cache.insert(key, styles.clone());
+            });
+            styles
+        });
         let mut at = 0;
-        for (range, style) in highlighter.styles(&(0..text.len()), &*theme) {
+        for (range, color, italic) in styles.iter().cloned() {
             if range.start > at {
                 runs.push(plain(range.start - at));
             }
@@ -463,10 +502,10 @@ fn code_block(
             }
             let start = range.start.max(at);
             let mut run = plain(range.end - start);
-            if let Some(color) = style.color {
+            if let Some(color) = color {
                 run.color = color;
             }
-            if style.font_style == Some(FontStyle::Italic) {
+            if italic {
                 run.font.style = FontStyle::Italic;
             }
             runs.push(run);

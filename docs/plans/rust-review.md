@@ -54,7 +54,8 @@ a new folder once), P11 (the Changes panel is a `list` over
 in the store) and P14 (saving no longer lists the tree again), P4 (servers that sync
 incrementally get the changed range, `edits::content_change`, never
 splitting a `\r\n`), P6 (word suggestions scan in the background, over
-shared copies of the open documents' text). Git: G3 (waiting
+shared copies of the open documents' text), P7 (the preview's code
+blocks are highlighted once per text and theme). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 
