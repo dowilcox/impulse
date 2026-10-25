@@ -37,6 +37,7 @@ mod control_server;
 mod debug_snapshot;
 mod dependency_prompts;
 mod display_options;
+mod editor_actions;
 mod editor_brackets;
 mod editor_diff;
 mod editor_git;

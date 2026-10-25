@@ -78,7 +78,15 @@ auto-imports are folded in, `impulse_lsp::completion::editor_completions`),
 E14 (code actions are asked with the diagnostics the range touches), E10
 (Vim reads Ctrl-C, which leaves Insert and Visual, and its other keys
 ahead of the app's commands, so Ctrl-F pages on Linux,
-`editor_vim::command_overrides`).
+`editor_vim::command_overrides`), E15 (Select All Occurrences ⇧⌘L,
+Toggle Block Comment ⇧⌥A (Ctrl+Shift+A on Linux), Go to Bracket ⇧⌘\,
+Next and Previous Problem F8 and ⇧F8, Expand and Shrink Selection
+(⌃⇧⌘→/←, Shift+Alt+→/← on Linux), parameter hints ⇧⌘Space, Cursor Undo
+⌘U, cursors at line ends ⇧⌥I, Trim Trailing Whitespace ⌘K ⌘X and F1 for
+the palette, in `editor_actions.rs` over `impulse_kit::line_edits`; Go to
+Next and Previous Merge Conflict in the context menu while the file has
+conflicts. Folding from the keyboard waits on GPUI Kit, whose folds only
+a gutter click sets).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a

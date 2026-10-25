@@ -443,6 +443,16 @@ impl EditorTab {
     }
 
     /// Go to the next (1) or previous (-1) conflict from the cursor.
+    /// The file has merge conflicts (its markers are in the text).
+    pub(crate) fn has_conflicts(&self) -> bool {
+        !self.git.conflicts.is_empty()
+    }
+
+    /// The bracket pairs last found in the text.
+    pub(crate) fn bracket_pairs(&self) -> std::rc::Rc<Vec<impulse_kit::bracket_pairs::Pair>> {
+        self.git.bracket_pairs.pairs.clone()
+    }
+
     pub(crate) fn go_to_conflict(
         &mut self,
         step: isize,

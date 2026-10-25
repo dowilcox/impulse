@@ -259,6 +259,194 @@ pub fn next_occurrence(text: &str, selection: Range<usize>, after: usize) -> Opt
         .filter(|found| *found != selection)
 }
 
+/// The block-comment delimiters for a language id, if it has them
+/// (Monaco's `blockComment`).
+pub fn block_comment(language: &str) -> Option<(&'static str, &'static str)> {
+    Some(match language {
+        "rust" | "c" | "cpp" | "javascript" | "javascriptreact" | "typescript"
+        | "typescriptreact" | "go" | "java" | "swift" | "php" | "css" | "scss" | "less"
+        | "jsonc" | "zig" | "kotlin" | "scala" | "csharp" | "dart" | "groovy" | "sql" => {
+            ("/*", "*/")
+        }
+        "html" | "xml" | "markdown" | "vue" | "svelte" => ("<!--", "-->"),
+        "lua" => ("--[[", "]]"),
+        "haskell" => ("{-", "-}"),
+        "ocaml" => ("(*", "*)"),
+        "python" => ("\"\"\"", "\"\"\""),
+        _ => return None,
+    })
+}
+
+/// Toggle a block comment around the selection (Monaco's ⇧⌥A): take the
+/// delimiters off when the selection, spaces aside, is one comment, else
+/// wrap it (an empty selection gets an empty comment, the cursor inside).
+pub fn toggle_block_comment(
+    text: &str,
+    selection: Range<usize>,
+    (open, close): (&str, &str),
+) -> LineEdit {
+    // A selection of whole lines wraps them, not the break after the last.
+    let mut selection = selection;
+    while selection.end > selection.start && text[..selection.end].ends_with(['\n', '\r']) {
+        selection.end -= 1;
+    }
+    let selected = &text[selection.clone()];
+    let trimmed = selected.trim();
+    if trimmed.len() >= open.len() + close.len()
+        && trimmed.starts_with(open)
+        && trimmed.ends_with(close)
+    {
+        let lead = selected.len() - selected.trim_start().len();
+        let start = selection.start + lead;
+        let end = start + trimmed.len();
+        let inner = &text[start + open.len()..end - close.len()];
+        let inner = inner
+            .strip_prefix(' ')
+            .unwrap_or(inner)
+            .strip_suffix(' ')
+            .unwrap_or_else(|| inner.strip_prefix(' ').unwrap_or(inner));
+        return LineEdit {
+            range: start..end,
+            text: inner.to_string(),
+            selection: start..start + inner.len(),
+        };
+    }
+    if selection.is_empty() {
+        let text = format!("{open}  {close}");
+        let at = selection.start + open.len() + 1;
+        return LineEdit {
+            range: selection,
+            text,
+            selection: at..at,
+        };
+    }
+    let wrapped = format!("{open} {selected} {close}");
+    let start = selection.start;
+    LineEdit {
+        range: selection,
+        selection: start..start + wrapped.len(),
+        text: wrapped,
+    }
+}
+
+/// Every line's trailing spaces and tabs taken off (⌘K ⌘X), as one edit
+/// over the span that changes; `None` when nothing does. The cursor keeps
+/// its line and stays put where the line still reaches.
+pub fn trim_trailing_whitespace(text: &str, cursor: usize) -> Option<LineEdit> {
+    let mut out = String::with_capacity(text.len());
+    let mut first = None;
+    let mut last = 0;
+    let mut start = 0;
+    let mut moved_cursor = cursor;
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        let ending = &line[body.len()..];
+        let kept = body.trim_end_matches([' ', '\t']);
+        if kept.len() != body.len() {
+            first.get_or_insert(start);
+            last = start + line.len();
+            let cut_from = start + kept.len();
+            if cursor > cut_from && cursor <= start + body.len() {
+                moved_cursor = cut_from;
+            }
+        }
+        out.push_str(kept);
+        out.push_str(ending);
+        start += line.len();
+    }
+    let first = first?;
+    let tail = text.len() - last;
+    let replaced = out[first..out.len() - tail].to_string();
+    // The cursor in the new text: before the change it's where it was,
+    // after it shifts by what went.
+    let removed_before = |at: usize| -> usize {
+        let mut gone = 0;
+        let mut pos = 0;
+        for line in text.split_inclusive('\n') {
+            if pos >= at {
+                break;
+            }
+            let body = line.trim_end_matches(['\n', '\r']);
+            let kept = body.trim_end_matches([' ', '\t']).len();
+            let cut = (pos + kept)..(pos + body.len());
+            gone += cut.end.min(at).saturating_sub(cut.start);
+            pos += line.len();
+        }
+        gone
+    };
+    let at = moved_cursor - removed_before(moved_cursor);
+    Some(LineEdit {
+        range: first..last,
+        text: replaced,
+        selection: at..at,
+    })
+}
+
+/// A cursor at the end of every line the selection touches (⇧⌥I).
+pub fn line_ends(text: &str, selection: Range<usize>) -> Vec<usize> {
+    let span = line_span(text, &selection);
+    let mut ends = Vec::new();
+    let mut pos = span.start;
+    for line in text[span.clone()].split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        ends.push(pos + body.len());
+        pos += line.len();
+    }
+    if ends.is_empty() {
+        ends.push(span.start);
+    }
+    ends
+}
+
+/// Where Go to Bracket goes from `offset` (⇧⌘\\): the partner of a bracket
+/// beside the cursor, else the closing bracket of the innermost pair
+/// around it. `pairs` hold each pair's opening and closing byte offsets.
+pub fn matching_bracket(pairs: &[(usize, usize)], offset: usize) -> Option<usize> {
+    for &(open, close) in pairs {
+        if offset == open || offset == open + 1 {
+            return Some(close);
+        }
+        if offset == close || offset == close + 1 {
+            return Some(open);
+        }
+    }
+    pairs
+        .iter()
+        .filter(|(open, close)| *open < offset && offset <= *close)
+        .min_by_key(|(open, close)| close - open)
+        .map(|&(_, close)| close)
+}
+
+/// The next larger selection (Expand Selection, ⌃⇧⌘→): the word at the
+/// cursor, then a bracket pair's inside, then the pair with its brackets,
+/// then the whole lines, and last the whole text.
+pub fn expand_selection(
+    text: &str,
+    selection: Range<usize>,
+    pairs: &[(usize, usize)],
+) -> Range<usize> {
+    let mut candidates: Vec<Range<usize>> = Vec::new();
+    if let Some(word) = word_at(text, selection.start) {
+        candidates.push(word);
+    }
+    for &(open, close) in pairs {
+        candidates.push(open + 1..close);
+        candidates.push(open..close + 1);
+    }
+    candidates.push(line_span(text, &selection));
+    candidates.push(0..text.len());
+    candidates
+        .into_iter()
+        .filter(|r| {
+            r.start <= selection.start
+                && r.end >= selection.end
+                && r.len() > selection.len()
+                && r.end <= text.len()
+        })
+        .min_by_key(|r| r.len())
+        .unwrap_or(selection)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,5 +574,50 @@ mod tests {
         assert_eq!(line_comment("python"), Some("#"));
         assert_eq!(line_comment("lua"), Some("--"));
         assert_eq!(line_comment("markdown"), None);
+    }
+
+    #[test]
+    fn block_comments_toggle() {
+        let text = "let a = 1;";
+        let on = toggle_block_comment(text, 8..9, ("/*", "*/"));
+        assert_eq!(on.text, "/* 1 */");
+        let after = format!("{}{}{}", &text[..8], on.text, &text[9..]);
+        let off = toggle_block_comment(&after, on.selection.clone(), ("/*", "*/"));
+        assert_eq!(off.text, "1");
+        let line = toggle_block_comment("a;\nb;\n", 3..6, ("/*", "*/"));
+        assert_eq!((line.range, line.text.as_str()), (3..5, "/* b; */"));
+        let empty = toggle_block_comment("x", 1..1, ("<!--", "-->"));
+        assert_eq!(empty.text, "<!--  -->");
+        assert_eq!(empty.selection, 6..6);
+    }
+
+    #[test]
+    fn trims_trailing_whitespace() {
+        let text = "a  \nb\nc\t \nd";
+        let edit = trim_trailing_whitespace(text, 4).unwrap();
+        let out = format!("{}{}{}", &text[..edit.range.start], edit.text, &text[edit.range.end..]);
+        assert_eq!(out, "a\nb\nc\nd");
+        // The cursor on "b" (byte 4) moves back by the two spaces cut before it.
+        assert_eq!(edit.selection, 2..2);
+        assert!(trim_trailing_whitespace("clean\n", 0).is_none());
+    }
+
+    #[test]
+    fn line_ends_of_a_selection() {
+        assert_eq!(line_ends("ab\ncd\nef", 1..4), vec![2, 5]);
+    }
+
+    #[test]
+    fn brackets_and_expansion() {
+        let text = "f(a, (b))";
+        let pairs = [(1, 8), (5, 7)];
+        assert_eq!(matching_bracket(&pairs, 1), Some(8));
+        assert_eq!(matching_bracket(&pairs, 8), Some(1));
+        assert_eq!(matching_bracket(&pairs, 3), Some(8));
+        assert_eq!(expand_selection(text, 6..6, &pairs), 6..7);
+        assert_eq!(expand_selection(text, 6..7, &pairs), 5..8);
+        assert_eq!(expand_selection(text, 5..8, &pairs), 2..8);
+        assert_eq!(expand_selection(text, 2..8, &pairs), 1..9);
+        assert_eq!(expand_selection(text, 1..9, &pairs), 0..9);
     }
 }

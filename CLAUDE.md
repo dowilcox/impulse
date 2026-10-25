@@ -351,8 +351,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           merge conflicts tinted with Accept Current,
                           Incoming or Both on each marker line
                           (EditorTab::conflict_bars), from
-                          impulse_kit::git::editor_marks; Monaco's keys,
-                          bracket pair colors (impulse_kit::bracket_pairs),
+                          impulse_kit::git::editor_marks; Monaco's keys
+                          (editor_actions.rs: block comment, Go to
+                          Bracket, F8, Expand/Shrink Selection, Cursor
+                          Undo, trim trailing whitespace…), bracket pair colors (impulse_kit::bracket_pairs),
                           with its guides and the matching-bracket box
                           (editor_brackets.rs),
                           tree-sitter grammars for Monaco's languages, with

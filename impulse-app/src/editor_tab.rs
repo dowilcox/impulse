@@ -93,6 +93,8 @@ pub struct EditorTab {
     /// ⌘D: the selection it started from and where the last one it added
     /// ends (GPUI Kit keeps the first selection active).
     occurrences: Option<(std::ops::Range<usize>, usize)>,
+    /// Cursor Undo's and Shrink Selection's earlier selections.
+    pub(crate) selections: crate::editor_actions::SelectionHistory,
     /// Other places the symbol at the cursor appears, and other matches of
     /// the selection (Monaco's occurrence and selection highlights).
     marks: Option<RangeDecorationCollection>,
@@ -271,6 +273,7 @@ impl EditorTab {
             diagnostics: Default::default(),
             hooks: None,
             occurrences: None,
+            selections: Default::default(),
             marks: None,
             diff: None,
             signature: None,
@@ -775,7 +778,7 @@ impl EditorTab {
 
     /// Apply one of Monaco's line commands (`impulse_kit::line_edits`) as one
     /// undo step, then put the selection where it says.
-    fn line_edit(
+    pub(crate) fn line_edit(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -928,6 +931,21 @@ impl EditorTab {
             selection
         };
         self.occurrences = Some((start, next.end));
+    }
+
+    /// Where each server's problems start, with whether it counts columns
+    /// in characters.
+    pub(crate) fn problem_positions(&self) -> Vec<(lsp_types::Position, bool)> {
+        let utf32 = |id: &str| {
+            self.links
+                .iter()
+                .find(|(server, _)| server == id)
+                .is_some_and(|(_, link)| link.client.uses_utf32())
+        };
+        self.diagnostics
+            .iter()
+            .flat_map(|(id, list)| list.iter().map(move |d| (d.range.start, utf32(id))))
+            .collect()
     }
 
     /// The servers running for this file, for the status bar.
@@ -1569,6 +1587,7 @@ impl Render for EditorTab {
         editor = editor.context_menu(Self::context_menu(
             self.primary_link().is_some(),
             !self.read_only,
+            self.has_conflicts(),
         ));
         let editor = crate::editor_vim::wrap(self.vim.as_ref(), editor, cx);
         let editor = self.wrap_git(editor, cx);
@@ -1604,6 +1623,16 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::insert_line_above))
             .on_action(cx.listener(Self::add_next_occurrence))
             .on_action(cx.listener(Self::change_all_occurrences))
+            .on_action(cx.listener(Self::toggle_block_comment))
+            .on_action(cx.listener(Self::go_to_bracket))
+            .on_action(cx.listener(Self::next_problem))
+            .on_action(cx.listener(Self::previous_problem))
+            .on_action(cx.listener(Self::expand_selection))
+            .on_action(cx.listener(Self::shrink_selection))
+            .on_action(cx.listener(Self::show_parameter_hints))
+            .on_action(cx.listener(Self::cursor_undo))
+            .on_action(cx.listener(Self::cursors_at_line_ends))
+            .on_action(cx.listener(Self::trim_trailing_whitespace))
             .on_key_down(
                 cx.listener(|tab, event: &gpui_kit::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "escape" && tab.signature.is_some() {
@@ -1700,7 +1729,9 @@ impl EditorTab {
         if self.marked_at.as_ref() == Some(&range) {
             return;
         }
-        self.marked_at = Some(range.clone());
+        if let Some(previous) = self.marked_at.replace(range.clone()) {
+            self.selections.moved(previous);
+        }
         self.git_cursor_moved(cx);
         let settings = crate::settings_store::SettingsStore::get(cx);
         let wanted = self.text_focused
@@ -1802,6 +1833,7 @@ impl EditorTab {
     fn context_menu(
         lsp: bool,
         editable: bool,
+        conflicts: bool,
     ) -> impl Fn(NativeMenu, &mut Window, &mut gpui_kit::App) -> NativeMenu + 'static {
         use crate::editor_keys::{
             ChangeAllOccurrences, GoToDeclaration, GoToImplementations, GoToTypeDefinition,
@@ -1810,7 +1842,8 @@ impl EditorTab {
         use crate::workbench::{FindReferences, FormatDocument, RenameSymbol};
         use gpui_kit::component::input::{Copy, Cut, GoToDefinition, Paste, ToggleCodeActions};
         move |menu, _, _| {
-            menu.menu_with_disabled("Go to Definition", !lsp, Box::new(GoToDefinition))
+            let mut menu = menu
+                .menu_with_disabled("Go to Definition", !lsp, Box::new(GoToDefinition))
                 .menu_with_disabled("Go to Type Definition", !lsp, Box::new(GoToTypeDefinition))
                 .menu_with_disabled("Go to Implementations", !lsp, Box::new(GoToImplementations))
                 .menu_with_disabled("Go to Declaration", !lsp, Box::new(GoToDeclaration))
@@ -1833,8 +1866,19 @@ impl EditorTab {
                     !(lsp && editable),
                     Box::new(ToggleCodeActions),
                 )
-                .menu("Show Commit for This Line", Box::new(ShowLineCommit))
-                .separator()
+                .menu("Show Commit for This Line", Box::new(ShowLineCommit));
+            if conflicts {
+                menu = menu
+                    .menu(
+                        "Go to Next Merge Conflict",
+                        Box::new(crate::editor_keys::NextConflict),
+                    )
+                    .menu(
+                        "Go to Previous Merge Conflict",
+                        Box::new(crate::editor_keys::PreviousConflict),
+                    );
+            }
+            menu.separator()
                 .menu_with_disabled("Cut", !editable, Box::new(Cut))
                 .menu("Copy", Box::new(Copy))
                 .menu_with_disabled("Paste", !editable, Box::new(Paste))
@@ -1955,18 +1999,17 @@ impl EditorTab {
     /// After typing: ask for the signature on `(` and `,` (and again while
     /// it shows, so the active parameter follows); `)` closes it.
     fn typed_for_signature(&mut self, cx: &mut Context<Self>) {
-        let (before, offset) = {
+        let before = {
             let state = self.state.read(cx);
             let offset = state.cursor();
             let text = state.text();
             // The character before the cursor (whole, however many bytes).
-            let before = (offset > 0)
+            (offset > 0)
                 .then(|| {
                     let start = text.floor_char_boundary(offset - 1);
                     text.slice(start..offset).to_string()
                 })
-                .and_then(|s| s.chars().last());
-            (before, offset)
+                .and_then(|s| s.chars().last())
         };
         match before {
             Some(')') => return self.hide_signature(cx),
@@ -1974,9 +2017,16 @@ impl EditorTab {
             _ if self.signature.is_some() => {}
             _ => return,
         }
+        self.request_signature(cx);
+    }
+
+    /// Ask the primary server for the signature at the cursor (parameter
+    /// hints, ⇧⌘Space, or after typing).
+    pub(crate) fn request_signature(&mut self, cx: &mut Context<Self>) {
         let Some(link) = self.primary_link() else {
             return;
         };
+        let offset = self.state.read(cx).cursor();
         let text = self.state.read(cx).text().clone();
         let task = link.signature_help(&text, offset, cx);
         self._signature_request = Some(cx.spawn(async move |tab, cx| {
