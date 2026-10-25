@@ -104,7 +104,14 @@ tab that opened it, else the one to its right; closing a workspace goes
 to the one used before it, `Workbench::recent_workspaces`) and W7 (each
 window has its own sidebar visibility and width, saved with it; the
 settings give new windows theirs, and changing them there applies to
-every window).
+every window), W8 (Restrict and Forget Trusted Folders stop language
+servers in every window), W9 (the titlebar's tab strip scrolls and keeps
+the active tab in view) and W10 (one app per user on Linux: a second
+launch hands its folder, files and commands to the running one over
+`$XDG_RUNTIME_DIR/impulse/instance.sock` and exits, `instance.rs`; paths
+on the command line open, and the desktop entry passes `%F`; on macOS
+files the system asks to open come in through GPUI's open-URLs handler.
+A Services menu item still needs the bundle's Info.plist).
 
 Performance: P3 (a repository notifies only when a refresh changed
 something, `RepositoryState::generation`; editors re-read only then, and

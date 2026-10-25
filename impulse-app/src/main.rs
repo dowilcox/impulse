@@ -55,6 +55,7 @@ mod git_actions;
 mod history_actions;
 mod history_view;
 mod image_view;
+mod instance;
 mod keybindings_view;
 mod kit_theme;
 mod lsp_hub;
@@ -207,6 +208,24 @@ fn parse_args() -> (Args, Launch) {
             args.trust = true;
             continue;
         }
+        // A path on its own (the desktop entry's %F, `impulse-app file`): a
+        // folder to work in, or a file to open, made absolute so another
+        // instance can take it.
+        if !flag.starts_with("--") {
+            let path = std::path::Path::new(&flag);
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir().unwrap_or_default().join(path)
+            };
+            if path.is_dir() {
+                cwd_given = true;
+                args.cwd = path.to_string_lossy().into_owned();
+            } else {
+                args.open.push(path.to_string_lossy().into_owned());
+            }
+            continue;
+        }
         // The snapshot flags without a value (`debug_snapshot`).
         if flag == "--impulse-snapshot-no-lsp" || flag == "--impulse-snapshot-persist" {
             continue;
@@ -229,6 +248,17 @@ fn parse_args() -> (Args, Launch) {
         open: args.open.clone(),
     };
     (args, launch)
+}
+
+/// `path` from the launch's folder, when it's relative.
+#[cfg(target_os = "linux")]
+fn absolute(cwd: &str, path: &str) -> String {
+    let path = std::path::Path::new(path);
+    if path.is_absolute() {
+        path.to_string_lossy().into_owned()
+    } else {
+        std::path::Path::new(cwd).join(path).to_string_lossy().into_owned()
+    }
 }
 
 fn main() {
@@ -258,9 +288,46 @@ fn main() {
         // (`trust-on`).
         args.trust_store.set_enabled(false);
     }
-    gpui_kit::application()
-        .with_assets(Assets)
-        .run(move |cx: &mut App| {
+    // An Impulse already running takes this launch (Linux; macOS runs one
+    // app per bundle itself). Not for snapshots, which run on their own.
+    #[cfg(target_os = "linux")]
+    {
+        #[cfg(debug_assertions)]
+        let snapshot = debug_snapshot::is_active();
+        #[cfg(not(debug_assertions))]
+        let snapshot = false;
+        if !snapshot {
+            let request = instance::Request {
+                cwd: launch.cwd.clone(),
+                open: launch
+                    .open
+                    .iter()
+                    .map(|p| absolute(&args.cwd, p))
+                    .collect(),
+                commands: launch.commands.clone(),
+            };
+            if instance::forward(&request) {
+                return;
+            }
+            instance::listen();
+        }
+    }
+    let app = gpui_kit::application().with_assets(Assets);
+    // Files the system asks to open (Finder, the Dock): in the front window.
+    app.on_open_urls(|urls| {
+        let open: Vec<String> = urls
+            .iter()
+            .filter_map(|url| url.strip_prefix("file://"))
+            .map(|path| impulse_kit::uri::uri_to_file_path(&format!("file://{path}")))
+            .collect();
+        if !open.is_empty() {
+            instance::send(instance::Request {
+                open,
+                ..Default::default()
+            });
+        }
+    });
+    app.run(move |cx: &mut App| {
             gpui_kit::init(cx);
             base_rules::register();
             settings_store::SettingsStore::init(cx);
@@ -284,8 +351,11 @@ fn main() {
             repository_state::start_auto_fetch(cx);
             update_check::start(cx);
             control_server::start(cx, control_commands::dispatch);
+            instance::serve(cx);
             cx.on_app_quit(|cx| {
                 control_server::stop();
+                #[cfg(target_os = "linux")]
+                instance::stop();
                 shell_launch::remove_private_dir();
                 workbench_trust::shutdown_servers(cx)
             })

@@ -636,7 +636,22 @@ impl Workbench {
             impulse_kit::keybindings::Platform::current(),
         )
         .unwrap_or_default();
-        let mut tabs = div().flex().items_center().gap(px(2.)).min_w_0();
+        // Tabs past the width scroll, the active one kept in view (Swift's
+        // tab strip).
+        let mut tabs = div()
+            .id("titlebar-tabs")
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .min_w_0()
+            .overflow_x_scroll()
+            .track_scroll(&self.tab_scroll);
+        if let Some(active) = workspace.tabs.get(workspace.active) {
+            if self.tab_scrolled_to.get() != Some(active.id) {
+                self.tab_scrolled_to.set(Some(active.id));
+                self.tab_scroll.scroll_to_item(workspace.active);
+            }
+        }
         for (index, tab) in workspace.tabs.iter().enumerate() {
             let active = index == workspace.active;
             let surface = tab.focused_surface();
@@ -673,6 +688,7 @@ impl Workbench {
             .join(", ");
             let mut t = div()
                 .id(("tab", tab.id))
+                .flex_none()
                 .role(gpui_kit::Role::Tab)
                 .aria_label(spoken)
                 .aria_selected(active)

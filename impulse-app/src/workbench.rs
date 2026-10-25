@@ -115,6 +115,9 @@ pub struct Workbench {
     pub(crate) sidebar_shown: bool,
     pub(crate) sidebar_px: f32,
     sidebar_seen: (bool, i64),
+    /// The titlebar's tab strip, and the tab it last scrolled to.
+    pub(crate) tab_scroll: gpui_kit::ScrollHandle,
+    pub(crate) tab_scrolled_to: std::cell::Cell<Option<u64>>,
     /// Workspace ids, the most recently shown last: closing one goes back to
     /// the one used before it.
     pub(crate) recent_workspaces: Vec<u64>,
@@ -261,6 +264,8 @@ impl Workbench {
             sidebar_px: settings.sidebar_width as f32,
             sidebar_seen: (settings.sidebar_visible, settings.sidebar_width),
             recent_workspaces: Vec::new(),
+            tab_scroll: gpui_kit::ScrollHandle::new(),
+            tab_scrolled_to: Default::default(),
             dismissed_settings_warning: None,
             undo_close: None,
             lsp_config_stamp: None,

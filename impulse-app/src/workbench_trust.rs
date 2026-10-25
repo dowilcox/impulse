@@ -375,8 +375,19 @@ impl Workbench {
         );
     }
 
-    /// Trust was taken away: language servers stop where it's gone.
+    /// Trust was taken away: language servers stop where it's gone, in
+    /// every window (they share one trust list).
     fn trust_changed(&mut self, cx: &mut Context<Self>) {
+        self.stop_untrusted_servers(cx);
+        let me = cx.entity_id();
+        for (other, _) in crate::session::workbenches(cx) {
+            if other.entity_id() != me {
+                other.update(cx, |w, cx| w.stop_untrusted_servers(cx));
+            }
+        }
+    }
+
+    fn stop_untrusted_servers(&mut self, cx: &mut Context<Self>) {
         for index in 0..self.workspaces.len() {
             let root = self.workspaces[index].root.to_string_lossy().into_owned();
             if self.workspaces[index].lsp.is_some() && !self.trust.is_trusted(&root) {

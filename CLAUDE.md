@@ -255,7 +255,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           (quick_terminal.rs: a pop-up
                           window over a TerminalView with no_bar, its
                           shortcut registered with global-hotkey),
-                          Use Impulse as $EDITOR (EDITOR/VISUAL set to
+                          one app per user (instance.rs: a second launch
+                          on Linux hands its folder, files and commands to
+                          the first over $XDG_RUNTIME_DIR/impulse/instance.sock;
+                          macOS's open-URLs), Use Impulse as $EDITOR (EDITOR/VISUAL set to
                           `impulse edit` by control_server::terminal_env),
                           the file tree following the disk (tree_watch.rs:
                           every listed folder watched on its own, listed
