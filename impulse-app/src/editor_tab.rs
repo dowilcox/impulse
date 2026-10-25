@@ -355,8 +355,9 @@ impl EditorTab {
             );
             state.set_auto_close(settings.editor_auto_closing_brackets != "never", window, cx);
         });
-        // Without a language server, the document's own words.
-        if self.primary_link().is_none() {
+        // Without a language server, the document's own words (settings.json
+        // keeps its schema's completions).
+        if self.primary_link().is_none() && !self.settings_file {
             let words = settings.editor_word_based_suggestions != "off";
             let provider = WordCompletions {
                 tab: cx.entity().downgrade(),

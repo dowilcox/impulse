@@ -47,6 +47,9 @@ struct Tints {
 pub(crate) struct DiffView {
     base: Entity<EditorState>,
     base_text: String,
+    /// A new base (staged or committed since) for the base editor, set at
+    /// the next frame (it needs the window).
+    base_pending: Option<String>,
     base_tints: Tints,
     own_tints: Tints,
     hunks: Vec<LineHunk>,
@@ -98,6 +101,7 @@ impl EditorTab {
         self.diff = Some(DiffView {
             base,
             base_text,
+            base_pending: None,
             base_tints: Tints::default(),
             own_tints: Tints::default(),
             hunks: Vec::new(),
@@ -289,8 +293,29 @@ impl EditorTab {
         }));
     }
 
+    /// The file's git base changed (staged, committed, checked out): the
+    /// Diff View compares against the new one.
+    pub(crate) fn diff_base_changed(&mut self, base: &str, cx: &mut Context<Self>) {
+        let Some(diff) = self.diff.as_mut() else {
+            return;
+        };
+        if diff.base_text == base {
+            return;
+        }
+        diff.base_text = base.to_string();
+        diff.base_pending = Some(base.to_string());
+        self.refresh_diff(Duration::ZERO, cx);
+        cx.notify();
+    }
+
     /// The inline document's new text, once there's a window to set it in.
     pub(crate) fn apply_inline_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(diff) = self.diff.as_mut() {
+            if let Some(text) = diff.base_pending.take() {
+                diff.base
+                    .update(cx, |state, cx| state.set_value(text, window, cx));
+            }
+        }
         let Some(view) = self.diff.as_mut().and_then(|d| d.inline.as_mut()) else {
             return;
         };

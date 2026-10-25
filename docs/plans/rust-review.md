@@ -65,6 +65,12 @@ reporting, Select All takes the screen, Ctrl+Right takes the
 suggestion's next word on Linux, the block toolbar's tooltips, Clear's
 comment, and no Ctrl+Shift+K Clear on Linux, where it's Bookmark Block).
 
+Editor: E5 (settings.json keeps its schema's completions when settings
+change), E7 (the Diff View's base follows staging, commits and
+checkouts, `EditorTab::diff_base_changed`), E8 (the git overlay takes
+clicks only where its hitbox is hovered, so menus and palettes over the
+editor keep theirs).
+
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a
 real desktop, since Xvfb's windows are decorated by the server).

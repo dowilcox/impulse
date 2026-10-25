@@ -180,6 +180,11 @@ impl EditorTab {
             });
             let (base, root, disk, blame, unchanged) = read.await;
             let _ = tab.update(cx, |tab, cx| {
+                // The Diff View compares against the same base.
+                let diff_base = base.clone().or_else(|| root.as_ref().map(|_| String::new()));
+                if let Some(diff_base) = diff_base {
+                    tab.diff_base_changed(&diff_base, cx);
+                }
                 tab.git.base = base;
                 if tab.git.root.is_none() {
                     if let Some(root) = root.clone() {
@@ -532,8 +537,10 @@ impl EditorTab {
             })
         };
         let overlay = canvas(
-            |_, _, _| {},
-            move |bounds, _, window, cx| {
+            // Where the overlay takes clicks: not under a menu or palette
+            // drawn over the editor.
+            |bounds, window, _| window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal),
+            move |bounds, hitbox, window, cx| {
                 origin.set(Some(bounds.origin));
                 if let Some((brackets, bracket_colors)) = &brackets {
                     brackets.paint(*bracket_colors, state.read(cx), bounds, window);
@@ -695,7 +702,7 @@ impl EditorTab {
                 // there (before the editor sees the click).
                 let tab = tab.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture {
+                    if phase != DispatchPhase::Capture || !hitbox.is_hovered(window) {
                         return;
                     }
                     if let Some((_, row)) = pinned.iter().find(|(r, _)| r.contains(&event.position))
