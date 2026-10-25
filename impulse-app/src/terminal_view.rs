@@ -1527,23 +1527,68 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// A program owns the screen (the alternate screen, or one in raw mode
+    /// at the prompt like Claude Code): Shift with PageUp, PageDown, Home
+    /// and End is its (selecting in an editor, paging in a pager), as the
+    /// Swift app sends them; at the shell they scroll the scrollback.
+    fn send_to_program(&mut self, keys: &str, cx: &mut Context<Self>) -> bool {
+        let owned = self.direct || self.backend.mode().contains(TerminalMode::ALT_SCREEN);
+        if !owned {
+            return false;
+        }
+        let Ok(keystroke) = gpui_kit::Keystroke::parse(keys) else {
+            return false;
+        };
+        let meta = key_encoder::alt_is_meta(
+            &SettingsStore::get(cx).terminal_option_as_meta,
+            cfg!(target_os = "macos"),
+        );
+        let bytes = self
+            .kitty_bytes(&keystroke, kitty_keyboard::Event::Press, meta)
+            .or_else(|| {
+                let press = KeyPress {
+                    key: &keystroke.key,
+                    text: None,
+                    ctrl: false,
+                    alt: false,
+                    shift: true,
+                    platform: false,
+                };
+                let app_cursor = self.backend.mode().contains(TerminalMode::APP_CURSOR);
+                key_encoder::encode(&press, app_cursor, meta)
+            });
+        if let Some(bytes) = bytes.filter(|b| !b.is_empty()) {
+            self.backend.write(&bytes);
+            self.typed();
+        }
+        true
+    }
+
     fn page_up(&mut self, _: &ScrollPageUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.backend.scroll(self.size.1 as i32 - 1);
+        if !self.send_to_program("shift-pageup", cx) {
+            self.backend.scroll(self.size.1 as i32 - 1);
+        }
         cx.notify();
     }
 
     fn page_down(&mut self, _: &ScrollPageDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.backend.scroll(-(self.size.1 as i32 - 1));
+        if !self.send_to_program("shift-pagedown", cx) {
+            self.backend.scroll(-(self.size.1 as i32 - 1));
+        }
         cx.notify();
     }
 
     fn scroll_top(&mut self, _: &ScrollToTop, _: &mut Window, cx: &mut Context<Self>) {
-        self.backend.scroll(i32::MAX / 2);
+        if !self.send_to_program("shift-home", cx) {
+            self.backend.scroll(i32::MAX / 2);
+        }
         cx.notify();
     }
 
     fn scroll_bottom(&mut self, _: &ScrollToBottom, _: &mut Window, cx: &mut Context<Self>) {
-        self.backend.scroll_to_bottom();
+        if !self.send_to_program("shift-end", cx) {
+            self.backend.scroll_to_bottom();
+        }
         cx.notify();
     }
 }

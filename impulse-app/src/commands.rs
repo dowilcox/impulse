@@ -700,7 +700,101 @@ const COMMAND_KEYS: KeyBindingMetaIndex = KeyBindingMetaIndex(0x4b45_5953);
 
 /// Bind every command's shortcut.
 pub fn bind_keys(settings: &Settings, cx: &mut App) {
-    cx.bind_keys(command_bindings(settings));
+    let others: Vec<KeyBinding> = cx.key_bindings().borrow().bindings().cloned().collect();
+    cx.bind_keys(command_bindings(settings, &others));
+}
+
+/// The editor's context, for the keys it keeps.
+const EDITOR_INPUT: &str = "ImpulseEditor > Input";
+
+/// Keys the editor keeps while it has the keyboard, whatever command they
+/// name, as the Swift app's `EditorWebView.appCommandWins` decides: the
+/// terminal's commands (they'd do nothing there; ⇧⌘K deletes a line), and
+/// Monaco's editing keys everyone knows from VS Code that Impulse's
+/// commands also use (⌘D adds the next occurrence, ⌥⌘↑/↓ add a cursor,
+/// ⇧⌘↩ inserts a line above).
+fn editor_keeps(settings: &Settings, bound: &[(&str, keybindings::Shortcut)]) -> Vec<String> {
+    let mut keys: Vec<String> = if cfg!(target_os = "macos") {
+        vec!["cmd-d", "alt-cmd-up", "alt-cmd-down", "shift-cmd-enter"]
+    } else {
+        vec!["ctrl-d", "ctrl-shift-enter"]
+    }
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let terminal: std::collections::HashSet<String> = catalog(settings)
+        .into_iter()
+        .filter(|c| c.category == "Terminal" || c.category == "Blocks")
+        .map(|c| c.id)
+        .collect();
+    for (id, shortcut) in bound {
+        if terminal.contains(*id) {
+            keys.push(shortcut.gpui());
+        }
+    }
+    // As GPUI writes them, to compare with bindings.
+    keys.iter()
+        .filter_map(|k| Keystroke::parse(k).ok().map(|k| k.unparse()))
+        .collect()
+}
+
+/// For the keys the editor keeps: the commands' bindings turned off in the
+/// editor, then its own bindings for them (GPUI Kit's and Impulse's)
+/// again, after the commands', so they win there (at the same depth the
+/// later binding does).
+fn editor_priority(keys: &[String], others: &[KeyBinding]) -> Vec<KeyBinding> {
+    let mut out = Vec::new();
+    for key in keys {
+        out.extend(
+            KeyBinding::load(
+                key,
+                Box::new(NoAction),
+                gpui_kit::KeyBindingContextPredicate::parse(EDITOR_INPUT)
+                    .ok()
+                    .map(Into::into),
+                false,
+                None,
+                &gpui_kit::DummyKeyboardMapper,
+            )
+            .ok(),
+        );
+        for binding in others.iter().filter(|b| b.meta() != Some(COMMAND_KEYS)) {
+            let [stroke] = binding.keystrokes() else {
+                continue;
+            };
+            if &stroke.inner().unparse() != key {
+                continue;
+            }
+            let context = binding
+                .predicate()
+                .map(|p| p.to_string())
+                .unwrap_or_default();
+            let editor = context.contains("ImpulseEditor");
+            if !editor && context != "Input" {
+                continue;
+            }
+            // GPUI Kit's text-input keys, scoped to the editor here.
+            let context = if editor {
+                context
+            } else {
+                EDITOR_INPUT.to_string()
+            };
+            out.extend(
+                KeyBinding::load(
+                    key,
+                    binding.action().boxed_clone(),
+                    gpui_kit::KeyBindingContextPredicate::parse(&context)
+                        .ok()
+                        .map(Into::into),
+                    false,
+                    binding.action_input(),
+                    &gpui_kit::DummyKeyboardMapper,
+                )
+                .ok(),
+            );
+        }
+    }
+    out
 }
 
 /// Bind the commands' shortcuts again whenever `keybinding_overrides` or
@@ -725,7 +819,8 @@ pub fn rebind_on_change(cx: &mut App) {
                 .position(|b| b.meta() == Some(COMMAND_KEYS))
                 .unwrap_or(all.len());
             all.retain(|b| b.meta() != Some(COMMAND_KEYS));
-            all.splice(at..at, command_bindings(&settings));
+            let commands = command_bindings(&settings, &all);
+            all.splice(at..at, commands);
             keymap.clear();
             keymap.add_bindings(all);
         }
@@ -746,7 +841,7 @@ fn binding(shortcut: &Shortcut, action: impl Action, context: Option<&str>) -> O
 /// Every command's shortcut. In a terminal on Linux, plain Ctrl+letter
 /// chords go to the shell, and the commands bound to them are reached with
 /// Shift added where that's free.
-fn command_bindings(settings: &Settings) -> Vec<KeyBinding> {
+fn command_bindings(settings: &Settings, others: &[KeyBinding]) -> Vec<KeyBinding> {
     let platform = Platform::current();
     let bindings = keybindings::bindings(&settings.keybinding_overrides, platform);
     let mut keys: Vec<KeyBinding> = bindings
@@ -792,5 +887,11 @@ fn command_bindings(settings: &Settings) -> Vec<KeyBinding> {
             Some("copy" | "paste")
         )
     });
+    let kept = editor_keeps(settings, &bindings);
+    keys.extend(
+        editor_priority(&kept, others)
+            .into_iter()
+            .map(|b| b.with_meta(COMMAND_KEYS)),
+    );
     keys
 }

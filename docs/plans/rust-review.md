@@ -35,6 +35,12 @@ an animation asking for every frame) and P10 (its ticks no longer redraw
 every pane). The workbench's own chrome still renders on each of them; P5
 (the file tree) is what makes that cheap.
 
+Keys: E2 (the editor keeps Monaco's ⌘D, ⌥⌘↑/↓ and ⇧⌘↩, and the terminal
+commands' keys, over the app's shortcuts while it has the keyboard, as
+Swift's `EditorWebView.appCommandWins` does: `commands::editor_priority`)
+and T17 (Shift with PageUp, PageDown, Home and End go to a program that
+owns the screen, and scroll the scrollback at the shell).
+
 ## What to fix first
 
 1. **Crashes and lost work**: the editor crash on non-ASCII typing (E1),

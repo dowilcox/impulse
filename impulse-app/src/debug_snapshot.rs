@@ -1078,9 +1078,15 @@ fn perform_now(action: &str, cx: &mut App) {
                     None => fail(format!("edit={label}: no editor is selected")),
                 }
             }
+            // Sent once the workbench isn't being updated: the key's
+            // handler may well update it.
             ("key", Some(key)) => {
                 if let Ok(keystroke) = gpui_kit::Keystroke::parse(key) {
-                    window.dispatch_keystroke(keystroke, cx);
+                    return Some(std::rc::Rc::new(
+                        move |window: &mut Window, cx: &mut App| {
+                            window.dispatch_keystroke(keystroke.clone(), cx);
+                        },
+                    ));
                 }
             }
             _ => unknown(),
