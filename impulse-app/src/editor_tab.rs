@@ -2191,8 +2191,9 @@ pub(crate) fn unsaved_paths(cx: &gpui_kit::App) -> Vec<PathBuf> {
 const MAX_WORD_SCAN: usize = 2 * 1024 * 1024;
 
 impl WordCompletions {
-    /// The other open files' text the setting takes words from.
-    fn others(&self, cx: &mut gpui_kit::App) -> Vec<String> {
+    /// The other open files' text the setting takes words from (shared,
+    /// not copied).
+    fn others(&self, cx: &mut gpui_kit::App) -> Vec<gpui_kit::SharedString> {
         let scope = crate::settings_store::SettingsStore::get(cx)
             .editor_word_based_suggestions
             .clone();
@@ -2209,7 +2210,6 @@ impl WordCompletions {
             .filter(|tab| scope == "allDocuments" || tab.read(cx).language == self.language)
             .map(|tab| tab.read(cx).state.read(cx).value().clone())
             .filter(|text| text.len() <= MAX_WORD_SCAN)
-            .map(|text| text.to_string())
             .collect()
     }
 }
@@ -2223,21 +2223,24 @@ impl CompletionProvider for WordCompletions {
         _: &mut Window,
         cx: &mut gpui_kit::App,
     ) -> gpui_kit::Task<gpui_kit::Result<lsp_types::CompletionResponse>> {
-        let items = if text.len() > MAX_WORD_SCAN {
-            Vec::new()
-        } else {
-            let others = self.others(cx);
-            let others: Vec<&str> = others.iter().map(String::as_str).collect();
-            impulse_kit::word_completions::suggestions_with(&text.to_string(), offset, &others)
-                .into_iter()
-                .map(|word| lsp_types::CompletionItem {
-                    label: word,
-                    kind: Some(lsp_types::CompletionItemKind::TEXT),
-                    ..Default::default()
-                })
-                .collect()
-        };
-        gpui_kit::Task::ready(Ok(lsp_types::CompletionResponse::Array(items)))
+        if text.len() > MAX_WORD_SCAN {
+            return gpui_kit::Task::ready(Ok(lsp_types::CompletionResponse::Array(Vec::new())));
+        }
+        // The scan runs off the main thread, so typing never waits on it.
+        let (text, others) = (text.clone(), self.others(cx));
+        cx.background_spawn(async move {
+            let others: Vec<&str> = others.iter().map(|text| text.as_ref()).collect();
+            let items =
+                impulse_kit::word_completions::suggestions_with(&text.to_string(), offset, &others)
+                    .into_iter()
+                    .map(|word| lsp_types::CompletionItem {
+                        label: word,
+                        kind: Some(lsp_types::CompletionItemKind::TEXT),
+                        ..Default::default()
+                    })
+                    .collect();
+            Ok(lsp_types::CompletionResponse::Array(items))
+        })
     }
 
     fn is_completion_trigger(&self, _: usize, new_text: &str, _: &mut gpui_kit::App) -> bool {
