@@ -393,8 +393,25 @@ pub struct DocumentLink {
     pub path: PathBuf,
     /// The workbench's handler for edits that reach other files.
     pub apply_edit: RefCell<Option<crate::editor_tab::ApplyEdit>>,
+    /// What the server has of the document, shared by every editor of the
+    /// file (in any window) that this server serves.
+    doc: Rc<SharedDocument>,
+    closed: std::cell::Cell<bool>,
+}
+
+/// One open document on one server: its version and text, and how many
+/// editors hold it (didClose goes out when the last one closes).
+struct SharedDocument {
     version: RefCell<i32>,
     sent: RefCell<Rope>,
+    holders: std::cell::Cell<usize>,
+}
+
+thread_local! {
+    /// Open documents by server and URI, so the same file in two windows
+    /// opens once and its versions only go up.
+    static DOCUMENTS: RefCell<HashMap<(usize, String), Rc<SharedDocument>>> =
+        RefCell::default();
 }
 
 impl DocumentLink {
@@ -405,45 +422,77 @@ impl DocumentLink {
         text: &Rope,
     ) -> Option<Rc<Self>> {
         let uri = path_uri(path)?;
-        client.did_open(uri.clone(), language, 1, text.to_string());
-        Some(Rc::new(Self {
+        let key = (Arc::as_ptr(&client) as usize, uri.as_str().to_string());
+        let existing = DOCUMENTS.with(|docs| docs.borrow().get(&key).cloned());
+        let doc = match existing {
+            Some(doc) => {
+                doc.holders.set(doc.holders.get() + 1);
+                doc
+            }
+            None => {
+                client.did_open(uri.clone(), language, 1, text.to_string());
+                let doc = Rc::new(SharedDocument {
+                    version: RefCell::new(1),
+                    sent: RefCell::new(text.clone()),
+                    holders: std::cell::Cell::new(1),
+                });
+                DOCUMENTS.with(|docs| docs.borrow_mut().insert(key, doc.clone()));
+                doc
+            }
+        };
+        let link = Rc::new(Self {
             client,
             uri,
             path: path.to_path_buf(),
             apply_edit: RefCell::default(),
-            version: RefCell::new(1),
-            sent: RefCell::new(text.clone()),
-        }))
+            doc,
+            closed: std::cell::Cell::new(false),
+        });
+        // Another editor of the file opened it: this one's text, if it
+        // differs, is the server's now.
+        link.sync(text);
+        Some(link)
     }
 
     /// Send the text if it changed since it was last sent, so a request is
     /// never answered against old text.
     pub fn sync(&self, text: &Rope) {
-        if *self.sent.borrow() == *text {
+        if *self.doc.sent.borrow() == *text {
             return;
         }
         let version = {
-            let mut version = self.version.borrow_mut();
+            let mut version = self.doc.version.borrow_mut();
             *version += 1;
             *version
         };
         log::debug!("didChange v{version} {}", self.uri.as_str());
-        let old = self.sent.borrow().to_string();
+        let old = self.doc.sent.borrow().to_string();
         self.client
             .did_change_from(self.uri.clone(), version, &old, &text.to_string());
-        *self.sent.borrow_mut() = text.clone();
+        *self.doc.sent.borrow_mut() = text.clone();
     }
 
     pub fn version(&self) -> i32 {
-        *self.version.borrow()
+        *self.doc.version.borrow()
     }
 
     pub fn saved(&self) {
         self.client.did_save(self.uri.clone());
     }
 
+    /// This editor is done with the document; the server is told once the
+    /// last editor holding it is.
     pub fn closed(&self) {
-        self.client.did_close(self.uri.clone());
+        if self.closed.replace(true) {
+            return;
+        }
+        let holders = self.doc.holders.get().saturating_sub(1);
+        self.doc.holders.set(holders);
+        if holders == 0 {
+            let key = (Arc::as_ptr(&self.client) as usize, self.uri.as_str().to_string());
+            DOCUMENTS.with(|docs| docs.borrow_mut().remove(&key));
+            self.client.did_close(self.uri.clone());
+        }
     }
 
     /// The server's edits to the text, then formatting the document.

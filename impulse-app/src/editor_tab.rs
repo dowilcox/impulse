@@ -484,6 +484,10 @@ impl EditorTab {
             .into_iter()
             .partition(|(server, _)| server == id);
         self.links = kept;
+        // Its documents end with it (a restarted server is told them anew).
+        for (_, link) in &gone {
+            link.closed();
+        }
         let primary = self.primary.as_deref() == Some(id);
         self.state.update(cx, |state, _| {
             let lsp = state.lsp_mut();
