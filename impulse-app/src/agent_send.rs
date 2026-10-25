@@ -481,7 +481,8 @@ pub(crate) fn mark_reviewed(root: &str) {
     let root = root.to_string();
     std::thread::spawn(move || {
         use impulse_git::safety;
-        if safety::create("reviewed", &root, safety::REVIEW_PREFIX).is_ok() {
+        let trusted = crate::workbench_trust::is_trusted(&root);
+        if safety::create_with("reviewed", &root, safety::REVIEW_PREFIX, trusted).is_ok() {
             safety::prune(&root, safety::REVIEW_PREFIX, 20, safety::DEFAULT_MAX_AGE);
         }
     });

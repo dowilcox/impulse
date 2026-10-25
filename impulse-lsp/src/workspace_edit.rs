@@ -260,19 +260,25 @@ impl WorkspaceEdit {
 }
 
 /// `path` with `..` taken out and symlinks resolved as far as it exists (a
-/// file still to be created resolves through its folder).
+/// file still to be created resolves through its folder). A `..` after a
+/// link steps up from where the link points, as the kernel's does: taken
+/// out lexically first, `<root>/link/../x` would read as inside `<root>`
+/// while the write lands next to the link's target.
 pub fn resolved_path(path: &Path) -> PathBuf {
-    let mut lexical = PathBuf::new();
+    let mut out = PathBuf::new();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                lexical.pop();
+                if let Ok(real) = std::fs::canonicalize(&out) {
+                    out = real;
+                }
+                out.pop();
             }
-            other => lexical.push(other),
+            other => out.push(other),
         }
     }
-    PathBuf::from(impulse_kit::trust::normalize(&lexical.to_string_lossy()))
+    PathBuf::from(impulse_kit::trust::normalize(&out.to_string_lossy()))
 }
 
 /// Whether `path` is `folder` or inside it, once `..` is taken out and
@@ -540,5 +546,18 @@ mod tests {
         assert_eq!(b(None, Some(&repo)), Some(repo.clone()));
         assert_eq!(b(None, None), Some(krate.clone()));
         assert_eq!(repository_root(&krate.join("src/lib.rs")), Some(repo));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dot_dot_after_a_link_leaves_through_it() {
+        let base = std::env::temp_dir().join(format!("impulse-edit-{}", std::process::id()));
+        let (root, outside) = (base.join("root"), base.join("outside/dir"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert!(!is_inside(&root.join("link/../x"), &root));
+        assert!(is_inside(&root.join("sub/../x"), &root));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

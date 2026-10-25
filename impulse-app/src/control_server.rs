@@ -94,7 +94,13 @@ fn is_serving(path: &std::path::Path) -> bool {
 /// Listen, and hand each request to `handle` on the main thread.
 pub fn start(cx: &mut App, handle: impl Fn(Incoming, &mut App) + 'static) {
     let persistence = std::env::var_os("IMPULSE_NO_PERSISTENCE").is_none();
-    let private = std::env::temp_dir().join(format!("impulse-{}.sock", std::process::id()));
+    // In this run's own 0700 folder: a name in a shared /tmp could be taken
+    // by another user first, leaving `impulse` with nothing to talk to.
+    let private = crate::shell_launch::private_dir()
+        .map(|dir| dir.join("impulse.sock"))
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!("impulse-{}.sock", std::process::id()))
+        });
     let mut path = if !persistence {
         private.clone()
     } else if cfg!(target_os = "macos") {

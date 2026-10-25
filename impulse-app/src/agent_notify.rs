@@ -81,6 +81,9 @@ fn linux_arguments(title: &str, subtitle: &str, body: &str, actions: bool) -> Ve
     if actions {
         arguments.push(format!("--action={CLICK}=Show"));
     }
+    // The title and body come from programs (OSC 9, 777 and 99): after
+    // `--`, one starting with `-` stays text instead of becoming an option.
+    arguments.push("--".to_string());
     arguments.push(title.to_string());
     arguments.push(lines(subtitle, body));
     arguments
@@ -147,11 +150,15 @@ mod tests {
             vec![
                 "--app-name=Impulse",
                 "--action=default=Show",
+                "--",
                 "Codex finished",
                 "impulse · zsh"
             ]
         );
-        assert_eq!(linux_arguments("Bell", "", "", false).len(), 3);
+        assert_eq!(linux_arguments("Bell", "", "", false).len(), 4);
+        // A title that looks like an option stays text.
+        let arguments = linux_arguments("--icon=/x", "", "", false);
+        assert_eq!(arguments[1], "--");
         assert!(was_clicked("default\n"));
         assert!(!was_clicked(""));
         assert!(!was_clicked("other\n"));

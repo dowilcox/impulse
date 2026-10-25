@@ -220,6 +220,7 @@ fn parse_args() -> (Args, Launch) {
             _ => {}
         }
     }
+    workbench_trust::share_trust(args.trust_store.clone());
     let launch = Launch {
         cwd: cwd_given.then(|| args.cwd.clone()),
         commands: args.commands.clone(),
@@ -282,6 +283,7 @@ fn main() {
             control_server::start(cx, control_commands::dispatch);
             cx.on_app_quit(|cx| {
                 control_server::stop();
+                shell_launch::remove_private_dir();
                 workbench_trust::shutdown_servers(cx)
             })
             .detach();

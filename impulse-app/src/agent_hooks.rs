@@ -567,10 +567,18 @@ impl Workbench {
                 let Some(file) = args.get("toolFile").cloned() else {
                     return reply_with(None);
                 };
+                let pane = terminal.read(cx).cwd.clone();
                 let task = cx.background_spawn(async move {
                     let dir = Path::new(&file).parent()?.to_string_lossy().into_owned();
                     let root = repo_root(&dir)?;
                     let main = crate::tasks::main_checkout_root(&root);
+                    // Only the pane's own repository: a file named anywhere
+                    // else mustn't have git run in a repository the user
+                    // never opened (its fsmonitor, say).
+                    let pane_main = crate::tasks::main_checkout_root(&repo_root(&pane)?);
+                    if task_registry::canonical(&pane_main) != task_registry::canonical(&main) {
+                        return None;
+                    }
                     let (_, changes) = workspace_changes(&main);
                     let me = task_registry::canonical(&root);
                     let relative = task_registry::canonical(&file)

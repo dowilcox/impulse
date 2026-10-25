@@ -56,11 +56,23 @@ fn identity(mut env: HashMap<String, String>) -> HashMap<String, String> {
     env
 }
 
-/// `environment()` with `GIT_INDEX_FILE` set to `index`.
-fn with_index(index: &str) -> HashMap<String, String> {
-    let mut env = environment();
+/// `base` with `GIT_INDEX_FILE` set to `index`.
+fn with_index(base: &HashMap<String, String>, index: &str) -> HashMap<String, String> {
+    let mut env = base.clone();
     env.insert("GIT_INDEX_FILE".into(), index.into());
     env
+}
+
+/// The environment for recording `root`'s working tree: in a folder that
+/// isn't trusted, git runs none of the repository's own hooks, fsmonitor
+/// or filters (`restricted_environment`), as for every other read Impulse
+/// makes there on its own.
+fn recording_environment(root: &str, trusted: bool) -> GitResult<HashMap<String, String>> {
+    if trusted {
+        return Ok(environment());
+    }
+    crate::cli::restricted_environment(root, &environment())
+        .ok_or_else(|| OperationError::Invalid("Couldn't read the repository's settings.".into()))
 }
 
 /// A copy of the real index at `copy`, removed when dropped.
@@ -99,15 +111,27 @@ fn trimmed(result: Result<CliOutput, CliError>) -> Option<String> {
 }
 
 /// Record the working tree and index under `prefix` (`OPLOG_PREFIX` by
-/// default).
+/// default), before something the user asked for.
 pub fn create(reason: &str, root: &str, prefix: &str) -> GitResult<SafetySnapshot> {
+    create_with(reason, root, prefix, true)
+}
+
+/// `create`, for a snapshot Impulse takes on its own (an agent's turn, a
+/// checkpoint an agent asked for): restricted when `root` isn't trusted.
+pub fn create_with(
+    reason: &str,
+    root: &str,
+    prefix: &str,
+    trusted: bool,
+) -> GitResult<SafetySnapshot> {
     let Some(git_dir) = absolute_git_dir(root) else {
         return Err(OperationError::Invalid("Not a git repository".into()));
     };
+    let base = recording_environment(root, trusted)?;
 
     // The working tree's tree, built in a temporary index.
     let temp_index = TempIndex::copy(&git_dir, &format!("impulse-snapshot-{}.index", unique_id()));
-    let env = with_index(&temp_index.0);
+    let env = with_index(&base, &temp_index.0);
     git_in(&["add", "--all", "--", "."], root, &env, 120)?;
     let Some(worktree_tree) = trimmed(git_in(&["write-tree"], root, &env, 120)) else {
         return Err(OperationError::Invalid(
@@ -124,7 +148,7 @@ pub fn create(reason: &str, root: &str, prefix: &str) -> GitResult<SafetySnapsho
     let index_tree = trimmed(git_in(
         &["write-tree"],
         root,
-        &with_index(&index_copy.0),
+        &with_index(&base, &index_copy.0),
         60,
     ));
 
@@ -174,11 +198,12 @@ pub fn create(reason: &str, root: &str, prefix: &str) -> GitResult<SafetySnapsho
 /// that aren't ignored included) on top of HEAD, with no ref pointing at it,
 /// for comparing work that isn't committed (git's gc removes it in time).
 /// HEAD itself when nothing is uncommitted; `None` when it can't be made.
-pub fn working_tree_commit(root: &str) -> Option<String> {
+pub fn working_tree_commit(root: &str, trusted: bool) -> Option<String> {
     let git_dir = absolute_git_dir(root)?;
     let head = head_commit(root)?;
+    let base = recording_environment(root, trusted).ok()?;
     let temp_index = TempIndex::copy(&git_dir, &format!("impulse-compare-{}.index", unique_id()));
-    let env = with_index(&temp_index.0);
+    let env = with_index(&base, &temp_index.0);
     git_in(&["add", "--all", "--", "."], root, &env, 120).ok()?;
     let tree = trimmed(git_in(&["write-tree"], root, &env, 60))?;
     if git(&["rev-parse", "HEAD^{tree}"], root).is_ok_and(|r| r.stdout.trim() == tree) {

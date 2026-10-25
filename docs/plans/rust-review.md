@@ -21,6 +21,12 @@ actions: confirmation, snapshot and Undo for reverts, errors as dialogs,
 busy marks kept through refreshes), G5, W3, E4 (with the BOM and Diff
 View parts of E11 and E7), E3, W16.
 
+Security: S1 to S9, and the writer half of P4 (each language server has
+a writer thread, so the UI never waits on one). Automatic snapshots
+(agent turns and checkpoints, the "reviewed" mark, overlap checks) use the
+restricted environment in folders that aren't trusted
+(`safety::create_with`, `working_tree_commit(root, trusted)`).
+
 ## What to fix first
 
 1. **Crashes and lost work**: the editor crash on non-ASCII typing (E1),

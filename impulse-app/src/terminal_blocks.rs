@@ -979,8 +979,10 @@ impl TerminalView {
                     text: target.text,
                     path: None,
                 };
+                // Through the link rules: web links open, file: ones in the
+                // editor or revealed, never launched (Swift's `openLink`).
                 if let Some(url) = hint.url() {
-                    cx.open_url(url.as_str());
+                    self.open_link(LinkTarget::Url(url.to_string()), window, cx);
                 }
             }
             HintKind::Path => {

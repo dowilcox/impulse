@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use futures::channel::oneshot;
@@ -74,7 +75,10 @@ pub struct LspClient {
     pub name: String,
     pub root: PathBuf,
     child: Mutex<Child>,
-    stdin: Mutex<BufWriter<ChildStdin>>,
+    /// Messages for the server, written in order by the client's writer
+    /// thread, so a sender never waits on a server that isn't reading (the
+    /// Swift client's write queue).
+    outbox: mpsc::Sender<Vec<u8>>,
     next_id: AtomicI64,
     pending: Pending,
     capabilities: Mutex<ServerCapabilities>,
@@ -149,11 +153,23 @@ impl LspClient {
         let stdin = child.stdin.take().ok_or("no stdin")?;
         let stdout = child.stdout.take().ok_or("no stdout")?;
 
+        let (outbox, messages) = mpsc::channel::<Vec<u8>>();
+        std::thread::Builder::new()
+            .name(format!("lsp-{name}-writer"))
+            .spawn(move || {
+                let mut stdin = BufWriter::new(stdin);
+                for body in messages {
+                    if write_message(&mut stdin, &body).is_err() {
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
         let client = Arc::new(LspClient {
             name: name.to_string(),
             root: root.to_path_buf(),
             child: Mutex::new(child),
-            stdin: Mutex::new(BufWriter::new(stdin)),
+            outbox,
             next_id: AtomicI64::new(1),
             pending: Arc::default(),
             capabilities: Mutex::default(),
@@ -267,8 +283,9 @@ impl LspClient {
 
     fn send(&self, message: &Value) -> Result<(), String> {
         let body = serde_json::to_vec(message).map_err(|e| e.to_string())?;
-        let mut stdin = self.stdin.lock().unwrap();
-        write_message(&mut *stdin, &body).map_err(|e| e.to_string())
+        self.outbox
+            .send(body)
+            .map_err(|_| "the server's input is closed".to_string())
     }
 
     /// Whether it was told to stop (`shutdown` or `kill`).

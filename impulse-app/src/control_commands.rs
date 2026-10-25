@@ -126,8 +126,14 @@ impl Workbench {
                 let Some(path) = args.get("path").cloned() else {
                     return answer(ControlResponse::failure("No file given."));
                 };
-                // Here, /dev/fd/5 would be one of Impulse's own files.
-                if path.starts_with("/dev/") {
+                // Here, /dev/fd/5 (or /proc/self/fd/5, or a link to either)
+                // would be one of Impulse's own files.
+                let resolved =
+                    std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+                if path.starts_with("/dev/")
+                    || resolved.starts_with("/dev")
+                    || resolved.starts_with("/proc")
+                {
                     return answer(ControlResponse::failure(format!(
                         "{path} isn't a regular file."
                     )));
@@ -233,7 +239,8 @@ impl Workbench {
                         return answer(ControlResponse::failure("Not in a git repository."));
                     };
                     let prefix = format!("{}manual/", impulse_git::safety::CHECKPOINT_PREFIX);
-                    match impulse_git::safety::create(&reason, &root, &prefix) {
+                    let trusted = crate::workbench_trust::is_trusted(&root);
+                    match impulse_git::safety::create_with(&reason, &root, &prefix, trusted) {
                         Ok(snapshot) => {
                             answer(ControlResponse::ok_message(snapshot.ref_name));
                             crate::agent_checkpoints::prune(&root);

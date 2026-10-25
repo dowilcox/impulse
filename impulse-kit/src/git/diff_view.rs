@@ -103,7 +103,10 @@ pub fn hide_unchanged(diff: InlineDiff, revealed: &[Range<usize>]) -> InlineDiff
     let rows = diff.buffer_rows.len();
     let changed = |row: usize| {
         let row = row as u32;
-        diff.removed.iter().chain(&diff.added).any(|r| r.contains(&row))
+        diff.removed
+            .iter()
+            .chain(&diff.added)
+            .any(|r| r.contains(&row))
     };
     // The rows to hide, as ranges of the document's rows.
     let mut hide: Vec<Range<usize>> = Vec::new();
@@ -123,9 +126,10 @@ pub fn hide_unchanged(diff: InlineDiff, revealed: &[Range<usize>]) -> InlineDiff
             continue;
         }
         let run = start + lead..row - trail;
-        let (Some(Some(first)), Some(Some(last))) =
-            (diff.buffer_rows.get(run.start), diff.buffer_rows.get(run.end - 1))
-        else {
+        let (Some(Some(first)), Some(Some(last))) = (
+            diff.buffer_rows.get(run.start),
+            diff.buffer_rows.get(run.end - 1),
+        ) else {
             continue;
         };
         let buffer = *first..*last + 1;

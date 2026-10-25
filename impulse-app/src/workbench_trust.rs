@@ -825,3 +825,19 @@ fn forget_project_trust(folder: &str) {
     projects.revoke(&crate::tasks::repository_trust_key(folder));
     crate::tasks::save_project_trust(&projects);
 }
+
+/// The run's trust store, for work off the main thread that has no window
+/// to ask (agent checkpoints, overlap checks).
+static SHARED_TRUST: std::sync::OnceLock<std::sync::Arc<impulse_kit::trust::WorkspaceTrust>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn share_trust(trust: std::sync::Arc<impulse_kit::trust::WorkspaceTrust>) {
+    let _ = SHARED_TRUST.set(trust);
+}
+
+/// Whether `path` is in a trusted folder (not before the store is shared).
+pub(crate) fn is_trusted(path: &str) -> bool {
+    SHARED_TRUST
+        .get()
+        .is_some_and(|trust| trust.is_trusted(path))
+}

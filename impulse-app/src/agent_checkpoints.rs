@@ -112,7 +112,12 @@ pub fn turn_started(terminal: &str, agent_name: &str, cwd: &str) {
             return;
         };
         let root = root.trim_end_matches('/').to_string();
-        let Ok(snapshot) = safety::create("turn start", &root, &prefix(&terminal)) else {
+        let Ok(snapshot) = safety::create_with(
+            "turn start",
+            &root,
+            &prefix(&terminal),
+            crate::workbench_trust::is_trusted(&root),
+        ) else {
             return;
         };
         let first = {
@@ -144,7 +149,12 @@ pub fn turn_ended(terminal: &str) {
         let Some(root) = state().roots.remove(&id) else {
             return;
         };
-        let Ok(snapshot) = safety::create("turn end", &root, &prefix(&terminal)) else {
+        let Ok(snapshot) = safety::create_with(
+            "turn end",
+            &root,
+            &prefix(&terminal),
+            crate::workbench_trust::is_trusted(&root),
+        ) else {
             return;
         };
         let mut state = state();

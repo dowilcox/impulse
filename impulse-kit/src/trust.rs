@@ -57,12 +57,20 @@ impl WorkspaceTrust {
                 .ok()
                 .and_then(|data| serde_json::from_slice::<Stored>(&data).ok())
             {
-                state.folders = stored.trusted.iter().map(|p| normalize(p)).collect();
+                // An empty or relative entry would trust (or block) every
+                // folder: it's dropped.
+                state.folders = stored
+                    .trusted
+                    .iter()
+                    .map(|p| normalize(p))
+                    .filter(|p| is_folder(p))
+                    .collect();
                 state.restricted = stored
                     .restricted
                     .unwrap_or_default()
                     .iter()
                     .map(|p| normalize(p))
+                    .filter(|p| is_folder(p))
                     .collect();
             }
         }
@@ -114,6 +122,9 @@ impl WorkspaceTrust {
     /// branch there).
     pub fn trust(&self, folder: &str) {
         let folder = normalize(folder);
+        if !is_folder(&folder) {
+            return;
+        }
         {
             let mut state = self.state.lock().unwrap();
             state.restricted.remove(&folder);
@@ -130,6 +141,9 @@ impl WorkspaceTrust {
     /// trusted itself.
     pub fn restrict(&self, folder: &str) {
         let folder = normalize(folder);
+        if !is_folder(&folder) {
+            return;
+        }
         {
             let mut state = self.state.lock().unwrap();
             state.folders.retain(|f| !contains(&folder, f));
@@ -166,12 +180,16 @@ impl WorkspaceTrust {
         self.save();
     }
 
+    /// Written while the state is locked, so two changes on different
+    /// threads can't land in the wrong order (one restriction lost), through
+    /// a temporary file of this process's own.
     fn save(&self) {
         let Some(file) = &self.file else { return };
+        let state = self.state.lock().unwrap();
         let stored = Stored {
             version: 1,
-            trusted: self.trusted_folders(),
-            restricted: Some(self.restricted_folders()),
+            trusted: state.folders.iter().cloned().collect(),
+            restricted: Some(state.restricted.iter().cloned().collect()),
         };
         let Ok(data) = serde_json::to_vec(&stored) else {
             return;
@@ -179,7 +197,7 @@ impl WorkspaceTrust {
         if let Some(dir) = file.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        let temp = file.with_extension("json.tmp");
+        let temp = file.with_extension(format!("json.{}.tmp", std::process::id()));
         if std::fs::write(&temp, data).is_ok() {
             let _ = std::fs::rename(&temp, file);
         }
@@ -234,9 +252,16 @@ pub fn normalize(path: &str) -> String {
     }
 }
 
+/// A folder the list can hold: absolute (an empty or relative entry would
+/// match every path).
+fn is_folder(folder: &str) -> bool {
+    folder.starts_with('/')
+}
+
 /// `folder` is `path` or one of its ancestors.
 fn contains(folder: &str, path: &str) -> bool {
-    folder == "/" || path == folder || path.starts_with(&format!("{folder}/"))
+    is_folder(folder)
+        && (folder == "/" || path == folder || path.starts_with(&format!("{folder}/")))
 }
 
 /// The trusted folder `path` is in, the innermost one, unless a restricted
@@ -422,5 +447,19 @@ mod tests {
         let trust = WorkspaceTrust::new(Some(file));
         assert!(trust.is_trusted(&format!("{code}/app")));
         assert!(!trust.is_trusted(&format!("{code}/other")));
+    }
+
+    #[test]
+    fn an_empty_entry_trusts_nothing() {
+        let dir = std::env::temp_dir().join(format!("impulse-trust-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("trusted-folders.json");
+        std::fs::write(&file, r#"{"version":1,"trusted":["", "relative"]}"#).unwrap();
+        let trust = WorkspaceTrust::new(Some(file));
+        assert!(!trust.is_trusted("/usr"));
+        trust.trust("");
+        assert!(!trust.is_trusted("/usr"));
+        assert!(trust.trusted_folders().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

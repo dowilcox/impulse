@@ -531,8 +531,9 @@ pub(crate) fn merged_records(main: &str, tasks: &[TaskRecord], trusted: bool) ->
 /// The files that would conflict if two workspaces' work met, uncommitted
 /// work included (off the main thread). `None` when git can't tell.
 pub(crate) fn conflicts(pair: &Pair) -> Option<Vec<String>> {
-    let a = impulse_git::safety::working_tree_commit(&pair.a.path)?;
-    let b = impulse_git::safety::working_tree_commit(&pair.b.path)?;
+    let trusted = |path: &str| crate::workbench_trust::is_trusted(path);
+    let a = impulse_git::safety::working_tree_commit(&pair.a.path, trusted(&pair.a.path))?;
+    let b = impulse_git::safety::working_tree_commit(&pair.b.path, trusted(&pair.b.path))?;
     operations::predict_conflicts(&a, &b, &pair.a.path)
 }
 
@@ -1117,16 +1118,20 @@ pub(crate) fn env_file_copy(
     }
 }
 
+/// Copy `files` into a new task. A link is copied as a link, as Swift's
+/// `FileManager.copyItem` does: followed, an untracked `.env` linking to a
+/// key elsewhere would become a real copy of the key inside the task.
 pub(crate) fn copy_files(files: &[String], root: &str, destination: &str) {
     for relative in files {
         let target = Path::new(destination).join(relative);
-        if target.exists() {
+        if std::fs::symlink_metadata(&target).is_ok() {
             continue;
         }
         if let Some(parent) = target.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::copy(Path::new(root).join(relative), &target);
+        let _ =
+            impulse_kit::project::folder_clone::copy_item(&Path::new(root).join(relative), &target);
     }
 }
 

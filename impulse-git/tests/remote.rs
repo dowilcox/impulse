@@ -206,7 +206,7 @@ fn conflicts_are_predicted_without_touching_a_folder() {
 
     // Uncommitted work on main that touches the same lines.
     repo.write("page.tsx", "overhaul\n");
-    let working = safety::working_tree_commit(&repo.root).unwrap();
+    let working = safety::working_tree_commit(&repo.root, true).unwrap();
     assert_ne!(working, base);
     assert_eq!(
         repo.git(&["status", "--porcelain"]).unwrap(),
@@ -219,7 +219,7 @@ fn conflicts_are_predicted_without_touching_a_folder() {
     );
     repo.git(&["checkout", "--", "page.tsx"]).unwrap();
     assert_eq!(
-        safety::working_tree_commit(&repo.root),
+        safety::working_tree_commit(&repo.root, true),
         Some(base),
         "clean: HEAD itself"
     );
@@ -291,6 +291,34 @@ fn commits_ahead_are_newest_first() {
 /// A repository whose own config shows signatures runs its `gpg.program`
 /// from `git log`, `show` and `reflog` on a signed commit: no read of
 /// Impulse's may, and their output stays parseable.
+#[test]
+fn untrusted_snapshots_run_no_filter() {
+    setup();
+    let repo = TempRepo::create();
+    repo.commit(&[("a.txt", "1\n")], "base");
+    let marker = repo.path("filter-ran");
+    let program = repo.path("fake-filter");
+    repo.write(
+        "fake-filter",
+        &format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+    );
+    set_executable(&program);
+    repo.git(&["config", "filter.evil.clean", &program.to_string_lossy()])
+        .unwrap();
+    repo.write(".git/info/attributes", "a.txt filter=evil\n");
+    repo.write("a.txt", "2\n");
+    // The setup does what it should: a trusted snapshot runs the filter.
+    assert!(safety::working_tree_commit(&repo.root, true).is_some());
+    assert!(marker.exists());
+    std::fs::remove_file(&marker).unwrap();
+    assert!(safety::working_tree_commit(&repo.root, false).is_some());
+    assert!(safety::create_with("turn", &repo.root, safety::OPLOG_PREFIX, false).is_ok());
+    assert!(
+        !marker.exists(),
+        "an untrusted snapshot ran the repository's filter"
+    );
+}
+
 #[test]
 fn no_read_runs_the_repositorys_gpg_program() {
     setup();
