@@ -465,6 +465,11 @@ pub struct TerminalView {
     hover_link: Option<HoverLink>,
     hover_cell: Option<(usize, usize)>,
     pub(crate) file_checks: FileChecks,
+    /// A hovered path was still being looked up (`FileChecks`).
+    pub(crate) file_check_pending: bool,
+    /// Tries at labelling hints while paths are looked up.
+    pub(crate) hint_attempts: u8,
+    _file_check_retry: Option<gpui_kit::Task<()>>,
 
     // Find.
     pub(crate) find: Option<FindBar>,
@@ -714,6 +719,9 @@ impl TerminalView {
             hover_link: None,
             hover_cell: None,
             file_checks: FileChecks::default(),
+            file_check_pending: false,
+            hint_attempts: 0,
+            _file_check_retry: None,
             find: None,
             last_find: None,
             tuck: Tuck::default(),
@@ -1459,6 +1467,21 @@ impl TerminalView {
         } else {
             None
         };
+        // A path still being looked up: look again shortly, if the pointer
+        // stays.
+        if std::mem::take(&mut self.file_check_pending) {
+            self._file_check_retry = Some(cx.spawn(async move |view, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(120))
+                    .await;
+                let _ = view.update(cx, |view, cx| {
+                    if view.hover_cell == Some((col, row)) {
+                        view.hover_cell = None;
+                        view.update_hover(col, row, cx);
+                    }
+                });
+            }));
+        }
         if link != self.hover_link {
             // A web link's target shows after a tooltip's delay: an OSC 8
             // link's text needn't say where it goes.

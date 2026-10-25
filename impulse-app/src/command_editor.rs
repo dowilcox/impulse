@@ -96,6 +96,9 @@ pub enum CommandEditorEvent {
     CopyNothing,
     /// Any click in the editor.
     Clicked,
+    /// Paste with no text on the clipboard (files or an image): the owner
+    /// may insert their paths.
+    PasteOther,
 }
 
 impl EventEmitter<CommandEditorEvent> for CommandEditor {}
@@ -513,8 +516,11 @@ impl CommandEditor {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-            self.insert(&text, cx);
+        if let Some(item) = cx.read_from_clipboard() {
+            match item.text() {
+                Some(text) => self.insert(&text, cx),
+                None => cx.emit(CommandEditorEvent::PasteOther),
+            }
         }
     }
 

@@ -103,23 +103,40 @@ pub(crate) struct RowText {
 }
 
 /// Recent answers to "is this an existing file?", so hovering doesn't look
-/// the same path up on every move.
+/// the same path up on every move. Looked up off the main thread: a path on
+/// a network mount that stopped answering would freeze the window.
 #[derive(Default)]
-pub(crate) struct FileChecks(HashMap<PathBuf, (bool, Instant)>);
+pub(crate) struct FileChecks(
+    std::sync::Arc<std::sync::Mutex<HashMap<PathBuf, (Option<bool>, Instant)>>>,
+);
 
 impl FileChecks {
-    pub fn is_file(&mut self, path: &PathBuf) -> bool {
-        if let Some((is_file, at)) = self.0.get(path) {
-            if at.elapsed() < Duration::from_secs(5) {
-                return *is_file;
+    /// The answer when it's known; `None` while it's being looked up
+    /// (started here when it isn't).
+    pub fn is_file(&self, path: &PathBuf) -> Option<bool> {
+        let mut known = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match known.get(path) {
+            Some((Some(is_file), at)) if at.elapsed() < Duration::from_secs(5) => {
+                return Some(*is_file)
             }
+            // Still looking (a stuck mount is asked again after a while).
+            Some((None, at)) if at.elapsed() < Duration::from_secs(30) => return None,
+            _ => {}
         }
-        let is_file = path.is_file();
-        if self.0.len() > 512 {
-            self.0.clear();
+        if known.len() > 512 {
+            known.retain(|_, (answer, _)| answer.is_none());
         }
-        self.0.insert(path.clone(), (is_file, Instant::now()));
-        is_file
+        known.insert(path.clone(), (None, Instant::now()));
+        drop(known);
+        let (checks, path) = (self.0.clone(), path.clone());
+        std::thread::spawn(move || {
+            let is_file = path.is_file();
+            checks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(path, (Some(is_file), Instant::now()));
+        });
+        None
     }
 }
 
@@ -753,8 +770,14 @@ impl TerminalView {
         }
         let found = impulse_kit::terminal_paths::match_at(&text.text, byte)?;
         let path = PathBuf::from(impulse_kit::terminal_paths::resolve(&found.path, &self.cwd));
-        if !self.file_checks.is_file(&path) {
-            return None;
+        match self.file_checks.is_file(&path) {
+            Some(true) => {}
+            Some(false) => return None,
+            // Asked again once it's known (`update_hover`).
+            None => {
+                self.file_check_pending = true;
+                return None;
+            }
         }
         let (start_col, end_col) = cols(&found.range)?;
         Some(HoverLink {
@@ -826,6 +849,7 @@ impl TerminalView {
         };
         let last_row = self.last_content_row.unwrap_or(grid.rows.saturating_sub(1));
         let mut found = Vec::new();
+        let mut pending = false;
         for row in 0..grid.rows.min(last_row + 1) {
             let text = grid.row_text(row);
             if text.text.trim().is_empty() {
@@ -850,14 +874,37 @@ impl TerminalView {
                         &reference.path,
                         &self.cwd,
                     ));
-                    if !self.file_checks.is_file(&absolute) {
-                        continue;
+                    match self.file_checks.is_file(&absolute) {
+                        Some(true) => {}
+                        Some(false) => continue,
+                        None => {
+                            pending = true;
+                            continue;
+                        }
                     }
                     path = Some((absolute, reference.line, reference.column));
                 }
                 found.push((row, start, last + 1, hint.kind, hint.text, path));
             }
         }
+        // Paths still being looked up: label once they're known (a few
+        // tries, then without the ones that never answered).
+        if pending && self.hint_attempts < 8 {
+            self.hint_attempts += 1;
+            cx.spawn_in(window, async move |view, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                let _ = view.update_in(cx, |view, window, cx| {
+                    if !view.begin_hints(window, cx) {
+                        cx.emit(TerminalViewEvent::Notice("Nothing to open on screen.".into()));
+                    }
+                });
+            })
+            .detach();
+            return true;
+        }
+        self.hint_attempts = 0;
         if found.is_empty() {
             return false;
         }

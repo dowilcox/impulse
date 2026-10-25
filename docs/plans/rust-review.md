@@ -43,7 +43,10 @@ owns the screen, and scroll the scrollback at the shell).
 
 Terminal: T1 (the grid snapshot's extras are read: combining marks shape
 with their cell's character, and SGR 58 underline colors are drawn), T2
-(⌘C with nothing selected does nothing), T3 (password
+(⌘C with nothing selected does nothing), T4 (pasting files or an image
+into the input bar inserts their paths, `CommandEditorEvent::PasteOther`),
+T6 (hovered and hinted paths are looked up on a background thread,
+`FileChecks`, the hover and the hints asked again once known), T3 (password
 mode's start and end empty the input bar, its undo history included,
 `CommandEditor::reset`), T18 (mouse reports carry their button and
 modifiers, a release pairs with its press, drags are reported once per

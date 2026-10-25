@@ -201,6 +201,9 @@ impl TerminalView {
                     self.end_block_selection(false, window, cx);
                 }
             }
+            // Files or an image: their paths, as the terminal pastes them
+            // (Swift's bar inserts them too).
+            CommandEditorEvent::PasteOther => self.paste_clipboard(window, cx),
         }
     }
 
