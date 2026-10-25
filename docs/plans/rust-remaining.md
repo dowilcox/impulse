@@ -61,8 +61,12 @@ Work that doesn't depend on anyone else.
   nothing else in the workspace needs a newer one, so `Cargo.lock` holds
   `cc` at 1.2.67, and `cargo update` keeps it on 1.2 while the grammar
   asks for that.
-- [ ] **Remove the line on the editor's right side.** A vertical line shows
+- [x] **Remove the line on the editor's right side.** A vertical line shows
   along the right of an editor tab, which the Swift app doesn't have.
+  Settled: it was the right margin, on in the dev build's own
+  settings.json (`~/.local/share/impulse-dev/`, not the v0.29 app's
+  `~/.config/impulse/`, where it was already off); turned off there, and
+  the default stays on as in the Swift app.
   Found: on a window wide enough, it's the right margin at column 120
   (`show_right_margin` and `right_margin_position`, on by default in both
   apps, painted in `editor_git.rs`). The Swift app draws the same ruler
@@ -117,6 +121,15 @@ on them yet.
 
 ## 4. Known issues
 
+- [x] **Find (Ctrl+F) in an editor said "Find isn't in the Rust app
+  yet."** `Workbench::run_command` only handled Find for a terminal; an
+  editor fell through to the catch-all for commands with no handler.
+  Fixed: Find opens GPUI Kit's search panel (`open_search`) in an editor,
+  and does nothing in Review, History, images and tool tabs, as in Swift.
+  Every command id in the catalog (palette, menus, keybindings) has a
+  handler; this was the only one that reached the catch-all from a
+  surface it should work on. Nothing scripted it: the smoke scenarios and
+  docs shots drive the editor through `edit=`, not the command.
 - [ ] **First keystroke lost in the editor's search field** under Xvfb.
   Focus moves there at once in GPUI Kit's code, so this looks like X11
   key input without a window manager. Check on a real Linux desktop and on

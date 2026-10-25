@@ -1427,6 +1427,16 @@ impl Workbench {
                     terminal.update(cx, |t, cx| t.toggle_find(window, cx));
                 }
             }
+            // In an editor, GPUI Kit's search panel.
+            "find" if self.active_editor().is_some() => {
+                if let Some(editor) = self.active_editor().cloned() {
+                    editor.update(cx, |tab, cx| {
+                        tab.state.update(cx, |state, cx| state.open_search(false, cx))
+                    });
+                }
+            }
+            // Review, History, images and tool tabs have no find, as in Swift.
+            "find" => {}
             block if crate::terminal_blocks::BLOCK_COMMANDS.contains(&block) => {
                 if let Some(terminal) = self.active_terminal().cloned() {
                     terminal.update(cx, |t, cx| t.perform_block_command(block, window, cx));
