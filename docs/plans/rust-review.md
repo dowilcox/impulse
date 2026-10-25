@@ -62,7 +62,11 @@ hidden; its default scope comes from the repository's last refresh;
 History refreshes on a new `generation`, not progress lines), P9 (a
 terminal reads its grid again only after damage or a change of scroll
 place or size, and the block overlay only when `block_overlay_key`
-changes; blinks and hovers reuse them). Git: G3 (waiting
+changes; blinks and hovers reuse them), P12 (an editor's change marks,
+conflicts, links and bracket pairs are worked out in the background and
+painted if the text hasn't moved on; the word diff keeps only each
+step's live diagonals, and the Diff View skips word marks on lines past
+`MAX_WORD_DIFF_LINE_LEN`, as Review does). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 

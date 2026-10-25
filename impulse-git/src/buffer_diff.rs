@@ -104,8 +104,15 @@ pub fn changed_words(
         let news = new_lines.get(new_rows).unwrap_or_default();
         for k in 0..olds.len().max(news.len()) {
             match (olds.get(k), news.get(k)) {
+                // Very long lines get no word marks, as in Review.
+                (Some(o), Some(n)) if o.len() + n.len() > crate::MAX_WORD_DIFF_LINE_LEN * 4 => {}
                 (Some(o), Some(n)) => {
                     let (o_text, n_text) = (&old[o.clone()], &new[n.clone()]);
+                    if o_text.encode_utf16().count() + n_text.encode_utf16().count()
+                        > crate::MAX_WORD_DIFF_LINE_LEN
+                    {
+                        continue;
+                    }
                     let (o_spans, n_spans) = word_spans(o_text, n_text);
                     removed.extend(joined(
                         old,

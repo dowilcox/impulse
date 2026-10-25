@@ -28,8 +28,8 @@ pub(crate) fn links(text: &str) -> Vec<Range<usize>> {
 }
 
 /// The underline under each link.
-pub(crate) fn underlines(text: &str) -> Vec<TextDecoration> {
-    links(text)
+pub(crate) fn underlines_at(links: Vec<Range<usize>>) -> Vec<TextDecoration> {
+    links
         .into_iter()
         .map(|range| {
             TextDecoration::new(

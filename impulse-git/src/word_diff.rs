@@ -117,11 +117,15 @@ pub fn changed_flags(old: &[&str], new: &[&str]) -> (Vec<bool>, Vec<bool>) {
     let offset = max_d;
     let at = |k: isize| (offset + k) as usize;
     let mut v = vec![0isize; 2 * (n + m) + 1];
+    // Before step d only diagonals -(d-1)..=(d-1) have been written (the
+    // rest are still 0), so each step keeps just that window: O(D²)
+    // memory, not O(D·(n+m)).
     let mut trace: Vec<Vec<isize>> = Vec::new();
     let mut end_d = 0;
 
     'outer: for d in 0..=max_d {
-        trace.push(v.clone());
+        let reach = (d - 1).max(0);
+        trace.push(v[at(-reach)..=at(reach)].to_vec());
         let mut k = -d;
         while k <= d {
             let mut x = if k == -d || (k != d && v[at(k - 1)] < v[at(k + 1)]) {
@@ -152,14 +156,22 @@ pub fn changed_flags(old: &[&str], new: &[&str]) -> (Vec<bool>, Vec<bool>) {
     let mut y = m as isize;
     let mut d = end_d;
     while d > 0 {
-        let previous = &trace[d as usize];
+        let window = &trace[d as usize];
+        let reach = (d - 1).max(0);
+        let previous = |k: isize| {
+            if k.abs() <= reach {
+                window[(k + reach) as usize]
+            } else {
+                0
+            }
+        };
         let k = x - y;
-        let previous_k = if k == -d || (k != d && previous[at(k - 1)] < previous[at(k + 1)]) {
+        let previous_k = if k == -d || (k != d && previous(k - 1) < previous(k + 1)) {
             k + 1
         } else {
             k - 1
         };
-        let previous_x = previous[at(previous_k)];
+        let previous_x = previous(previous_k);
         let previous_y = previous_x - previous_k;
         // Back through the snake (equal tokens).
         while x > previous_x && y > previous_y {

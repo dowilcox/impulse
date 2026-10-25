@@ -84,8 +84,55 @@ pub(crate) struct GitLayer {
     links: Option<TextDecorationCollection>,
     _base: Option<Task<()>>,
     _diff: Option<Task<()>>,
+    _marks: Option<Task<()>>,
     _blame: Option<Task<()>>,
     _repository: Option<Subscription>,
+}
+
+type ScannedBrackets = (
+    Vec<(std::ops::Range<usize>, impulse_kit::bracket_pairs::Color)>,
+    Vec<impulse_kit::bracket_pairs::Pair>,
+    Vec<impulse_kit::bracket_pairs::Guide>,
+);
+
+/// What `update_git_marks` works out off the main thread.
+struct Marks {
+    hunks: Vec<LineHunk>,
+    conflicts: Vec<ConflictBlock>,
+    links: Vec<std::ops::Range<usize>>,
+    brackets: Option<ScannedBrackets>,
+}
+
+/// Documents past this size get no links or bracket colors.
+const MAX_DECORATED: usize = 2 * 1024 * 1024;
+
+impl Marks {
+    fn compute(
+        text: &str,
+        base: Option<&str>,
+        language: &str,
+        tab_size: usize,
+        brackets_on: bool,
+    ) -> Marks {
+        use impulse_kit::bracket_pairs;
+        let small = text.len() <= MAX_DECORATED;
+        Marks {
+            hunks: base
+                .map(|base| editor_marks::line_hunks(base, text))
+                .unwrap_or_default(),
+            conflicts: editor_marks::find_conflicts(text),
+            links: if small {
+                crate::editor_links::links(text)
+            } else {
+                Vec::new()
+            },
+            brackets: (brackets_on && small).then(|| {
+                let (brackets, pairs) = bracket_pairs::scan(text, language);
+                let guides = bracket_pairs::guides(text, &pairs, tab_size);
+                (brackets, pairs, guides)
+            }),
+        }
+    }
 }
 
 impl EditorTab {
@@ -176,24 +223,40 @@ impl EditorTab {
         }));
     }
 
+    /// Work out the change marks, conflicts, links and bracket pairs in the
+    /// background, then paint them (unless the text moved on meanwhile).
     fn update_git_marks(&mut self, cx: &mut Context<Self>) {
         let text = self.text(cx);
-        self.git.hunks = self
-            .git
-            .base
-            .as_deref()
-            .map(|base| editor_marks::line_hunks(base, &text))
-            .unwrap_or_default();
+        let base = self.git.base.clone();
+        let language = self.language.clone();
+        let tab_size = self.tab_size;
+        let brackets_on = crate::settings_store::SettingsStore::get(cx).bracket_pair_colorization;
+        self.git._marks = Some(cx.spawn(async move |tab, cx| {
+            let (text, marks) = cx
+                .background_spawn(async move {
+                    let marks = Marks::compute(&text, base.as_deref(), &language, tab_size, brackets_on);
+                    (text, marks)
+                })
+                .await;
+            let _ = tab.update(cx, |tab, cx| {
+                if tab.text(cx) == text {
+                    tab.apply_marks(marks, cx);
+                }
+            });
+        }));
+    }
+
+    fn apply_marks(&mut self, marks: Marks, cx: &mut Context<Self>) {
+        self.git.hunks = marks.hunks;
         if let Some(start) = self.git.peek {
             if !self.git.hunks.iter().any(|h| h.new_start == start) {
                 self.git.peek = None;
             }
         }
-        self.paint_brackets(&text, cx);
-        self.paint_links(&text, cx);
-        let conflicts = editor_marks::find_conflicts(&text);
-        let resolved = !self.git.conflicts.is_empty() && conflicts.is_empty();
-        self.git.conflicts = conflicts;
+        self.paint_brackets(marks.brackets, cx);
+        self.paint_links(marks.links, cx);
+        let resolved = !self.git.conflicts.is_empty() && marks.conflicts.is_empty();
+        self.git.conflicts = marks.conflicts;
         self.paint_conflicts(cx);
         if resolved {
             cx.emit(EditorGitAction {
@@ -205,15 +268,11 @@ impl EditorTab {
     }
 
     /// Underline the links, as Monaco does.
-    fn paint_links(&mut self, text: &str, cx: &mut Context<Self>) {
-        let underlines = if text.len() > 2 * 1024 * 1024 {
-            Vec::new()
-        } else {
-            crate::editor_links::underlines(text)
-        };
-        if underlines.is_empty() && self.git.links.is_none() {
+    fn paint_links(&mut self, links: Vec<std::ops::Range<usize>>, cx: &mut Context<Self>) {
+        if links.is_empty() && self.git.links.is_none() {
             return;
         }
+        let underlines = crate::editor_links::underlines_at(links);
         let marks = self.git.links.get_or_insert_with(|| {
             self.state.update(cx, |state, cx| {
                 state.create_decorations_collection(Vec::new(), cx)
@@ -224,16 +283,15 @@ impl EditorTab {
 
     /// Color bracket pairs by depth (`bracket_pair_colorization`, Monaco's
     /// three colors), unmatched ones red.
-    fn paint_brackets(&mut self, text: &str, cx: &mut Context<Self>) {
+    fn paint_brackets(&mut self, scanned: Option<ScannedBrackets>, cx: &mut Context<Self>) {
         use impulse_kit::bracket_pairs::{self, Color};
-        let on = crate::settings_store::SettingsStore::get(cx).bracket_pair_colorization;
-        if !on || text.len() > 2 * 1024 * 1024 {
+        let Some((brackets, pairs, guides)) = scanned else {
             if let Some(marks) = self.git.brackets.as_ref() {
                 marks.clear(cx);
             }
             self.git.bracket_pairs = Default::default();
             return;
-        }
+        };
         let hex = |h: &str| crate::workbench_chrome::hsla(impulse_kit::chrome::Rgba::from_hex(h));
         let levels = if cx.theme().mode.is_dark() {
             bracket_pairs::DARK
@@ -242,9 +300,8 @@ impl EditorTab {
         }
         .map(hex);
         let unexpected = hex(bracket_pairs::UNEXPECTED);
-        let (brackets, pairs) = bracket_pairs::scan(text, &self.language);
         self.git.bracket_pairs = crate::editor_brackets::Brackets {
-            guides: std::rc::Rc::new(bracket_pairs::guides(text, &pairs, self.tab_size)),
+            guides: std::rc::Rc::new(guides),
             pairs: std::rc::Rc::new(pairs),
         };
         let decorations: Vec<TextDecoration> = brackets
