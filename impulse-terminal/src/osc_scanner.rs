@@ -115,6 +115,9 @@ pub(crate) const MAX_CLIPBOARD_OSC_LEN: usize = 4 * 1024 * 1024;
 /// At most this many names from one OSC 6973;Names.
 const MAX_SHELL_NAMES: usize = 20_000;
 
+/// How long an OSC 7 folder's check is waited for.
+const DIRECTORY_CHECK_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// Scans a byte stream for OSC sequences used by Impulse.
 pub struct OscScanner {
     state: State,
@@ -140,6 +143,9 @@ pub struct OscScanner {
     /// it too. Until then they're taken without it, so a shell with its own
     /// integration keeps working.
     nonce_seen: bool,
+    /// An OSC 7 folder is being checked (`is_directory`) and hasn't
+    /// answered yet.
+    checking_directory: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A kitty (OSC 99) notification arriving in chunks.
@@ -164,6 +170,7 @@ impl OscScanner {
             kitty_pending: Vec::new(),
             nonce: None,
             nonce_seen: false,
+            checking_directory: Default::default(),
         }
     }
 
@@ -376,7 +383,7 @@ impl OscScanner {
             if !self.trusts(nonce, false) {
                 return None;
             }
-            return Self::parse_osc7(payload).map(OscEvent::CwdChanged);
+            return self.parse_osc7(payload).map(OscEvent::CwdChanged);
         }
 
         // OSC 133 (shell integration): "133;X[;params]", "133;D;code[;params]"
@@ -634,7 +641,7 @@ impl OscScanner {
     }
 
     /// Parse OSC 7 payload: "file://hostname/path" → URL-decoded path.
-    fn parse_osc7(payload: &[u8]) -> Option<String> {
+    fn parse_osc7(&self, payload: &[u8]) -> Option<String> {
         let s = std::str::from_utf8(payload).ok()?;
 
         // Strip "file://" prefix.
@@ -654,14 +661,39 @@ impl OscScanner {
 
         // Validate: must be an existing absolute directory and safe to pass
         // across FFI boundaries.
-        if decoded.starts_with('/')
-            && !decoded.contains('\0')
-            && std::path::Path::new(&decoded).is_dir()
-        {
+        if decoded.starts_with('/') && !decoded.contains('\0') && self.is_directory(&decoded) {
             Some(decoded)
         } else {
             None
         }
+    }
+
+    /// Whether `path` is a directory, asked on a helper thread so a folder
+    /// on a mount that stopped answering can't stall the terminal's output:
+    /// past `DIRECTORY_CHECK_WAIT`, or while an earlier check still hangs,
+    /// it counts as not one.
+    fn is_directory(&self, path: &str) -> bool {
+        use std::sync::atomic::Ordering;
+        let checking = self.checking_directory.clone();
+        if checking.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let path = path.to_string();
+        let spawned = std::thread::Builder::new()
+            .name("impulse-osc7-check".into())
+            .spawn(move || {
+                let answer = std::path::Path::new(&path).is_dir();
+                // Before the answer, so the next check never sees this one
+                // still running.
+                checking.store(false, Ordering::SeqCst);
+                let _ = sender.send(answer);
+            });
+        if spawned.is_err() {
+            self.checking_directory.store(false, Ordering::SeqCst);
+            return false;
+        }
+        receiver.recv_timeout(DIRECTORY_CHECK_WAIT).unwrap_or(false)
     }
 
     /// An OSC 7 host that means this Mac: none, `localhost`, or its name

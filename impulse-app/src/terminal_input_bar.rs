@@ -1245,20 +1245,23 @@ fn completion_candidates(
     let dir = cwd.clone();
     let git = move |args: &[&str]| -> Vec<String> {
         let Some(dir) = &dir else { return Vec::new() };
-        std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .map(str::to_string)
-                    .filter(|l| !l.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default()
+        impulse_git::cli::run(
+            args,
+            dir,
+            impulse_git::cli::RunOptions {
+                timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )
+        .ok()
+        .map(|o| {
+            o.stdout
+                .lines()
+                .map(str::to_string)
+                .filter(|l| !l.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
     };
     let git_branches = git.clone();
     let git_remotes = git.clone();

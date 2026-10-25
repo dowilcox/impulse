@@ -453,12 +453,14 @@ pub fn list_dir(dir: &Path, show_hidden: bool) -> Vec<(String, bool)> {
 }
 
 pub fn git_branch(dir: &Path) -> String {
-    std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+    impulse_git::cli::run(
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        &dir.to_string_lossy(),
+        impulse_git::cli::RunOptions {
+            timeout: Some(std::time::Duration::from_secs(5)),
+            ..Default::default()
+        },
+    )
+    .map(|o| o.stdout.trim().to_string())
+    .unwrap_or_default()
 }

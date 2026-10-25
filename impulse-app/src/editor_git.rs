@@ -171,7 +171,7 @@ impl EditorTab {
                     (Some(root), true) => RepositoryState::read_git(
                         root,
                         trusted,
-                        &["blame", "--porcelain", "--", &file],
+                        &["blame", "--porcelain", "--no-textconv", "--", &file],
                     )
                     .map(|text| impulse_git::git_blame::parse_porcelain(&text)),
                     _ => None,

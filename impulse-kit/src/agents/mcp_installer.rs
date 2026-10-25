@@ -37,8 +37,14 @@ pub const FORWARDED_VARIABLES: [&str; 3] = ["IMPULSE_SOCKET", "IMPULSE_PANE_TOKE
 pub const DEFAULT_CLI: &str = "/Applications/Impulse.app/Contents/Resources/bin/impulse";
 
 /// The `sh -c` script that starts the server: the CLI of the Impulse the
-/// terminal belongs to, else `fallback_cli`.
+/// terminal belongs to, else `fallback_cli`. A `}` would end the default
+/// of `${IMPULSE_CLI:-…}`, so a path with one is set aside in a variable
+/// first.
 pub fn launcher(fallback_cli: &str) -> String {
+    if fallback_cli.contains('}') {
+        let quoted = fallback_cli.replace('\'', "'\\''");
+        return format!("cli='{quoted}'; exec \"${{IMPULSE_CLI:-$cli}}\" mcp");
+    }
     let mut escaped = String::new();
     for c in fallback_cli.chars() {
         // Inside double quotes, these four are special to sh.
@@ -470,6 +476,21 @@ mod tests {
             launcher(r#"/A "b"/$x"#),
             r#"exec "${IMPULSE_CLI:-/A \"b\"/\$x}" mcp"#
         );
+        // sh runs the CLI a `}` (or a quote) in the path names.
+        let dir = std::env::temp_dir().join(format!("impulse-launcher-{}", std::process::id()));
+        let cli = dir.join("a}b's").join("impulse");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "#!/bin/sh\necho \"ran $1\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(launcher(&cli.to_string_lossy()))
+            .env_remove("IMPULSE_CLI")
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ran mcp\n");
         let args = claude_add_arguments(ClaudeScope::User, CLI);
         assert_eq!(args[..5], ["mcp", "add-json", "--scope", "user", "impulse"]);
         let entry: Value = serde_json::from_str(&args[5]).unwrap();

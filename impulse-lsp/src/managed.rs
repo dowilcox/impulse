@@ -4,9 +4,13 @@
 //! Language Servers page shows both and installs the managed ones.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::time::Duration;
 
+use impulse_kit::child_process::ChildProcess;
 use impulse_kit::shell::login::{is_executable_file, login_path, merge_paths, which};
+
+/// How long a managed install may take.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The npm packages, each held to one major version (for 0.x, one minor)
 /// so a reinstall never moves to one that works differently. TypeScript
@@ -154,13 +158,12 @@ pub fn tool_path() -> String {
 
 /// `npm --version` succeeds.
 pub fn npm_is_available() -> bool {
-    Command::new("npm")
+    ChildProcess::new("npm")
         .arg("--version")
         .env("PATH", tool_path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .timeout(Duration::from_secs(30))
+        .run()
+        .is_ok_and(|o| o.status == 0 && !o.timed_out)
 }
 
 /// npm-install `PACKAGES` into the managed folder (blocking). The bin
@@ -177,20 +180,27 @@ pub fn install() -> Result<PathBuf, String> {
     write_package_json(&root)?;
     // No install scripts: none of these servers needs one, and skipping them
     // means installing runs no package's code.
-    let status = Command::new("npm")
+    // A stalled registry or proxy gives up after INSTALL_TIMEOUT, npm and
+    // everything it started stopped with it.
+    let output = ChildProcess::new("npm")
         .args(["install", "--prefix"])
         .arg(&root)
         .args(["--no-audit", "--no-fund", "--ignore-scripts"])
         .args(PACKAGES)
         .env("PATH", tool_path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .timeout(INSTALL_TIMEOUT)
+        .run()
         .map_err(|e| format!("Failed to run npm install: {e}"))?;
-    if !status.success() {
+    if output.timed_out {
         return Err(format!(
-            "npm install failed with status {status} while installing managed LSP servers"
+            "npm install didn't finish within {} minutes while installing managed LSP servers",
+            INSTALL_TIMEOUT.as_secs() / 60
+        ));
+    }
+    if output.status != 0 {
+        return Err(format!(
+            "npm install failed with exit status: {} while installing managed LSP servers",
+            output.status
         ));
     }
     Ok(managed_bin_dir())

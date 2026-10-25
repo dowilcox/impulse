@@ -279,8 +279,10 @@ pub fn merged_environment(extra: Option<&HashMap<String, String>>) -> HashMap<St
 /// Environment for a git read in a folder that isn't trusted, so it runs no
 /// program the repository's own configuration names: an fsmonitor hook,
 /// hooks, a clean/smudge filter driver (`git status` runs clean filters on
-/// files whose timestamps changed) or a merge driver (`git merge-tree` runs
-/// those). Set through `GIT_CONFIG_KEY_<n>` rather than `-c`, which a driver
+/// files whose timestamps changed), a merge driver (`git merge-tree` runs
+/// those), or a diff's external command or textconv (`git blame` runs
+/// textconv drivers; one set empty makes git refuse rather than run
+/// anything). Set through `GIT_CONFIG_KEY_<n>` rather than `-c`, which a driver
 /// name containing "=" would get past. `None` when the configuration can't
 /// be read, so the drivers aren't known: the read mustn't run then.
 pub fn restricted_environment(
@@ -289,7 +291,7 @@ pub fn restricted_environment(
 ) -> Option<HashMap<String, String>> {
     let mut keys: Vec<String> = vec!["core.fsmonitor".into(), "core.hooksPath".into()];
     let mut values: Vec<String> = vec!["false".into(), "/dev/null".into()];
-    let pattern = r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver)$";
+    let pattern = r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver|diff\..*\.(textconv|command)|diff\.external)$";
     let listed = run(
         &["config", "-z", "--name-only", "--get-regexp", pattern],
         root,
@@ -317,6 +319,11 @@ pub fn restricted_environment(
             // A merge driver that always reports a conflict.
             keys.push(name);
             values.push("false".into());
+            continue;
+        }
+        if name.starts_with("diff.") {
+            keys.push(name);
+            values.push(String::new());
             continue;
         }
         // Not required either: a required filter with no command fails.

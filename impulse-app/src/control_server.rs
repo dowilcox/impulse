@@ -7,11 +7,12 @@
 //! and pane; requests are answered on the main thread by the window that
 //! holds the pane (`control_commands`).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::App;
 use impulse_protocol::control::{
@@ -150,10 +151,22 @@ pub fn start(cx: &mut App, handle: impl Fn(Incoming, &mut App) + 'static) {
         .name("impulse-control".into())
         .spawn(move || {
             for stream in listener.incoming().flatten() {
+                // Past the cap, a connection is closed unanswered: a
+                // process opening them in a loop can't use up threads.
+                if CLIENTS.fetch_add(1, Ordering::SeqCst) >= MAX_CLIENTS {
+                    CLIENTS.fetch_sub(1, Ordering::SeqCst);
+                    continue;
+                }
                 let tx = tx.clone();
-                let _ = std::thread::Builder::new()
+                let spawned = std::thread::Builder::new()
                     .name("impulse-control-client".into())
-                    .spawn(move || serve(stream, tx));
+                    .spawn(move || {
+                        serve(stream, tx);
+                        CLIENTS.fetch_sub(1, Ordering::SeqCst);
+                    });
+                if spawned.is_err() {
+                    CLIENTS.fetch_sub(1, Ordering::SeqCst);
+                }
             }
         })
         .ok();
@@ -165,8 +178,42 @@ pub fn start(cx: &mut App, handle: impl Fn(Incoming, &mut App) + 'static) {
     .detach();
 }
 
+/// Clients being served now, and how many may be at once (requests that
+/// wait, `tasks wait` and `edit`, hold theirs).
+static CLIENTS: AtomicUsize = AtomicUsize::new(0);
+const MAX_CLIENTS: usize = 64;
+
+/// The request line, read by `REQUEST_DEADLINE` in all (not per read, so
+/// a byte at a time can't keep the connection), up to `MAX_REQUEST_LINE`.
+fn read_request(stream: &mut UnixStream) -> Option<Vec<u8>> {
+    let deadline = Instant::now() + REQUEST_DEADLINE;
+    let mut line = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let left = deadline.checked_duration_since(Instant::now())?;
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            return None;
+        }
+        let read = match stream.read(&mut buffer) {
+            Ok(0) => return None,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        };
+        if let Some(end) = buffer[..read].iter().position(|&b| b == b'\n') {
+            line.extend_from_slice(&buffer[..end]);
+            return (line.len() <= MAX_REQUEST_LINE).then_some(line);
+        }
+        line.extend_from_slice(&buffer[..read]);
+        // Requests are one short line; past a megabyte, it isn't one.
+        if line.len() > MAX_REQUEST_LINE {
+            return None;
+        }
+    }
+}
+
 /// One client: read its line, wait for the answer, send it.
-fn serve(stream: UnixStream, tx: async_channel::Sender<Incoming>) {
+fn serve(mut stream: UnixStream, tx: async_channel::Sender<Incoming>) {
     let Some((uid, pid)) = peer(&stream) else {
         return;
     };
@@ -174,7 +221,6 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Incoming>) {
     if uid != unsafe { libc::getuid() } {
         return;
     }
-    let _ = stream.set_read_timeout(Some(REQUEST_DEADLINE));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let mut writer = match stream.try_clone() {
         Ok(writer) => writer,
@@ -183,13 +229,10 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Incoming>) {
     let send = |writer: &mut UnixStream, response: &ControlResponse| {
         let _ = writer.write_all(&control::encode_line(response));
     };
-    let mut line = Vec::new();
-    let mut reader = BufReader::new(stream.take_limit());
-    match reader.read_until(b'\n', &mut line) {
-        Ok(n) if n > 0 && line.ends_with(b"\n") => {}
-        _ => return send(&mut writer, &ControlResponse::failure(MALFORMED_REQUEST)),
-    }
-    let Ok(request) = control::decode::<ControlRequest>(&line[..line.len() - 1]) else {
+    let Some(line) = read_request(&mut stream) else {
+        return send(&mut writer, &ControlResponse::failure(MALFORMED_REQUEST));
+    };
+    let Ok(request) = control::decode::<ControlRequest>(&line) else {
         return send(&mut writer, &ControlResponse::failure(MALFORMED_REQUEST));
     };
     let (reply_tx, reply_rx) = async_channel::bounded(1);
@@ -244,18 +287,6 @@ fn hung_up(stream: &UnixStream, wait: Duration) -> bool {
         )
     };
     read == 0
-}
-
-trait TakeLimit {
-    fn take_limit(self) -> std::io::Take<UnixStream>;
-}
-
-impl TakeLimit for UnixStream {
-    /// Requests are one short line; past a megabyte, it isn't one.
-    fn take_limit(self) -> std::io::Take<UnixStream> {
-        use std::io::Read;
-        self.take(MAX_REQUEST_LINE as u64)
-    }
 }
 
 /// The peer's user id and process id.

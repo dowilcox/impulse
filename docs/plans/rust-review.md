@@ -56,6 +56,22 @@ running), A6 (an agent hears "declined" only when the user was asked) and
 A7 (the Quick Terminal's hooks with no window open get a window to answer
 them from).
 
+Core: every app git read goes through `cli::run` (a timeout and no
+prompts; `command_history.rs`, the input bar's completions and
+`workspace::git_branch`); blame never runs a textconv driver (`git blame`
+does by default: `--no-textconv`, which also keeps its lines the file's
+own), and the restricted environment empties any configured
+`diff.external` and `diff.<driver>.textconv` or `.command`, so git
+refuses instead of running them (Swift has the same gap); the MCP
+launcher holds a CLI path with a `}` in a variable first (others keep the
+documented form, so existing installs still match); `npm install` gives
+up after 10 minutes and `npm --version` after 30 s, stopping everything
+npm started, and the initialize handshake after 30 s and shutdown after
+5, as Swift's; the control socket reads a request by its deadline in all
+and serves at most 64 clients at once; and OSC 7's folder check runs on a
+helper thread, waited for 500 ms, one at a time per terminal, so a mount
+that stopped answering can't stall the terminal's output.
+
 Terminal: T1 (the grid snapshot's extras are read: combining marks shape
 with their cell's character, and SGR 58 underline colors are drawn), T2
 (⌘C with nothing selected does nothing), T4 (pasting files or an image

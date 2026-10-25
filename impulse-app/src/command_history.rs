@@ -268,14 +268,16 @@ impl CommandHistory {
 }
 
 fn git(dir: &str, args: &[&str]) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-c", "log.showSignature=false"])
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let output = impulse_git::cli::run(
+        args,
+        dir,
+        impulse_git::cli::RunOptions {
+            timeout: Some(std::time::Duration::from_secs(5)),
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    let text = output.stdout.trim().to_string();
     (!text.is_empty()).then_some(text)
 }
 

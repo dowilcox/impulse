@@ -243,3 +243,53 @@ fn set_executable(path: &str) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+#[test]
+fn blame_and_diffs_in_a_folder_that_isnt_trusted_run_no_diff_driver() {
+    setup();
+    let repo = TempRepo::create();
+    let ran = format!("{}-diff-ran", repo.root);
+    let _cleanup = RemoveOnDrop(ran.clone());
+    repo.commit(
+        &[(".gitattributes", "*.txt diff=evil\n"), ("a.txt", "a\n")],
+        "base",
+    );
+    repo.commit(&[("a.txt", "a\nb\n")], "more");
+    let script = format!("echo ran >> '{ran}'; cat \"$1\"");
+    repo.git(&[
+        "config",
+        "diff.evil.textconv",
+        &format!("sh -c '{script}' -"),
+    ])
+    .unwrap();
+    // The oracle: git's own blame and diff run it.
+    repo.git(&["blame", "--porcelain", "--", "a.txt"]).unwrap();
+    assert!(std::path::Path::new(&ran).exists());
+    std::fs::remove_file(&ran).unwrap();
+
+    // Impulse's blame never asks for the converted text.
+    assert_eq!(impulse_git::git_blame::blame("a.txt", &repo.root).len(), 2);
+    assert!(!std::path::Path::new(&ran).exists());
+
+    // A diff with the restricted environment refuses rather than runs it,
+    // and so does an external diff command.
+    let restricted = restricted_environment(&repo.root, &git_overrides()).unwrap();
+    let diff = |env: &std::collections::HashMap<String, String>| {
+        impulse_git::cli::run(
+            &["diff", "HEAD~1"],
+            &repo.root,
+            impulse_git::cli::RunOptions {
+                environment: Some(env),
+                ..Default::default()
+            },
+        )
+    };
+    assert!(diff(&restricted).is_err());
+    repo.git(&["config", "--unset", "diff.evil.textconv"])
+        .unwrap();
+    repo.git(&["config", "diff.external", &format!("sh -c '{script}' -")])
+        .unwrap();
+    let restricted = restricted_environment(&repo.root, &git_overrides()).unwrap();
+    assert!(diff(&restricted).is_err());
+    assert!(!std::path::Path::new(&ran).exists());
+}

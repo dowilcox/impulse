@@ -95,7 +95,7 @@ pub fn parse_porcelain(text: &str) -> HashMap<usize, BlameLine> {
 /// (untracked, binary).
 pub fn blame(path: &str, root: &str) -> HashMap<usize, BlameLine> {
     match git_with(
-        &["blame", "--porcelain", "--", path],
+        &["blame", "--porcelain", "--no-textconv", "--", path],
         root,
         Call {
             timeout: Duration::from_secs(30),

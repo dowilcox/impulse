@@ -100,11 +100,12 @@ struct Deadlines {
 
 /// How long a request may wait for its answer (the Swift client's): 5
 /// seconds for what the editor waits on as you type or point, 10 for
-/// formatting and code actions, 15 for the rest. The handshake and
-/// shutdown have their own limits.
-fn timeout_for(method: &str) -> Option<std::time::Duration> {
+/// formatting and code actions, 30 for the initialize handshake, 5 for
+/// shutdown and 15 for the rest.
+fn timeout_for(method: &str) -> std::time::Duration {
     let seconds = match method {
-        "initialize" | "shutdown" => return None,
+        "initialize" => 30,
+        "shutdown" => 5,
         "textDocument/completion"
         | "textDocument/hover"
         | "textDocument/signatureHelp"
@@ -118,7 +119,7 @@ fn timeout_for(method: &str) -> Option<std::time::Duration> {
         | "codeAction/resolve" => 10,
         _ => 15,
     };
-    Some(std::time::Duration::from_secs(seconds))
+    std::time::Duration::from_secs(seconds)
 }
 
 pub fn path_uri(path: &Path) -> Option<Uri> {
@@ -269,14 +270,12 @@ impl LspClient {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, sender);
-        if let Some(timeout) = timeout_for(R::METHOD) {
-            self.deadlines
-                .due
-                .lock()
-                .unwrap()
-                .push((std::time::Instant::now() + timeout, id));
-            self.deadlines.changed.notify_one();
-        }
+        self.deadlines
+            .due
+            .lock()
+            .unwrap()
+            .push((std::time::Instant::now() + timeout_for(R::METHOD), id));
+        self.deadlines.changed.notify_one();
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params });
         if let Err(error) = self.send(&message) {
             self.pending.lock().unwrap().remove(&id);

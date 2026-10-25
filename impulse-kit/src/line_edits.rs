@@ -595,7 +595,12 @@ mod tests {
     fn trims_trailing_whitespace() {
         let text = "a  \nb\nc\t \nd";
         let edit = trim_trailing_whitespace(text, 4).unwrap();
-        let out = format!("{}{}{}", &text[..edit.range.start], edit.text, &text[edit.range.end..]);
+        let out = format!(
+            "{}{}{}",
+            &text[..edit.range.start],
+            edit.text,
+            &text[edit.range.end..]
+        );
         assert_eq!(out, "a\nb\nc\nd");
         // The cursor on "b" (byte 4) moves back by the two spaces cut before it.
         assert_eq!(edit.selection, 2..2);
