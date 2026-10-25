@@ -2191,9 +2191,9 @@ pub(crate) fn unsaved_paths(cx: &gpui_kit::App) -> Vec<PathBuf> {
 const MAX_WORD_SCAN: usize = 2 * 1024 * 1024;
 
 impl WordCompletions {
-    /// The other open files' text the setting takes words from (shared,
-    /// not copied).
-    fn others(&self, cx: &mut gpui_kit::App) -> Vec<gpui_kit::SharedString> {
+    /// The other open files' text the setting takes words from (ropes,
+    /// which share their nodes: made into strings off the main thread).
+    fn others(&self, cx: &mut gpui_kit::App) -> Vec<gpui_kit::component::input::Rope> {
         let scope = crate::settings_store::SettingsStore::get(cx)
             .editor_word_based_suggestions
             .clone();
@@ -2208,7 +2208,7 @@ impl WordCompletions {
             .filter(|tab| tab.entity_id() != own)
             .filter_map(|tab| tab.upgrade())
             .filter(|tab| scope == "allDocuments" || tab.read(cx).language == self.language)
-            .map(|tab| tab.read(cx).state.read(cx).value().clone())
+            .map(|tab| tab.read(cx).state.read(cx).text().clone())
             .filter(|text| text.len() <= MAX_WORD_SCAN)
             .collect()
     }
@@ -2229,7 +2229,8 @@ impl CompletionProvider for WordCompletions {
         // The scan runs off the main thread, so typing never waits on it.
         let (text, others) = (text.clone(), self.others(cx));
         cx.background_spawn(async move {
-            let others: Vec<&str> = others.iter().map(|text| text.as_ref()).collect();
+            let others: Vec<String> = others.iter().map(ToString::to_string).collect();
+            let others: Vec<&str> = others.iter().map(String::as_str).collect();
             let items =
                 impulse_kit::word_completions::suggestions_with(&text.to_string(), offset, &others)
                     .into_iter()

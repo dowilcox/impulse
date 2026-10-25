@@ -165,28 +165,57 @@ fn autosave(cx: &mut App) {
         return;
     }
     cx.global_mut::<Sessions>().autosaved = key;
-    save(cx);
+    if let Some(state) = current(cx) {
+        // The files are written off the main thread, one save at a time.
+        let order = next_order();
+        cx.background_spawn(async move { write(&state, order) }).detach();
+    }
 }
 
-/// Write the session now (output files off the main thread is a later
-/// refinement; the files are small and named by content, so unchanged
-/// output isn't written again).
+/// Write the session now (at quit, and as the last window closes).
 pub fn save(cx: &mut App) {
-    if !persistence() || !cx.has_global::<Sessions>() {
+    if let Some(state) = current(cx) {
+        write(&state, next_order());
+    }
+}
+
+/// Each save's place in line: an older one never overwrites a newer.
+static ORDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_order() -> u64 {
+    ORDER.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// Saves run one at a time (an autosave in the background, then the one
+/// at quit).
+/// The lock holds the order of the last save written.
+static WRITING: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+
+fn write(state: &SessionState, order: u64) {
+    let mut written = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    if order < *written {
         return;
     }
-    let with_scrollback = SettingsStore::get(cx).restore_scrollback;
-    let windows = open_windows(cx, with_scrollback);
-    if windows.is_empty() {
-        return;
-    }
-    let active = windows.iter().position(|(_, active)| *active).unwrap_or(0);
-    let windows = windows.into_iter().map(|(window, _)| window).collect();
-    let state = SessionState::new(windows, Some(active as i64));
+    *written = order;
     state.persist(
         &SessionState::path(cfg!(debug_assertions)),
         &impulse_kit::session::scrollback_dir(cfg!(debug_assertions)),
     );
+}
+
+/// The session as it stands, scrollback included when it's kept.
+fn current(cx: &mut App) -> Option<SessionState> {
+    if !persistence() || !cx.has_global::<Sessions>() {
+        return None;
+    }
+    let with_scrollback = SettingsStore::get(cx).restore_scrollback;
+    let windows = open_windows(cx, with_scrollback);
+    if windows.is_empty() {
+        return None;
+    }
+    let active = windows.iter().position(|(_, active)| *active).unwrap_or(0);
+    let windows = windows.into_iter().map(|(window, _)| window).collect();
+    Some(SessionState::new(windows, Some(active as i64)))
 }
 
 fn surface_state(surface: &Surface, with_scrollback: bool, cx: &App) -> SessionSurface {

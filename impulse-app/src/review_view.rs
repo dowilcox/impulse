@@ -264,6 +264,13 @@ fn split_pairs(lines: &[DiffLine]) -> Vec<(Option<usize>, Option<usize>)> {
 
 /// Unstaged when there is unstaged work, else staged, else everything
 /// uncommitted (`ReviewSurface.defaultScope`).
+/// The latest snapshot Mark as Reviewed took. Blocking (git).
+fn latest_reviewed(root: &str) -> Option<impulse_git::safety::SafetySnapshot> {
+    impulse_git::safety::list(root, impulse_git::safety::REVIEW_PREFIX)
+        .into_iter()
+        .next()
+}
+
 pub fn default_scope(root: &str, cx: &gpui_kit::App) -> DiffScope {
     // From the repository's last refresh when there is one, without
     // diffing the working tree on the main thread.
@@ -326,6 +333,9 @@ pub struct ReviewView {
     editing: Option<comments::Editing>,
     /// The repository changed since the last read.
     stale: bool,
+    /// The latest "reviewed" snapshot, read with the diffs (the scope
+    /// menu offers it).
+    reviewed: Option<impulse_git::safety::SafetySnapshot>,
     _refresh: gpui_kit::Task<()>,
     _watching: gpui_kit::Subscription,
 }
@@ -405,6 +415,7 @@ impl ReviewView {
             _nav_filter_events: None,
             editing: None,
             stale: false,
+            reviewed: None,
             _refresh: refresh,
             _watching: watching,
         };
@@ -470,7 +481,8 @@ impl ReviewView {
                     .map_err(|e| e.to_string())
                 })
                 .collect();
-            Ok::<_, String>((changes, diffs))
+            let reviewed = latest_reviewed(&root);
+            Ok::<_, String>((changes, diffs, reviewed))
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -480,7 +492,8 @@ impl ReviewView {
                 }
                 view.loading = false;
                 match result {
-                    Ok((changes, diffs)) => {
+                    Ok((changes, diffs, reviewed)) => {
+                        view.reviewed = reviewed;
                         view.merge(changes, diffs);
                         view.rebuild_rows();
                         if let Some(path) = view.pending_reveal.take() {
@@ -536,16 +549,18 @@ impl ReviewView {
                     .map_err(|e| e.to_string())
                 })
                 .collect();
-            Some((changes, diffs))
+            let reviewed = latest_reviewed(&root);
+            Some((changes, diffs, reviewed))
         });
         cx.spawn(async move |this, cx| {
-            let Some((changes, diffs)) = task.await else {
+            let Some((changes, diffs, reviewed)) = task.await else {
                 return;
             };
             let _ = this.update(cx, |view, cx| {
                 if view.generation != generation {
                     return;
                 }
+                view.reviewed = reviewed;
                 let same =
                     view.files.len() == changes.len()
                         && view.files.iter().zip(&diffs).all(|(file, diff)| {
@@ -1126,6 +1141,7 @@ impl ReviewView {
             {
                 let view = view.clone();
                 let (root, base) = (self.root.clone(), self.base_branch.clone());
+                let reviewed = self.reviewed.clone();
                 move |menu: gpui_kit::component::menu::PopupMenu,
                   _: &mut Window,
                   _: &mut gpui_kit::Context<gpui_kit::component::menu::PopupMenu>| {
@@ -1154,8 +1170,7 @@ impl ReviewView {
                         turn.scope(),
                     ));
                 }
-                let reviewed = impulse_git::safety::list(&root, impulse_git::safety::REVIEW_PREFIX);
-                if let Some(review) = reviewed.first() {
+                if let Some(review) = &reviewed {
                     let scope = DiffScope::Snapshot {
                         from: review.ref_name.clone(),
                         to: None,

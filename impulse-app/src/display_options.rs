@@ -59,16 +59,9 @@ pub fn init(cx: &mut App) {
         return;
     };
     apply(options, cx);
-    // Read off the main thread (on Linux it starts processes), checked
-    // here once a second.
+    // Followed off the main thread, checked here once a second.
     let shared = Arc::new(AtomicU8::new(options.bits()));
-    let reader = shared.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(POLL);
-        if let Some(options) = read() {
-            reader.store(options.bits(), Ordering::Relaxed);
-        }
-    });
+    follow(shared.clone());
     cx.spawn(async move |cx| loop {
         cx.background_executor().timer(Duration::from_secs(1)).await;
         let options = Options::from_bits(shared.load(Ordering::Relaxed));
@@ -88,10 +81,64 @@ fn apply(options: Options, cx: &mut App) {
     }
 }
 
+/// Poll AppKit's flags (cheap property reads).
 #[cfg(target_os = "macos")]
-const POLL: Duration = Duration::from_secs(1);
+fn follow(shared: Arc<AtomicU8>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if let Some(options) = read() {
+            shared.store(options.bits(), Ordering::Relaxed);
+        }
+    });
+}
+
+/// One `gsettings monitor` per key, each printing a line as its value
+/// changes (rather than starting two processes every few seconds). They
+/// end with the app.
 #[cfg(not(target_os = "macos"))]
-const POLL: Duration = Duration::from_secs(5);
+fn follow(shared: Arc<AtomicU8>) {
+    use std::io::BufRead as _;
+    use std::os::unix::process::CommandExt as _;
+    let keys = [
+        ("org.gnome.desktop.a11y.interface", "high-contrast", 1u8, false),
+        ("org.gnome.desktop.interface", "enable-animations", 2u8, true),
+    ];
+    for (schema, key, bit, inverted) in keys {
+        let shared = shared.clone();
+        std::thread::spawn(move || {
+            let mut command = std::process::Command::new("gsettings");
+            command
+                .args(["monitor", schema, key])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
+            #[cfg(target_os = "linux")]
+            // SAFETY: prctl is async-signal-safe; it only asks for SIGTERM
+            // when the app (the parent) exits.
+            unsafe {
+                command.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
+            }
+            let Ok(mut child) = command.spawn() else {
+                return;
+            };
+            let Some(stdout) = child.stdout.take() else {
+                return;
+            };
+            // "high-contrast: true"
+            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+                let on = line.rsplit(':').next().map(str::trim) == Some("true");
+                let set = on != inverted;
+                let _ = shared.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {
+                    Some(if set { bits | bit } else { bits & !bit })
+                });
+            }
+            let _ = child.wait();
+        });
+    }
+}
 
 /// The options now, or `None` where the system has none to read.
 #[cfg(target_os = "macos")]

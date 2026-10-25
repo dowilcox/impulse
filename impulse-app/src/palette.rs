@@ -1993,9 +1993,8 @@ impl Workbench {
         cx.spawn(async move |workbench, cx| {
             let result = switching.await;
             let _ = workbench.update(cx, |workbench, cx| {
-                for workspace in &mut workbench.workspaces {
-                    workspace.refresh_branch();
-                }
+                // The repository's refresh brings the new branch name.
+                workbench.sync_branches(cx);
                 match result {
                     Ok(()) if create => {
                         workbench.set_notice(format!("Created and switched to {name}"), cx)

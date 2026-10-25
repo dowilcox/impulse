@@ -24,23 +24,35 @@ fn indent(line: &str, tab_size: usize) -> Option<usize> {
 /// outermost first, at most `max`. A line opens a scope when the next
 /// non-blank line is indented deeper than it.
 pub fn scope_rows(lines: &[&str], top: usize, tab_size: usize, max: usize) -> Vec<usize> {
-    if top == 0 || top >= lines.len() {
+    scope_rows_by(lines.len(), |row| lines[row], top, tab_size, max)
+}
+
+/// `scope_rows` over `count` lines read one at a time by `line`, so only
+/// the few lines it looks at are taken from the document.
+pub fn scope_rows_by<S: AsRef<str>>(
+    count: usize,
+    line: impl Fn(usize) -> S,
+    top: usize,
+    tab_size: usize,
+    max: usize,
+) -> Vec<usize> {
+    if top == 0 || top >= count {
         return Vec::new();
     }
+    let indent_at = |row: usize| indent(line(row).as_ref(), tab_size);
     // The indentation the top of the view is at (blank lines take the next
     // line's).
-    let Some(mut depth) = lines[top..].iter().find_map(|l| indent(l, tab_size)) else {
+    let Some(mut depth) = (top..count).find_map(indent_at) else {
         return Vec::new();
     };
     let mut rows = Vec::new();
     for row in (0..top).rev() {
-        let Some(own) = indent(lines[row], tab_size) else {
+        let Some(own) = indent_at(row) else {
             continue;
         };
         if own < depth {
-            let opens = lines[row + 1..]
-                .iter()
-                .find_map(|l| indent(l, tab_size))
+            let opens = (row + 1..count)
+                .find_map(indent_at)
                 .is_some_and(|next| next > own);
             if opens {
                 rows.push(row);

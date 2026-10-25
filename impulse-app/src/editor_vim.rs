@@ -189,7 +189,7 @@ impl VimLayer {
         }
         let (text, cursor) = {
             let state = self.state.read(cx);
-            (state.value().to_string(), state.cursor())
+            (state.value().clone(), state.cursor())
         };
         if let Some(fixed) = self.vim.sync(&text, cursor, selection.clone()) {
             self.state
@@ -284,7 +284,7 @@ impl VimLayer {
         let (text, cursor, rows) = {
             let state = state.read(cx);
             (
-                state.value().to_string(),
+                state.value().clone(),
                 state.cursor(),
                 state.visible_row_range().unwrap_or(0..0),
             )
@@ -377,7 +377,7 @@ impl VimLayer {
                 Action::Reveal(at) => self.reveal_cursor(at, &rows, cx),
             }
         }
-        let text = state.read(cx).value().to_string();
+        let text = state.read(cx).value().clone();
         self.seen = Some((state.read(cx).selected_range(), text.len()));
         self.paint(&text, cx);
         self.paint_matches(&text, edited, cx);

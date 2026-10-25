@@ -1330,15 +1330,14 @@ fn sticky_layout(
         let start = text.line_start_offset(row);
         state.range_to_bounds(&(start..start)).map(|b| b.origin.x)
     })?;
-    let lines: Vec<String> = (0..text.lines_len().min(top + 2))
-        .map(|row| {
-            let at = text.line_start_offset(row);
-            text.slice(at..at + text.line_len(row)).to_string()
-        })
-        .collect();
-    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let sticky = impulse_kit::sticky_scroll::scope_rows(
-        &refs,
+    // Only the lines it looks at are copied out (not every line above).
+    let line = |row: usize| {
+        let at = text.line_start_offset(row);
+        text.slice(at..at + text.line_len(row)).to_string()
+    };
+    let sticky = impulse_kit::sticky_scroll::scope_rows_by(
+        text.lines_len().min(top + 2),
+        line,
         top + 1,
         tab_size,
         impulse_kit::sticky_scroll::MAX_LINES,
@@ -1349,7 +1348,7 @@ fn sticky_layout(
         lines: sticky
             .into_iter()
             .map(|row| {
-                let line: String = refs[row].chars().take(400).collect();
+                let line: String = line(row).chars().take(400).collect();
                 (row, line.replace('\t', &" ".repeat(tab_size)))
             })
             .collect(),

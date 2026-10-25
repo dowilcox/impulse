@@ -18,9 +18,22 @@ use crate::workbench::Workbench;
 /// Changes come in bursts (a checkout, a build): wait for the rest.
 const DEBOUNCE: Duration = Duration::from_millis(150);
 
+/// An order-independent key for a set of folders (the sum of their
+/// hashes, and how many), so a frame can tell nothing changed without
+/// building the set.
+pub(crate) fn paths_key<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> (u64, usize) {
+    use std::hash::{BuildHasher, BuildHasherDefault};
+    let hasher = BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default();
+    paths.fold((0u64, 0usize), |(sum, count), path| {
+        (sum.wrapping_add(hasher.hash_one(path)), count + 1)
+    })
+}
+
 pub(crate) struct TreeWatch {
     watcher: Option<RecommendedWatcher>,
     dirs: HashSet<PathBuf>,
+    /// `paths_key` of the folders last asked for.
+    key: (u64, usize),
     receiver: Option<async_channel::Receiver<PathBuf>>,
     _task: Option<Task<()>>,
 }
@@ -52,6 +65,7 @@ impl TreeWatch {
         TreeWatch {
             watcher,
             dirs: HashSet::new(),
+            key: (0, 0),
             receiver: Some(receiver),
             _task: None,
         }
@@ -108,6 +122,12 @@ impl Workbench {
 
     /// Watch exactly the folders the tree has listed.
     pub(crate) fn sync_tree_watch(&mut self) {
+        // Every frame: compare a key before building any set.
+        let key = paths_key(self.workspaces.iter().flat_map(|w| w.children.keys()));
+        if key == self.tree_watch.key && self.tree_watch.dirs.len() == key.1 {
+            return;
+        }
+        self.tree_watch.key = key;
         let wanted: HashSet<PathBuf> = self
             .workspaces
             .iter()

@@ -415,8 +415,23 @@ pub struct SettingsFile {
     /// False for headless runs that mustn't write files.
     pub persistence: bool,
     snapshot: Option<String>,
+    /// The file's size, change time and inode when its content last
+    /// matched `snapshot`: an unchanged stat skips reading and hashing it
+    /// on each check.
+    checked: std::cell::Cell<Option<FileStamp>>,
     blocked: bool,
     pub warning: Option<LoadWarning>,
+}
+
+type FileStamp = (u64, std::time::SystemTime, u64);
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    let inode = std::os::unix::fs::MetadataExt::ino(&meta);
+    #[cfg(not(unix))]
+    let inode = 0;
+    Some((meta.len(), meta.modified().ok()?, inode))
 }
 
 /// The settings.json path in the data directory.
@@ -439,6 +454,7 @@ impl SettingsFile {
             path,
             persistence: true,
             snapshot: None,
+            checked: std::cell::Cell::new(None),
             blocked: false,
             warning: None,
         }
@@ -519,7 +535,13 @@ impl SettingsFile {
 
     /// settings.json changed since Impulse last read or wrote it.
     pub fn changed_on_disk(&self) -> bool {
-        self.change_since_load().is_some()
+        let stamp = file_stamp(&self.path);
+        if stamp.is_some() && stamp == self.checked.get() {
+            return false;
+        }
+        let changed = self.change_since_load().is_some();
+        self.checked.set(if changed { None } else { stamp });
+        changed
     }
 
     fn change_since_load(&self) -> Option<String> {

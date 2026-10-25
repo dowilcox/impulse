@@ -22,6 +22,9 @@ const DEBOUNCE: Duration = Duration::from_millis(100);
 pub(crate) struct EditorWatch {
     watcher: Option<RecommendedWatcher>,
     dirs: HashSet<PathBuf>,
+    /// `tree_watch::paths_key` of the open files' paths last seen.
+    key: (u64, usize),
+    failed: bool,
     receiver: Option<async_channel::Receiver<PathBuf>>,
     _task: Option<Task<()>>,
 }
@@ -45,9 +48,18 @@ impl EditorWatch {
         EditorWatch {
             watcher,
             dirs: HashSet::new(),
+            key: (0, 0),
+            failed: false,
             receiver: Some(receiver),
             _task: None,
         }
+    }
+}
+
+impl EditorWatch {
+    /// Every wanted folder is watched (none waits to be tried again).
+    fn retry_done(&self) -> bool {
+        !self.failed
     }
 }
 
@@ -107,6 +119,20 @@ impl Workbench {
 
     /// Watch exactly the folders of the files open in editors.
     pub(crate) fn sync_editor_watch(&mut self, cx: &Context<Self>) {
+        // Every frame: compare the open files' key before building a set.
+        let paths: Vec<&PathBuf> = self
+            .workspaces
+            .iter()
+            .flat_map(|w| w.tabs.iter())
+            .flat_map(|t| t.panes.values())
+            .filter_map(Surface::editor)
+            .map(|e| &e.read(cx).path)
+            .collect();
+        let key = crate::tree_watch::paths_key(paths.into_iter());
+        if key == self.editor_watch.key && self.editor_watch.retry_done() {
+            return;
+        }
+        self.editor_watch.key = key;
         let wanted: HashSet<PathBuf> = self
             .workspaces
             .iter()
@@ -118,6 +144,7 @@ impl Workbench {
             .collect();
         let watch = &mut self.editor_watch;
         if wanted == watch.dirs {
+            watch.failed = false;
             return;
         }
         let Some(watcher) = watch.watcher.as_mut() else {
@@ -133,6 +160,7 @@ impl Workbench {
             }
         }
         // Folders that couldn't be watched are tried again next time.
+        watch.failed = watching.len() < wanted.len();
         watch.dirs = watching;
     }
 }

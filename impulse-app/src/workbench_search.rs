@@ -129,37 +129,64 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let dirty = self.dirty_paths(cx);
-        let (mut rewritten, mut matches, mut skipped, mut failed) = (Vec::new(), 0, 0, 0);
-        for path in files {
-            if dirty.contains(path) {
-                skipped += 1;
-                continue;
+        let (files, query, replacement) = (files.clone(), query.to_string(), replacement.to_string());
+        let panel = panel.clone();
+        // The files are read and written off the main thread.
+        let work = cx.background_executor().spawn(async move {
+            let (mut rewritten, mut matches, mut skipped, mut failed) = (Vec::new(), 0, 0, 0);
+            for path in &files {
+                if dirty.contains(path) {
+                    skipped += 1;
+                    continue;
+                }
+                let Some(file) = text_file::read(path) else {
+                    failed += 1;
+                    continue;
+                };
+                let (after, count) = impulse_kit::project_replace::replace(
+                    &file.text,
+                    &query,
+                    &replacement,
+                    case_sensitive,
+                );
+                if count == 0 {
+                    continue;
+                }
+                if text_file::write(&after, file.bom, path).is_err() {
+                    failed += 1;
+                    continue;
+                }
+                matches += count;
+                rewritten.push(Rewritten {
+                    path: path.clone(),
+                    before: file.text,
+                    after,
+                    bom: file.bom,
+                });
             }
-            let Some(file) = text_file::read(path) else {
-                failed += 1;
-                continue;
-            };
-            let (after, count) = impulse_kit::project_replace::replace(
-                &file.text,
-                query,
-                replacement,
-                case_sensitive,
-            );
-            if count == 0 {
-                continue;
-            }
-            if text_file::write(&after, file.bom, path).is_err() {
-                failed += 1;
-                continue;
-            }
-            matches += count;
-            rewritten.push(Rewritten {
-                path: path.clone(),
-                before: file.text,
-                after,
-                bom: file.bom,
+            (rewritten, matches, skipped, failed)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let (rewritten, matches, skipped, failed) = work.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.replaced(rewritten, matches, skipped, failed, &panel, window, cx)
             });
-        }
+        })
+        .detach();
+    }
+
+    /// Replace All is done: show the new text and say what happened.
+    #[allow(clippy::too_many_arguments)]
+    fn replaced(
+        &mut self,
+        rewritten: Vec<Rewritten>,
+        matches: usize,
+        skipped: usize,
+        failed: usize,
+        panel: &Entity<SearchPanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let paths: Vec<PathBuf> = rewritten.iter().map(|r| r.path.clone()).collect();
         self.reload_editors(&paths, window, cx);
         panel.update(cx, |panel, cx| {

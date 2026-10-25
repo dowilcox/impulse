@@ -70,7 +70,17 @@ step's live diagonals, and the Diff View skips word marks on lines past
 1.5 s after a held repository's watcher sees a change,
 `Workbench::schedule_task_refresh`, with a one-minute fallback instead of
 a five-second poll; an agent's edit hooks share one reading of the
-workspaces' changes for three seconds). Git: G3 (waiting
+workspaces' changes for three seconds) and P15 (the render's watch sets
+are compared by a key before any set is built, `tree_watch::paths_key`;
+settings.json is read and hashed only when its stat changed; on Linux one
+`gsettings monitor` per key replaces two processes every five seconds;
+autosave writes the session in the background, an older save never
+overwriting a newer; Replace All reads and writes files in the
+background; switching workspaces takes the branch from the repository's
+state; Review's scope menu reads the "reviewed" snapshot with the diffs;
+sticky scroll copies out only the lines it looks at; Vim copies the
+document once per key, not three times; word suggestions copy ropes;
+hovers reuse the terminal's cached grid). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 

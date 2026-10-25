@@ -335,7 +335,7 @@ impl Workbench {
 
     /// Folder workspaces show their repository's branch (the titlebar, the
     /// status bar, the sidebar rows), updated when HEAD moves.
-    fn sync_branches(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_branches(&mut self, cx: &mut Context<Self>) {
         for index in 0..self.workspaces.len() {
             if self.workspaces[index].kind != Kind::Folder {
                 continue;

@@ -652,7 +652,9 @@ impl Workbench {
             return;
         }
         self.active = index;
-        self.workspaces[index].refresh_branch();
+        // The branch comes from the repository's state (`sync_branches`),
+        // not a git call on the main thread.
+        self.sync_branches(cx);
         if self.workspaces[index].tabs.is_empty() {
             let dir = self.workspaces[index].default_directory();
             let terminal = self.new_terminal(dir, Vec::new(), window, cx);
