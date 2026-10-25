@@ -37,7 +37,7 @@ pub fn apply(
     let k = Theme::global_mut(cx);
     k.font_family = "Inter".into();
     k.font_size = px(13.);
-    k.mono_font_family = settings.font_family.clone().into();
+    k.mono_font_family = crate::fonts::family(&settings.font_family);
     k.mono_font_size = px(settings.font_size as f32);
     k.radius = px(impulse_kit::chrome::metrics::RADIUS);
     k.radius_lg = px(impulse_kit::chrome::metrics::RADIUS_LARGE);

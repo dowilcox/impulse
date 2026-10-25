@@ -515,8 +515,8 @@ impl DocumentLink {
             options: lsp_types::FormattingOptions {
                 tab_size: tab_size as u32,
                 insert_spaces,
-                trim_trailing_whitespace: Some(true),
-                insert_final_newline: Some(true),
+                // Only what Monaco sends: the rest is the server's own
+                // configuration's.
                 ..Default::default()
             },
             work_done_progress_params: Default::default(),
@@ -757,6 +757,25 @@ impl DocumentLink {
     }
 }
 
+/// A UTF-16 position in `text` as the editor's (characters into the line).
+fn utf16_to_chars(text: &Rope, position: Position) -> Position {
+    let row = position.line as usize;
+    if row >= text.lines_len() {
+        return position;
+    }
+    let line = text.slice_line(row).to_string();
+    let mut units = 0u32;
+    let mut chars = 0u32;
+    for c in line.chars() {
+        if units >= position.character {
+            break;
+        }
+        units += c.len_utf16() as u32;
+        chars += 1;
+    }
+    Position::new(position.line, chars)
+}
+
 fn failed(error: String) -> anyhow::Error {
     anyhow::anyhow!(error)
 }
@@ -845,21 +864,33 @@ impl DefinitionProvider for DocumentLink {
             partial_result_params: Default::default(),
         };
         let client = self.client.clone();
+        let (text, uri) = (text.clone(), self.uri.clone());
         cx.background_executor().spawn(async move {
-            Ok(
-                match client
-                    .request::<GotoDefinition>(params)
-                    .await
-                    .map_err(failed)?
-                {
-                    Some(GotoDefinitionResponse::Link(links)) => links,
-                    Some(GotoDefinitionResponse::Scalar(location)) => vec![link(location)],
-                    Some(GotoDefinitionResponse::Array(locations)) => {
-                        locations.into_iter().map(link).collect()
+            let mut links = match client
+                .request::<GotoDefinition>(params)
+                .await
+                .map_err(failed)?
+            {
+                Some(GotoDefinitionResponse::Link(links)) => links,
+                Some(GotoDefinitionResponse::Scalar(location)) => vec![link(location)],
+                Some(GotoDefinitionResponse::Array(locations)) => {
+                    locations.into_iter().map(link).collect()
+                }
+                None => Vec::new(),
+            };
+            // GPUI Kit reads this document's columns as characters.
+            if !client.uses_utf32() {
+                let chars = |p: Position| utf16_to_chars(&text, p);
+                let range = |r: lsp_types::Range| lsp_types::Range::new(chars(r.start), chars(r.end));
+                for link in &mut links {
+                    link.origin_selection_range = link.origin_selection_range.map(range);
+                    if link.target_uri == uri {
+                        link.target_range = range(link.target_range);
+                        link.target_selection_range = range(link.target_selection_range);
                     }
-                    None => Vec::new(),
-                },
-            )
+                }
+            }
+            Ok(links)
         })
     }
 }

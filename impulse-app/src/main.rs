@@ -50,6 +50,7 @@ mod editor_vim;
 mod editor_watch;
 mod file_icons;
 mod file_tree_actions;
+mod fonts;
 mod git_actions;
 mod history_actions;
 mod history_view;
@@ -273,6 +274,7 @@ fn main() {
             cx.text_system()
                 .add_fonts(bundled_fonts())
                 .expect("bundled fonts");
+            fonts::init(cx);
             let settings = settings_store::SettingsStore::get(cx).clone();
             commands::bind_keys(&settings, cx);
             commands::rebind_on_change(cx);

@@ -86,7 +86,13 @@ Next and Previous Problem F8 and ⇧F8, Expand and Shrink Selection
 the palette, in `editor_actions.rs` over `impulse_kit::line_edits`; Go to
 Next and Previous Merge Conflict in the context menu while the file has
 conflicts. Folding from the keyboard waits on GPUI Kit, whose folds only
-a gutter click sets).
+a gutter click sets), and the rest of E11 (didSave goes out after the
+formatter, with the formatted text; clicking the inline blame shows the
+line's commit; font settings may list families, the first installed
+used, `fonts.rs`; Format Document sends only Monaco's options; a lone CR
+ends a line; definitions in the same document come back in character
+columns; and linked editing of HTML and XML tag names, as Swift's Monaco
+has it on, `impulse_kit::linked_tags`).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a

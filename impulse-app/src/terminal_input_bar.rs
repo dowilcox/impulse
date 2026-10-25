@@ -661,7 +661,7 @@ impl TerminalView {
             self.tick_spinner(cx);
         }
         let settings = SettingsStore::get(cx).clone();
-        let font = gpui_kit::font(SharedString::from(settings.terminal_font_family.clone()));
+        let font = gpui_kit::font(crate::fonts::family(&settings.terminal_font_family));
         let font_size = px((settings.terminal_font_size - 1).max(6) as f32);
         let placeholder: SharedString = if password {
             "Password (input hidden)…".into()
@@ -906,7 +906,7 @@ impl TerminalView {
             used += gap + width;
             shown += 1;
         }
-        let mono = SettingsStore::get(cx).terminal_font_family.clone();
+        let mono = crate::fonts::family(&SettingsStore::get(cx).terminal_font_family);
         let chip_bg = hsla(c(&theme.fg).opacity(0.07));
         let row = div()
             .flex()
@@ -1061,7 +1061,7 @@ impl TerminalView {
             .saturating_sub(MENU_ROWS / 2)
             .min(count.saturating_sub(MENU_ROWS));
         let prefix = self.bar.completion_prefix.clone();
-        let mono = SharedString::from(SettingsStore::get(cx).terminal_font_family.clone());
+        let mono = crate::fonts::family(&SettingsStore::get(cx).terminal_font_family);
         let rows = self
             .bar
             .completions

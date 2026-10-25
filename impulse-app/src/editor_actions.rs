@@ -6,8 +6,8 @@
 
 use std::ops::Range;
 
-use gpui_kit::{Context, Window};
-use impulse_kit::line_edits;
+use gpui_kit::{Context, EntityInputHandler as _, Window};
+use impulse_kit::{line_edits, linked_tags};
 
 use crate::editor_keys::{
     CursorUndo, CursorsAtLineEnds, ExpandSelection, GoToBracket, NextProblem, PreviousProblem,
@@ -45,7 +45,114 @@ impl SelectionHistory {
     }
 }
 
+/// Past this size, tags aren't linked (finding pairs reads the text).
+const MAX_LINKED_TEXT: usize = 1024 * 1024;
+
+/// The tag pair the cursor is in, as the text was when it was found.
+#[derive(Default)]
+pub(crate) struct LinkedTags {
+    pair: Option<(Range<usize>, Range<usize>, String)>,
+    /// The text's length when `pair` was found (an edit since isn't
+    /// followed by a cursor move's search).
+    len: usize,
+    /// The partner's edit is under way.
+    applying: bool,
+}
+
 impl EditorTab {
+    fn links_tags(&self) -> bool {
+        linked_tags::applies(&self.language) && !self.read_only
+    }
+
+    /// The cursor moved: the tag pair it's in now, if any.
+    pub(crate) fn find_linked_tag(&mut self, cx: &mut Context<Self>) {
+        if !self.links_tags() {
+            return;
+        }
+        let state = self.state.read(cx);
+        let len = state.text().len();
+        // Right after an edit `follow_linked_tag` looks again.
+        if len != self.linked.len && self.linked.pair.is_some() {
+            return;
+        }
+        let selection = state.selected_range();
+        self.linked.len = len;
+        self.linked.pair = None;
+        if !selection.is_empty() || len > MAX_LINKED_TEXT {
+            return;
+        }
+        let text = state.value().to_string();
+        self.linked.pair = linked_tags::linked_names(&text, selection.start)
+            .map(|(here, there)| {
+                let name = text[here.clone()].to_string();
+                (here, there, name)
+            });
+    }
+
+    /// The text changed: a tag name the cursor was in takes its partner
+    /// along.
+    pub(crate) fn follow_linked_tag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The partner's own edit: the pair was moved along already.
+        if std::mem::take(&mut self.linked.applying) {
+            self.linked.len = self.state.read(cx).text().len();
+            return;
+        }
+        let Some((here, there, name)) = self.linked.pair.take() else {
+            self.linked.len = self.state.read(cx).text().len();
+            return;
+        };
+        let (text, cursor) = {
+            let state = self.state.read(cx);
+            (state.value().to_string(), state.selected_range())
+        };
+        let delta = text.len() as isize - self.linked.len as isize;
+        self.linked.len = text.len();
+        let end = here.end as isize + delta;
+        let fits = end >= here.start as isize
+            && (end as usize) <= text.len()
+            && cursor.is_empty()
+            && cursor.start >= here.start
+            && cursor.start as isize <= end;
+        if !fits || !text.is_char_boundary(here.start) || !text.is_char_boundary(end as usize) {
+            return self.find_linked_tag(cx);
+        }
+        let renamed = &text[here.start..end as usize];
+        let after = there.start > here.start;
+        let shift = |at: usize| if after { (at as isize + delta) as usize } else { at };
+        let partner = shift(there.start)..shift(there.end);
+        let partner_holds = text.get(partner.clone()) == Some(name.as_str());
+        if !partner_holds || !linked_tags::is_name(renamed) || renamed == name {
+            if renamed != name {
+                return self.find_linked_tag(cx);
+            }
+            self.linked.pair = Some((here.start..end as usize, partner, name));
+            return;
+        }
+        let renamed = renamed.to_string();
+        let utf16 = |byte: usize| text[..byte].encode_utf16().count();
+        // The cursor stays in the name being typed.
+        let moved = renamed.len() as isize - name.len() as isize;
+        let keep = if after {
+            cursor.start
+        } else {
+            (cursor.start as isize + moved) as usize
+        };
+        // The pair as it will be, kept even while the name is empty.
+        let here = if after {
+            here.start..end as usize
+        } else {
+            (here.start as isize + moved) as usize..(end + moved) as usize
+        };
+        let there = partner.start..partner.start + renamed.len();
+        self.linked.pair = Some((here, there, renamed.clone()));
+        self.linked.applying = true;
+        let range = utf16(partner.start)..utf16(partner.end);
+        self.state.update(cx, |state, cx| {
+            state.replace_text_in_range(Some(range), &renamed, window, cx);
+            state.set_selected_range(keep..keep, cx);
+        });
+    }
+
     pub(crate) fn toggle_block_comment(
         &mut self,
         _: &ToggleBlockComment,

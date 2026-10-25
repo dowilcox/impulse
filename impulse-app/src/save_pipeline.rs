@@ -59,9 +59,6 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(saved) = editor.update(cx, |e, cx| e.write(cx)) else {
-            return;
-        };
         let path = editor.read(cx).path.clone();
         let file = path.to_string_lossy().into_owned();
         // Formatters load the project's own config (prettier runs
@@ -72,6 +69,11 @@ impl Workbench {
             .then(|| SettingsStore::get(cx).format_on_save(&file).cloned())
             .flatten()
             .filter(|f| !f.command.is_empty());
+        // Servers hear of the save once the formatter is done with it.
+        let tell_now = formatter.is_none();
+        let Some(saved) = editor.update(cx, |e, cx| e.write_and_tell(tell_now, cx)) else {
+            return;
+        };
         let Some(formatter) = formatter else {
             return self.after_save(&editor, &path, window, cx);
         };
@@ -100,7 +102,8 @@ impl Workbench {
                     );
                 }
                 editor.update(cx, |e, cx| {
-                    e.adopt_rewrite(&saved, result.is_ok(), window, cx)
+                    e.adopt_rewrite(&saved, result.is_ok(), window, cx);
+                    e.tell_saved(cx);
                 });
                 w.after_save(&editor, &path, window, cx);
             });

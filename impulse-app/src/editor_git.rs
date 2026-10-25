@@ -537,7 +537,7 @@ impl EditorTab {
         let sticky = {
             let settings = crate::settings_store::SettingsStore::get(cx);
             settings.sticky_scroll.then(|| StickyStyle {
-                font: gpui_kit::font(settings.font_family.clone()),
+                font: gpui_kit::font(crate::fonts::family(&settings.font_family)),
                 size: px(settings.font_size as f32),
                 tab_size: self.tab_size,
                 background: cx.theme().background,
@@ -672,6 +672,8 @@ impl EditorTab {
                         color,
                     ));
                 }
+                // Where the blame text is, so a click on it shows the commit.
+                let mut blame_hit = None;
                 if let Some((line, label)) = &blame {
                     if let Some(end) = line_offset(*line).map(|o| {
                         let row = line - 1;
@@ -693,6 +695,10 @@ impl EditorTab {
                                 None,
                             );
                             let origin = point(at.origin.x + px(28.), at.origin.y);
+                            blame_hit = Some(Bounds::new(
+                                origin,
+                                gpui_kit::size(shaped.width, at.size.height),
+                            ));
                             let _ = shaped.paint(
                                 origin,
                                 at.size.height,
@@ -713,6 +719,11 @@ impl EditorTab {
                 let tab = tab.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Capture || !hitbox.is_hovered(window) {
+                        return;
+                    }
+                    if blame_hit.is_some_and(|b| b.contains(&event.position)) {
+                        let _ = tab.update(cx, |tab, cx| tab.show_line_commit(cx));
+                        cx.stop_propagation();
                         return;
                     }
                     if let Some((_, row)) = pinned.iter().find(|(r, _)| r.contains(&event.position))
@@ -835,7 +846,7 @@ impl EditorTab {
     fn font_for_blame(&self, cx: &App) -> gpui_kit::Font {
         let settings = crate::settings_store::SettingsStore::get(cx);
         gpui_kit::Font {
-            family: settings.font_family.clone().into(),
+            family: crate::fonts::family(&settings.font_family),
             style: gpui_kit::FontStyle::Italic,
             ..gpui_kit::font("Inter")
         }
@@ -990,7 +1001,7 @@ impl EditorTab {
         let button =
             |id: &'static str, label: &'static str| Button::new(id).label(label).small().outline();
         let settings = crate::settings_store::SettingsStore::get(cx);
-        let mono = settings.font_family.clone();
+        let mono = crate::fonts::family(&settings.font_family);
         let colors = cx.try_global::<GitColors>().copied();
         let (edge, removed) = colors
             .map(|c| (c.modified, c.deleted.opacity(0.12)))

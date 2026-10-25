@@ -354,7 +354,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           impulse_kit::git::editor_marks; Monaco's keys
                           (editor_actions.rs: block comment, Go to
                           Bracket, F8, Expand/Shrink Selection, Cursor
-                          Undo, trim trailing whitespace…), bracket pair colors (impulse_kit::bracket_pairs),
+                          Undo, trim trailing whitespace…, and linked HTML
+                          tag names over impulse_kit::linked_tags), font
+                          settings listing families (fonts.rs), bracket pair colors (impulse_kit::bracket_pairs),
                           with its guides and the matching-bracket box
                           (editor_brackets.rs),
                           tree-sitter grammars for Monaco's languages, with

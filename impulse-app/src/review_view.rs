@@ -400,7 +400,7 @@ impl ReviewView {
             focus: cx.focus_handle(),
             colors: Colors::new(theme, palette),
             palette: palette.clone(),
-            font_family: settings.font_family.clone().into(),
+            font_family: crate::fonts::family(&settings.font_family),
             font_size: (settings.font_size as f32 * 6.0 / 7.0).round().max(8.0),
             focused: None,
             loading: false,
@@ -449,7 +449,7 @@ impl ReviewView {
         self.colors = Colors::new(theme, palette);
         self.palette = palette.clone();
         let settings = crate::settings_store::SettingsStore::get(cx);
-        self.font_family = settings.font_family.clone().into();
+        self.font_family = crate::fonts::family(&settings.font_family);
         self.font_size = (settings.font_size as f32 * 6.0 / 7.0).round().max(8.0);
         cx.notify();
     }

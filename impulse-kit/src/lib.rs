@@ -31,6 +31,7 @@ pub mod keybindings;
 pub mod kitty_keyboard;
 pub mod layout_tree;
 pub mod line_edits;
+pub mod linked_tags;
 pub mod listening_ports;
 pub mod markdown_blocks;
 pub mod markdown_preview;

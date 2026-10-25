@@ -217,7 +217,7 @@ impl EditorTab {
         let (name, dir) = name_and_dir(&selected.path, root);
         let mut editor = Editor::new(&peek.preview)
             .size_full()
-            .font_family(settings.font_family.clone())
+            .font_family(crate::fonts::family(&settings.font_family))
             .text_size(px(settings.font_size as f32))
             .bordered(false);
         if settings.editor_line_height > 0 {
@@ -278,7 +278,7 @@ impl EditorTab {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .font_family(settings.font_family.clone())
+                            .font_family(crate::fonts::family(&settings.font_family))
                             .child(item.code.clone()),
                     )
                     .child(

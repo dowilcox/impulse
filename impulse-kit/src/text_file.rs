@@ -48,9 +48,11 @@ impl LineEnding {
     }
 
     /// The text with `\n` line ends, as the editor holds it.
+    /// A lone `\r` ends a line too, as in Monaco (which then writes the
+    /// model's EOL there).
     pub fn normalize(text: &str) -> String {
         if text.contains('\r') {
-            text.replace("\r\n", "\n")
+            text.replace("\r\n", "\n").replace('\r', "\n")
         } else {
             text.to_string()
         }
@@ -310,6 +312,8 @@ mod tests {
             "one\r\ntwo\r\nthree\r\ntyped\r\n"
         );
         assert_eq!(LineEnding::Lf.apply("a\nb"), "a\nb");
+        // An old Mac file's lone \r ends lines too.
+        assert_eq!(LineEnding::normalize("a\rb\r\nc\r"), "a\nb\nc\n");
         // A stray \r\n pasted into a CRLF file doesn't double.
         assert_eq!(LineEnding::Crlf.apply("a\r\nb"), "a\r\nb");
     }

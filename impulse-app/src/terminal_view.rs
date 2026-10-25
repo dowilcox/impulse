@@ -1908,7 +1908,7 @@ fn colors(theme: &ResolvedTheme) -> TerminalColors {
 /// The terminal's font, without ligatures: each cell shows its own
 /// character, as the Swift renderer draws them one by one.
 fn terminal_font(family: &str) -> Font {
-    let mut font = gpui_kit::font(SharedString::from(family.to_string()));
+    let mut font = gpui_kit::font(crate::fonts::family(family));
     font.features = gpui_kit::FontFeatures(std::sync::Arc::new(vec![
         ("calt".into(), 0),
         ("liga".into(), 0),

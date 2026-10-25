@@ -124,6 +124,10 @@ pub struct EditorTab {
     _marking: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
     _observe_state: Subscription,
+    /// Linked tag names (`impulse_kit::linked_tags`): the pair the cursor
+    /// is in, and the edit that follows the other one.
+    pub(crate) linked: crate::editor_actions::LinkedTags,
+    _linked_edits: Subscription,
     _lsp_start: Vec<gpui_kit::Task<()>>,
     /// Servers being started for this file (`_lsp_start`), not attached yet.
     lsp_pending: std::collections::HashSet<String>,
@@ -237,6 +241,11 @@ impl EditorTab {
                 cx.notify();
             }
         });
+        let linked_edits = cx.subscribe_in(&state, window, |tab, _, event: &InputEvent, window, cx| {
+            if matches!(event, InputEvent::Change) {
+                tab.follow_linked_tag(window, cx);
+            }
+        });
         let observe_state = cx.observe(&state, |tab, _, cx| {
             tab.selection_moved(cx);
             // The peek follows its change as the editor scrolls.
@@ -289,6 +298,8 @@ impl EditorTab {
             _marking: None,
             _subscription: subscription,
             _observe_state: observe_state,
+            linked: Default::default(),
+            _linked_edits: linked_edits,
             _lsp_start: Vec::new(),
             lsp_pending: Default::default(),
             too_large_told: false,
@@ -1386,6 +1397,15 @@ impl EditorTab {
         tab
     }
 
+    /// The servers hear of the save, with the text as it now is.
+    pub fn tell_saved(&mut self, cx: &mut Context<Self>) {
+        let text = self.state.read(cx).text().clone();
+        for (_, link) in &self.links {
+            link.sync(&text);
+            link.saved();
+        }
+    }
+
     /// The file changed on disk since it was loaded or saved here (by an
     /// agent, git or another app).
     pub fn changed_on_disk(&self) -> bool {
@@ -1395,14 +1415,20 @@ impl EditorTab {
     /// Write the buffer to its file: the text written, or `None` when it
     /// couldn't be (the notice says why).
     pub fn write(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        self.write_and_tell(true, cx)
+    }
+
+    /// `write`, telling the language servers (didSave) now or, with
+    /// `tell` false, later with `tell_saved` (after the formatter).
+    pub fn write_and_tell(&mut self, tell: bool, cx: &mut Context<Self>) -> Option<String> {
         if self.read_only || self.untitled.is_some() {
             return None;
         }
         let text = self.disk_text(cx);
         let written = match text_file::write(&text, self.bom, &self.path) {
             Ok(()) => {
-                for (_, link) in &self.links {
-                    link.saved();
+                if tell {
+                    self.tell_saved(cx);
                 }
                 self.dirty = false;
                 self.notice = None;
@@ -1567,7 +1593,7 @@ impl Render for EditorTab {
         let signature = self.signature_popup(cx);
         let rename = self.rename_box(cx);
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
-        let (family, size) = (settings.font_family.clone(), settings.font_size as f32);
+        let (family, size) = (crate::fonts::family(&settings.font_family), settings.font_size as f32);
         let line_height = settings.editor_line_height;
         let mut editor = Editor::new(&self.state)
             .size_full()
@@ -1732,6 +1758,7 @@ impl EditorTab {
         if let Some(previous) = self.marked_at.replace(range.clone()) {
             self.selections.moved(previous);
         }
+        self.find_linked_tag(cx);
         self.git_cursor_moved(cx);
         let settings = crate::settings_store::SettingsStore::get(cx);
         let wanted = self.text_focused
@@ -2074,7 +2101,7 @@ impl EditorTab {
             .try_global::<crate::kit_theme::EditorBackdrop>()
             .map_or(theme.popover, |b| b.widget);
         let settings = crate::settings_store::SettingsStore::get(cx);
-        let font = gpui_kit::SharedString::from(settings.font_family.clone());
+        let font = crate::fonts::family(&settings.font_family);
         let size = px(settings.font_size as f32);
         let field = gpui_kit::div()
             .h(px(26.))

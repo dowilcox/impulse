@@ -458,7 +458,7 @@ impl EditorTab {
         let styled = |state: &Entity<EditorState>| {
             let mut editor = Editor::new(state)
                 .size_full()
-                .font_family(settings.font_family.clone())
+                .font_family(crate::fonts::family(&settings.font_family))
                 .text_size(px(settings.font_size as f32))
                 .pl(crate::editor_tab::gutter_inset(
                     state,
@@ -477,7 +477,7 @@ impl EditorTab {
         };
         let border = cx.theme().border;
         let signs = Signs {
-            font: gpui_kit::font(settings.font_family.clone()),
+            font: gpui_kit::font(crate::fonts::family(&settings.font_family)),
             size: px(settings.font_size as f32),
             color: cx.theme().muted_foreground,
         };
