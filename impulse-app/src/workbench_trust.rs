@@ -846,6 +846,11 @@ pub(crate) fn share_trust(trust: std::sync::Arc<impulse_kit::trust::WorkspaceTru
     let _ = SHARED_TRUST.set(trust);
 }
 
+/// The trust list every window shares.
+pub(crate) fn shared_trust() -> Option<std::sync::Arc<impulse_kit::trust::WorkspaceTrust>> {
+    SHARED_TRUST.get().cloned()
+}
+
 /// Whether `path` is in a trusted folder (not before the store is shared).
 pub(crate) fn is_trusted(path: &str) -> bool {
     SHARED_TRUST

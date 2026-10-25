@@ -118,6 +118,8 @@ pub struct Workbench {
     /// The titlebar's tab strip, and the tab it last scrolled to.
     pub(crate) tab_scroll: gpui_kit::ScrollHandle,
     pub(crate) tab_scrolled_to: std::cell::Cell<Option<u64>>,
+    /// Clears the status bar's notice after a while.
+    notice_timer: Option<gpui_kit::Task<()>>,
     /// Workspace ids, the most recently shown last: closing one goes back to
     /// the one used before it.
     pub(crate) recent_workspaces: Vec<u64>,
@@ -264,6 +266,7 @@ impl Workbench {
             sidebar_px: settings.sidebar_width as f32,
             sidebar_seen: (settings.sidebar_visible, settings.sidebar_width),
             recent_workspaces: Vec::new(),
+            notice_timer: None,
             tab_scroll: gpui_kit::ScrollHandle::new(),
             tab_scrolled_to: Default::default(),
             dismissed_settings_warning: None,
@@ -1175,7 +1178,13 @@ impl Workbench {
                     }
                     workspace.active = t;
                 } else {
-                    let at = (workspace.active + 1).min(workspace.tabs.len());
+                    // After the active tab, but never among the pinned ones
+                    // unless it was pinned itself.
+                    let after_pinned = workspace.tabs.iter().take_while(|t| t.pinned).count();
+                    let mut at = (workspace.active + 1).min(workspace.tabs.len());
+                    if !restored.pinned {
+                        at = at.max(after_pinned);
+                    }
                     workspace.tabs.insert(at, restored);
                     workspace.active = at;
                 }
@@ -1314,7 +1323,20 @@ impl Workbench {
     pub(crate) fn set_notice(&mut self, notice: String, cx: &mut Context<Self>) {
         #[cfg(debug_assertions)]
         crate::debug_snapshot::note_toast("notice", &notice, None, None);
-        self.notice = Some(notice);
+        self.notice = Some(notice.clone());
+        // Gone after a while, as the Swift app's alerts and toasts go, unless
+        // another took its place.
+        self.notice_timer = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(8))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.notice.as_deref() == Some(notice.as_str()) {
+                    this.notice = None;
+                    cx.notify();
+                }
+            });
+        }));
         cx.notify();
     }
 

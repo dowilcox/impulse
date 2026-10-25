@@ -16,13 +16,38 @@ use crate::terminal_view::TerminalView;
 use crate::workbench::Workbench;
 use crate::workspace::Surface;
 
-/// Hand a request to the window holding its pane (else the first window).
+/// Hand a request to the window holding its pane, else the front window,
+/// else the first.
 pub fn dispatch(incoming: Incoming, cx: &mut App) {
-    let windows = crate::session::workbenches(cx);
+    let mut windows = crate::session::workbenches(cx);
     let token = incoming.request.token.clone().unwrap_or_default();
+    // The Quick Terminal with no window open (macOS keeps running): a
+    // window to answer it from.
+    if windows.is_empty()
+        && !token.is_empty()
+        && crate::quick_terminal::terminal_with_token(&token, cx).is_some()
+    {
+        if let Some(trust_store) = crate::workbench_trust::shared_trust() {
+            crate::open_main_window(
+                crate::Args {
+                    theme: None,
+                    cwd: crate::workspace::home().to_string_lossy().into_owned(),
+                    commands: Vec::new(),
+                    open: Vec::new(),
+                    trust: false,
+                    trust_store,
+                    session: None,
+                },
+                cx,
+            );
+            windows = crate::session::workbenches(cx);
+        }
+    }
+    let front = cx.active_window();
     let target = windows
         .iter()
         .find(|(w, _)| !token.is_empty() && w.read(cx).terminal_with_token(&token, cx).is_some())
+        .or_else(|| windows.iter().find(|(_, h)| Some(*h) == front))
         .or(windows.first())
         .cloned();
     let Some((workbench, handle)) = target else {

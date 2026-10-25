@@ -176,9 +176,13 @@ impl Workbench {
                     match choice {
                         Choice::Save => {
                             if editor.read(cx).untitled.is_some() {
-                                // Save As first; closing waits for another try.
+                                // Save As first; the close (or quit) carries
+                                // on once the file is written.
+                                let again = again.clone();
+                                let carry_on: Rc<dyn Fn(&mut Window, &mut App)> =
+                                    Rc::new(move |window, cx| again(answered.clone(), window, cx));
                                 let _ = workbench.update(cx, |w, cx| {
-                                    w.save_untitled(editor.clone(), window, cx)
+                                    w.save_untitled_then(editor.clone(), window, cx, Some(carry_on))
                                 });
                                 return;
                             }

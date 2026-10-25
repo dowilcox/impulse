@@ -54,6 +54,8 @@ pub fn fixed_shortcut(fixed: Fixed, platform: Platform) -> Option<String> {
         Fixed::Quit => "Ctrl+Shift+Q".into(),
         Fixed::Open if mac => "Cmd+O".into(),
         Fixed::CloseWindow if mac => "Shift+Cmd+W".into(),
+        // Ctrl+Shift+W closes the tab from a terminal; the desktop's own.
+        Fixed::CloseWindow => "Alt+F4".into(),
         Fixed::Minimize if mac => "Cmd+M".into(),
         Fixed::Tab(n) if mac => format!("Cmd+{n}"),
         Fixed::Tab(n) => format!("Alt+{n}"),

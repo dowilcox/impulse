@@ -37,6 +37,18 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.save_untitled_then(editor, window, cx, None)
+    }
+
+    /// `save_untitled`, then `then` once the file is written (a close or
+    /// quit carrying on).
+    pub(crate) fn save_untitled_then(
+        &mut self,
+        editor: Entity<EditorTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: Option<std::rc::Rc<dyn Fn(&mut Window, &mut gpui_kit::App)>>,
+    ) {
         let Some(dir) = editor.read(cx).untitled.clone() else {
             return;
         };
@@ -44,7 +56,13 @@ impl Workbench {
         cx.spawn_in(window, async move |this, cx| {
             let answer = chosen.await;
             let _ = this.update_in(cx, |this, window, cx| match answer {
-                Ok(Ok(Some(path))) => this.save_untitled_to(&editor, &path, window, cx),
+                Ok(Ok(Some(path))) => {
+                    if this.save_untitled_to(&editor, &path, window, cx) {
+                        if let Some(then) = then.clone() {
+                            cx.defer_in(window, move |_, window, cx| then(window, cx));
+                        }
+                    }
+                }
                 Ok(Ok(None)) => {}
                 _ => {
                     let initial = dir.join("Untitled").to_string_lossy().into_owned();
@@ -57,8 +75,12 @@ impl Workbench {
                         cx,
                         move |this, path, window, cx| {
                             let path = PathBuf::from(path.trim());
-                            if !path.as_os_str().is_empty() {
-                                this.save_untitled_to(&editor, &path, window, cx);
+                            if !path.as_os_str().is_empty()
+                                && this.save_untitled_to(&editor, &path, window, cx)
+                            {
+                                if let Some(then) = then.clone() {
+                                    cx.defer_in(window, move |_, window, cx| then(window, cx));
+                                }
                             }
                         },
                     );
@@ -70,13 +92,14 @@ impl Workbench {
 
     /// Write the untitled editor's text to `path` and show the file in its
     /// place, as an editor of that file (its language, its servers).
+    /// True when the file was written.
     fn save_untitled_to(
         &mut self,
         editor: &Entity<EditorTab>,
         path: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let path = if path.is_relative() {
             editor
                 .read(cx)
@@ -96,7 +119,7 @@ impl Workbench {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            return toast(
+            toast(
                 window,
                 cx,
                 ToastKind::Warning,
@@ -104,9 +127,10 @@ impl Workbench {
                 None,
                 None,
             );
+            return false;
         }
         let Some(Surface::Editor(saved)) = self.make_editor(&path, window, cx) else {
-            return;
+            return false;
         };
         // The pane that showed the untitled editor shows the file now.
         let found = self.workspaces.iter().enumerate().find_map(|(w, ws)| {
@@ -126,6 +150,7 @@ impl Workbench {
         self.reload_tree(cx);
         self.focus_active(window, cx);
         cx.notify();
+        true
     }
 
     /// Install Language Servers: npm-installs the managed web servers.

@@ -172,10 +172,50 @@ fn autosave(cx: &mut App) {
     }
 }
 
-/// Write the session now (at quit, and as the last window closes).
+/// Write the session now (at quit, and as the last window closes), and
+/// keep the front window's size for new windows (Swift's
+/// `window_width`/`window_height`).
 pub fn save(cx: &mut App) {
     if let Some(state) = current(cx) {
         write(&state, next_order());
+    }
+    let front = cx.active_window();
+    let size = workbenches(cx)
+        .into_iter()
+        .find(|(_, h)| Some(*h) == front)
+        .or_else(|| workbenches(cx).into_iter().next())
+        .map(|(w, _)| w.read(cx).bounds.size);
+    if let Some(size) = size {
+        let (width, height) = (f32::from(size.width) as i64, f32::from(size.height) as i64);
+        if width > 0 && height > 0 {
+            SettingsStore::update(cx, |s| {
+                s.window_width = width;
+                s.window_height = height;
+            });
+        }
+    }
+}
+
+/// The files open in editors in every window, each once (`open_files`,
+/// opened again when there's no session to restore).
+fn note_open_files(cx: &mut App) {
+    let mut seen = std::collections::HashSet::new();
+    let files: Vec<String> = workbenches(cx)
+        .iter()
+        .flat_map(|(w, _)| {
+            w.read(cx)
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.all_surfaces())
+                .filter_map(Surface::editor)
+                .filter(|e| e.read(cx).untitled.is_none())
+                .map(|e| e.read(cx).path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        })
+        .filter(|path| seen.insert(path.clone()))
+        .collect();
+    if SettingsStore::get(cx).open_files != files {
+        SettingsStore::update(cx, |s| s.open_files = files);
     }
 }
 
@@ -208,6 +248,7 @@ fn current(cx: &mut App) -> Option<SessionState> {
     if !persistence() || !cx.has_global::<Sessions>() {
         return None;
     }
+    note_open_files(cx);
     let with_scrollback = SettingsStore::get(cx).restore_scrollback;
     let windows = open_windows(cx, with_scrollback);
     if windows.is_empty() {

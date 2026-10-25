@@ -1310,7 +1310,14 @@ impl Workbench {
                         .child(row_background(active_tab, "workspace-tab", p))
                         .on_click(cx.listener(
                             move |w, event: &gpui_kit::ClickEvent, window, cx| {
-                                w.active = index;
+                                // Another workspace's tab: that workspace comes
+                                // up as itself (trust, language servers, branch).
+                                if w.active != index {
+                                    w.workspaces[index].active = t;
+                                    w.activate_workspace(index, window, cx);
+                                } else {
+                                    w.active = index;
+                                }
                                 if event.click_count() >= 2 {
                                     w.keep_tab(t, cx);
                                 }

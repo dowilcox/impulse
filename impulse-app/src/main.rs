@@ -414,6 +414,24 @@ fn main() {
                     }
                 }
                 None => {
+                    // No session: the files that were open last time
+                    // (`open_files`, as the Swift app reopens them).
+                    let reopen: Vec<String> = if launch.open.is_empty()
+                        && settings_store::SettingsStore::get(cx).restore_session
+                    {
+                        settings_store::SettingsStore::get(cx)
+                            .open_files
+                            .iter()
+                            .filter(|p| std::path::Path::new(p).is_file())
+                            .cloned()
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    #[cfg(debug_assertions)]
+                    let reopen = if debug_snapshot::is_active() { Vec::new() } else { reopen };
+                    let mut args = args;
+                    args.open.extend(reopen);
                     open_main_window(args, cx);
                 }
             }

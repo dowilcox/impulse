@@ -41,6 +41,9 @@ Swift's `EditorWebView.appCommandWins` does: `commands::editor_priority`)
 and T17 (Shift with PageUp, PageDown, Home and End go to a program that
 owns the screen, and scroll the scrollback at the shell).
 
+Agents: A7 (the Quick Terminal's hooks with no window open get a window
+to answer them from).
+
 Terminal: T1 (the grid snapshot's extras are read: combining marks shape
 with their cell's character, and SGR 58 underline colors are drawn), T2
 (⌘C with nothing selected does nothing), T4 (pasting files or an image
@@ -111,7 +114,17 @@ launch hands its folder, files and commands to the running one over
 `$XDG_RUNTIME_DIR/impulse/instance.sock` and exits, `instance.rs`; paths
 on the command line open, and the desktop entry passes `%F`; on macOS
 files the system asks to open come in through GPUI's open-URLs handler.
-A Services menu item still needs the bundle's Info.plist).
+A Services menu item still needs the bundle's Info.plist), W11 (Linux
+leaves GNOME's Ctrl+Alt(+Shift) arrows alone: Focus and Resize Pane
+have no keys there by default; Next Agent is Ctrl+Alt+U, clear of IBus's
+Ctrl+Shift+U; Close Window shows Alt+F4), W12 (a tab of another
+workspace clicked in the sidebar brings that workspace up as itself)
+and W13 (`impulse` requests without a pane go to the front window; the
+front window's size is kept for new windows, and the files open in
+editors are kept in `open_files` and opened again when there's no
+session; status-bar notices clear after 8 s; Save As while closing or
+quitting carries on once the file is written; a reopened tab doesn't land
+among pinned ones).
 
 Performance: P3 (a repository notifies only when a refresh changed
 something, `RepositoryState::generation`; editors re-read only then, and

@@ -51,6 +51,7 @@ fn fixed_shortcuts() -> Vec<(String, String)> {
             ("Cut", "Ctrl+X"),
             ("Select All", "Ctrl+A"),
             ("Quit Impulse", "Ctrl+Shift+Q"),
+            ("Close Window", "Alt+F4"),
         ]
     };
     let mut out: Vec<(String, String)> = fixed

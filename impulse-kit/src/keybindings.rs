@@ -252,11 +252,20 @@ const LINUX: &[(&str, &str)] = &[
     ("split_right", "Ctrl+Shift+D"),
     ("split_down", "Ctrl+Alt+Shift+D"),
     ("agent_composer", "Ctrl+Alt+I"),
-    // The Mac's Ctrl+Cmd chords.
-    ("resize_pane_left", "Ctrl+Alt+Shift+Left"),
-    ("resize_pane_right", "Ctrl+Alt+Shift+Right"),
-    ("resize_pane_up", "Ctrl+Alt+Shift+Up"),
-    ("resize_pane_down", "Ctrl+Alt+Shift+Down"),
+    // The Mac's Cmd+Alt and Ctrl+Cmd arrows would be Ctrl+Alt(+Shift)
+    // arrows here, GNOME's for switching workspaces and moving windows
+    // between them (and Super is the desktop's): no keys by default, the
+    // Keyboard Shortcuts tab can give them some.
+    ("resize_pane_left", ""),
+    ("resize_pane_right", ""),
+    ("resize_pane_up", ""),
+    ("resize_pane_down", ""),
+    ("focus_pane_left", ""),
+    ("focus_pane_right", ""),
+    ("focus_pane_up", ""),
+    ("focus_pane_down", ""),
+    // Ctrl+Shift+U is IBus's Unicode entry.
+    ("next_agent", "Ctrl+Alt+U"),
     ("equalize_panes", "Ctrl+Alt+="),
     ("switch_workspace", "Ctrl+Alt+O"),
     ("switch_branch", "Ctrl+Alt+B"),
