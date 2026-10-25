@@ -188,8 +188,18 @@ impl HistoryView {
                     view.filter_changed(cx)
                 }
             }),
-            // Refs moved (a commit, a fetch, a tag): refresh what's loaded.
-            cx.observe(&repository, |view, _, cx| view.schedule_refresh(cx)),
+            // Refs moved (a commit, a fetch, a tag): refresh what's loaded,
+            // not for progress lines.
+            {
+                let mut seen = repository.read(cx).generation;
+                cx.observe(&repository, move |view, repository, cx| {
+                    let now = repository.read(cx).generation;
+                    if now != seen {
+                        seen = now;
+                        view.schedule_refresh(cx);
+                    }
+                })
+            },
         ];
         let applied = Request {
             scope: scope.clone(),

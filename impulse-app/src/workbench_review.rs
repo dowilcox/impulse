@@ -116,7 +116,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Surface {
-        let scope = scope.unwrap_or_else(|| crate::review_view::default_scope(&root));
+        let scope = scope.unwrap_or_else(|| crate::review_view::default_scope(&root, cx));
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
         let review = cx.new(|cx| ReviewView::new(root, scope, &theme, &palette, cx));
         cx.observe(&review, |_, _, cx| cx.notify()).detach();

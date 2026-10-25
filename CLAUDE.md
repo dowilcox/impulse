@@ -203,7 +203,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           commands::rebind_on_change), git
                           (repository_state.rs: RepositoryState per
                           repository root via RepositoryStore, refreshed by
-                          impulse_git's RepoWatcher and after every action,
+                          impulse_git's RepoWatcher (RepositoryEvent::FilesChanged
+                          for each change it sees, which a Review follows)
+                          and after every action,
                           operations serialized with safety snapshots, CLI
                           reads through RepositoryState::read_git, restricted
                           in untrusted folders; changes_panel.rs: the Changes

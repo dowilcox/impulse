@@ -34,6 +34,10 @@ pub enum RepositoryEvent {
     /// terminal) while no operation was in progress, from one commit to
     /// another.
     HeadMoved { from: String, to: String },
+    /// The watcher saw files or git's own state change (a refresh
+    /// follows). Sent even when the refresh finds nothing new, as a file's
+    /// content can change without its status.
+    FilesChanged,
 }
 
 pub struct RepositoryState {
@@ -200,7 +204,11 @@ impl RepositoryState {
         self.watcher = Some(watcher);
         self._watching = Some(cx.spawn(async move |this, cx| {
             while receiver.recv().await.is_ok() {
-                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
+                let changed = this.update(cx, |this, cx| {
+                    cx.emit(RepositoryEvent::FilesChanged);
+                    this.refresh(cx)
+                });
+                if changed.is_err() {
                     break;
                 }
             }

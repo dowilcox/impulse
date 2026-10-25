@@ -303,6 +303,7 @@ impl Workbench {
                     let root = state.read(cx).root.clone();
                     workbench.offer_dependency_steps(root, from.clone(), to.clone(), cx);
                 }
+                RepositoryEvent::FilesChanged => {}
             });
             self.git.held.insert(
                 root.clone(),

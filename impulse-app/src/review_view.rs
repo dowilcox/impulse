@@ -264,7 +264,22 @@ fn split_pairs(lines: &[DiffLine]) -> Vec<(Option<usize>, Option<usize>)> {
 
 /// Unstaged when there is unstaged work, else staged, else everything
 /// uncommitted (`ReviewSurface.defaultScope`).
-pub fn default_scope(root: &str) -> DiffScope {
+pub fn default_scope(root: &str, cx: &gpui_kit::App) -> DiffScope {
+    // From the repository's last refresh when there is one, without
+    // diffing the working tree on the main thread.
+    let state = crate::repository_state::RepositoryStore::existing(root, cx);
+    if let Some(snapshot) = state.as_ref().and_then(|s| s.read(cx).snapshot.as_ref()) {
+        return if !snapshot.unstaged.is_empty()
+            || !snapshot.untracked.is_empty()
+            || !snapshot.conflicted.is_empty()
+        {
+            DiffScope::Unstaged
+        } else if !snapshot.staged.is_empty() {
+            DiffScope::Staged
+        } else {
+            DiffScope::Uncommitted
+        };
+    }
     let has = |scope: DiffScope| {
         impulse_git::scoped_diff::changed_files_in_scope(root, &scope)
             .map(|c| !c.is_empty())
@@ -309,7 +324,10 @@ pub struct ReviewView {
     comments_stamp: Option<std::time::SystemTime>,
     composer: Option<comments::Composer>,
     editing: Option<comments::Editing>,
+    /// The repository changed since the last read.
+    stale: bool,
     _refresh: gpui_kit::Task<()>,
+    _watching: gpui_kit::Subscription,
 }
 
 /// What the review asks the window to do.
@@ -336,8 +354,16 @@ impl ReviewView {
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
         let context = settings.review_context_lines as i32;
         let base_branch = impulse_git::scoped_diff::default_base_branch(&root);
-        // Changes on disk show without a refresh: the working tree is read
-        // again every two seconds while the review is open.
+        // Changes on disk show without a refresh: the repository's watcher
+        // marks the review stale, and it reads the working tree again when
+        // it's next drawn (so not while it's hidden).
+        let repository = crate::repository_state::RepositoryStore::state(&root, cx);
+        let watching = cx.subscribe(&repository, |view: &mut Self, _, _, cx| {
+            view.stale = true;
+            cx.notify();
+        });
+        // Review comments live outside the repository: their file is
+        // checked every two seconds.
         let refresh = cx.spawn(async move |this, cx| loop {
             cx.background_executor()
                 .timer(std::time::Duration::from_secs(2))
@@ -378,7 +404,9 @@ impl ReviewView {
             nav_filter: None,
             _nav_filter_events: None,
             editing: None,
+            stale: false,
             _refresh: refresh,
+            _watching: watching,
         };
         view.reload_comments(cx);
         view.refresh(cx);
@@ -472,11 +500,19 @@ impl ReviewView {
         .detach();
     }
 
-    /// The live scopes read again in the background; fixed ones (a commit)
-    /// never change.
+    /// The review comments' file changed: read it again.
     fn refresh_if_live(&mut self, cx: &mut Context<Self>) {
         self.reload_comments_if_changed(cx);
-        if !self.loading && (self.scope.includes_working_tree() || self.scope.supports_staging()) {
+    }
+
+    /// The live scopes read again in the background once the repository
+    /// changed; fixed ones (a commit) never change.
+    fn refresh_if_stale(&mut self, cx: &mut Context<Self>) {
+        if self.stale
+            && !self.loading
+            && (self.scope.includes_working_tree() || self.scope.supports_staging())
+        {
+            self.stale = false;
             self.refresh_quietly(cx);
         }
     }
@@ -2011,6 +2047,7 @@ fn stat(added: usize, removed: usize, p: &ChromePalette) -> impl IntoElement {
 
 impl Render for ReviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_if_stale(cx);
         let p = self.palette.clone();
         let wide = window.viewport_size().width >= px(900.);
         let body: AnyElement = match &self.message {
