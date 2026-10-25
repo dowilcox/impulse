@@ -397,6 +397,9 @@ pub struct DocumentLink {
     /// file (in any window) that this server serves.
     doc: Rc<SharedDocument>,
     closed: std::cell::Cell<bool>,
+    /// The server's last diagnostics for the document: code actions are
+    /// asked with those they could fix.
+    pub diagnostics: RefCell<Vec<lsp_types::Diagnostic>>,
 }
 
 /// One open document on one server: its version and text, and how many
@@ -447,6 +450,7 @@ impl DocumentLink {
             apply_edit: RefCell::default(),
             doc,
             closed: std::cell::Cell::new(false),
+            diagnostics: RefCell::default(),
         });
         // Another editor of the file opened it: this one's text, if it
         // differs, is the server's now.
@@ -776,15 +780,24 @@ impl CompletionProvider for DocumentLink {
         let line_start = text.line_start_offset(text.offset_to_point(offset).row);
         let prefix = typed_prefix(&text.slice(line_start..offset).to_string()).to_string();
         let client = self.client.clone();
+        let text = text.clone();
         cx.background_executor().spawn(async move {
             let items = match client.request::<Completion>(params).await.map_err(failed)? {
                 Some(CompletionResponse::Array(items)) => items,
                 Some(CompletionResponse::List(list)) => list.items,
                 None => Vec::new(),
             };
-            Ok(CompletionResponse::Array(filter_completions(
-                items, &prefix,
-            )))
+            let items = filter_completions(items, &prefix);
+            // As the editor applies them: one edit each, in characters,
+            // auto-imports included.
+            let items = impulse_lsp::completion::editor_completions(
+                items,
+                &text.to_string(),
+                offset,
+                prefix.len(),
+                client.uses_utf32(),
+            );
+            Ok(CompletionResponse::Array(items))
         })
     }
 
@@ -865,16 +878,26 @@ impl CodeActionProvider for DocumentLink {
     ) -> Task<gpui_kit::Result<Vec<lsp_types::CodeAction>>> {
         let text = state.read(cx).text().clone();
         self.sync(&text);
+        let (start, end) = (
+            self.position(&text, range.start),
+            self.position(&text, range.end),
+        );
+        // The diagnostics the range touches, so quick fixes show.
+        let key = |p: &lsp_types::Position| (p.line, p.character);
+        let diagnostics = self
+            .diagnostics
+            .borrow()
+            .iter()
+            .filter(|d| key(&d.range.start) <= key(&end) && key(&d.range.end) >= key(&start))
+            .cloned()
+            .collect();
         let params = lsp_types::CodeActionParams {
             text_document: TextDocumentIdentifier {
                 uri: self.uri.clone(),
             },
-            range: lsp_types::Range::new(
-                self.position(&text, range.start),
-                self.position(&text, range.end),
-            ),
+            range: lsp_types::Range::new(start, end),
             context: lsp_types::CodeActionContext {
-                diagnostics: Vec::new(),
+                diagnostics,
                 only: None,
                 trigger_kind: Some(lsp_types::CodeActionTriggerKind::INVOKED),
             },

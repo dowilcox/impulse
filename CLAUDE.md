@@ -399,8 +399,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           args or options (LspHub::reconfigure, watched by
                           Workbench::start_lsp_config_watch);
                           impulse-lsp's requests time out with
-                          $/cancelRequest, and documents sync by changed
-                          ranges where the server takes them) (code actions, formatting, rename in
+                          $/cancelRequest, documents sync by changed
+                          ranges where the server takes them, and
+                          completions reach GPUI Kit's editor as one
+                          character-column edit each,
+                          impulse_lsp::completion::editor_completions) (code actions, formatting, rename in
                           Monaco's inline box (EditorTab's RenameBox) and
                           references with edits across files), the
                           headless snapshot mode of debug builds

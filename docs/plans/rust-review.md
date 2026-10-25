@@ -71,7 +71,11 @@ checkouts, `EditorTab::diff_base_changed`), E8 (the git overlay takes
 clicks only where its hitbox is hovered, so menus and palettes over the
 editor keep theirs), E9 (a file open in several editors, in any window,
 is one document per server: one didOpen, versions that only go up, and
-didClose with the last editor, `SharedDocument` in `lsp_hub.rs`).
+didClose with the last editor, `SharedDocument` in `lsp_hub.rs`), E13
+(every completion reaches the editor as one edit in character columns:
+`insertText` replaces what's typed, `additionalTextEdits` such as
+auto-imports are folded in, `impulse_lsp::completion::editor_completions`),
+E14 (code actions are asked with the diagnostics the range touches).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a

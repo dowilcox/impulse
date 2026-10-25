@@ -440,6 +440,9 @@ impl EditorTab {
             return;
         };
         *link.apply_edit.borrow_mut() = Some(hooks.apply_edit.clone());
+        if let Some(list) = self.diagnostics.get(&id) {
+            *link.diagnostics.borrow_mut() = list.clone();
+        }
         let primary = self.primary.as_deref() == Some(id.as_str());
         self.state.update(cx, |state, _| {
             // Every server's fixes (eslint's beside typescript's).
@@ -950,6 +953,9 @@ impl EditorTab {
             .iter()
             .map(|(id, link)| (id.clone(), link.client.uses_utf32()))
             .collect();
+        if let Some((_, link)) = self.links.iter().find(|(id, _)| *id == server) {
+            *link.diagnostics.borrow_mut() = diagnostics.clone();
+        }
         self.diagnostics.insert(server, diagnostics);
         let all: Vec<(bool, lsp_types::Diagnostic)> = self
             .diagnostics
