@@ -75,7 +75,10 @@ didClose with the last editor, `SharedDocument` in `lsp_hub.rs`), E13
 (every completion reaches the editor as one edit in character columns:
 `insertText` replaces what's typed, `additionalTextEdits` such as
 auto-imports are folded in, `impulse_lsp::completion::editor_completions`),
-E14 (code actions are asked with the diagnostics the range touches).
+E14 (code actions are asked with the diagnostics the range touches), E10
+(Vim reads Ctrl-C, which leaves Insert and Visual, and its other keys
+ahead of the app's commands, so Ctrl-F pages on Linux,
+`editor_vim::command_overrides`).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a

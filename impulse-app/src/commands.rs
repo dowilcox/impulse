@@ -909,5 +909,11 @@ fn command_bindings(settings: &Settings, others: &[KeyBinding]) -> Vec<KeyBindin
             .into_iter()
             .map(|b| b.with_meta(COMMAND_KEYS)),
     );
+    // Vim's keys outrank the commands' while it reads them.
+    keys.extend(
+        crate::editor_vim::command_overrides()
+            .into_iter()
+            .map(|b| b.with_meta(COMMAND_KEYS)),
+    );
     keys
 }

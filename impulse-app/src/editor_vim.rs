@@ -54,6 +54,8 @@ const TAKEN: &[&str] = &[
     "ctrl-y",
     "ctrl-v",
     "ctrl-[",
+    // Leaves Visual mode (Linux's Copy otherwise).
+    "ctrl-c",
 ];
 
 /// Unbind GPUI Kit's (and `editor_keys`') bindings of the keys Vim reads.
@@ -67,9 +69,29 @@ pub fn bind_keys(cx: &mut App) {
             .map(|key| KeyBinding::new(key, NoAction, Some(normal.as_str()))),
     );
     // Ctrl+[ is Escape in Insert mode too (GPUI Kit outdents with it on
-    // Linux).
+    // Linux), and so is Ctrl+C (Copy there otherwise).
     let any = format!("{CONTEXT} > Input && mode == editor");
-    cx.bind_keys([KeyBinding::new("ctrl-[", NoAction, Some(any.as_str()))]);
+    cx.bind_keys([
+        KeyBinding::new("ctrl-[", NoAction, Some(any.as_str())),
+        KeyBinding::new("ctrl-c", NoAction, Some(any.as_str())),
+    ]);
+}
+
+/// The same keys again, bound after the app's commands (`commands`), so a
+/// command on one of them (Find on Ctrl+F on Linux) doesn't take it from
+/// Vim either.
+pub fn command_overrides() -> Vec<KeyBinding> {
+    let normal = format!("{NORMAL} > Input && mode == editor");
+    let any = format!("{CONTEXT} > Input && mode == editor");
+    TAKEN
+        .iter()
+        .map(|key| KeyBinding::new(key, NoAction, Some(normal.as_str())))
+        .chain(
+            ["ctrl-[", "ctrl-c"]
+                .iter()
+                .map(|key| KeyBinding::new(key, NoAction, Some(any.as_str()))),
+        )
+        .collect()
 }
 
 /// The key Vim reads from a keystroke; `None` for chords that stay the
