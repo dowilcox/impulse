@@ -13,9 +13,11 @@
 //! output sits against the bar; find (`terminal_find_bar`); and command
 //! blocks, hints and links (`terminal_blocks`).
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{
@@ -301,6 +303,14 @@ pub struct TerminalView {
     metrics: Metrics,
     size: (u16, u16),
     buffer: Vec<u8>,
+    /// The last grid snapshot, with the scroll place and size it was read
+    /// at; read again only after damage (output, selection, search).
+    grid_cache: Option<(Rc<Grid>, (usize, (u16, u16)))>,
+    grid_dirty: bool,
+    /// Damage a snapshot took before the wake handler saw it.
+    damage_seen: bool,
+    /// The block overlay by `block_overlay_key`.
+    overlay_cache: RefCell<Option<(u64, BlockOverlay)>>,
     pub title: String,
     pub cwd: String,
     pub last_duration_ms: Option<u64>,
@@ -582,6 +592,10 @@ impl TerminalView {
             metrics,
             size,
             buffer: Vec::new(),
+            grid_cache: None,
+            grid_dirty: true,
+            damage_seen: false,
+            overlay_cache: RefCell::default(),
             title: String::new(),
             temp_paths: launch.temp_paths,
             token,
@@ -687,7 +701,7 @@ impl TerminalView {
     }
 
     /// A fresh grid snapshot (rows for links and hints).
-    pub(crate) fn grid_now(&mut self) -> Option<Grid> {
+    pub(crate) fn grid_now(&mut self) -> Option<Rc<Grid>> {
         self.snapshot().0
     }
 
@@ -878,7 +892,9 @@ impl TerminalView {
                 _ => {}
             }
         }
-        if !matches!(self.backend.take_damage(), Some(rows) if rows.is_empty()) {
+        let damaged = !matches!(self.backend.take_damage(), Some(rows) if rows.is_empty());
+        if damaged || std::mem::take(&mut self.damage_seen) {
+            self.grid_dirty = true;
             changed = true;
             self.agent_output(cx);
             // Output brings the view to the bottom unless the user is
@@ -916,17 +932,43 @@ impl TerminalView {
         }
     }
 
-    fn snapshot(&mut self) -> (Option<Grid>, BlockOverlay, TerminalMode) {
-        let needed = self.backend.grid_buffer_size();
-        if self.buffer.len() < needed {
-            self.buffer.resize(needed, 0);
+    /// The grid, the block overlay and the modes, read again only when
+    /// they changed (a blink or a hover reuses the last ones).
+    fn snapshot(&mut self) -> (Option<Rc<Grid>>, BlockOverlay, TerminalMode) {
+        if !matches!(self.backend.take_damage(), Some(rows) if rows.is_empty()) {
+            self.grid_dirty = true;
+            self.damage_seen = true;
         }
-        let written = self.backend.write_grid_to_buffer(&mut self.buffer);
-        (
-            Grid::read(&self.buffer[..written]),
-            self.backend.block_overlay(),
-            self.backend.mode(),
-        )
+        let key = (self.backend.display_offset(), self.backend.dimensions());
+        let grid = match &self.grid_cache {
+            Some((grid, at)) if !self.grid_dirty && *at == key => Some(grid.clone()),
+            _ => {
+                let needed = self.backend.grid_buffer_size();
+                if self.buffer.len() < needed {
+                    self.buffer.resize(needed, 0);
+                }
+                let written = self.backend.write_grid_to_buffer(&mut self.buffer);
+                let grid = Grid::read(&self.buffer[..written]).map(Rc::new);
+                self.grid_cache = grid.clone().map(|grid| (grid, key));
+                self.grid_dirty = false;
+                grid
+            }
+        };
+        (grid, self.overlay(), self.backend.mode())
+    }
+
+    /// The block overlay, kept until `block_overlay_key` changes.
+    fn overlay(&self) -> BlockOverlay {
+        let key = self.backend.block_overlay_key();
+        let mut cache = self.overlay_cache.borrow_mut();
+        match &*cache {
+            Some((at, overlay)) if *at == key => overlay.clone(),
+            _ => {
+                let overlay = self.backend.block_overlay();
+                *cache = Some((key, overlay.clone()));
+                overlay
+            }
+        }
     }
 
     /// Typing goes to the bottom of the output, as in other terminals.
@@ -1260,7 +1302,7 @@ impl TerminalView {
         if self.direct || !SettingsStore::get(cx).terminal_blocks {
             return None;
         }
-        let overlay = self.backend.block_overlay();
+        let overlay = self.overlay();
         if overlay.alt_screen {
             return None;
         }
@@ -1834,7 +1876,7 @@ impl RowLayout {
 
 /// Everything a frame paints, worked out before painting.
 struct Frame {
-    grid: Option<Grid>,
+    grid: Option<Rc<Grid>>,
     overlay: BlockOverlay,
     mode: TerminalMode,
     metrics: Metrics,
@@ -2664,7 +2706,7 @@ impl TerminalView {
         if self.direct || self.hints.is_some() {
             return None;
         }
-        let overlay = self.backend.block_overlay();
+        let overlay = self.overlay();
         let block = overlay.blocks.iter().find(|b| b.id == id)?;
         let row = block.start_row.max(0) as usize;
         if row >= self.draw_rows {

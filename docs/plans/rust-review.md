@@ -59,7 +59,10 @@ blocks are highlighted once per text and theme), P8 (a Review reads the
 working tree again when the repository's watcher saw a change,
 `RepositoryEvent::FilesChanged`, and only once it's drawn, so not while
 hidden; its default scope comes from the repository's last refresh;
-History refreshes on a new `generation`, not progress lines). Git: G3 (waiting
+History refreshes on a new `generation`, not progress lines), P9 (a
+terminal reads its grid again only after damage or a change of scroll
+place or size, and the block overlay only when `block_overlay_key`
+changes; blinks and hovers reuse them). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 
