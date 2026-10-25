@@ -286,7 +286,10 @@ impl Workbench {
         for (root, held) in &self.git.held {
             let trusted = !ask || self.trust.is_trusted(root);
             if held.state.read(cx).trusted != trusted {
-                held.state.update(cx, |state, _| state.trusted = trusted);
+                held.state.update(cx, |state, cx| {
+                    state.trusted = trusted;
+                    cx.notify();
+                });
             }
         }
         self.git.active = roots

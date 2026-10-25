@@ -63,6 +63,8 @@ pub(crate) struct GitLayer {
     /// (blame says nothing once the buffer differs from it).
     blame: HashMap<usize, BlameLine>,
     blame_for: Option<String>,
+    /// The HEAD the blame was read at (with `blame_for`, what it's cached by).
+    blame_head: Option<String>,
     /// The line whose blame shows.
     blame_line: Option<usize>,
     /// The peeked hunk, by its start line.
@@ -95,6 +97,14 @@ impl EditorTab {
         }
         let path = self.path.clone();
         let (trusted, root) = (self.git.trusted, self.git.root.clone());
+        let head = root.as_deref().and_then(|root| {
+            let state = crate::repository_state::RepositoryStore::existing(root, cx)?;
+            state.read(cx).snapshot.as_ref()?.head_oid.clone()
+        });
+        // Blame only changes with HEAD or the file on disk.
+        let cached = (head.is_some() && head == self.git.blame_head)
+            .then(|| self.git.blame_for.clone())
+            .flatten();
         self.git._base = Some(cx.spawn(async move |tab, cx| {
             cx.background_executor().timer(BASE_DELAY).await;
             let read = cx.background_executor().spawn(async move {
@@ -106,6 +116,9 @@ impl EditorTab {
                 });
                 let disk =
                     impulse_kit::text_file::read(&path).map(|c| LineEnding::normalize(&c.text));
+                if disk.is_some() && disk == cached {
+                    return (base, root, disk, None, true);
+                }
                 // Git reads run as the repository's trust allows.
                 let blame = match (&root, base.is_some()) {
                     (Some(root), true) => RepositoryState::read_git(
@@ -116,9 +129,9 @@ impl EditorTab {
                     .map(|text| impulse_git::git_blame::parse_porcelain(&text)),
                     _ => None,
                 };
-                (base, root, disk, blame)
+                (base, root, disk, blame, false)
             });
-            let (base, root, disk, blame) = read.await;
+            let (base, root, disk, blame, unchanged) = read.await;
             let _ = tab.update(cx, |tab, cx| {
                 tab.git.base = base;
                 if tab.git.root.is_none() {
@@ -127,8 +140,11 @@ impl EditorTab {
                     }
                 }
                 tab.git.root = root;
-                tab.git.blame = blame.unwrap_or_default();
-                tab.git.blame_for = disk;
+                if !unchanged {
+                    tab.git.blame = blame.unwrap_or_default();
+                    tab.git.blame_for = disk;
+                    tab.git.blame_head = head;
+                }
                 tab.update_git_marks(cx);
             });
         }));
@@ -137,10 +153,17 @@ impl EditorTab {
     /// Follow the repository: its index, HEAD and conflicts.
     fn watch_repository(&mut self, root: &str, cx: &mut Context<Self>) {
         let state = crate::repository_state::RepositoryStore::state(root, cx);
-        self.git.trusted = state.read(cx).trusted;
-        self.git._repository = Some(cx.observe(&state, |tab, state, cx| {
-            tab.git.trusted = state.read(cx).trusted;
-            tab.refresh_git(cx);
+        let read = |state: &RepositoryState| (state.trusted, state.generation);
+        let mut seen = read(state.read(cx));
+        self.git.trusted = seen.0;
+        self.git._repository = Some(cx.observe(&state, move |tab, state, cx| {
+            // Not for progress lines and activity, only the repository.
+            let now = read(state.read(cx));
+            if now != seen {
+                seen = now;
+                tab.git.trusted = now.0;
+                tab.refresh_git(cx);
+            }
         }));
     }
 

@@ -47,6 +47,8 @@ pub struct RepositoryState {
     pub activity_detail: Option<String>,
     /// Whether the folder is trusted, as the window last said.
     pub trusted: bool,
+    /// Counts the refreshes that changed something (not progress lines).
+    pub generation: u64,
     refresh_in_flight: bool,
     refresh_queued: bool,
     waiting: Vec<oneshot::Sender<()>>,
@@ -71,6 +73,7 @@ impl RepositoryState {
             activity: None,
             activity_detail: None,
             trusted: false,
+            generation: 0,
             refresh_in_flight: false,
             refresh_queued: false,
             waiting: Vec::new(),
@@ -93,9 +96,13 @@ impl RepositoryState {
         self.refresh_in_flight = true;
         let root = self.root.clone();
         let trusted = self.trusted;
+        let lock = self.lock.clone();
         cx.spawn(async move |this, cx| {
             let (snapshot, statuses) = cx
                 .background_spawn(async move {
+                    // Never in the middle of an operation, which would read
+                    // its half-done state (the Swift app's serial queue).
+                    let _turn = lock.lock().unwrap_or_else(|e| e.into_inner());
                     let snapshot = impulse_git::snapshot(&root, true);
                     // A merge, cherry-pick or revert just started (an agent's,
                     // say): note the work from before it, so Abort can put
@@ -125,6 +132,8 @@ impl RepositoryState {
         cx: &mut Context<Self>,
     ) {
         self.refresh_in_flight = false;
+        // Only a real change tells observers (editors read blame on each).
+        let changed = !self.loaded || snapshot != self.snapshot || statuses != self.statuses;
         self.loaded = true;
         if snapshot != self.snapshot {
             let moved = match (&self.snapshot, &snapshot) {
@@ -151,16 +160,19 @@ impl RepositoryState {
                 let _ = waiter.send(());
             }
         }
-        cx.notify();
+        if changed {
+            self.generation += 1;
+            cx.notify();
+        }
     }
 
     /// Resolves once the refresh in progress (or the next one) is done.
     pub fn next_refresh(&mut self, cx: &mut Context<Self>) -> oneshot::Receiver<()> {
         let (sender, receiver) = oneshot::channel();
         self.waiting.push(sender);
-        if !self.refresh_in_flight {
-            self.refresh(cx);
-        }
+        // A refresh already running may have read the repository before
+        // the change this waits for, so one more follows it.
+        self.refresh(cx);
         receiver
     }
 
@@ -456,6 +468,14 @@ impl RepositoryStore {
             added: snapshot.total_added(),
             removed: snapshot.total_removed(),
         })
+    }
+
+    /// The state for a repository root, if something holds it.
+    pub fn existing(root: &str, cx: &App) -> Option<Entity<RepositoryState>> {
+        cx.try_global::<RepositoryStore>()?
+            .states
+            .get(root)
+            .and_then(WeakEntity::upgrade)
     }
 
     /// The state for a repository root, created on first use.
