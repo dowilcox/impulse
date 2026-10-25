@@ -189,6 +189,9 @@ pub struct Tab {
     pub preview: bool,
     /// Shown as its icon only, and closing it asks first.
     pub pinned: bool,
+    /// The tab that was active when this one opened: closing this one goes
+    /// back there (Swift's tab manager).
+    pub opener: Option<u64>,
 }
 
 impl Tab {
@@ -201,6 +204,7 @@ impl Tab {
             zoomed: None,
             preview: false,
             pinned: false,
+            opener: None,
         }
     }
 

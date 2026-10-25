@@ -96,7 +96,15 @@ has it on, `impulse_kit::linked_tags`).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a
-real desktop, since Xvfb's windows are decorated by the server).
+real desktop, since Xvfb's windows are decorated by the server), W4
+(Scratch's tree keeps the folder it lists with the workspace's others,
+so its folders expand; see P5), W5 (restored editors go back to their
+cursor's line and column), W6 (closing the active tab goes back to the
+tab that opened it, else the one to its right; closing a workspace goes
+to the one used before it, `Workbench::recent_workspaces`) and W7 (each
+window has its own sidebar visibility and width, saved with it; the
+settings give new windows theirs, and changing them there applies to
+every window).
 
 Performance: P3 (a repository notifies only when a refresh changed
 something, `RepositoryState::generation`; editors re-read only then, and

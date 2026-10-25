@@ -339,7 +339,6 @@ pub(crate) fn session_workspace(
 impl Workbench {
     /// This window as the session file holds it.
     pub(crate) fn session_window(&self, with_scrollback: bool, cx: &App) -> SessionWindow {
-        let settings = SettingsStore::get(cx);
         let workspaces = self
             .workspaces
             .iter()
@@ -348,8 +347,8 @@ impl Workbench {
         SessionWindow {
             workspaces: Some(workspaces),
             active_workspace_index: Some(self.active as i64),
-            sidebar_visible: Some(settings.sidebar_visible),
-            sidebar_width: Some(settings.sidebar_width as f64),
+            sidebar_visible: Some(self.sidebar_shown),
+            sidebar_width: Some(self.sidebar_px as f64),
             frame: Some(frame_of(self.bounds, cx)),
             workspaces_height: self.workspaces_height.map(f64::from),
             ..Default::default()
@@ -364,25 +363,13 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The sidebar as it was (Swift keeps it per window; here it's the
-        // settings' sidebar_visible and sidebar_width).
+        // The sidebar as this window had it (Swift keeps it per window).
         self.workspaces_height = state.workspaces_height.map(|h| h.max(0.) as f32);
-        let (visible, width) = (state.sidebar_visible, state.sidebar_width);
-        let settings = SettingsStore::get(cx);
-        let width = width
-            .filter(|w| *w > 120.)
-            .map(|w| w.round() as i64)
-            .filter(|w| *w != settings.sidebar_width);
-        let visible = visible.filter(|v| *v != settings.sidebar_visible);
-        if width.is_some() || visible.is_some() {
-            SettingsStore::update(cx, |s| {
-                if let Some(width) = width {
-                    s.sidebar_width = width;
-                }
-                if let Some(visible) = visible {
-                    s.sidebar_visible = visible;
-                }
-            });
+        if let Some(width) = state.sidebar_width.filter(|w| *w > 120.) {
+            self.sidebar_px = width.round() as f32;
+        }
+        if let Some(visible) = state.sidebar_visible {
+            self.sidebar_shown = visible;
         }
         for saved in state.workspaces.unwrap_or_default() {
             if saved.kind != "folder" && self.workspaces.iter().any(|w| w.kind == Kind::Scratch) {
@@ -527,7 +514,16 @@ impl Workbench {
                         if crate::image_view::is_image_file(path) {
                             Some(self.make_image(path, cx))
                         } else {
-                            self.make_editor(path, window, cx)
+                            let editor = self.make_editor(path, window, cx);
+                            // Back where its cursor was (1-based in the file).
+                            if let (Some(Surface::Editor(e)), Some(line)) = (&editor, surface.line) {
+                                let position = gpui_kit::component::input::Position::new(
+                                    (line.max(1) - 1) as u32,
+                                    (surface.column.unwrap_or(1).max(1) - 1) as u32,
+                                );
+                                e.update(cx, |e, cx| e.go_to(position, window, cx));
+                            }
+                            editor
                         }
                     }),
                 _ => None,

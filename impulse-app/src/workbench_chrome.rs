@@ -617,8 +617,7 @@ impl Workbench {
     /// `sidebar_tabs`: the sidebar lists the tabs (while it's shown) and the
     /// titlebar doesn't.
     fn tabs_in_sidebar(&self, cx: &gpui_kit::App) -> bool {
-        let settings = SettingsStore::get(cx);
-        settings.sidebar_tabs && settings.sidebar_visible
+        SettingsStore::get(cx).sidebar_tabs && self.sidebar_shown
     }
 
     pub(crate) fn titlebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -807,7 +806,7 @@ impl Workbench {
             tabs = tabs.child(t);
         }
         let tabs_in_sidebar = self.tabs_in_sidebar(cx);
-        let sidebar_visible = SettingsStore::get(cx).sidebar_visible;
+        let sidebar_visible = self.sidebar_shown;
         // Over the sidebar the leading part fills its width, so tabs start
         // where the content column starts; without it, it hugs its content.
         let leading_width = sidebar_visible.then(|| self.sidebar_width(cx).max(220.));
@@ -2191,12 +2190,9 @@ const SIDEBAR_WIDTHS: std::ops::RangeInclusive<f32> = 180.0..=520.0;
 const DIVIDER_GRIP: f32 = 7.;
 
 impl Workbench {
-    /// The sidebar's width: the one being dragged, else the setting.
-    pub(crate) fn sidebar_width(&self, cx: &gpui_kit::App) -> f32 {
-        let width = self
-            .sidebar_drag
-            .map(|d| d.width)
-            .unwrap_or(SettingsStore::get(cx).sidebar_width as f32);
+    /// The sidebar's width: the one being dragged, else this window's.
+    pub(crate) fn sidebar_width(&self, _: &gpui_kit::App) -> f32 {
+        let width = self.sidebar_drag.map(|d| d.width).unwrap_or(self.sidebar_px);
         width.clamp(*SIDEBAR_WIDTHS.start(), *SIDEBAR_WIDTHS.end())
     }
 
@@ -2230,9 +2226,8 @@ impl Workbench {
                         cx.stop_propagation();
                         if event.click_count == 2 {
                             w.sidebar_drag = None;
-                            SettingsStore::update(cx, |s| {
-                                s.sidebar_width = metrics::LEFT_DOCK_DEFAULT_WIDTH as i64
-                            });
+                            w.sidebar_px = metrics::LEFT_DOCK_DEFAULT_WIDTH;
+                            cx.notify();
                             return;
                         }
                         w.sidebar_drag = Some(SidebarDrag {
@@ -2269,13 +2264,12 @@ impl Workbench {
         true
     }
 
-    /// Let go of the sidebar's edge: its width becomes the setting.
+    /// Let go of the sidebar's edge: its width is this window's.
     pub(crate) fn end_sidebar_drag(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(drag) = self.sidebar_drag.take() else {
             return false;
         };
-        let width = drag.width.round() as i64;
-        SettingsStore::update(cx, |s| s.sidebar_width = width);
+        self.sidebar_px = drag.width.round();
         cx.notify();
         true
     }

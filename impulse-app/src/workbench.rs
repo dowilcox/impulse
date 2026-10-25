@@ -109,6 +109,15 @@ pub struct Workbench {
     /// The settings.json warning dismissed (`SettingsStore::warning`'s count).
     pub(crate) dismissed_settings_warning: Option<u64>,
     pub(crate) tree_scroll: gpui_kit::UniformListScrollHandle,
+    /// This window's sidebar, shown or not, and its width (Swift keeps them
+    /// per window; the settings give new windows theirs, and a change there
+    /// applies to every window).
+    pub(crate) sidebar_shown: bool,
+    pub(crate) sidebar_px: f32,
+    sidebar_seen: (bool, i64),
+    /// Workspace ids, the most recently shown last: closing one goes back to
+    /// the one used before it.
+    pub(crate) recent_workspaces: Vec<u64>,
     /// The task states' refresh waiting for changes to settle
     /// (`Workbench::schedule_task_refresh`).
     pub(crate) task_refresh: Option<gpui_kit::Task<()>>,
@@ -248,6 +257,10 @@ impl Workbench {
             tree_selection: None,
             tree_scroll: gpui_kit::UniformListScrollHandle::new(),
             task_refresh: None,
+            sidebar_shown: settings.sidebar_visible,
+            sidebar_px: settings.sidebar_width as f32,
+            sidebar_seen: (settings.sidebar_visible, settings.sidebar_width),
+            recent_workspaces: Vec::new(),
             dismissed_settings_warning: None,
             undo_close: None,
             lsp_config_stamp: None,
@@ -407,6 +420,12 @@ impl Workbench {
     /// Settings changed: the theme, the editor's and terminals' fonts.
     fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = SettingsStore::get(cx).clone();
+        let sidebar = (settings.sidebar_visible, settings.sidebar_width);
+        if sidebar != self.sidebar_seen {
+            self.sidebar_seen = sidebar;
+            self.sidebar_shown = sidebar.0;
+            self.sidebar_px = sidebar.1 as f32;
+        }
         crate::workspace::SCRATCH.with(|s| *s.borrow_mut() = settings.scratch_directory.clone());
         let theme_id = self
             .theme_override
@@ -593,7 +612,10 @@ impl Workbench {
         } else {
             workspace.active + 1
         };
-        workspace.tabs.insert(at, Tab::new(tab_id, pane, surface));
+        let opener = workspace.tabs.get(workspace.active).map(|t| t.id);
+        let mut tab = Tab::new(tab_id, pane, surface);
+        tab.opener = opener;
+        workspace.tabs.insert(at, tab);
         workspace.active = at;
         self.active = index;
         self.focus_active(window, cx);
@@ -652,6 +674,9 @@ impl Workbench {
             return;
         }
         self.active = index;
+        let id = self.workspaces[index].id;
+        self.recent_workspaces.retain(|w| *w != id);
+        self.recent_workspaces.push(id);
         // The branch comes from the repository's state (`sync_branches`),
         // not a git call on the main thread.
         self.sync_branches(cx);
@@ -1038,7 +1063,9 @@ impl Workbench {
             return;
         };
         let workspace = self.workspace().id;
+        let was_active = self.workspace().active == index;
         let tab = self.workspace_mut().tabs.remove(index);
+        let back_to = was_active.then_some(tab.opener).flatten();
         for surface in tab.panes.values() {
             self.editor_closed(surface);
         }
@@ -1052,7 +1079,7 @@ impl Workbench {
             },
             title,
         );
-        self.after_tab_removed(index, window, cx);
+        self.after_tab_removed(index, back_to, window, cx);
     }
 
     /// Note something closed, unless nothing in it could come back (tools
@@ -1214,11 +1241,13 @@ impl Workbench {
                     surface.name(cx),
                 );
                 if !self.workspaces[w].tabs[t].remove(pane) {
-                    self.workspaces[w].tabs.remove(t);
+                    let was_active = self.workspaces[w].active == t;
+                    let removed = self.workspaces[w].tabs.remove(t);
+                    let back_to = was_active.then_some(removed.opener).flatten();
                     let previous = self.active;
                     let count = self.workspaces.len();
                     self.active = w;
-                    self.after_tab_removed(t, window, cx);
+                    self.after_tab_removed(t, back_to, window, cx);
                     // Its workspace may have gone with its last tab.
                     let gone = self.workspaces.len() < count;
                     if previous != w {
@@ -1240,7 +1269,16 @@ impl Workbench {
     /// The active workspace lost tab `index`: show its neighbor, or a new
     /// terminal when it was the last (a workspace always has a tab while
     /// it's shown).
-    fn after_tab_removed(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// The tab at `index` is gone: the active one becomes the tab that
+    /// opened it (`back_to`, when it was active and that tab is still
+    /// there), else its right neighbour, else its left (Swift's).
+    fn after_tab_removed(
+        &mut self,
+        index: usize,
+        back_to: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // A workspace closes with its last tab while others remain.
         if self.workspace().tabs.is_empty() && self.workspaces.len() > 1 {
             let active = self.active;
@@ -1254,10 +1292,15 @@ impl Workbench {
             self.add_tab(active, terminal, window, cx);
             return;
         }
-        if workspace.active >= index && workspace.active > 0 {
-            workspace.active -= 1;
+        let opener = back_to.and_then(|id| workspace.tabs.iter().position(|t| t.id == id));
+        workspace.active = match opener {
+            Some(at) => at,
+            // The closed one was active: what slid into its place.
+            None if workspace.active == index => index,
+            None if workspace.active > index => workspace.active - 1,
+            None => workspace.active,
         }
-        workspace.active = workspace.active.min(workspace.tabs.len() - 1);
+        .min(workspace.tabs.len() - 1);
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -1356,7 +1399,8 @@ impl Workbench {
             "import_shell_history" => self.import_shell_history(window, cx),
             "clear_command_history" => self.clear_command_history(window, cx),
             "toggle_sidebar" => {
-                SettingsStore::update(cx, |s| s.sidebar_visible = !s.sidebar_visible)
+                self.sidebar_shown = !self.sidebar_shown;
+                cx.notify();
             }
             palette if crate::palette::prefix_for(palette).is_some() => {
                 let prefix = crate::palette::prefix_for(palette).unwrap_or_default();
@@ -1370,16 +1414,14 @@ impl Workbench {
                 };
                 // Pressed again while the panel has the keyboard: back to
                 // the tab.
-                if self.panel == panel
-                    && SettingsStore::get(cx).sidebar_visible
-                    && self.panel_has_focus(window, cx)
+                if self.panel == panel && self.sidebar_shown && self.panel_has_focus(window, cx)
                 {
                     self.focus_active(window, cx);
                     cx.notify();
                     return;
                 }
                 self.panel = panel;
-                SettingsStore::update(cx, |s| s.sidebar_visible = true);
+                self.sidebar_shown = true;
                 match self.panel {
                     SidebarPanel::Search => self
                         .search
@@ -1683,10 +1725,19 @@ impl Workbench {
                 format!("workspace {}", removed.name()),
             );
         }
+        self.recent_workspaces.retain(|w| *w != removed.id);
+        // The workspace used before it, else its neighbour.
+        let last_used = self
+            .recent_workspaces
+            .iter()
+            .rev()
+            .find_map(|id| self.workspaces.iter().position(|w| w.id == *id));
         if self.active >= index && self.active > 0 {
             self.active -= 1;
         }
-        let active = self.active.min(self.workspaces.len() - 1);
+        let active = last_used
+            .unwrap_or(self.active)
+            .min(self.workspaces.len() - 1);
         self.activate_workspace(active, window, cx);
     }
 
@@ -1730,7 +1781,7 @@ impl Render for Workbench {
         self.sync_git(cx);
         self.sync_editor_watch(cx);
         self.sync_tree_watch();
-        let sidebar = SettingsStore::get(cx).sidebar_visible;
+        let sidebar = self.sidebar_shown;
         let root = self.menu_actions(div().id("workbench"), cx);
         let p = &self.palette;
         root.track_focus(&self.focus)

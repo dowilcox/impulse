@@ -561,9 +561,8 @@ fn perform_now(action: &str, cx: &mut App) {
         match (name, argument) {
             ("wait", None) => {}
             ("sidebar" | "no-sidebar", None) => {
-                crate::settings_store::SettingsStore::update(cx, |s| {
-                    s.sidebar_visible = name == "sidebar"
-                })
+                workbench.sidebar_shown = name == "sidebar";
+                cx.notify();
             }
             ("palette", None) => workbench.show_palette(">", window, cx),
             ("quickopen", None) => workbench.show_palette("", window, cx),
