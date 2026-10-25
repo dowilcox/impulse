@@ -100,8 +100,18 @@ fn follow(shared: Arc<AtomicU8>) {
     use std::io::BufRead as _;
     use std::os::unix::process::CommandExt as _;
     let keys = [
-        ("org.gnome.desktop.a11y.interface", "high-contrast", 1u8, false),
-        ("org.gnome.desktop.interface", "enable-animations", 2u8, true),
+        (
+            "org.gnome.desktop.a11y.interface",
+            "high-contrast",
+            1u8,
+            false,
+        ),
+        (
+            "org.gnome.desktop.interface",
+            "enable-animations",
+            2u8,
+            true,
+        ),
     ];
     for (schema, key, bit, inverted) in keys {
         let shared = shared.clone();
@@ -128,7 +138,10 @@ fn follow(shared: Arc<AtomicU8>) {
                 return;
             };
             // "high-contrast: true"
-            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
                 let on = line.rsplit(':').next().map(str::trim) == Some("true");
                 let set = on != inverted;
                 let _ = shared.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |bits| {

@@ -13,7 +13,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -378,8 +377,6 @@ thread_local! {
     static OFFERED_CLEAN_UP: std::cell::RefCell<HashSet<String>> = Default::default();
 }
 
-static MONITOR_BUSY: AtomicBool = AtomicBool::new(false);
-
 /// Answers by (base, tip) commit ids: what two commits say about each other
 /// never changes, so a recompute only asks git about branches that moved.
 static MERGED_ANSWERS: LazyLock<Mutex<HashMap<String, bool>>> =
@@ -593,7 +590,9 @@ impl Workbench {
     /// (`refresh_task_states`), and once a minute for what no watcher sees.
     pub(crate) fn start_task_monitor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |workbench, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(60)).await;
+            cx.background_executor()
+                .timer(Duration::from_secs(60))
+                .await;
             if workbench
                 .update(cx, |workbench, cx| workbench.refresh_task_states(cx))
                 .is_err()
@@ -612,7 +611,9 @@ impl Workbench {
             return;
         }
         self.task_refresh = Some(cx.spawn(async move |workbench, cx| {
-            cx.background_executor().timer(Duration::from_millis(1500)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(1500))
+                .await;
             let _ = workbench.update(cx, |workbench, cx| workbench.refresh_task_states(cx));
         }));
     }
@@ -629,21 +630,31 @@ impl Workbench {
                 }
             }
         }
-        if repositories.is_empty() || MONITOR_BUSY.swap(true, Ordering::SeqCst) {
+        if repositories.is_empty() {
             return;
         }
+        // One at a time in each window; one asked for meanwhile follows.
+        if let Some(again) = self.task_states_running.as_mut() {
+            *again = true;
+            return;
+        }
+        self.task_states_running = Some(false);
         let trust = self.trust.clone();
         let work = cx.background_executor().spawn(async move {
-            let found: Vec<RepositoryTasks> = repositories
+            repositories
                 .iter()
                 .map(|(common, root)| compute_repository(&main_checkout_root(root), common, &trust))
-                .collect();
-            MONITOR_BUSY.store(false, Ordering::SeqCst);
-            found
+                .collect::<Vec<RepositoryTasks>>()
         });
         cx.spawn(async move |workbench, cx| {
             let found = work.await;
-            let _ = workbench.update(cx, |workbench, cx| workbench.apply_task_states(found, cx));
+            let _ = workbench.update(cx, |workbench, cx| {
+                let again = workbench.task_states_running.take() == Some(true);
+                workbench.apply_task_states(found, cx);
+                if again {
+                    workbench.refresh_task_states(cx);
+                }
+            });
         })
         .detach();
     }
@@ -799,7 +810,12 @@ impl Workbench {
                     }
                     toast(window, cx, ToastKind::Warning, sentence, Some(detail), None);
                 } else {
-                    let _ = crate::agent_notify::post("Tasks change the same files", "", &sentence);
+                    let _ = crate::agent_notify::post(
+                        "Tasks change the same files",
+                        "",
+                        &sentence,
+                        None,
+                    );
                 }
             }
         });

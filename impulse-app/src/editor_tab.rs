@@ -241,11 +241,12 @@ impl EditorTab {
                 cx.notify();
             }
         });
-        let linked_edits = cx.subscribe_in(&state, window, |tab, _, event: &InputEvent, window, cx| {
-            if matches!(event, InputEvent::Change) {
-                tab.follow_linked_tag(window, cx);
-            }
-        });
+        let linked_edits =
+            cx.subscribe_in(&state, window, |tab, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    tab.follow_linked_tag(window, cx);
+                }
+            });
         let observe_state = cx.observe(&state, |tab, _, cx| {
             tab.selection_moved(cx);
             // The peek follows its change as the editor scrolls.
@@ -1593,7 +1594,10 @@ impl Render for EditorTab {
         let signature = self.signature_popup(cx);
         let rename = self.rename_box(cx);
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
-        let (family, size) = (crate::fonts::family(&settings.font_family), settings.font_size as f32);
+        let (family, size) = (
+            crate::fonts::family(&settings.font_family),
+            settings.font_size as f32,
+        );
         let line_height = settings.editor_line_height;
         let mut editor = Editor::new(&self.state)
             .size_full()

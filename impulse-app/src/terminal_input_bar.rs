@@ -917,7 +917,7 @@ impl TerminalView {
             .children(chips.into_iter().take(shown).enumerate().map(
                 |(index, (icon, text, chevron, status))| {
                     if let (true, Some(r)) = (Some(index) == review_at, review.as_ref()) {
-                        let mono = SharedString::from(mono.clone());
+                        let mono = mono.clone();
                         let part = |text: String, color: &str| {
                             div().text_color(hsla(c(color))).child(text)
                         };
@@ -1002,7 +1002,7 @@ impl TerminalView {
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .font_family(SharedString::from(mono.clone()))
+                                .font_family(mono.clone())
                                 .text_size(px(11.))
                                 .text_color(hsla(c(&theme.fg_muted)))
                                 .child(text),

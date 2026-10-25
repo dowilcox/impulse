@@ -126,6 +126,9 @@ pub struct Workbench {
     /// The task states' refresh waiting for changes to settle
     /// (`Workbench::schedule_task_refresh`).
     pub(crate) task_refresh: Option<gpui_kit::Task<()>>,
+    /// The task states are being worked out; `Some(true)` when another
+    /// refresh was asked for meanwhile (it runs once this one is done).
+    pub(crate) task_states_running: Option<bool>,
     /// Closed tabs and workspaces, newest last, each with its id.
     closed: Vec<(u64, Closed)>,
     /// The last close recorded: its id and what to call it (for the Undo
@@ -262,6 +265,7 @@ impl Workbench {
             tree_selection: None,
             tree_scroll: gpui_kit::UniformListScrollHandle::new(),
             task_refresh: None,
+            task_states_running: None,
             sidebar_shown: settings.sidebar_visible,
             sidebar_px: settings.sidebar_width as f32,
             sidebar_seen: (settings.sidebar_visible, settings.sidebar_width),
@@ -1441,8 +1445,7 @@ impl Workbench {
                 };
                 // Pressed again while the panel has the keyboard: back to
                 // the tab.
-                if self.panel == panel && self.sidebar_shown && self.panel_has_focus(window, cx)
-                {
+                if self.panel == panel && self.sidebar_shown && self.panel_has_focus(window, cx) {
                     self.focus_active(window, cx);
                     cx.notify();
                     return;

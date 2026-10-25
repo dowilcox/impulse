@@ -325,7 +325,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           agent_integration.rs: the Agent Integration
                           dialog; agent_notify.rs: desktop notifications by
                           notify-send or osascript, a click on one showing
-                          its terminal where notify-send takes --action;
+                          its terminal where notify-send takes --action,
+                          withdrawn when its attention clears where it
+                          takes --print-id (agent_notify::clear);
                           badge.rs: the terminals needing attention on the
                           Dock tile, or Unity's LauncherEntry by gdbus;
                           agent_send.rs: text for agents as a paste, queued

@@ -106,9 +106,10 @@ pub(crate) struct RowText {
 /// the same path up on every move. Looked up off the main thread: a path on
 /// a network mount that stopped answering would freeze the window.
 #[derive(Default)]
-pub(crate) struct FileChecks(
-    std::sync::Arc<std::sync::Mutex<HashMap<PathBuf, (Option<bool>, Instant)>>>,
-);
+pub(crate) struct FileChecks(std::sync::Arc<std::sync::Mutex<Checked>>);
+
+/// Each path's answer (`None` while it's being looked up) and when.
+type Checked = HashMap<PathBuf, (Option<bool>, Instant)>;
 
 impl FileChecks {
     /// The answer when it's known; `None` while it's being looked up
@@ -897,7 +898,9 @@ impl TerminalView {
                     .await;
                 let _ = view.update_in(cx, |view, window, cx| {
                     if !view.begin_hints(window, cx) {
-                        cx.emit(TerminalViewEvent::Notice("Nothing to open on screen.".into()));
+                        cx.emit(TerminalViewEvent::Notice(
+                            "Nothing to open on screen.".into(),
+                        ));
                     }
                 });
             })

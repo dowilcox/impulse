@@ -648,7 +648,7 @@ impl Workbench {
                         if let Some(terminal) = &terminal_for_attention {
                             terminal.update(cx, |t, cx| t.request_attention(cx));
                         }
-                        if !window.is_window_active() {
+                        if !crate::agent_notify::app_in_front(cx) {
                             window.request_attention();
                         }
                         workbench.present_agent_task(
@@ -659,7 +659,7 @@ impl Workbench {
                             let heard = heard.recv().await.ok();
                             ASKING.with(|a| a.borrow_mut().remove(&me));
                             let answered = workbench.update_in(cx, |w, window, cx| {
-                                w.reply_with_outcome(heard, caller_cwd, reply.clone(), window, cx)
+                                w.reply_with_outcome(heard, true, caller_cwd, reply.clone(), window, cx)
                             });
                             if answered.is_err() {
                                 failure(&reply, "The window closed.");
@@ -677,7 +677,7 @@ impl Workbench {
                             let heard = heard.recv().await.ok();
                             creating(&repository, -1);
                             let answered = workbench.update_in(cx, |w, window, cx| {
-                                w.reply_with_outcome(heard, caller_cwd, reply.clone(), window, cx)
+                                w.reply_with_outcome(heard, false, caller_cwd, reply.clone(), window, cx)
                             });
                             if answered.is_err() {
                                 failure(&reply, "The window closed.");
@@ -693,16 +693,20 @@ impl Workbench {
 
     /// How an agent's request ended, as its answer: the new task as
     /// `impulse tasks show` describes it, seen from the caller's workspace.
+    /// No outcome is the user's no only when they were `asked`.
+    #[allow(clippy::too_many_arguments)]
     fn reply_with_outcome(
         &mut self,
         heard: Option<Outcome>,
+        asked: bool,
         cwd: String,
         reply: Reply,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let (path, branch) = match heard {
-            None => return failure(&reply, "The user declined: no task was created."),
+            None if asked => return failure(&reply, "The user declined: no task was created."),
+            None => return failure(&reply, "The task wasn't created."),
             Some(Outcome::Failed(message)) => {
                 return failure(&reply, format!("The task wasn't created: {message}"))
             }
@@ -746,6 +750,10 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let Some(root) = self.task_repository(Some(index)) else {
+            // The user was never asked.
+            let _ = outcome.try_send(Outcome::Failed(
+                "the workspace is no longer a repository's".into(),
+            ));
             return;
         };
         let blocker = self.move_blocker(&root, cx);
@@ -1023,7 +1031,7 @@ impl Workbench {
                 let Some(view) = view else {
                     return failure(&reply, format!("Finish Task couldn't open for {name}."));
                 };
-                if !window.is_window_active() {
+                if !crate::agent_notify::app_in_front(cx) {
                     window.request_attention();
                 }
                 // A run you started yourself goes on as you started it; the
@@ -1145,7 +1153,7 @@ impl Workbench {
             };
             let id = workbench.workspaces[index].id;
             let root = workbench.workspaces[index].root.clone();
-            if !window.is_window_active() {
+            if !crate::agent_notify::app_in_front(cx) {
                 window.request_attention();
             }
             workbench.archive_task(index, window, cx);

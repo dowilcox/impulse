@@ -3,6 +3,7 @@
 //! in `$XDG_RUNTIME_DIR`) and exits, and files the system asks to open
 //! (macOS's open-URLs, the desktop entry's `%F`) open in the front window.
 
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -33,7 +34,7 @@ pub fn serve(cx: &mut App) {
     }
     cx.spawn(async move |cx| {
         while let Ok(request) = receiver.recv().await {
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 let front = cx.active_window();
                 let workbenches = crate::session::workbenches(cx);
                 let Some((workbench, handle)) = workbenches

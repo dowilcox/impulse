@@ -1387,96 +1387,101 @@ impl Workbench {
         let workspace = self.workspace();
         let row = row.clone();
         let expanded = workspace.expanded_dirs.contains(&row.path);
-        let selected = self.tree_selection.as_deref().or(open_path)
-            == Some(row.path.as_path());
+        let selected = self.tree_selection.as_deref().or(open_path) == Some(row.path.as_path());
         let path = row.path.clone();
         let is_dir = row.is_dir;
         let status = self.git.tree_status(&row.path, p, ignored, cx);
         let menu = self.tree_menu(row.path.clone(), row.is_dir, cx);
-        let row_element = div()
-            .id(("file", index))
-            .role(gpui_kit::Role::TreeItem)
-            .aria_label(row.name.clone())
-            .aria_level(row.depth + 1)
-            .aria_selected(selected)
-            .when(row.is_dir, |d| d.aria_expanded(expanded))
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(6.))
-            // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
-            .h(px(22.))
-            .mx(px(4.))
-            .pl(px(4. + 16. * row.depth as f32))
-            .pr(px(8.))
-            .rounded(px(5.))
-            .text_size(px(13.))
-            .when(selected, |d| d.bg(hsla(p.accent).opacity(0.2)))
-            .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
-            .on_click(
-                cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
-                    this.tree_selection = Some(path.clone());
-                    if is_dir {
-                        this.toggle_dir(path.clone(), cx);
-                    } else if event.modifiers().alt {
-                        // ⌥-click: beside the current tab, as Swift's
-                        // tree opens it.
-                        this.open_beside(&path, window, cx);
-                    } else if event.click_count() >= 2 {
-                        // The second click of a double-click keeps the
-                        // preview.
-                        this.open_file(&path, window, cx);
-                    } else {
-                        this.preview_file(&path, window, cx);
-                    }
-                }),
-            )
-            .child(div().w(px(16.)).flex_none().flex().justify_center().child(
-                if row.is_dir {
-                    icon(
-                        if expanded {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        },
-                        metrics::ICON_SMALL,
-                        p.text_tertiary,
-                    )
-                    .into_any_element()
-                } else {
-                    div().into_any_element()
-                },
-            ))
-            .child(
-                gpui_kit::img(crate::file_icons::icon_path(
-                    &row.name, row.is_dir, expanded,
-                ))
-                .size(px(16.))
+        let row_element =
+            div()
+                .id(("file", index))
+                .role(gpui_kit::Role::TreeItem)
+                .aria_label(row.name.clone())
+                .aria_level(row.depth + 1)
+                .aria_selected(selected)
+                .when(row.is_dir, |d| d.aria_expanded(expanded))
+                .flex()
                 .flex_none()
-                // Right after the chevron, as Swift's row has it.
-                .ml(px(-6.)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
-                    .child(row.name),
-            )
-            .children(status.filter(|(letter, _)| !letter.is_empty()).map(
-                |(letter, color)| {
+                .items_center()
+                .gap(px(6.))
+                // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
+                .h(px(22.))
+                .mx(px(4.))
+                .pl(px(4. + 16. * row.depth as f32))
+                .pr(px(8.))
+                .rounded(px(5.))
+                .text_size(px(13.))
+                .when(selected, |d| d.bg(hsla(p.accent).opacity(0.2)))
+                .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
+                .on_click(
+                    cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
+                        this.tree_selection = Some(path.clone());
+                        if is_dir {
+                            this.toggle_dir(path.clone(), cx);
+                        } else if event.modifiers().alt {
+                            // ⌥-click: beside the current tab, as Swift's
+                            // tree opens it.
+                            this.open_beside(&path, window, cx);
+                        } else if event.click_count() >= 2 {
+                            // The second click of a double-click keeps the
+                            // preview.
+                            this.open_file(&path, window, cx);
+                        } else {
+                            this.preview_file(&path, window, cx);
+                        }
+                    }),
+                )
+                .child(
                     div()
+                        .w(px(16.))
                         .flex_none()
-                        .font_family("JetBrains Mono")
-                        .text_size(px(10.))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(hsla(color))
-                        .child(letter)
-                },
-            ));
+                        .flex()
+                        .justify_center()
+                        .child(if row.is_dir {
+                            icon(
+                                if expanded {
+                                    "chevron-down"
+                                } else {
+                                    "chevron-right"
+                                },
+                                metrics::ICON_SMALL,
+                                p.text_tertiary,
+                            )
+                            .into_any_element()
+                        } else {
+                            div().into_any_element()
+                        }),
+                )
+                .child(
+                    gpui_kit::img(crate::file_icons::icon_path(
+                        &row.name, row.is_dir, expanded,
+                    ))
+                    .size(px(16.))
+                    .flex_none()
+                    // Right after the chevron, as Swift's row has it.
+                    .ml(px(-6.)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
+                        .child(row.name),
+                )
+                .children(status.filter(|(letter, _)| !letter.is_empty()).map(
+                    |(letter, color)| {
+                        div()
+                            .flex_none()
+                            .font_family("JetBrains Mono")
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(hsla(color))
+                            .child(letter)
+                    },
+                ));
         let (drag_path, drop_target, external_target) =
             (row.path.clone(), row.path.clone(), row.path.clone());
         let drag_name = row
@@ -1499,11 +1504,11 @@ impl Workbench {
                     this.tree_drop(vec![dragged.0.clone()], &drop_target, window, cx)
                 },
             ))
-            .on_drop(cx.listener(
-                move |this, paths: &gpui_kit::ExternalPaths, window, cx| {
+            .on_drop(
+                cx.listener(move |this, paths: &gpui_kit::ExternalPaths, window, cx| {
                     this.tree_drop(paths.paths().to_vec(), &external_target, window, cx)
-                },
-            ));
+                }),
+            );
         row_element.context_menu(menu).into_any_element()
     }
 
@@ -1542,7 +1547,10 @@ impl Workbench {
                 let this = cx.entity();
                 cx.defer(move |cx| {
                     this.update(cx, |this, cx| {
-                        this.workspace_mut().children.entry(folder).or_insert(listed);
+                        this.workspace_mut()
+                            .children
+                            .entry(folder)
+                            .or_insert(listed);
                         cx.notify();
                     })
                 });
@@ -1565,7 +1573,9 @@ impl Workbench {
                     cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                         let open_path = this.active_editor().map(|e| e.read(cx).path.clone());
                         range
-                            .map(|index| this.tree_row(&rows[index], index, open_path.as_deref(), cx))
+                            .map(|index| {
+                                this.tree_row(&rows[index], index, open_path.as_deref(), cx)
+                            })
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -2215,7 +2225,10 @@ const DIVIDER_GRIP: f32 = 7.;
 impl Workbench {
     /// The sidebar's width: the one being dragged, else this window's.
     pub(crate) fn sidebar_width(&self, _: &gpui_kit::App) -> f32 {
-        let width = self.sidebar_drag.map(|d| d.width).unwrap_or(self.sidebar_px);
+        let width = self
+            .sidebar_drag
+            .map(|d| d.width)
+            .unwrap_or(self.sidebar_px);
         width.clamp(*SIDEBAR_WIDTHS.start(), *SIDEBAR_WIDTHS.end())
     }
 

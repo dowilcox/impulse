@@ -25,8 +25,8 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Icon;
 use gpui_kit::{
     actions, div, img, prelude::*, px, AnyElement, App, ClipboardItem, Context, ElementId, Entity,
-    FocusHandle, FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, SharedString, Subscription,
-    WeakEntity, Window,
+    FocusHandle, FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, SharedString,
+    Subscription, WeakEntity, Window,
 };
 use impulse_git::operations::{self, CommitOptions, OperationAction, StashEntry};
 use impulse_git::{ChangeStatus, FileChange, RepoSnapshot};
@@ -1257,7 +1257,9 @@ impl Workbench {
                         Some(changes.len()),
                     ),
                     Section::Staged => ("sec-staged", "Staged".to_string(), Some(changes.len())),
-                    Section::Unstaged => ("sec-changes", "Changes".to_string(), Some(changes.len())),
+                    Section::Unstaged => {
+                        ("sec-changes", "Changes".to_string(), Some(changes.len()))
+                    }
                     Section::Untracked if snapshot.untracked_truncated => (
                         "sec-untracked",
                         format!("Untracked (first {})", changes.len()),

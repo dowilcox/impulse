@@ -191,6 +191,9 @@ fn mouse_report(button: u8, col: usize, row: usize, release: bool, sgr: bool) ->
     ]
 }
 
+/// What a grid snapshot was read at: the scroll place and the size.
+type GridKey = (usize, (u16, u16));
+
 pub fn rgba(c: KitRgba) -> Rgba {
     Rgba {
         r: c.r,
@@ -317,7 +320,8 @@ impl Grid {
                     }
                 }
                 EXTRA_UNDERLINE_COLOR if index < cells.len() && len == 3 => {
-                    cells[index].underline = Some(RgbColor::new(payload[0], payload[1], payload[2]));
+                    cells[index].underline =
+                        Some(RgbColor::new(payload[0], payload[1], payload[2]));
                 }
                 _ => {}
             }
@@ -336,7 +340,9 @@ impl Grid {
 
     /// The zero-width characters drawn with the cell at `row`, `col`.
     fn combining(&self, row: usize, col: usize) -> Option<&str> {
-        self.zero_width.get(&(row * self.cols + col)).map(String::as_str)
+        self.zero_width
+            .get(&(row * self.cols + col))
+            .map(String::as_str)
     }
 
     fn cell(&self, row: usize, col: usize) -> &Cell {
@@ -443,7 +449,7 @@ pub struct TerminalView {
     buffer: Vec<u8>,
     /// The last grid snapshot, with the scroll place and size it was read
     /// at; read again only after damage (output, selection, search).
-    grid_cache: Option<(Rc<Grid>, (usize, (u16, u16)))>,
+    grid_cache: Option<(Rc<Grid>, GridKey)>,
     grid_dirty: bool,
     /// Damage a snapshot took before the wake handler saw it.
     damage_seen: bool,
@@ -1328,7 +1334,9 @@ impl TerminalView {
     /// Mouse reporting is on (any of the click, drag and motion modes).
     fn mouse_reporting(&self) -> bool {
         self.backend.mode().intersects(
-            TerminalMode::MOUSE_REPORT_CLICK | TerminalMode::MOUSE_DRAG | TerminalMode::MOUSE_MOTION,
+            TerminalMode::MOUSE_REPORT_CLICK
+                | TerminalMode::MOUSE_DRAG
+                | TerminalMode::MOUSE_MOTION,
         )
     }
 
@@ -1379,7 +1387,8 @@ impl TerminalView {
             code += 16;
         }
         let sgr = mode.contains(TerminalMode::MOUSE_SGR);
-        self.backend.write(&mouse_report(code, col, row, release, sgr));
+        self.backend
+            .write(&mouse_report(code, col, row, release, sgr));
         true
     }
 
@@ -1672,7 +1681,8 @@ impl TerminalView {
             let button = if whole > 0.0 { 64 } else { 65 };
             let sgr = mode.contains(TerminalMode::MOUSE_SGR);
             let one = mouse_report(button, col, row, false, sgr);
-            self.backend.write(&one.repeat((whole.abs() as usize).min(20)));
+            self.backend
+                .write(&one.repeat((whole.abs() as usize).min(20)));
         } else if mode.contains(TerminalMode::ALT_SCREEN) {
             // Full-screen programs without mouse support page, one page key
             // per four lines, as Swift's renderer does: arrow keys are input
@@ -3404,7 +3414,10 @@ mod mouse_report_tests {
     #[test]
     fn sgr_and_normal_reports() {
         // A drag of the middle button with Control, then its release.
-        assert_eq!(mouse_report(1 + 32 + 16, 4, 2, false, true), b"\x1b[<49;5;3M");
+        assert_eq!(
+            mouse_report(1 + 32 + 16, 4, 2, false, true),
+            b"\x1b[<49;5;3M"
+        );
         assert_eq!(mouse_report(1, 4, 2, true, true), b"\x1b[<1;5;3m");
         // The normal form: plus 32, a release as button 3, far cells clamped.
         assert_eq!(mouse_report(0, 0, 0, false, false), b"\x1b[M\x20\x21\x21");

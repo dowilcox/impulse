@@ -131,7 +131,8 @@ fn workspace_changes(main: &str) -> (Vec<TaskRecord>, Vec<Changes>) {
 fn recent_workspace_changes(main: &str) -> Vec<Changes> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    static RECENT: Mutex<Option<HashMap<String, (Instant, Vec<Changes>)>>> = Mutex::new(None);
+    type Recent = HashMap<String, (Instant, Vec<Changes>)>;
+    static RECENT: Mutex<Option<Recent>> = Mutex::new(None);
     const FRESH: Duration = Duration::from_secs(3);
     if let Some((at, changes)) = RECENT.lock().unwrap().get_or_insert_default().get(main) {
         if at.elapsed() < FRESH {

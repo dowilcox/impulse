@@ -70,7 +70,6 @@ pub(crate) struct AgentTracker {
     /// The user is looking at the terminal (its window is active and it
     /// has the keyboard), as of the last frame.
     watched: bool,
-    window_active: bool,
     /// The bell or program notification being handled went to the desktop.
     event_was_notified: bool,
     last_bell: Option<Instant>,
@@ -108,7 +107,6 @@ impl Default for AgentTracker {
             needs_attention: false,
             shared_file_notes: HashSet::new(),
             watched: false,
-            window_active: false,
             event_was_notified: false,
             last_bell: None,
             last_bounce: None,
@@ -296,9 +294,7 @@ impl TerminalView {
     /// Whether the user is looking at the terminal, each frame. Looking
     /// clears its attention mark (and a finished turn is seen).
     pub(crate) fn agent_note_watched(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let active = window.is_window_active();
-        let watched = active && self.focus_handle().contains_focused(window, cx);
-        self.agent.window_active = active;
+        let watched = window.is_window_active() && self.focus_handle().contains_focused(window, cx);
         if watched == self.agent.watched {
             return;
         }
@@ -325,7 +321,7 @@ impl TerminalView {
             self.set_needs_attention(true, cx);
         }
         let now = Instant::now();
-        if self.agent.window_active
+        if crate::agent_notify::app_in_front(cx)
             || self
                 .agent
                 .last_bounce
@@ -343,6 +339,9 @@ impl TerminalView {
     fn set_needs_attention(&mut self, value: bool, cx: &mut Context<Self>) {
         if self.agent.needs_attention != value {
             self.agent.needs_attention = value;
+            if !value {
+                crate::agent_notify::clear(cx.entity_id().as_u64());
+            }
             cx.emit(AgentSignal::Changed);
             cx.notify();
         }
@@ -360,7 +359,7 @@ impl TerminalView {
         coalesced: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.agent.window_active {
+        if crate::agent_notify::app_in_front(cx) {
             return false;
         }
         if coalesced {

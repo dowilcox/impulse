@@ -168,7 +168,8 @@ fn autosave(cx: &mut App) {
     if let Some(state) = current(cx) {
         // The files are written off the main thread, one save at a time.
         let order = next_order();
-        cx.background_spawn(async move { write(&state, order) }).detach();
+        cx.background_spawn(async move { write(&state, order) })
+            .detach();
     }
 }
 
@@ -557,7 +558,8 @@ impl Workbench {
                         } else {
                             let editor = self.make_editor(path, window, cx);
                             // Back where its cursor was (1-based in the file).
-                            if let (Some(Surface::Editor(e)), Some(line)) = (&editor, surface.line) {
+                            if let (Some(Surface::Editor(e)), Some(line)) = (&editor, surface.line)
+                            {
                                 let position = gpui_kit::component::input::Position::new(
                                     (line.max(1) - 1) as u32,
                                     (surface.column.unwrap_or(1).max(1) - 1) as u32,

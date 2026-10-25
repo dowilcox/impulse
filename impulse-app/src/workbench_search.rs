@@ -129,7 +129,8 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         let dirty = self.dirty_paths(cx);
-        let (files, query, replacement) = (files.clone(), query.to_string(), replacement.to_string());
+        let (files, query, replacement) =
+            (files.clone(), query.to_string(), replacement.to_string());
         let panel = panel.clone();
         // The files are read and written off the main thread.
         let work = cx.background_executor().spawn(async move {

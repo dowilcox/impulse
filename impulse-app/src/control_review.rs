@@ -32,7 +32,7 @@ fn data_dir() -> std::path::PathBuf {
 }
 
 /// `path` under `root` without it; anything else as given.
-fn relative(path: &str, root: &str) -> String {
+pub(crate) fn relative(path: &str, root: &str) -> String {
     path.strip_prefix(root)
         .and_then(|rest| rest.strip_prefix('/'))
         .unwrap_or(path)
@@ -154,7 +154,7 @@ impl Workbench {
             Command::Comments(comments) => {
                 // They read the caller's workspace: without a pane, there's
                 // none.
-                let (Some(_), Some(cwd)) = (terminal.as_ref(), cwd) else {
+                let (Some(caller), Some(cwd)) = (terminal.as_ref(), cwd) else {
                     return answer(inside_terminal());
                 };
                 // Marking one addressed changes what's saved, so only the
@@ -164,8 +164,13 @@ impl Workbench {
                         "impulse comments only works from the terminal's own shell, not inside tmux or screen.",
                     ));
                 }
-                // The agent's name, once the Rust app tells agents apart.
-                let by = "An agent".to_string();
+                let by = caller
+                    .read(cx)
+                    .agent
+                    .agent
+                    .as_ref()
+                    .map(|a| a.display_name.clone())
+                    .unwrap_or_else(|| "An agent".to_string());
                 let task = cx.background_spawn(async move {
                     let Some(root) = impulse_git::branches::repo_root(&cwd)
                         .map(|r| r.trim_end_matches('/').to_string())
@@ -265,7 +270,7 @@ impl Workbench {
 
     /// The caller's workspace folder (a folder workspace's root), else its
     /// repository's, else its own folder.
-    fn workspace_root_of(
+    pub(crate) fn workspace_root_of(
         &self,
         terminal: &Entity<TerminalView>,
         cwd: Option<String>,

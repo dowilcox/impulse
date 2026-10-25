@@ -10,9 +10,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::path::{Path, PathBuf};
 
 use gpui_kit::component::highlighter::SyntaxHighlighter;
 use gpui_kit::component::input::Rope;
@@ -479,7 +479,11 @@ fn code_block(
                     .styles(&(0..text.len()), &*theme)
                     .into_iter()
                     .map(|(range, style)| {
-                        (range, style.color, style.font_style == Some(FontStyle::Italic))
+                        (
+                            range,
+                            style.color,
+                            style.font_style == Some(FontStyle::Italic),
+                        )
                     })
                     .collect(),
             );

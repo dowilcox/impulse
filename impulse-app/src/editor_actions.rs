@@ -82,8 +82,8 @@ impl EditorTab {
             return;
         }
         let text = state.value().to_string();
-        self.linked.pair = linked_tags::linked_names(&text, selection.start)
-            .map(|(here, there)| {
+        self.linked.pair =
+            linked_tags::linked_names(&text, selection.start).map(|(here, there)| {
                 let name = text[here.clone()].to_string();
                 (here, there, name)
             });
@@ -118,7 +118,13 @@ impl EditorTab {
         }
         let renamed = &text[here.start..end as usize];
         let after = there.start > here.start;
-        let shift = |at: usize| if after { (at as isize + delta) as usize } else { at };
+        let shift = |at: usize| {
+            if after {
+                (at as isize + delta) as usize
+            } else {
+                at
+            }
+        };
         let partner = shift(there.start)..shift(there.end);
         let partner_holds = text.get(partner.clone()) == Some(name.as_str());
         if !partner_holds || !linked_tags::is_name(renamed) || renamed == name {
@@ -175,7 +181,12 @@ impl EditorTab {
             .collect()
     }
 
-    pub(crate) fn go_to_bracket(&mut self, _: &GoToBracket, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_bracket(
+        &mut self,
+        _: &GoToBracket,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pairs = self.pairs();
         let cursor = self.state.read(cx).cursor();
         if let Some(to) = line_edits::matching_bracket(&pairs, cursor) {
@@ -280,7 +291,12 @@ impl EditorTab {
         self.request_signature(cx);
     }
 
-    pub(crate) fn next_problem(&mut self, _: &NextProblem, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn next_problem(
+        &mut self,
+        _: &NextProblem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.go_to_problem(true, window, cx);
     }
 

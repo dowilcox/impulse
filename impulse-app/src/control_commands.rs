@@ -196,6 +196,18 @@ impl Workbench {
                 }
                 if args.get("background").is_none() {
                     window.activate_window();
+                } else if !crate::agent_notify::app_in_front(cx) {
+                    // An agent's open_file: the tab opens where it is, and
+                    // the pane asks for attention instead of taking focus
+                    // from another app.
+                    if let Some(terminal) = terminal.as_ref() {
+                        terminal.update(cx, |t, cx| t.request_attention(cx));
+                    }
+                }
+                // Images never get an editor tab to close: don't wait.
+                if request.wait && crate::image_view::is_image_file(&path) {
+                    self.open_file(&path, window, cx);
+                    return answer(ControlResponse::ok());
                 }
                 self.open_file(&path, window, cx);
                 if let (Some(line), Some(editor)) = (
@@ -276,17 +288,38 @@ impl Workbench {
                 .detach();
             }
             "unsaved" => {
-                if terminal.is_none() {
+                let Some(terminal) = terminal.as_ref() else {
                     return answer(inside_terminal());
-                }
-                let files = self
-                    .workspace()
-                    .all_surfaces()
-                    .filter_map(Surface::editor)
-                    .filter(|e| e.read(cx).dirty)
+                };
+                let root = self.workspace_root_of(terminal, cwd, cx);
+                // Outside a workspace (the Quick Terminal): the window's
+                // editors under the caller's folder.
+                let workspace = self.workspaces.iter().find(|w| {
+                    w.all_surfaces()
+                        .filter_map(Surface::terminal)
+                        .any(|t| t == terminal)
+                });
+                let prefix = format!("{root}/");
+                let editors: Vec<Entity<crate::editor_tab::EditorTab>> = match workspace {
+                    Some(w) => w
+                        .all_surfaces()
+                        .filter_map(Surface::editor)
+                        .cloned()
+                        .collect(),
+                    None => self
+                        .workspaces
+                        .iter()
+                        .flat_map(|w| w.all_surfaces().filter_map(Surface::editor).cloned())
+                        .filter(|e| e.read(cx).path.to_string_lossy().starts_with(&prefix))
+                        .collect(),
+                };
+                let files = editors
+                    .iter()
+                    .map(|e| e.read(cx))
+                    .filter(|e| e.dirty)
                     .map(|e| impulse_protocol::agent_tools::UnsavedFile {
-                        path: e.read(cx).path.to_string_lossy().into_owned(),
-                        changed_on_disk: false,
+                        path: crate::control_review::relative(&e.path.to_string_lossy(), &root),
+                        changed_on_disk: e.changed_on_disk(),
                     })
                     .collect();
                 let list = impulse_protocol::agent_tools::UnsavedList::new(files);

@@ -202,7 +202,7 @@ impl Workbench {
             }
             AgentSignal::Notify { title, body } => {
                 // In front, the tab's dot is enough.
-                if window.is_window_active() {
+                if crate::agent_notify::app_in_front(cx) {
                     return;
                 }
                 window.request_attention();
@@ -222,7 +222,9 @@ impl Workbench {
                     .collect::<Vec<_>>()
                     .join(" · ");
                 // Clicking it (where the desktop says) shows the terminal.
-                let Some(clicked) = crate::agent_notify::post(title, &subtitle, body) else {
+                let Some(clicked) =
+                    crate::agent_notify::post(title, &subtitle, body, Some(id.as_u64()))
+                else {
                     return;
                 };
                 let terminal = terminal.clone();

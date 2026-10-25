@@ -257,7 +257,10 @@ fn absolute(cwd: &str, path: &str) -> String {
     if path.is_absolute() {
         path.to_string_lossy().into_owned()
     } else {
-        std::path::Path::new(cwd).join(path).to_string_lossy().into_owned()
+        std::path::Path::new(cwd)
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -299,11 +302,7 @@ fn main() {
         if !snapshot {
             let request = instance::Request {
                 cwd: launch.cwd.clone(),
-                open: launch
-                    .open
-                    .iter()
-                    .map(|p| absolute(&args.cwd, p))
-                    .collect(),
+                open: launch.open.iter().map(|p| absolute(&args.cwd, p)).collect(),
                 commands: launch.commands.clone(),
             };
             if instance::forward(&request) {
@@ -328,124 +327,128 @@ fn main() {
         }
     });
     app.run(move |cx: &mut App| {
-            gpui_kit::init(cx);
-            base_rules::register();
-            settings_store::SettingsStore::init(cx);
-            display_options::init(cx);
-            workbench::bind_keys(cx);
-            editor_keys::bind_keys(cx);
-            editor_vim::bind_keys(cx);
-            terminal_view::bind_keys(cx);
-            palette::bind_keys(cx);
-            command_editor::bind_keys(cx);
-            cx.text_system()
-                .add_fonts(bundled_fonts())
-                .expect("bundled fonts");
-            fonts::init(cx);
-            let settings = settings_store::SettingsStore::get(cx).clone();
-            commands::bind_keys(&settings, cx);
-            commands::rebind_on_change(cx);
-            menus::init(cx);
-            session::init(cx);
-            quick_terminal::init(cx);
-            repository_state::start_auto_fetch(cx);
-            update_check::start(cx);
-            control_server::start(cx, control_commands::dispatch);
-            instance::serve(cx);
-            cx.on_app_quit(|cx| {
-                control_server::stop();
-                #[cfg(target_os = "linux")]
-                instance::stop();
-                shell_launch::remove_private_dir();
-                workbench_trust::shutdown_servers(cx)
-            })
-            .detach();
-            // The saved session comes back even when launched to open
-            // something, which then opens on top of it (as the Swift app
-            // does): otherwise the next quit would save over it.
-            let saved = session::saved(cx);
-            // A snapshot opens its own session file, or the default window.
-            #[cfg(debug_assertions)]
-            let saved = match debug_snapshot::is_active() {
-                true => debug_snapshot::session(cx),
-                false => saved,
-            };
-            let mut front = None;
-            match saved {
-                Some(state) => {
-                    let active = state.active_window_index.unwrap_or(0).max(0) as usize;
-                    for (index, window) in state.windows.into_iter().enumerate() {
-                        let opened = open_main_window(
-                            Args {
-                                session: Some(window),
-                                theme: args.theme.clone(),
-                                cwd: args.cwd.clone(),
-                                commands: Vec::new(),
-                                open: Vec::new(),
-                                trust: args.trust,
-                                trust_store: args.trust_store.clone(),
-                            },
-                            cx,
-                        );
-                        if index == active {
-                            front = opened;
-                        }
+        gpui_kit::init(cx);
+        base_rules::register();
+        settings_store::SettingsStore::init(cx);
+        display_options::init(cx);
+        workbench::bind_keys(cx);
+        editor_keys::bind_keys(cx);
+        editor_vim::bind_keys(cx);
+        terminal_view::bind_keys(cx);
+        palette::bind_keys(cx);
+        command_editor::bind_keys(cx);
+        cx.text_system()
+            .add_fonts(bundled_fonts())
+            .expect("bundled fonts");
+        fonts::init(cx);
+        let settings = settings_store::SettingsStore::get(cx).clone();
+        commands::bind_keys(&settings, cx);
+        commands::rebind_on_change(cx);
+        menus::init(cx);
+        session::init(cx);
+        quick_terminal::init(cx);
+        repository_state::start_auto_fetch(cx);
+        update_check::start(cx);
+        control_server::start(cx, control_commands::dispatch);
+        instance::serve(cx);
+        cx.on_app_quit(|cx| {
+            control_server::stop();
+            #[cfg(target_os = "linux")]
+            instance::stop();
+            shell_launch::remove_private_dir();
+            workbench_trust::shutdown_servers(cx)
+        })
+        .detach();
+        // The saved session comes back even when launched to open
+        // something, which then opens on top of it (as the Swift app
+        // does): otherwise the next quit would save over it.
+        let saved = session::saved(cx);
+        // A snapshot opens its own session file, or the default window.
+        #[cfg(debug_assertions)]
+        let saved = match debug_snapshot::is_active() {
+            true => debug_snapshot::session(cx),
+            false => saved,
+        };
+        let mut front = None;
+        match saved {
+            Some(state) => {
+                let active = state.active_window_index.unwrap_or(0).max(0) as usize;
+                for (index, window) in state.windows.into_iter().enumerate() {
+                    let opened = open_main_window(
+                        Args {
+                            session: Some(window),
+                            theme: args.theme.clone(),
+                            cwd: args.cwd.clone(),
+                            commands: Vec::new(),
+                            open: Vec::new(),
+                            trust: args.trust,
+                            trust_store: args.trust_store.clone(),
+                        },
+                        cx,
+                    );
+                    if index == active {
+                        front = opened;
                     }
-                    let target = front.or_else(|| session::workbenches(cx).first().map(|w| w.1));
-                    if let Some(workbench) = target.and_then(|handle| {
-                        session::workbenches(cx)
-                            .into_iter()
-                            .find(|(_, h)| *h == handle)
-                            .map(|(w, _)| w)
-                    }) {
-                        let _ = target.map(|handle| {
-                            handle.update(cx, |_, window, cx| {
-                                workbench.update(cx, |workbench, cx| {
-                                    workbench.apply_launch(
-                                        launch.cwd.clone(),
-                                        launch.commands.clone(),
-                                        launch.open.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                })
+                }
+                let target = front.or_else(|| session::workbenches(cx).first().map(|w| w.1));
+                if let Some(workbench) = target.and_then(|handle| {
+                    session::workbenches(cx)
+                        .into_iter()
+                        .find(|(_, h)| *h == handle)
+                        .map(|(w, _)| w)
+                }) {
+                    let _ = target.map(|handle| {
+                        handle.update(cx, |_, window, cx| {
+                            workbench.update(cx, |workbench, cx| {
+                                workbench.apply_launch(
+                                    launch.cwd.clone(),
+                                    launch.commands.clone(),
+                                    launch.open.clone(),
+                                    window,
+                                    cx,
+                                )
                             })
-                        });
-                    }
-                }
-                None => {
-                    // No session: the files that were open last time
-                    // (`open_files`, as the Swift app reopens them).
-                    let reopen: Vec<String> = if launch.open.is_empty()
-                        && settings_store::SettingsStore::get(cx).restore_session
-                    {
-                        settings_store::SettingsStore::get(cx)
-                            .open_files
-                            .iter()
-                            .filter(|p| std::path::Path::new(p).is_file())
-                            .cloned()
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    #[cfg(debug_assertions)]
-                    let reopen = if debug_snapshot::is_active() { Vec::new() } else { reopen };
-                    let mut args = args;
-                    args.open.extend(reopen);
-                    open_main_window(args, cx);
+                        })
+                    });
                 }
             }
-            #[cfg(debug_assertions)]
-            if debug_snapshot::is_active() {
-                // Never the active app: keys meant for another stay there.
-                return debug_snapshot::run(cx);
+            None => {
+                // No session: the files that were open last time
+                // (`open_files`, as the Swift app reopens them).
+                let reopen: Vec<String> = if launch.open.is_empty()
+                    && settings_store::SettingsStore::get(cx).restore_session
+                {
+                    settings_store::SettingsStore::get(cx)
+                        .open_files
+                        .iter()
+                        .filter(|p| std::path::Path::new(p).is_file())
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                #[cfg(debug_assertions)]
+                let reopen = if debug_snapshot::is_active() {
+                    Vec::new()
+                } else {
+                    reopen
+                };
+                let mut args = args;
+                args.open.extend(reopen);
+                open_main_window(args, cx);
             }
-            cx.activate(true);
-            // The window that was in front at quit comes to the front again.
-            if let Some(front) = front {
-                let _ = front.update(cx, |_, window, _| window.activate_window());
-            }
-        });
+        }
+        #[cfg(debug_assertions)]
+        if debug_snapshot::is_active() {
+            // Never the active app: keys meant for another stay there.
+            return debug_snapshot::run(cx);
+        }
+        cx.activate(true);
+        // The window that was in front at quit comes to the front again.
+        if let Some(front) = front {
+            let _ = front.update(cx, |_, window, _| window.activate_window());
+        }
+    });
 }
 
 /// A main window, sized from the settings, or where a restored one was.

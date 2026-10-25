@@ -181,7 +181,9 @@ impl EditorTab {
             let (base, root, disk, blame, unchanged) = read.await;
             let _ = tab.update(cx, |tab, cx| {
                 // The Diff View compares against the same base.
-                let diff_base = base.clone().or_else(|| root.as_ref().map(|_| String::new()));
+                let diff_base = base
+                    .clone()
+                    .or_else(|| root.as_ref().map(|_| String::new()));
                 if let Some(diff_base) = diff_base {
                     tab.diff_base_changed(&diff_base, cx);
                 }
@@ -239,7 +241,8 @@ impl EditorTab {
         self.git._marks = Some(cx.spawn(async move |tab, cx| {
             let (text, marks) = cx
                 .background_spawn(async move {
-                    let marks = Marks::compute(&text, base.as_deref(), &language, tab_size, brackets_on);
+                    let marks =
+                        Marks::compute(&text, base.as_deref(), &language, tab_size, brackets_on);
                     (text, marks)
                 })
                 .await;

@@ -493,7 +493,10 @@ impl DocumentLink {
         let holders = self.doc.holders.get().saturating_sub(1);
         self.doc.holders.set(holders);
         if holders == 0 {
-            let key = (Arc::as_ptr(&self.client) as usize, self.uri.as_str().to_string());
+            let key = (
+                Arc::as_ptr(&self.client) as usize,
+                self.uri.as_str().to_string(),
+            );
             DOCUMENTS.with(|docs| docs.borrow_mut().remove(&key));
             self.client.did_close(self.uri.clone());
         }
@@ -881,7 +884,8 @@ impl DefinitionProvider for DocumentLink {
             // GPUI Kit reads this document's columns as characters.
             if !client.uses_utf32() {
                 let chars = |p: Position| utf16_to_chars(&text, p);
-                let range = |r: lsp_types::Range| lsp_types::Range::new(chars(r.start), chars(r.end));
+                let range =
+                    |r: lsp_types::Range| lsp_types::Range::new(chars(r.start), chars(r.end));
                 for link in &mut links {
                     link.origin_selection_range = link.origin_selection_range.map(range);
                     if link.target_uri == uri {

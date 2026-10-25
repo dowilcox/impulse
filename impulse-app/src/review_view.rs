@@ -536,9 +536,7 @@ impl ReviewView {
         let follows_head = matches!(&self.scope, DiffScope::Commit { sha } if sha == "HEAD");
         if self.stale
             && !self.loading
-            && (self.scope.includes_working_tree()
-                || self.scope.supports_staging()
-                || follows_head)
+            && (self.scope.includes_working_tree() || self.scope.supports_staging() || follows_head)
         {
             self.stale = false;
             self.refresh_quietly(cx);

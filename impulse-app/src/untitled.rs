@@ -47,7 +47,7 @@ impl Workbench {
         editor: Entity<EditorTab>,
         window: &mut Window,
         cx: &mut Context<Self>,
-        then: Option<std::rc::Rc<dyn Fn(&mut Window, &mut gpui_kit::App)>>,
+        then: Option<crate::alert::AlertAction>,
     ) {
         let Some(dir) = editor.read(cx).untitled.clone() else {
             return;

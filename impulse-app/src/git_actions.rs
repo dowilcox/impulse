@@ -800,27 +800,21 @@ impl Workbench {
                     return this.toast(note, window, cx);
                 }
                 let repo = repo_for_undo.clone();
-                this.note_with_action(
-                    note,
-                    "Undo",
-                    window,
-                    cx,
-                    move |this, window, cx| {
-                        let (aborted, operation) = (aborted.clone(), operation.clone());
-                        this.git_run(
-                            &repo,
-                            Some("Undoing…".into()),
-                            None,
-                            false,
-                            move |root, _| operation_abort::undo(&aborted, &operation, root),
-                            window,
-                            cx,
-                            |this, result, _, window, cx| {
-                                this.report(result, "Couldn't undo the abort", window, cx)
-                            },
-                        );
-                    },
-                );
+                this.note_with_action(note, "Undo", window, cx, move |this, window, cx| {
+                    let (aborted, operation) = (aborted.clone(), operation.clone());
+                    this.git_run(
+                        &repo,
+                        Some("Undoing…".into()),
+                        None,
+                        false,
+                        move |root, _| operation_abort::undo(&aborted, &operation, root),
+                        window,
+                        cx,
+                        |this, result, _, window, cx| {
+                            this.report(result, "Couldn't undo the abort", window, cx)
+                        },
+                    );
+                });
             },
         );
     }

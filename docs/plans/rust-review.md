@@ -41,8 +41,20 @@ Swift's `EditorWebView.appCommandWins` does: `commands::editor_priority`)
 and T17 (Shift with PageUp, PageDown, Home and End go to a program that
 owns the screen, and scroll the scrollback at the shell).
 
-Agents: A7 (the Quick Terminal's hooks with no window open get a window
-to answer them from).
+Agents: A1 (`impulse unsaved` answers for the caller's workspace, the
+Quick Terminal's for the window's editors under its folder, with paths
+relative to it and `changedOnDisk` read from the file), A2 (a resolved
+review comment is credited to the agent the pane runs), A3 (`open --wait`
+on an image opens it and answers at once; a background `open_file` while
+Impulse isn't in front flags the pane), A4 (desktop notifications and the
+Dock's bounce wait for Impulse itself to be out of front, not just the
+window, `agent_notify::app_in_front`; on Linux a terminal's notifications
+are withdrawn when its attention clears and only its latest ten stay up,
+by the id `notify-send --print-id` gives), A5 (each window works out its
+task states on its own, a refresh asked for meanwhile following the one
+running), A6 (an agent hears "declined" only when the user was asked) and
+A7 (the Quick Terminal's hooks with no window open get a window to answer
+them from).
 
 Terminal: T1 (the grid snapshot's extras are read: combining marks shape
 with their cell's character, and SGR 58 underline colors are drawn), T2
