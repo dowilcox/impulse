@@ -621,7 +621,8 @@ impl CommandEditor {
             "left" | "right" | "home" | "end" => {
                 let right = matches!(k.key.as_str(), "right" | "end");
                 let at = self.cursor();
-                if right && !m.shift && self.is_at_end() && (plain || (word && !secondary)) {
+                // Alt+Right on the Mac (not with Cmd), Ctrl+Right elsewhere.
+                if right && !m.shift && self.is_at_end() && (plain || (word && !m.platform)) {
                     cx.emit(CommandEditorEvent::Key(if word {
                         EditorKey::WordRight
                     } else {

@@ -4,11 +4,25 @@
 //! application cursor mode, modifiers go in CSI parameters, Ctrl makes
 //! control characters, and Alt sends Esc + the key when it's Meta.
 
-/// Which Option keys are Meta (`terminal_option_as_meta`). GPUI doesn't say
-/// which side was held, so on the Mac any setting but `off` makes Option
-/// Meta; on Linux Alt is always Meta, as in other Linux terminals.
+/// Which Option keys are Meta (`terminal_option_as_meta`): `held` says
+/// which sides are down (left, right) where the platform can tell (the
+/// Mac's device flags), else either side counts. On Linux Alt is always
+/// Meta, as in other Linux terminals.
+pub fn alt_is_meta_held(setting: &str, mac: bool, held: Option<(bool, bool)>) -> bool {
+    if !mac {
+        return true;
+    }
+    match setting.to_lowercase().as_str() {
+        "off" | "" => false,
+        "left" => held.is_none_or(|(left, _)| left),
+        "right" => held.is_none_or(|(_, right)| right),
+        _ => true,
+    }
+}
+
+/// `alt_is_meta_held` without knowing the side.
 pub fn alt_is_meta(setting: &str, mac: bool) -> bool {
-    !mac || !matches!(setting.to_lowercase().as_str(), "off" | "")
+    alt_is_meta_held(setting, mac, None)
 }
 
 /// A key press.
@@ -363,6 +377,12 @@ mod tests {
         assert!(alt_is_meta("off", false), "Alt is Meta on Linux");
         assert!(!alt_is_meta("off", true));
         assert!(alt_is_meta("left", true));
+        // The side held decides on the Mac.
+        assert!(alt_is_meta_held("left", true, Some((true, false))));
+        assert!(!alt_is_meta_held("left", true, Some((false, true))));
+        assert!(alt_is_meta_held("right", true, Some((false, true))));
+        assert!(!alt_is_meta_held("right", true, Some((true, false))));
+        assert!(alt_is_meta_held("both", true, Some((false, true))));
     }
 
     #[test]

@@ -127,7 +127,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           to a gap by RowLayout),
                           keys (the kitty keyboard
                           protocol once a program pushes its flags,
-                          impulse_kit::kitty_keyboard), input methods,
+                          impulse_kit::kitty_keyboard; Option as Meta by
+                          the side held on the Mac), input methods,
                           selection, mouse reporting,
                           settings.json (SettingsStore, watched and merged;
                           checked against its schema in an editor tab by

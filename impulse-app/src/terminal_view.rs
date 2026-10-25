@@ -86,22 +86,90 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("tab", gpui_kit::NoAction, c),
         KeyBinding::new("shift-tab", gpui_kit::NoAction, c),
     ];
+    // Copy and Paste are bound with the commands, at the keys the settings
+    // give them (`commands::command_bindings`).
     if cfg!(target_os = "macos") {
         bindings.extend([
-            KeyBinding::new("cmd-c", Copy, c),
-            KeyBinding::new("cmd-v", Paste, c),
             KeyBinding::new("cmd-a", SelectAll, c),
             KeyBinding::new("cmd-k", Clear, c),
         ]);
     } else {
-        bindings.extend([
-            KeyBinding::new("ctrl-shift-c", Copy, c),
-            KeyBinding::new("ctrl-shift-v", Paste, c),
-            KeyBinding::new("ctrl-shift-a", SelectAll, c),
-            KeyBinding::new("ctrl-shift-k", Clear, c),
-        ]);
+        // No Clear key: Ctrl+L is the shell's own, and Ctrl+Shift+K is
+        // Bookmark Block's.
+        bindings.extend([KeyBinding::new("ctrl-shift-a", SelectAll, c)]);
     }
     cx.bind_keys(bindings);
+}
+
+/// A process's working directory, for shells that don't say it (Swift's
+/// `TerminalBackend.queryCwd`).
+#[cfg(target_os = "linux")]
+fn process_cwd(pid: u32) -> Option<String> {
+    (pid > 0)
+        .then(|| std::fs::read_link(format!("/proc/{pid}/cwd")).ok())
+        .flatten()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn process_cwd(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+    // SAFETY: proc_pidinfo fills at most `size` bytes of `info`, which is
+    // plain data; the path is a NUL-terminated C string inside it.
+    unsafe {
+        let mut info: libc::proc_vnodepathinfo = std::mem::zeroed();
+        let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as i32;
+        let filled = libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            (&mut info as *mut libc::proc_vnodepathinfo).cast(),
+            size,
+        );
+        if filled != size {
+            return None;
+        }
+        let path = std::ffi::CStr::from_ptr(info.pvi_cdir.vip_path.as_ptr().cast());
+        let path = path.to_string_lossy().into_owned();
+        (!path.is_empty()).then_some(path)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn process_cwd(_: u32) -> Option<String> {
+    None
+}
+
+/// Whether Alt (Option) is Meta for the key being handled, by
+/// `terminal_option_as_meta` and, on the Mac, the side held.
+fn alt_meta(cx: &App) -> bool {
+    key_encoder::alt_is_meta_held(
+        &SettingsStore::get(cx).terminal_option_as_meta,
+        cfg!(target_os = "macos"),
+        option_sides(),
+    )
+}
+
+/// The Option keys held now (left, right), from AppKit's device-dependent
+/// modifier flags: GPUI's modifiers don't say which side.
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+fn option_sides() -> Option<(bool, bool)> {
+    use objc::runtime::Class;
+    use objc::{msg_send, sel, sel_impl};
+    const LEFT_OPTION: u64 = 0x20; // NX_DEVICELALTKEYMASK
+    const RIGHT_OPTION: u64 = 0x40; // NX_DEVICERALTKEYMASK
+    let class = Class::get("NSEvent")?;
+    // SAFETY: a class property read; NSEventModifierFlags is NSUInteger.
+    let flags: u64 = unsafe { msg_send![class, modifierFlags] };
+    Some((flags & LEFT_OPTION != 0, flags & RIGHT_OPTION != 0))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn option_sides() -> Option<(bool, bool)> {
+    None
 }
 
 /// One mouse report (Swift's `mouseReport`): SGR (`CSI < Cb ; Cx ; Cy M`,
@@ -176,6 +244,8 @@ pub(crate) struct Grid {
     pub cols: usize,
     pub rows: usize,
     cursor: Option<(usize, usize, u8)>,
+    /// Where the cursor is, shown or not (input methods compose there).
+    cursor_at: (usize, usize),
     selection: Vec<Span>,
     matches: Vec<Span>,
     cells: Vec<Cell>,
@@ -256,6 +326,7 @@ impl Grid {
             cols,
             rows,
             cursor: visible.then_some((cursor_row, cursor_col, shape)),
+            cursor_at: (cursor_row, cursor_col),
             selection: (0..selections).map(span).collect(),
             matches: (selections..selections + searches).map(span).collect(),
             cells,
@@ -491,6 +562,12 @@ pub struct TerminalView {
     pub(crate) agent: crate::agent_tracker::AgentTracker,
     _wake: gpui_kit::Task<()>,
     _blink: gpui_kit::Task<()>,
+    /// The shell's own folder, read every few seconds while it sends no
+    /// OSC 7 (Swift's `startCwdPolling`).
+    _cwd_poll: gpui_kit::Task<()>,
+    /// The shell has told its folder with OSC 7 (then it's trusted alone:
+    /// over ssh it names a remote folder).
+    osc7_seen: bool,
 }
 
 /// What a terminal reports to whoever shows it.
@@ -566,8 +643,10 @@ impl TerminalView {
             colors: colors(&theme),
             scrollback_lines: settings.terminal_scrollback.max(0) as usize,
             minimum_contrast: settings.terminal_minimum_contrast as f32,
-            allow_clipboard_write: settings.terminal_allow_osc52_write,
-            allow_clipboard_read: settings.terminal_allow_osc52_read,
+            // Both reach the app, which asks the settings as each request
+            // comes, so a change applies to open terminals too.
+            allow_clipboard_write: true,
+            allow_clipboard_read: true,
             restored_transcript: transcript
                 .filter(|t| !t.is_empty())
                 .map(|t| format!("{t}\u{1b}[0;2m── {RESTORED_RULE} ──\u{1b}[0m\r\n")),
@@ -612,6 +691,30 @@ impl TerminalView {
                     break;
                 }
             }
+        });
+        let cwd_poll = cx.spawn(async move |view, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
+            let Ok(Some(pid)) = view.update(cx, |view, _| {
+                (!view.osc7_seen && view.exited.is_none()).then(|| view.backend.child_pid())
+            }) else {
+                if view.upgrade().is_none() {
+                    break;
+                }
+                continue;
+            };
+            let dir = cx
+                .background_executor()
+                .spawn(async move { process_cwd(pid) })
+                .await;
+            let Some(dir) = dir else { continue };
+            let _ = view.update(cx, |view, cx| {
+                if !view.osc7_seen && dir != view.cwd {
+                    view.cwd = dir.clone();
+                    view.refresh_branch(cx);
+                    cx.emit(TerminalViewEvent::DirectoryChanged(dir));
+                    cx.notify();
+                }
+            });
         });
         let blink = cx.spawn(async move |this, cx| loop {
             cx.background_executor()
@@ -732,6 +835,8 @@ impl TerminalView {
             agent: Default::default(),
             _wake: wake,
             _blink: blink,
+            _cwd_poll: cwd_poll,
+            osc7_seen: false,
         };
         view.refresh_branch(cx);
         CommandHistory::preload(cx);
@@ -873,6 +978,7 @@ impl TerminalView {
             self.agent_observe(&event, cx);
             match event {
                 TerminalEvent::CwdChanged(path) => {
+                    self.osc7_seen = true;
                     if path != self.cwd {
                         self.cwd = path.clone();
                         self.refresh_branch(cx);
@@ -951,9 +1057,14 @@ impl TerminalView {
                     cx.emit(TerminalViewEvent::CommandEnded(block.exit_code));
                 }
                 TerminalEvent::ClipboardStore(text) => {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    if SettingsStore::get(cx).terminal_allow_osc52_write {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
                 }
                 TerminalEvent::ClipboardLoad => {
+                    if !SettingsStore::get(cx).terminal_allow_osc52_read {
+                        continue;
+                    }
                     if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
                         use std::io::Write as _;
                         let mut reply = Vec::new();
@@ -1094,9 +1205,7 @@ impl TerminalView {
             }
             return;
         }
-        let settings = SettingsStore::get(cx);
-        let meta =
-            key_encoder::alt_is_meta(&settings.terminal_option_as_meta, cfg!(target_os = "macos"));
+        let meta = alt_meta(cx);
         // A program that asked for the kitty keyboard protocol gets keys it
         // can tell apart (Ctrl-I vs Tab, Esc vs Alt); plain typing still goes
         // through text input.
@@ -1173,10 +1282,7 @@ impl TerminalView {
         if self.typing_goes_to_bar(cx) {
             return;
         }
-        let meta = key_encoder::alt_is_meta(
-            &SettingsStore::get(cx).terminal_option_as_meta,
-            cfg!(target_os = "macos"),
-        );
+        let meta = alt_meta(cx);
         if let Some(bytes) =
             self.kitty_bytes(&event.keystroke, kitty_keyboard::Event::Release, meta)
         {
@@ -1736,10 +1842,7 @@ impl TerminalView {
         let Ok(keystroke) = gpui_kit::Keystroke::parse(keys) else {
             return false;
         };
-        let meta = key_encoder::alt_is_meta(
-            &SettingsStore::get(cx).terminal_option_as_meta,
-            cfg!(target_os = "macos"),
-        );
+        let meta = alt_meta(cx);
         let bytes = self
             .kitty_bytes(&keystroke, kitty_keyboard::Event::Press, meta)
             .or_else(|| {
@@ -2479,27 +2582,35 @@ impl Frame {
                     }
                 }
             }
-            // Text an input method is composing, underlined at the cursor.
-            if let Some(marked) = self.marked.as_ref().filter(|t| !t.is_empty()) {
-                let text: SharedString = marked.clone().into();
-                let color = cell_hsla(rgb_color(&self.theme.terminal_fg));
-                let run = TextRun {
-                    len: text.len(),
-                    font: self.font.clone(),
-                    color,
-                    background_color: Some(cell_hsla(bg)),
-                    underline: Some(UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(color),
-                        wavy: false,
-                    }),
-                    strikethrough: None,
-                };
-                let line = window
-                    .text_system()
-                    .shape_line(text, m.font_size, &[run], None);
-                let _ = line.paint(at, m.height, TextAlign::Left, None, window, cx);
-            }
+        }
+
+        // Text an input method is composing, underlined at the cursor, even
+        // where the program hides it (TUIs such as Claude Code do).
+        let (row, col) = grid.cursor_at;
+        if let Some(marked) = self
+            .marked
+            .as_ref()
+            .filter(|t| !t.is_empty() && !self.hide_cursor && row < rows && col < grid.cols)
+        {
+            let at = cell_origin(row, col);
+            let text: SharedString = marked.clone().into();
+            let color = cell_hsla(rgb_color(&self.theme.terminal_fg));
+            let run = TextRun {
+                len: text.len(),
+                font: self.font.clone(),
+                color,
+                background_color: Some(cell_hsla(bg)),
+                underline: Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(color),
+                    wavy: false,
+                }),
+                strikethrough: None,
+            };
+            let line = window
+                .text_system()
+                .shape_line(text, m.font_size, &[run], None);
+            let _ = line.paint(at, m.height, TextAlign::Left, None, window, cx);
         }
 
         // Exit status and duration at the right of each block's first row
@@ -2900,9 +3011,12 @@ impl TerminalView {
                 .bg(rgba(bg.opacity(0.96)))
                 .border_1()
                 .border_color(rgba(muted.opacity(0.28)))
-                .children(buttons.into_iter().map(|(button, icon, _help)| {
+                .children(buttons.into_iter().map(|(button, icon, help)| {
                     div()
                         .id(icon)
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(help).build(window, cx)
+                        })
                         .w(px(26.))
                         .h_full()
                         .flex()
@@ -2944,6 +3058,9 @@ impl TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The window it's in now (the Quick Terminal's comes back in a new
+        // one; a tab can move): blinking and attention follow it.
+        self.window_handle = window.window_handle();
         let view = cx.entity();
         let focused = self.focus.is_focused(window);
         self.shown_focused = focused;

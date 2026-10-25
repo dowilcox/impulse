@@ -977,6 +977,7 @@ impl TerminalView {
                         }),
                     };
                     div()
+                        .id(("chip", index))
                         .flex()
                         .flex_none()
                         .items_center()
@@ -986,6 +987,16 @@ impl TerminalView {
                         .max_w(px(280.))
                         .rounded(px(10.))
                         .bg(chip_bg)
+                        // The branch chip opens the branch switcher (Swift's
+                        // context bar).
+                        .when(chevron, |d| {
+                            d.cursor_pointer().on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(crate::commands::RunCommand::new("switch_branch")),
+                                    cx,
+                                )
+                            })
+                        })
                         .when_some(leading, |d, icon| d.child(icon))
                         .child(
                             div()

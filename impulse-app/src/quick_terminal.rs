@@ -188,7 +188,13 @@ fn show(cx: &mut App) {
         }
         cx.global_mut::<QuickTerminal>().window = None;
     }
-    let Some(display) = cx.primary_display() else {
+    // The display of the window in front (Swift: the screen in use),
+    // else the primary one.
+    let front = cx
+        .active_window()
+        .and_then(|w| w.update(cx, |_, window, cx| window.display(cx)).ok())
+        .flatten();
+    let Some(display) = front.or_else(|| cx.primary_display()) else {
         return;
     };
     let screen = display.visible_bounds();

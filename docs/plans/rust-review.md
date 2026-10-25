@@ -51,8 +51,19 @@ mode's start and end empty the input bar, its undo history included,
 `CommandEditor::reset`), T18 (mouse reports carry their button and
 modifiers, a release pairs with its press, drags are reported once per
 cell, wheel reports cap at 20, the middle button reports or pastes the
-primary selection on Linux) and from T19 Option-click selecting under
-mouse reporting, Select All taking the screen, and Clear's comment.
+primary selection on Linux), T8 (input-method text is drawn at the
+cursor even where the program hides it), T9 (OSC 52 store and load ask
+the settings as each request comes), T10 (the branch chip opens the
+branch switcher), T11 (on the Mac "left" and "right" read the side held
+from AppKit's device flags, `key_encoder::alt_is_meta_held`; Linux keeps
+Alt as Meta), T12 (Copy and Paste in terminals and their input bars are
+bound from the settings' shortcuts), T13 (a shell that never sends OSC 7
+has its folder read every 5 s, as Swift's `startCwdPolling`), T16 (a
+terminal takes its window's handle each frame; the Quick Terminal opens
+on the front window's display) and T19 (Option-click selects under mouse
+reporting, Select All takes the screen, Ctrl+Right takes the
+suggestion's next word on Linux, the block toolbar's tooltips, Clear's
+comment, and no Ctrl+Shift+K Clear on Linux, where it's Bookmark Block).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a

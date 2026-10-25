@@ -876,8 +876,9 @@ fn command_bindings(settings: &Settings, others: &[KeyBinding]) -> Vec<KeyBindin
             }
         }
     }
-    // Copy and paste in a terminal are its own (⌘C with nothing selected
-    // interrupts), and in the editor GPUI Kit's.
+    // Copy and Paste are the terminal's own actions, at the keys the
+    // settings give them (in its input bar too); the editor keeps GPUI
+    // Kit's.
     keys.retain(|k| {
         !matches!(
             k.action()
@@ -887,6 +888,21 @@ fn command_bindings(settings: &Settings, others: &[KeyBinding]) -> Vec<KeyBindin
             Some("copy" | "paste")
         )
     });
+    for (id, shortcut) in &bindings {
+        let terminal = Some(crate::terminal_view::CONTEXT);
+        let bar = Some(crate::command_editor::CONTEXT);
+        match *id {
+            "copy" => {
+                keys.extend(binding(shortcut, crate::terminal_view::Copy, terminal));
+                keys.extend(binding(shortcut, crate::command_editor::Copy, bar));
+            }
+            "paste" => {
+                keys.extend(binding(shortcut, crate::terminal_view::Paste, terminal));
+                keys.extend(binding(shortcut, crate::command_editor::Paste, bar));
+            }
+            _ => {}
+        }
+    }
     let kept = editor_keeps(settings, &bindings);
     keys.extend(
         editor_priority(&kept, others)
