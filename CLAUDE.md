@@ -271,7 +271,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           tab, Save, Don't Save or Cancel for each unsaved
                           editor, then running terminal work from
                           impulse_kit::close_risk; quitting asks once about
-                          every window's unsaved documents and running work),
+                          every window's unsaved documents and running work;
+                          closing the last window saves the session and quits),
                           update_check.rs (a newer release, once a day,
                           by impulse_kit::update_checker with curl, as
                           "Update x.y.z" in the status bar),
@@ -288,7 +289,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           window frame (window_frame.rs: client-side
                           decorations, the titlebar's empty stretch moving
                           and zooming the window, minimize, maximize and
-                          close at its right end),
+                          close at its right end, its edges and corners
+                          resizing it: window_frame::resize_edges),
                           alert.rs (the Swift app's NSAlert sheets: 260
                           wide, stacked pill buttons, an accessory, fields
                           and checkboxes; trust prompts, confirmations,

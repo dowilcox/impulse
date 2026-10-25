@@ -41,6 +41,10 @@ Swift's `EditorWebView.appCommandWins` does: `commands::editor_priority`)
 and T17 (Shift with PageUp, PageDown, Home and End go to a program that
 owns the screen, and scroll the scrollback at the shell).
 
+Windows: W1 (closing the last window saves the session and quits) and W2
+(the Linux frame's edges and corners resize the window; to check on a
+real desktop, since Xvfb's windows are decorated by the server).
+
 ## What to fix first
 
 1. **Crashes and lost work**: the editor crash on non-ASCII typing (E1),

@@ -561,9 +561,23 @@ impl Workbench {
             Answered::default(),
             window,
             cx,
-            Rc::new(|w, window, _| {
+            Rc::new(|w, window, cx| {
                 w.close_confirmed = true;
-                window.remove_window();
+                // The last window closing quits, as the Swift app's
+                // `applicationShouldTerminateAfterLastWindowClosed` does,
+                // with the session saved while the window is still there to
+                // save (closing was already asked about).
+                let last = crate::session::workbenches(cx).len() <= 1;
+                if !last {
+                    return window.remove_window();
+                }
+                // Saving reads every workbench, this one included: once
+                // its update is over.
+                window.defer(cx, |window, cx| {
+                    crate::session::save(cx);
+                    window.remove_window();
+                    cx.quit();
+                });
             }),
         );
     }

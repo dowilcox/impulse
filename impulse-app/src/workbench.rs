@@ -1763,5 +1763,6 @@ impl Render for Workbench {
             .child(self.status_bar(cx))
             .child(gpui_kit::deferred(self.command_palette.clone()).with_priority(1))
             .children(crate::toasts::layer(&self.palette, window, cx))
+            .children(crate::window_frame::resize_edges(window))
     }
 }

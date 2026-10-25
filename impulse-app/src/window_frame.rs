@@ -9,7 +9,9 @@
 use std::cell::Cell;
 
 use gpui_kit::component::{Icon, IconName, Sizable as _};
-use gpui_kit::{div, prelude::*, px, AnyElement, Decorations, MouseButton, Window};
+use gpui_kit::{
+    div, prelude::*, px, AnyElement, CursorStyle, Decorations, MouseButton, ResizeEdge, Window,
+};
 use impulse_kit::chrome::ChromePalette;
 
 use crate::workbench_chrome::hsla;
@@ -112,4 +114,128 @@ pub(crate) fn controls(window: &Window, p: &ChromePalette) -> Option<AnyElement>
             )
             .into_any_element(),
     )
+}
+
+/// How far in from the window's edge a press resizes it, and how far along
+/// it the corners reach.
+const EDGE: f32 = 5.;
+const CORNER: f32 = 10.;
+
+/// The window's edges and corners, which resize it when the frame is ours
+/// (no window manager border to grab), except edges the window manager has
+/// tiled and while it's maximized.
+pub(crate) fn resize_edges(window: &Window) -> Option<AnyElement> {
+    let Decorations::Client { tiling } = window.window_decorations() else {
+        return None;
+    };
+    if !cfg!(target_os = "linux") || window.is_maximized() || window.is_fullscreen() {
+        return None;
+    }
+    let handle = |id: &'static str, edge: ResizeEdge, cursor: CursorStyle| {
+        div()
+            .id(id)
+            .absolute()
+            .cursor(cursor)
+            .occlude()
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                window.start_window_resize(edge);
+                cx.stop_propagation();
+            })
+    };
+    let (top, bottom, left, right) = (!tiling.top, !tiling.bottom, !tiling.left, !tiling.right);
+    let mut layer = div().absolute().inset_0();
+    if top {
+        layer = layer.child(
+            handle("resize-top", ResizeEdge::Top, CursorStyle::ResizeUpDown)
+                .top_0()
+                .left(px(CORNER))
+                .right(px(CORNER))
+                .h(px(EDGE)),
+        );
+    }
+    if bottom {
+        layer = layer.child(
+            handle(
+                "resize-bottom",
+                ResizeEdge::Bottom,
+                CursorStyle::ResizeUpDown,
+            )
+            .bottom_0()
+            .left(px(CORNER))
+            .right(px(CORNER))
+            .h(px(EDGE)),
+        );
+    }
+    if left {
+        layer = layer.child(
+            handle(
+                "resize-left",
+                ResizeEdge::Left,
+                CursorStyle::ResizeLeftRight,
+            )
+            .left_0()
+            .top(px(CORNER))
+            .bottom(px(CORNER))
+            .w(px(EDGE)),
+        );
+    }
+    if right {
+        layer = layer.child(
+            handle(
+                "resize-right",
+                ResizeEdge::Right,
+                CursorStyle::ResizeLeftRight,
+            )
+            .right_0()
+            .top(px(CORNER))
+            .bottom(px(CORNER))
+            .w(px(EDGE)),
+        );
+    }
+    let corner = |id, edge, cursor| handle(id, edge, cursor).size(px(CORNER));
+    if top && left {
+        layer = layer.child(
+            corner(
+                "resize-top-left",
+                ResizeEdge::TopLeft,
+                CursorStyle::ResizeUpLeftDownRight,
+            )
+            .top_0()
+            .left_0(),
+        );
+    }
+    if top && right {
+        layer = layer.child(
+            corner(
+                "resize-top-right",
+                ResizeEdge::TopRight,
+                CursorStyle::ResizeUpRightDownLeft,
+            )
+            .top_0()
+            .right_0(),
+        );
+    }
+    if bottom && left {
+        layer = layer.child(
+            corner(
+                "resize-bottom-left",
+                ResizeEdge::BottomLeft,
+                CursorStyle::ResizeUpRightDownLeft,
+            )
+            .bottom_0()
+            .left_0(),
+        );
+    }
+    if bottom && right {
+        layer = layer.child(
+            corner(
+                "resize-bottom-right",
+                ResizeEdge::BottomRight,
+                CursorStyle::ResizeUpLeftDownRight,
+            )
+            .bottom_0()
+            .right_0(),
+        );
+    }
+    Some(layer.into_any_element())
 }
