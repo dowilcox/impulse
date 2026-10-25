@@ -9,7 +9,7 @@
 //! branch a task is still working on, and dependency files that changed
 //! under it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -123,6 +123,28 @@ fn workspace_changes(main: &str) -> (Vec<TaskRecord>, Vec<Changes>) {
         .unwrap_or_default();
     let changes = crate::tasks::changes(main, &tasks);
     (tasks, changes)
+}
+
+/// `workspace_changes`' changes, read again at most every few seconds: an
+/// agent's edits come in bursts, and each would otherwise run git in every
+/// worktree of the repository.
+fn recent_workspace_changes(main: &str) -> Vec<Changes> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static RECENT: Mutex<Option<HashMap<String, (Instant, Vec<Changes>)>>> = Mutex::new(None);
+    const FRESH: Duration = Duration::from_secs(3);
+    if let Some((at, changes)) = RECENT.lock().unwrap().get_or_insert_default().get(main) {
+        if at.elapsed() < FRESH {
+            return changes.clone();
+        }
+    }
+    let (_, changes) = workspace_changes(main);
+    RECENT
+        .lock()
+        .unwrap()
+        .get_or_insert_default()
+        .insert(main.to_string(), (Instant::now(), changes.clone()));
+    changes
 }
 
 /// The repository's workspaces as `impulse tasks` shows them, from the
@@ -579,7 +601,7 @@ impl Workbench {
                     if task_registry::canonical(&pane_main) != task_registry::canonical(&main) {
                         return None;
                     }
-                    let (_, changes) = workspace_changes(&main);
+                    let changes = recent_workspace_changes(&main);
                     let me = task_registry::canonical(&root);
                     let relative = task_registry::canonical(&file)
                         .strip_prefix(&format!("{me}/"))?

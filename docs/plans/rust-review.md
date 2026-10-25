@@ -66,7 +66,11 @@ changes; blinks and hovers reuse them), P12 (an editor's change marks,
 conflicts, links and bracket pairs are worked out in the background and
 painted if the text hasn't moved on; the word diff keeps only each
 step's live diagonals, and the Diff View skips word marks on lines past
-`MAX_WORD_DIFF_LINE_LEN`, as Review does). Git: G3 (waiting
+`MAX_WORD_DIFF_LINE_LEN`, as Review does), P13 (task states refresh
+1.5 s after a held repository's watcher sees a change,
+`Workbench::schedule_task_refresh`, with a one-minute fallback instead of
+a five-second poll; an agent's edit hooks share one reading of the
+workspaces' changes for three seconds). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 

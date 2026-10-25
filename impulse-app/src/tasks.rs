@@ -588,11 +588,12 @@ fn compute_repository(main: &str, common: &str, trust: &WorkspaceTrust) -> Repos
 }
 
 impl Workbench {
-    /// Keep the sidebar's task states current: every few seconds, and
-    /// whenever a task flow asks (`refresh_task_states`).
+    /// Keep the sidebar's task states current: when a repository the
+    /// window holds changes (`schedule_task_refresh`), when a task flow asks
+    /// (`refresh_task_states`), and once a minute for what no watcher sees.
     pub(crate) fn start_task_monitor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |workbench, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(5)).await;
+            cx.background_executor().timer(Duration::from_secs(60)).await;
             if workbench
                 .update(cx, |workbench, cx| workbench.refresh_task_states(cx))
                 .is_err()
@@ -602,6 +603,18 @@ impl Workbench {
         })
         .detach();
         self.refresh_task_states(cx);
+    }
+
+    /// A repository changed: refresh the task states once changes settle
+    /// (Swift's OverlapMonitor follows the repositories the same way).
+    pub(crate) fn schedule_task_refresh(&mut self, cx: &mut Context<Self>) {
+        if !self.workspaces.iter().any(|w| w.task.common_dir.is_some()) {
+            return;
+        }
+        self.task_refresh = Some(cx.spawn(async move |workbench, cx| {
+            cx.background_executor().timer(Duration::from_millis(1500)).await;
+            let _ = workbench.update(cx, |workbench, cx| workbench.refresh_task_states(cx));
+        }));
     }
 
     /// Work out again where each repository's workspaces change the same

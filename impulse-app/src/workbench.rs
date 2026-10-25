@@ -109,6 +109,9 @@ pub struct Workbench {
     /// The settings.json warning dismissed (`SettingsStore::warning`'s count).
     pub(crate) dismissed_settings_warning: Option<u64>,
     pub(crate) tree_scroll: gpui_kit::UniformListScrollHandle,
+    /// The task states' refresh waiting for changes to settle
+    /// (`Workbench::schedule_task_refresh`).
+    pub(crate) task_refresh: Option<gpui_kit::Task<()>>,
     /// Closed tabs and workspaces, newest last, each with its id.
     closed: Vec<(u64, Closed)>,
     /// The last close recorded: its id and what to call it (for the Undo
@@ -244,6 +247,7 @@ impl Workbench {
             tree_focus: cx.focus_handle(),
             tree_selection: None,
             tree_scroll: gpui_kit::UniformListScrollHandle::new(),
+            task_refresh: None,
             dismissed_settings_warning: None,
             undo_close: None,
             lsp_config_stamp: None,
