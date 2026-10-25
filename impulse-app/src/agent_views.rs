@@ -9,7 +9,6 @@ use std::time::Instant;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::Sizable as _;
-use gpui_kit::AnimationExt as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, Entity, EntityId, FontWeight, SharedString,
     Window,
@@ -68,6 +67,20 @@ fn ago(since: Instant) -> String {
     }
 }
 
+/// How far round the working ring is: one turn every 900 ms, in twelve
+/// steps (the workbench redraws twelve times a second while an agent works,
+/// `Workbench::start_spinner`, rather than every frame).
+pub(crate) const SPINNER_STEP: std::time::Duration = std::time::Duration::from_millis(75);
+
+pub(crate) fn spinner_turn() -> f32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let elapsed = START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis();
+    ((elapsed % 900) * 12 / 900) as f32 / 12.
+}
+
 /// A coding agent's state at a glance: a spinner while it works, a bot
 /// with a badge when it wants the user, a quiet bot otherwise. The badges
 /// differ in shape as well as color: a solid dot asks for input, a check
@@ -90,29 +103,20 @@ pub fn agent_glyph(state: AgentState, size: f32, p: &ChromePalette) -> AnyElemen
                 0.,
             ))
             .into_any_element(),
-        AgentState::Working => {
-            let color = p.working;
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(size))
-                .flex_none()
-                .with_animation(
-                    "agent-working",
-                    gpui_kit::Animation::new(std::time::Duration::from_millis(900)).repeat(),
-                    move |d, delta| {
-                        d.child(crate::workbench_chrome::progress_ring(
-                            None,
-                            color,
-                            size - 1.,
-                            1.6,
-                            delta,
-                        ))
-                    },
-                )
-                .into_any_element()
-        }
+        AgentState::Working => div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(size))
+            .flex_none()
+            .child(crate::workbench_chrome::progress_ring(
+                None,
+                p.working,
+                size - 1.,
+                1.6,
+                spinner_turn(),
+            ))
+            .into_any_element(),
         AgentState::NeedsInput | AgentState::Done => {
             let badge = if state == AgentState::NeedsInput {
                 div()
@@ -944,5 +948,44 @@ mod tests {
     #[test]
     fn ages_are_short() {
         assert_eq!(ago(Instant::now()), "0s ago");
+    }
+}
+
+impl crate::workbench::Workbench {
+    /// Redraw twelve times a second while an agent in this window works,
+    /// for its turning ring; four times a second just to look otherwise.
+    pub(crate) fn start_spinner(
+        &mut self,
+        window: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |workbench, cx| loop {
+            let working = workbench.update(cx, |workbench, cx| {
+                let working = workbench
+                    .workspaces
+                    .iter()
+                    .flat_map(|w| w.all_surfaces())
+                    .any(|s| match s {
+                        crate::workspace::Surface::Terminal(t) => {
+                            t.read(cx).agent.machine.state() == AgentState::Working
+                        }
+                        _ => false,
+                    });
+                if working && !crate::display_options::reduce_motion() {
+                    cx.notify();
+                }
+                working
+            });
+            let Ok(working) = working else {
+                break;
+            };
+            let wait = if working {
+                SPINNER_STEP
+            } else {
+                std::time::Duration::from_millis(250)
+            };
+            cx.background_executor().timer(wait).await;
+        })
+        .detach();
     }
 }

@@ -189,9 +189,12 @@ impl Workbench {
         let p = &self.palette;
         let dim = if p.is_light { 0.28 } else { 0.34 };
         let tab_id = tab.id;
+        // Terminals and editors are cached views: output in one terminal,
+        // or typing in one editor, redraws that pane, not every pane.
+        let fill = || gpui_kit::StyleRefinement::default().size_full();
         let body: AnyElement = match surface {
-            Surface::Terminal(t) => t.clone().into_any_element(),
-            Surface::Editor(e) => e.clone().into_any_element(),
+            Surface::Terminal(t) => t.clone().cached(fill()).into_any_element(),
+            Surface::Editor(e) => e.clone().cached(fill()).into_any_element(),
             Surface::Review(r) => r.clone().into_any_element(),
             Surface::History(h) => h.clone().into_any_element(),
             Surface::Image(i) => i.clone().into_any_element(),

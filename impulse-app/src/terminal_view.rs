@@ -701,6 +701,26 @@ impl TerminalView {
     /// into it reaches the shell and not a running program (Swift's
     /// `isAtPrompt`). Without shell integration commands aren't marked;
     /// then the terminal's foreground process group tells.
+    /// What the workbench's chrome shows of this terminal (tab title and
+    /// glyphs, progress, status, folder, agent state), as one number: the
+    /// workbench redraws for a terminal it isn't showing only when this
+    /// changes, not for every line of output.
+    pub(crate) fn chrome_key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.title.hash(&mut hasher);
+        self.cwd.hash(&mut hasher);
+        self.direct.hash(&mut hasher);
+        self.command_running.hash(&mut hasher);
+        self.at_prompt().hash(&mut hasher);
+        format!("{:?}{:?}", self.progress, self.session_status).hash(&mut hasher);
+        self.agent.agent.hash(&mut hasher);
+        self.agent.machine.state().hash(&mut hasher);
+        self.agent.needs_attention.hash(&mut hasher);
+        self.agent.status_message.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub(crate) fn at_prompt(&self) -> bool {
         if self.command_running
             || self

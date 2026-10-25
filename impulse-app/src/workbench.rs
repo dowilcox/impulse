@@ -188,6 +188,7 @@ impl Workbench {
         });
         workbench.start_task_monitor(window, cx);
         workbench.start_port_scan(window, cx);
+        workbench.start_spinner(window, cx);
         workbench.start_editor_watch(window, cx);
         workbench.start_tree_watch(window, cx);
         workbench.start_lsp_config_watch(window, cx);
@@ -508,7 +509,18 @@ impl Workbench {
                 cx,
             )
         });
-        cx.observe(&terminal, |_, _, cx| cx.notify()).detach();
+        // A terminal on screen redraws the window itself (GPUI marks its
+        // ancestors dirty); one in a hidden tab or workspace only when what
+        // the chrome shows of it changed.
+        let mut shown_key = None;
+        cx.observe(&terminal, move |_, terminal, cx| {
+            let key = terminal.read(cx).chrome_key();
+            if shown_key != Some(key) {
+                shown_key = Some(key);
+                cx.notify();
+            }
+        })
+        .detach();
         cx.subscribe_in(
             &terminal,
             window,

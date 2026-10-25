@@ -27,6 +27,14 @@ a writer thread, so the UI never waits on one). Automatic snapshots
 restricted environment in folders that aren't trusted
 (`safety::create_with`, `working_tree_commit(root, trusted)`).
 
+Redraws: P1 (terminals and editors are cached views in their panes, and a
+terminal the window isn't showing redraws the workbench only when
+`TerminalView::chrome_key` changes), P2 (the working ring steps twelve
+times a second from a shared clock, `Workbench::start_spinner`, instead of
+an animation asking for every frame) and P10 (its ticks no longer redraw
+every pane). The workbench's own chrome still renders on each of them; P5
+(the file tree) is what makes that cheap.
+
 ## What to fix first
 
 1. **Crashes and lost work**: the editor crash on non-ASCII typing (E1),
