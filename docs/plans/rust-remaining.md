@@ -3,6 +3,8 @@
 What still stands between the Rust app (`impulse-app`, on GPUI + GPUI Kit)
 and the Swift app it replaces. The migration plan and what's already done
 are in [rust-migration.md](rust-migration.md).
+The code review of October 2026, with the bugs, security and performance
+findings still to fix, is [rust-review.md](rust-review.md).
 
 Where things stand: on Linux every docs shot matches the Swift app, except
 where the Swift shots are older than the code or the platforms differ, and
