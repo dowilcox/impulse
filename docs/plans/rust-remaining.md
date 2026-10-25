@@ -162,3 +162,5 @@ need no work:
   next. Each Rust shot starts fresh.
 - "Undo" without "⌘Z" in the close toast on Linux, where that shortcut
   doesn't exist.
+- No inline blame in the editor: dropped on purpose (it was clunky).
+  Show Commit for This Line stays, blaming the cursor's line when asked.

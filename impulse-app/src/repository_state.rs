@@ -136,7 +136,7 @@ impl RepositoryState {
         cx: &mut Context<Self>,
     ) {
         self.refresh_in_flight = false;
-        // Only a real change tells observers (editors read blame on each).
+        // Only a real change tells observers (editors read the index on each).
         let changed = !self.loaded || snapshot != self.snapshot || statuses != self.statuses;
         self.loaded = true;
         if snapshot != self.snapshot {

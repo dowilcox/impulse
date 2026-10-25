@@ -77,8 +77,8 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           scrollback files), project config + settings file +
                           task environment + detector, task registry and
                           worktree tasks, commit graph, git helpers (the
-                          editor's change marks, conflict blocks and blame
-                          text: git/editor_marks.rs), agent
+                          editor's change marks and conflict blocks:
+                          git/editor_marks.rs), agent
                           state machine, hook events + installers, MCP
                           installer, JSONC edits and task policy/briefs
                           ported; Vim mode's state machine (vim/: modes
@@ -352,7 +352,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           clean editor reloading what an agent or git
                           wrote; editor_git.rs: change marks against the
                           index painted over the gutter, the peek with
-                          Revert, Stage, Diff and Review, inline blame,
+                          Revert, Stage, Diff and Review, Show Commit
+                          for This Line (blamed when asked),
                           merge conflicts tinted with Accept Current,
                           Incoming or Both on each marker line
                           (EditorTab::conflict_bars), from

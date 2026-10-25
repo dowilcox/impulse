@@ -2,7 +2,7 @@
 //! `web/editor.js`): the hunks between a file's git base (its index
 //! version) and the live buffer, which the gutter marks and the peek show;
 //! the edit that reverts one; merge conflict blocks and the edit that
-//! resolves one; and the inline blame's text.
+//! resolves one.
 
 use std::ops::Range;
 
@@ -374,30 +374,6 @@ pub fn resolve_edit(
     }
 }
 
-/// "3 days ago", "1 hour ago", "just now", as the inline blame says it.
-pub fn relative_time(seconds_ago: i64) -> String {
-    const UNITS: [(&str, i64); 6] = [
-        ("year", 31_536_000),
-        ("month", 2_592_000),
-        ("week", 604_800),
-        ("day", 86_400),
-        ("hour", 3600),
-        ("minute", 60),
-    ];
-    for (unit, size) in UNITS {
-        let n = seconds_ago / size;
-        if n >= 1 {
-            return format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" });
-        }
-    }
-    "just now".into()
-}
-
-/// The inline blame shown after a line: "Ada, 3 days ago · Fix the parser".
-pub fn blame_text(author: &str, seconds_ago: i64, summary: &str) -> String {
-    format!("{author}, {} · {summary}", relative_time(seconds_ago))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,16 +477,5 @@ mod tests {
         let last = apply(text, resolve_edit(text, &blocks[1], Resolution::Both));
         assert!(last.ends_with("middle\na\nc\n"), "{last:?}");
         assert!(find_conflicts("<<<<<<< unclosed\nx\n").is_empty());
-    }
-
-    #[test]
-    fn blame_reads_like_the_editor_says_it() {
-        assert_eq!(relative_time(30), "just now");
-        assert_eq!(relative_time(3600), "1 hour ago");
-        assert_eq!(relative_time(3 * 86_400), "3 days ago");
-        assert_eq!(
-            blame_text("Ada", 2 * 31_536_000, "Fix the parser"),
-            "Ada, 2 years ago · Fix the parser"
-        );
     }
 }

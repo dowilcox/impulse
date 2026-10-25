@@ -117,7 +117,7 @@ pub struct EditorTab {
     text_focused: bool,
     /// Vim mode, with `editor_vim_mode` on (`editor_vim`).
     pub(crate) vim: Option<crate::editor_vim::Attached>,
-    /// Change marks, the peek, inline blame and conflicts (`editor_git`).
+    /// Change marks, the peek and conflicts (`editor_git`).
     pub(crate) git: crate::editor_git::GitLayer,
     /// The pointer over the minimap (`editor_minimap`).
     pub(crate) minimap: crate::editor_minimap::MinimapState,
@@ -1236,6 +1236,8 @@ impl EditorTab {
                 "type" | "paste" => self
                     .state
                     .update(cx, |state, cx| state.replace(argument.clone(), window, cx)),
+                // Show Commit for This Line, at the cursor.
+                "line-commit" => self.show_line_commit(cx),
                 "undo" | "redo" => {
                     let focus = self.focus_handle(cx);
                     if command == "undo" {
@@ -1763,7 +1765,6 @@ impl EditorTab {
             self.selections.moved(previous);
         }
         self.find_linked_tag(cx);
-        self.git_cursor_moved(cx);
         let settings = crate::settings_store::SettingsStore::get(cx);
         let wanted = self.text_focused
             && if range.is_empty() {

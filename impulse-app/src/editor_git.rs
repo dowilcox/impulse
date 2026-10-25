@@ -1,14 +1,13 @@
 //! The editor's git layer (the Swift editor's `web/editor.js` git section):
 //! change marks in the gutter against the file's index version, following
 //! typing; a click on one opens a peek with the original lines and Revert,
-//! Stage, Diff and Review; the inline blame after the cursor's line once
-//! it rests; and merge conflicts tinted, with Accept Current, Incoming or
-//! Both from a bar over the editor. The texts are worked out by
+//! Stage, Diff and Review; Show Commit for This Line; and merge conflicts
+//! tinted, with Accept Current, Incoming or Both from a bar over the
+//! editor. The texts are worked out by
 //! `impulse_kit::git::editor_marks`; the marks are painted over the editor
 //! from its own layout (GPUI Kit's editor has no gutter decorations).
 
-use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{TextDecoration, TextDecorationCollection};
@@ -17,7 +16,6 @@ use gpui_kit::{
     canvas, div, fill, point, prelude::*, px, size, AnyElement, App, Bounds, Context,
     DispatchPhase, EventEmitter, Global, Hsla, MouseDownEvent, Pixels, Subscription, Task, Window,
 };
-use impulse_git::git_blame::BlameLine;
 use impulse_kit::git::editor_marks::{self, ConflictBlock, LineHunk, MarkKind, Resolution};
 use impulse_kit::text_file::LineEnding;
 
@@ -26,8 +24,6 @@ use crate::repository_state::RepositoryState;
 
 /// Typing settles before the marks follow it.
 const DIFF_DELAY: Duration = Duration::from_millis(150);
-/// The cursor rests this long before its line's blame shows.
-const BLAME_DELAY: Duration = Duration::from_millis(450);
 /// The repository changes in bursts (a commit, a checkout).
 const BASE_DELAY: Duration = Duration::from_millis(300);
 
@@ -59,14 +55,6 @@ pub(crate) struct GitLayer {
     pub(crate) root: Option<String>,
     trusted: bool,
     hunks: Vec<LineHunk>,
-    /// Who last changed each line of the saved file, and that file's text
-    /// (blame says nothing once the buffer differs from it).
-    blame: HashMap<usize, BlameLine>,
-    blame_for: Option<String>,
-    /// The HEAD the blame was read at (with `blame_for`, what it's cached by).
-    blame_head: Option<String>,
-    /// The line whose blame shows.
-    blame_line: Option<usize>,
     /// The peeked hunk, by its start line.
     pub(crate) peek: Option<usize>,
     /// Where the editor's text area was last painted (the peek sits under
@@ -85,7 +73,7 @@ pub(crate) struct GitLayer {
     _base: Option<Task<()>>,
     _diff: Option<Task<()>>,
     _marks: Option<Task<()>>,
-    _blame: Option<Task<()>>,
+    _line_commit: Option<Task<()>>,
     _repository: Option<Subscription>,
 }
 
@@ -136,22 +124,14 @@ impl Marks {
 }
 
 impl EditorTab {
-    /// Read the file's git base and blame again (opened, saved, or the
-    /// repository changed).
+    /// Read the file's git base again (opened, saved, or the repository
+    /// changed).
     pub(crate) fn refresh_git(&mut self, cx: &mut Context<Self>) {
         if self.untitled.is_some() || self.path.as_os_str().is_empty() {
             return;
         }
         let path = self.path.clone();
-        let (trusted, root) = (self.git.trusted, self.git.root.clone());
-        let head = root.as_deref().and_then(|root| {
-            let state = crate::repository_state::RepositoryStore::existing(root, cx)?;
-            state.read(cx).snapshot.as_ref()?.head_oid.clone()
-        });
-        // Blame only changes with HEAD or the file on disk.
-        let cached = (head.is_some() && head == self.git.blame_head)
-            .then(|| self.git.blame_for.clone())
-            .flatten();
+        let root = self.git.root.clone();
         self.git._base = Some(cx.spawn(async move |tab, cx| {
             cx.background_executor().timer(BASE_DELAY).await;
             let read = cx.background_executor().spawn(async move {
@@ -161,24 +141,9 @@ impl EditorTab {
                     impulse_git::repo_root(&path.parent()?.to_string_lossy())
                         .map(|r| r.trim_end_matches('/').to_string())
                 });
-                let disk =
-                    impulse_kit::text_file::read(&path).map(|c| LineEnding::normalize(&c.text));
-                if disk.is_some() && disk == cached {
-                    return (base, root, disk, None, true);
-                }
-                // Git reads run as the repository's trust allows.
-                let blame = match (&root, base.is_some()) {
-                    (Some(root), true) => RepositoryState::read_git(
-                        root,
-                        trusted,
-                        &["blame", "--porcelain", "--no-textconv", "--", &file],
-                    )
-                    .map(|text| impulse_git::git_blame::parse_porcelain(&text)),
-                    _ => None,
-                };
-                (base, root, disk, blame, false)
+                (base, root)
             });
-            let (base, root, disk, blame, unchanged) = read.await;
+            let (base, root) = read.await;
             let _ = tab.update(cx, |tab, cx| {
                 // The Diff View compares against the same base.
                 let diff_base = base
@@ -194,11 +159,6 @@ impl EditorTab {
                     }
                 }
                 tab.git.root = root;
-                if !unchanged {
-                    tab.git.blame = blame.unwrap_or_default();
-                    tab.git.blame_for = disk;
-                    tab.git.blame_head = head;
-                }
                 tab.update_git_marks(cx);
             });
         }));
@@ -223,7 +183,6 @@ impl EditorTab {
 
     /// The buffer changed: the marks follow once typing settles.
     pub(crate) fn git_text_changed(&mut self, cx: &mut Context<Self>) {
-        self.git.blame_line = None;
         self.git._diff = Some(cx.spawn(async move |tab, cx| {
             cx.background_executor().timer(DIFF_DELAY).await;
             let _ = tab.update(cx, |tab, cx| tab.update_git_marks(cx));
@@ -365,35 +324,6 @@ impl EditorTab {
         self.git.line_fills = fills;
     }
 
-    /// The cursor moved: its line's blame shows once it rests.
-    pub(crate) fn git_cursor_moved(&mut self, cx: &mut Context<Self>) {
-        if self.git.blame_line.take().is_some() {
-            cx.notify();
-        }
-        if self.git.blame.is_empty() {
-            return;
-        }
-        self.git._blame = Some(cx.spawn(async move |tab, cx| {
-            cx.background_executor().timer(BLAME_DELAY).await;
-            let _ = tab.update(cx, |tab, cx| {
-                let line = tab.cursor(cx).0 as usize;
-                // Blame describes the saved file, and not lines changed
-                // since.
-                let saved = tab.git.blame_for.as_deref() == Some(tab.text(cx).as_str());
-                let changed = editor_marks::hunk_at_line(&tab.git.hunks, line).is_some();
-                let committed = tab
-                    .git
-                    .blame
-                    .get(&line)
-                    .is_some_and(|b| !b.is_uncommitted());
-                if saved && !changed && committed {
-                    tab.git.blame_line = Some(line);
-                    cx.notify();
-                }
-            });
-        }));
-    }
-
     /// Peek the change on buffer line `line` (the snapshot's `git-peek=`,
     /// what a click on its mark does).
     #[cfg(debug_assertions)]
@@ -492,8 +422,7 @@ impl EditorTab {
         }
     }
 
-    /// The marks, the blame and the conflict bar over `editor`; the peek
-    /// under it.
+    /// The marks and the conflict bar over `editor`; the peek under it.
     pub(crate) fn wrap_git(&self, editor: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let colors = cx.try_global::<GitColors>().copied();
         let state = self.state.clone();
@@ -511,18 +440,6 @@ impl EditorTab {
                 crate::editor_brackets::BracketColors::new(cx.theme().mode.is_dark()),
             )
         });
-        let blame = self.git.blame_line.and_then(|line| {
-            let info = self.git.blame.get(&line)?;
-            let ago = SystemTime::now()
-                .duration_since(info.author_time)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            Some((
-                line,
-                editor_marks::blame_text(&info.author, ago, &info.summary),
-            ))
-        });
-        let ghost = cx.theme().muted_foreground.opacity(0.7);
         let margin = {
             let settings = crate::settings_store::SettingsStore::get(cx);
             settings
@@ -535,7 +452,6 @@ impl EditorTab {
         } else {
             gpui_kit::rgb(0xd3d3d3).into()
         };
-        let font = self.font_for_blame(cx);
         let tab = cx.entity().downgrade();
         let sticky = {
             let settings = crate::settings_store::SettingsStore::get(cx);
@@ -675,44 +591,6 @@ impl EditorTab {
                         color,
                     ));
                 }
-                // Where the blame text is, so a click on it shows the commit.
-                let mut blame_hit = None;
-                if let Some((line, label)) = &blame {
-                    if let Some(end) = line_offset(*line).map(|o| {
-                        let row = line - 1;
-                        o + text.line_len(row)
-                    }) {
-                        if let Some(at) = state.range_to_bounds(&(end..end)) {
-                            let run = gpui_kit::TextRun {
-                                len: label.len(),
-                                font: font.clone(),
-                                color: ghost,
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-                            };
-                            let shaped = window.text_system().shape_line(
-                                label.clone().into(),
-                                font_size(at),
-                                &[run],
-                                None,
-                            );
-                            let origin = point(at.origin.x + px(28.), at.origin.y);
-                            blame_hit = Some(Bounds::new(
-                                origin,
-                                gpui_kit::size(shaped.width, at.size.height),
-                            ));
-                            let _ = shaped.paint(
-                                origin,
-                                at.size.height,
-                                gpui_kit::TextAlign::Left,
-                                None,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                }
                 let pinned = match (&sticky, sticky_layout) {
                     (Some(style), Some(layout)) => paint_sticky(layout, bounds, style, window, cx),
                     _ => Vec::new(),
@@ -722,11 +600,6 @@ impl EditorTab {
                 let tab = tab.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Capture || !hitbox.is_hovered(window) {
-                        return;
-                    }
-                    if blame_hit.is_some_and(|b| b.contains(&event.position)) {
-                        let _ = tab.update(cx, |tab, cx| tab.show_line_commit(cx));
-                        cx.stop_propagation();
                         return;
                     }
                     if let Some((_, row)) = pinned.iter().find(|(r, _)| r.contains(&event.position))
@@ -844,15 +717,6 @@ impl EditorTab {
             )
             .children(below)
             .into_any_element()
-    }
-
-    fn font_for_blame(&self, cx: &App) -> gpui_kit::Font {
-        let settings = crate::settings_store::SettingsStore::get(cx);
-        gpui_kit::Font {
-            family: crate::fonts::family(&settings.font_family),
-            style: gpui_kit::FontStyle::Italic,
-            ..gpui_kit::font("Inter")
-        }
     }
 
     /// Each conflict's actions on its `<<<<<<<` line, after the marker:
@@ -1093,21 +957,76 @@ impl EditorTab {
         )
     }
 
-    /// Show Commit for This Line: the commit that last changed it.
+    /// Show Commit for This Line: the commit that last changed it, blamed
+    /// when asked, against the buffer's own text (`--contents`), so lines
+    /// keep their numbers through unsaved edits. A line not committed yet
+    /// has none.
     pub(crate) fn show_line_commit(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.git.root.clone() else {
+            return;
+        };
         let line = self.cursor(cx).0 as usize;
-        if let Some(info) = self.git.blame.get(&line).filter(|b| !b.is_uncommitted()) {
-            cx.emit(EditorGitAction {
-                action: format!("commit:{}", info.sha),
-                line,
+        let (trusted, path, text) = (self.git.trusted, self.path.clone(), self.text(cx));
+        let read = cx.background_executor().spawn(async move {
+            let contents = tempfile_with(&text)?;
+            let file = path.to_string_lossy().into_owned();
+            let range = format!("{line},{line}");
+            let contents_path = contents.to_string_lossy().into_owned();
+            // Git reads run as the repository's trust allows.
+            let found = RepositoryState::read_git(
+                &root,
+                trusted,
+                &[
+                    "blame",
+                    "--porcelain",
+                    "--no-textconv",
+                    "-L",
+                    &range,
+                    "--contents",
+                    &contents_path,
+                    "--",
+                    &file,
+                ],
+            );
+            let _ = std::fs::remove_file(&contents);
+            impulse_git::git_blame::parse_porcelain(&found?)
+                .remove(&line)
+                .filter(|b| !b.is_uncommitted())
+        });
+        self.git._line_commit = Some(cx.spawn(async move |tab, cx| {
+            let Some(info) = read.await else {
+                return;
+            };
+            let _ = tab.update(cx, |_, cx| {
+                cx.emit(EditorGitAction {
+                    action: format!("commit:{}", info.sha),
+                    line,
+                })
             });
-        }
+        }));
     }
 }
 
-/// The editor's text size, from a line's height.
-fn font_size(line: Bounds<Pixels>) -> Pixels {
-    line.size.height / 1.5
+/// `text` in a new file of the system's temporary folder, readable only by
+/// the user.
+fn tempfile_with(text: &str) -> Option<std::path::PathBuf> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "impulse-blame-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .ok()?;
+    file.write_all(text.as_bytes()).ok()?;
+    Some(path)
 }
 
 impl crate::workbench::Workbench {
