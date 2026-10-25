@@ -37,7 +37,8 @@ use impulse_kit::terminal_find::TerminalFindQuery;
 use impulse_kit::theme::ResolvedTheme;
 use impulse_terminal::{
     BlockOverlay, CellFlags, RgbColor, SelectionKind, TerminalBackend, TerminalColors,
-    TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
+    TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, EXTRA_UNDERLINE_COLOR,
+    EXTRA_ZERO_WIDTH, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 
 use crate::command_editor::{CommandEditor, EditorColors};
@@ -157,6 +158,8 @@ pub(crate) struct Cell {
     fg: RgbColor,
     bg: RgbColor,
     flags: CellFlags,
+    /// Its underline's own color (SGR 58), from the snapshot's extras.
+    underline: Option<RgbColor>,
 }
 
 /// A highlighted span of one row, columns inclusive.
@@ -176,6 +179,9 @@ pub(crate) struct Grid {
     selection: Vec<Span>,
     matches: Vec<Span>,
     cells: Vec<Cell>,
+    /// Combining marks and other zero-width characters after a cell's own
+    /// (by cell index), from the snapshot's extras.
+    zero_width: std::collections::HashMap<usize, String>,
 }
 
 impl Grid {
@@ -211,9 +217,41 @@ impl Grid {
                         buf[at + 10],
                         buf[at + 11],
                     ])),
+                    underline: None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let mut cells = cells;
+        // The extras after the cells: a count, then (cell, kind, length,
+        // bytes) entries.
+        let mut zero_width = std::collections::HashMap::new();
+        let mut at = start + cols * rows * CELL_STRIDE;
+        let count = buf
+            .get(at..at + 4)
+            .map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+        at += 4;
+        for _ in 0..count {
+            let Some(head) = buf.get(at..at + 6) else {
+                break;
+            };
+            let index = u32::from_le_bytes([head[0], head[1], head[2], head[3]]) as usize;
+            let (kind, len) = (head[4], head[5] as usize);
+            let Some(payload) = buf.get(at + 6..at + 6 + len) else {
+                break;
+            };
+            at += 6 + len;
+            match kind {
+                EXTRA_ZERO_WIDTH if index < cells.len() => {
+                    if let Ok(text) = std::str::from_utf8(payload) {
+                        zero_width.insert(index, text.to_string());
+                    }
+                }
+                EXTRA_UNDERLINE_COLOR if index < cells.len() && len == 3 => {
+                    cells[index].underline = Some(RgbColor::new(payload[0], payload[1], payload[2]));
+                }
+                _ => {}
+            }
+        }
         Some(Grid {
             cols,
             rows,
@@ -221,7 +259,13 @@ impl Grid {
             selection: (0..selections).map(span).collect(),
             matches: (selections..selections + searches).map(span).collect(),
             cells,
+            zero_width,
         })
+    }
+
+    /// The zero-width characters drawn with the cell at `row`, `col`.
+    fn combining(&self, row: usize, col: usize) -> Option<&str> {
+        self.zero_width.get(&(row * self.cols + col)).map(String::as_str)
     }
 
     fn cell(&self, row: usize, col: usize) -> &Cell {
@@ -277,6 +321,10 @@ impl Grid {
             let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
             text.push(ch);
             col_for_byte.extend(std::iter::repeat_n(col, ch.len_utf8()));
+            if let Some(marks) = self.combining(row, col) {
+                text.push_str(marks);
+                col_for_byte.extend(std::iter::repeat_n(col, marks.len()));
+            }
         }
         RowText {
             text,
@@ -2292,6 +2340,11 @@ impl Frame {
                     }
                     let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
                     text.push(ch);
+                    // Combining marks shape with their base (forced widths
+                    // keep a mark on its base's cell).
+                    if let Some(marks) = grid.combining(row, col) {
+                        text.push_str(marks);
+                    }
                     col += 1;
                     // A wide character stands alone.
                     if cell.flags.contains(CellFlags::WIDE_CHAR) {
@@ -2320,7 +2373,7 @@ impl Frame {
                     background_color: None,
                     underline: style.underline.then_some(UnderlineStyle {
                         thickness: px(1.),
-                        color: Some(style.color),
+                        color: Some(style.underline_color.unwrap_or(style.color)),
                         wavy: style.wavy,
                     }),
                     strikethrough: style.strike.then_some(StrikethroughStyle {
@@ -2384,7 +2437,8 @@ impl Frame {
                         // The character under it, in the background color.
                         let cell = grid.cell(row, col);
                         if cell.ch != ' ' && cell.ch != '\0' {
-                            let text: SharedString = cell.ch.to_string().into();
+                            let marks = grid.combining(row, col).unwrap_or_default();
+                            let text: SharedString = format!("{}{marks}", cell.ch).into();
                             let run = TextRun {
                                 len: text.len(),
                                 font: self.font.clone(),
@@ -2543,6 +2597,8 @@ impl Frame {
 #[derive(PartialEq)]
 struct Style {
     color: Hsla,
+    /// SGR 58's color, when the program set one.
+    underline_color: Option<Hsla>,
     bold: bool,
     italic: bool,
     underline: bool,
@@ -2573,6 +2629,7 @@ fn text_style(cell: &Cell, bright_bold: Option<&[RgbColor; 16]>) -> Style {
     }
     Style {
         color,
+        underline_color: cell.underline.map(cell_hsla),
         bold: f.contains(CellFlags::BOLD),
         italic: f.contains(CellFlags::ITALIC),
         underline: f.intersects(

@@ -41,7 +41,9 @@ Swift's `EditorWebView.appCommandWins` does: `commands::editor_priority`)
 and T17 (Shift with PageUp, PageDown, Home and End go to a program that
 owns the screen, and scroll the scrollback at the shell).
 
-Terminal: T2 (⌘C with nothing selected does nothing), T3 (password
+Terminal: T1 (the grid snapshot's extras are read: combining marks shape
+with their cell's character, and SGR 58 underline colors are drawn), T2
+(⌘C with nothing selected does nothing), T3 (password
 mode's start and end empty the input bar, its undo history included,
 `CommandEditor::reset`), T18 (mouse reports carry their button and
 modifiers, a release pairs with its press, drags are reported once per
