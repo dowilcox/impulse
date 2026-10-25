@@ -377,6 +377,7 @@ pub(crate) fn abbreviate_home(path: &str) -> String {
 }
 
 /// One row of the file tree.
+#[derive(Clone)]
 struct TreeRow {
     path: PathBuf,
     name: String,
@@ -467,7 +468,8 @@ impl Workbench {
         let select = |this: &mut Self, i: usize| {
             let i = i.min(rows.len() - 1);
             this.tree_selection = Some(rows[i].path.clone());
-            this.tree_scroll.scroll_to_item(i);
+            this.tree_scroll
+                .scroll_to_item(i, gpui_kit::ScrollStrategy::Nearest);
         };
         let row = index.map(|i| &rows[i]);
         let expanded = |path: &PathBuf, this: &Self| this.workspace().expanded_dirs.contains(path);
@@ -1350,10 +1352,142 @@ impl Workbench {
         column.into_any_element()
     }
 
+    /// One row of the file tree.
+    fn tree_row(
+        &self,
+        row: &TreeRow,
+        index: usize,
+        open_path: Option<&Path>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = &self.palette;
+        let ignored = KitRgba::from_hex(&self.theme.git_ignored);
+        let workspace = self.workspace();
+        let row = row.clone();
+        let expanded = workspace.expanded_dirs.contains(&row.path);
+        let selected = self.tree_selection.as_deref().or(open_path)
+            == Some(row.path.as_path());
+        let path = row.path.clone();
+        let is_dir = row.is_dir;
+        let status = self.git.tree_status(&row.path, p, ignored, cx);
+        let menu = self.tree_menu(row.path.clone(), row.is_dir, cx);
+        let row_element = div()
+            .id(("file", index))
+            .role(gpui_kit::Role::TreeItem)
+            .aria_label(row.name.clone())
+            .aria_level(row.depth + 1)
+            .aria_selected(selected)
+            .when(row.is_dir, |d| d.aria_expanded(expanded))
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(6.))
+            // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
+            .h(px(22.))
+            .mx(px(4.))
+            .pl(px(4. + 16. * row.depth as f32))
+            .pr(px(8.))
+            .rounded(px(5.))
+            .text_size(px(13.))
+            .when(selected, |d| d.bg(hsla(p.accent).opacity(0.2)))
+            .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
+            .on_click(
+                cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
+                    this.tree_selection = Some(path.clone());
+                    if is_dir {
+                        this.toggle_dir(path.clone(), cx);
+                    } else if event.modifiers().alt {
+                        // ⌥-click: beside the current tab, as Swift's
+                        // tree opens it.
+                        this.open_beside(&path, window, cx);
+                    } else if event.click_count() >= 2 {
+                        // The second click of a double-click keeps the
+                        // preview.
+                        this.open_file(&path, window, cx);
+                    } else {
+                        this.preview_file(&path, window, cx);
+                    }
+                }),
+            )
+            .child(div().w(px(16.)).flex_none().flex().justify_center().child(
+                if row.is_dir {
+                    icon(
+                        if expanded {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        },
+                        metrics::ICON_SMALL,
+                        p.text_tertiary,
+                    )
+                    .into_any_element()
+                } else {
+                    div().into_any_element()
+                },
+            ))
+            .child(
+                gpui_kit::img(crate::file_icons::icon_path(
+                    &row.name, row.is_dir, expanded,
+                ))
+                .size(px(16.))
+                .flex_none()
+                // Right after the chevron, as Swift's row has it.
+                .ml(px(-6.)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
+                    .child(row.name),
+            )
+            .children(status.filter(|(letter, _)| !letter.is_empty()).map(
+                |(letter, color)| {
+                    div()
+                        .flex_none()
+                        .font_family("JetBrains Mono")
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(hsla(color))
+                        .child(letter)
+                },
+            ));
+        let (drag_path, drop_target, external_target) =
+            (row.path.clone(), row.path.clone(), row.path.clone());
+        let drag_name = row
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let row_element = row_element
+            .on_drag(
+                crate::file_tree_actions::DraggedPath(drag_path),
+                move |_, _, _, cx| {
+                    cx.new(|_| crate::file_tree_actions::DragPreview(drag_name.clone()))
+                },
+            )
+            .drag_over::<crate::file_tree_actions::DraggedPath>(|style, _, _, _| {
+                style.bg(gpui_kit::black().opacity(0.12))
+            })
+            .on_drop(cx.listener(
+                move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
+                    this.tree_drop(vec![dragged.0.clone()], &drop_target, window, cx)
+                },
+            ))
+            .on_drop(cx.listener(
+                move |this, paths: &gpui_kit::ExternalPaths, window, cx| {
+                    this.tree_drop(paths.paths().to_vec(), &external_target, window, cx)
+                },
+            ));
+        row_element.context_menu(menu).into_any_element()
+    }
+
     pub(crate) fn sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let settings = SettingsStore::get(cx).clone();
-        let open_path = self.active_editor().map(|e| e.read(cx).path.clone());
         let root = self.tree_root(cx);
         let workspace = self.workspace();
         let (root_drop, root_external) = (root.clone(), root.clone());
@@ -1361,7 +1495,6 @@ impl Workbench {
             .id("files")
             .track_focus(&self.tree_focus)
             .on_key_down(cx.listener(Self::tree_key))
-            .track_scroll(&self.tree_scroll)
             .on_drop(cx.listener(
                 move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
                     this.tree_drop(vec![dragged.0.clone()], &root_drop, window, cx)
@@ -1375,16 +1508,23 @@ impl Workbench {
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .py(px(4.));
+            .min_h_0();
         if self.panel == SidebarPanel::Files {
-            let ignored = KitRgba::from_hex(&self.theme.git_ignored);
-            // Scratch's tree follows the tab: list its folder when it's new.
+            // Scratch's tree follows the tab: list its folder when it's new
+            // (once: kept with the workspace's other folders after).
             let rows = if workspace.children.contains_key(&root) {
                 tree_rows(workspace, &root)
             } else {
-                crate::workspace::list_dir(&root, settings.sidebar_show_hidden)
+                let entries = crate::workspace::list_dir(&root, settings.sidebar_show_hidden);
+                let (listed, folder) = (entries.clone(), root.clone());
+                let this = cx.entity();
+                cx.defer(move |cx| {
+                    this.update(cx, |this, cx| {
+                        this.workspace_mut().children.entry(folder).or_insert(listed);
+                        cx.notify();
+                    })
+                });
+                entries
                     .into_iter()
                     .map(|(name, is_dir)| TreeRow {
                         path: root.join(&name),
@@ -1394,127 +1534,23 @@ impl Workbench {
                     })
                     .collect()
             };
-            for (index, row) in rows.into_iter().enumerate() {
-                let expanded = workspace.expanded_dirs.contains(&row.path);
-                let selected = self.tree_selection.as_deref().or(open_path.as_deref())
-                    == Some(row.path.as_path());
-                let path = row.path.clone();
-                let is_dir = row.is_dir;
-                let status = self.git.tree_status(&row.path, p, ignored, cx);
-                let menu = self.tree_menu(row.path.clone(), row.is_dir, cx);
-                let row_element = div()
-                    .id(("file", index))
-                    .role(gpui_kit::Role::TreeItem)
-                    .aria_label(row.name.clone())
-                    .aria_level(row.depth + 1)
-                    .aria_selected(selected)
-                    .when(row.is_dir, |d| d.aria_expanded(expanded))
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(6.))
-                    // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
-                    .h(px(22.))
-                    .mx(px(4.))
-                    .pl(px(4. + 16. * row.depth as f32))
-                    .pr(px(8.))
-                    .rounded(px(5.))
-                    .text_size(px(13.))
-                    .when(selected, |d| d.bg(hsla(p.accent).opacity(0.2)))
-                    .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
-                    .on_click(
-                        cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
-                            this.tree_selection = Some(path.clone());
-                            if is_dir {
-                                this.toggle_dir(path.clone(), cx);
-                            } else if event.modifiers().alt {
-                                // ⌥-click: beside the current tab, as Swift's
-                                // tree opens it.
-                                this.open_beside(&path, window, cx);
-                            } else if event.click_count() >= 2 {
-                                // The second click of a double-click keeps the
-                                // preview.
-                                this.open_file(&path, window, cx);
-                            } else {
-                                this.preview_file(&path, window, cx);
-                            }
-                        }),
-                    )
-                    .child(div().w(px(16.)).flex_none().flex().justify_center().child(
-                        if row.is_dir {
-                            icon(
-                                if expanded {
-                                    "chevron-down"
-                                } else {
-                                    "chevron-right"
-                                },
-                                metrics::ICON_SMALL,
-                                p.text_tertiary,
-                            )
-                            .into_any_element()
-                        } else {
-                            div().into_any_element()
-                        },
-                    ))
-                    .child(
-                        gpui_kit::img(crate::file_icons::icon_path(
-                            &row.name, row.is_dir, expanded,
-                        ))
-                        .size(px(16.))
-                        .flex_none()
-                        // Right after the chevron, as Swift's row has it.
-                        .ml(px(-6.)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
-                            .child(row.name),
-                    )
-                    .children(status.filter(|(letter, _)| !letter.is_empty()).map(
-                        |(letter, color)| {
-                            div()
-                                .flex_none()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(10.))
-                                .font_weight(FontWeight::BOLD)
-                                .text_color(hsla(color))
-                                .child(letter)
-                        },
-                    ));
-                let (drag_path, drop_target, external_target) =
-                    (row.path.clone(), row.path.clone(), row.path.clone());
-                let drag_name = row
-                    .path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let row_element = row_element
-                    .on_drag(
-                        crate::file_tree_actions::DraggedPath(drag_path),
-                        move |_, _, _, cx| {
-                            cx.new(|_| crate::file_tree_actions::DragPreview(drag_name.clone()))
-                        },
-                    )
-                    .drag_over::<crate::file_tree_actions::DraggedPath>(|style, _, _, _| {
-                        style.bg(gpui_kit::black().opacity(0.12))
-                    })
-                    .on_drop(cx.listener(
-                        move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
-                            this.tree_drop(vec![dragged.0.clone()], &drop_target, window, cx)
-                        },
-                    ))
-                    .on_drop(cx.listener(
-                        move |this, paths: &gpui_kit::ExternalPaths, window, cx| {
-                            this.tree_drop(paths.paths().to_vec(), &external_target, window, cx)
-                        },
-                    ));
-                files = files.child(row_element.context_menu(menu));
-            }
+            // Only the rows on screen are built (Swift's LazyVStack).
+            let rows = Rc::new(rows);
+            files = files.child(
+                gpui_kit::uniform_list(
+                    "file-rows",
+                    rows.len(),
+                    cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                        let open_path = this.active_editor().map(|e| e.read(cx).path.clone());
+                        range
+                            .map(|index| this.tree_row(&rows[index], index, open_path.as_deref(), cx))
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .track_scroll(&self.tree_scroll)
+                .flex_1()
+                .py(px(4.)),
+            );
         }
         if self.panel == SidebarPanel::Search {
             let root = root.to_string_lossy().into_owned();

@@ -14,6 +14,7 @@
 //! is in (`sync_git`, run on every render, so Scratch follows its tab),
 //! the states it holds, and the panel's own view state.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -24,7 +25,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Icon;
 use gpui_kit::{
     actions, div, img, prelude::*, px, AnyElement, App, ClipboardItem, Context, ElementId, Entity,
-    FocusHandle, FontWeight, KeyBinding, KeyDownEvent, ScrollHandle, SharedString, Subscription,
+    FocusHandle, FontWeight, KeyBinding, KeyDownEvent, ListAlignment, ListState, SharedString, Subscription,
     WeakEntity, Window,
 };
 use impulse_git::operations::{self, CommitOptions, OperationAction, StashEntry};
@@ -59,7 +60,24 @@ enum Section {
     Untracked,
 }
 
+/// The sections in the order listed.
+const SECTIONS: [Section; 4] = [
+    Section::Conflicted,
+    Section::Staged,
+    Section::Unstaged,
+    Section::Untracked,
+];
+
 impl Section {
+    fn changes(self, snapshot: &RepoSnapshot) -> &[FileChange] {
+        match self {
+            Section::Conflicted => &snapshot.conflicted,
+            Section::Staged => &snapshot.staged,
+            Section::Unstaged => &snapshot.unstaged,
+            Section::Untracked => &snapshot.untracked,
+        }
+    }
+
     /// The working copy differs from the index (what the Diff View shows).
     fn has_working_copy_diff(self) -> bool {
         matches!(self, Section::Unstaged | Section::Untracked)
@@ -83,6 +101,16 @@ struct ListedRow {
     change: FileChange,
     section: Section,
     child: usize,
+}
+
+/// An item of the Changes list, as `GitPanel::list_state` counts them.
+#[derive(Clone, PartialEq)]
+enum ChangeItem {
+    Header(Section),
+    /// A file: its index in the section, and its path.
+    Row(Section, usize, String),
+    Stashes,
+    Stash(usize),
 }
 
 fn row_key(section: Section, path: &str) -> String {
@@ -117,7 +145,9 @@ pub(crate) struct GitPanel {
     selection: Option<String>,
     /// The file list's keyboard focus (Swift's `listFocused`).
     list_focus: FocusHandle,
-    list_scroll: ScrollHandle,
+    /// Only the rows on screen are built (Swift's List).
+    list_state: ListState,
+    list_items: RefCell<Vec<ChangeItem>>,
     _message_events: Subscription,
 }
 
@@ -159,7 +189,8 @@ impl GitPanel {
             recalled: String::new(),
             selection: None,
             list_focus: cx.focus_handle(),
-            list_scroll: ScrollHandle::new(),
+            list_state: ListState::new(0, ListAlignment::Top, px(200.)),
+            list_items: RefCell::new(Vec::new()),
             _message_events: events,
         }
     }
@@ -592,17 +623,24 @@ impl Workbench {
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.git.list_scroll)
-            .pb(px(8.));
+            .min_h_0();
         let clean = snapshot
             .as_ref()
             .is_some_and(|s| !s.has_changes() && s.operation.is_none());
         if let Some(snapshot) = &snapshot {
-            for element in self.sections(&repo, snapshot, focused, cx) {
-                list = list.child(element);
-            }
+            let items = self.change_items(snapshot);
+            self.sync_change_list(&items);
+            let (items, snapshot, repo) = (Rc::new(items), Rc::new(snapshot.clone()), repo.clone());
+            list = list.child(
+                gpui_kit::list(
+                    self.git.list_state.clone(),
+                    cx.processor(move |this, index: usize, _, cx| {
+                        this.change_item(&repo, &snapshot, &items[index], focused, cx)
+                    }),
+                )
+                .flex_1()
+                .pb(px(8.)),
+            );
         }
         div()
             .flex()
@@ -1075,7 +1113,7 @@ impl Workbench {
         let select = |panel: &mut Self, i: isize| {
             let row = &rows[i.clamp(0, rows.len() as isize - 1) as usize];
             panel.git.selection = Some(row.key.clone());
-            panel.git.list_scroll.scroll_to_item(row.child);
+            panel.git.list_state.scroll_to_reveal_item(row.child);
         };
         match event.keystroke.key.as_str() {
             "up" => select(self, index.map_or(rows.len() as isize, |i| i as isize) - 1),
@@ -1130,130 +1168,167 @@ impl Workbench {
         cx.notify();
     }
 
-    fn sections(
-        &self,
-        repo: &Entity<RepositoryState>,
-        snapshot: &RepoSnapshot,
-        focused: bool,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let mut out = Vec::new();
-        let groups = [
-            (Section::Conflicted, &snapshot.conflicted),
-            (Section::Staged, &snapshot.staged),
-            (Section::Unstaged, &snapshot.unstaged),
-            (Section::Untracked, &snapshot.untracked),
-        ];
-        for (section, changes) in groups {
+    /// The list's items in order (collapsed sections' rows left out).
+    fn change_items(&self, snapshot: &RepoSnapshot) -> Vec<ChangeItem> {
+        let mut items = Vec::new();
+        for section in SECTIONS {
+            let changes = section.changes(snapshot);
             if changes.is_empty() {
                 continue;
             }
-            let expanded = !self.git.collapsed.contains(&section);
-            let (id, title, count) = match section {
-                Section::Conflicted => (
-                    "sec-conflicts",
-                    "Conflicts".to_string(),
-                    Some(changes.len()),
-                ),
-                Section::Staged => ("sec-staged", "Staged".to_string(), Some(changes.len())),
-                Section::Unstaged => ("sec-changes", "Changes".to_string(), Some(changes.len())),
-                Section::Untracked if snapshot.untracked_truncated => (
-                    "sec-untracked",
-                    format!("Untracked (first {})", changes.len()),
-                    None,
-                ),
-                Section::Untracked => (
-                    "sec-untracked",
-                    "Untracked".to_string(),
-                    Some(changes.len()),
-                ),
-            };
-            let trailing: Vec<AnyElement> = match section {
-                Section::Conflicted => Vec::new(),
-                Section::Staged => {
-                    let repo = repo.clone();
-                    vec![self.icon_button(
-                        "unstage-all",
-                        "minus",
-                        20.,
-                        12.,
-                        cx,
-                        move |wb, window, cx| wb.git_unstage_all(&repo, window, cx),
-                    )]
-                }
-                Section::Unstaged => {
-                    let (r1, r2) = (repo.clone(), repo.clone());
-                    let (c1, c2) = (changes.clone(), changes.clone());
-                    vec![
-                        self.icon_button(
-                            "discard-all",
-                            "undo-2",
-                            20.,
-                            12.,
-                            cx,
-                            move |wb, window, cx| {
-                                wb.git_discard(&r1, c1.clone(), false, window, cx)
-                            },
-                        ),
-                        self.icon_button(
-                            "stage-all",
-                            "plus",
-                            20.,
-                            12.,
-                            cx,
-                            move |wb, window, cx| wb.git_stage(&r2, &c2, window, cx),
-                        ),
-                    ]
-                }
-                Section::Untracked => {
-                    let (repo, changes) = (repo.clone(), changes.clone());
-                    vec![self.icon_button(
-                        "stage-untracked",
-                        "plus",
-                        20.,
-                        12.,
-                        cx,
-                        move |wb, window, cx| wb.git_stage(&repo, &changes, window, cx),
-                    )]
-                }
-            };
-            out.push(self.section_header(
-                id,
-                title,
-                count,
-                expanded,
-                move |wb| {
-                    if !wb.git.collapsed.remove(&section) {
-                        wb.git.collapsed.insert(section);
-                    }
-                },
-                trailing,
-                cx,
-            ));
-            if expanded {
-                for change in changes {
-                    out.push(self.change_row(repo, change, section, focused, cx));
+            items.push(ChangeItem::Header(section));
+            if !self.git.collapsed.contains(&section) {
+                for (index, change) in changes.iter().enumerate() {
+                    items.push(ChangeItem::Row(section, index, change.path.clone()));
                 }
             }
         }
         if snapshot.stash_count > 0 {
-            let expanded = self.git.stashes_expanded;
-            out.push(self.section_header(
-                "sec-stashes",
-                "Stashes".into(),
-                Some(snapshot.stash_count),
-                expanded,
-                |wb| wb.git.stashes_expanded = !wb.git.stashes_expanded,
-                Vec::new(),
-                cx,
-            ));
-            if expanded {
-                for entry in self.git.stashes.clone() {
-                    out.push(self.stash_row(repo, entry, cx));
-                }
+            items.push(ChangeItem::Stashes);
+            if self.git.stashes_expanded {
+                items.extend((0..self.git.stashes.len()).map(ChangeItem::Stash));
             }
         }
-        out
+        items
+    }
+
+    /// Tell the list which items changed since the last frame, keeping
+    /// its scroll place and the heights it measured for the rest.
+    fn sync_change_list(&self, items: &[ChangeItem]) {
+        let mut listed = self.git.list_items.borrow_mut();
+        if *listed == items {
+            return;
+        }
+        let prefix = listed.iter().zip(items).take_while(|(a, b)| a == b).count();
+        let suffix = listed[prefix..]
+            .iter()
+            .rev()
+            .zip(items[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.git
+            .list_state
+            .splice(prefix..listed.len() - suffix, items.len() - prefix - suffix);
+        *listed = items.to_vec();
+    }
+
+    /// One item of the list: a section's header, a file or a stash.
+    fn change_item(
+        &self,
+        repo: &Entity<RepositoryState>,
+        snapshot: &RepoSnapshot,
+        item: &ChangeItem,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match item {
+            ChangeItem::Header(section) => {
+                let section = *section;
+                let changes = section.changes(snapshot);
+                let expanded = !self.git.collapsed.contains(&section);
+                let (id, title, count) = match section {
+                    Section::Conflicted => (
+                        "sec-conflicts",
+                        "Conflicts".to_string(),
+                        Some(changes.len()),
+                    ),
+                    Section::Staged => ("sec-staged", "Staged".to_string(), Some(changes.len())),
+                    Section::Unstaged => ("sec-changes", "Changes".to_string(), Some(changes.len())),
+                    Section::Untracked if snapshot.untracked_truncated => (
+                        "sec-untracked",
+                        format!("Untracked (first {})", changes.len()),
+                        None,
+                    ),
+                    Section::Untracked => (
+                        "sec-untracked",
+                        "Untracked".to_string(),
+                        Some(changes.len()),
+                    ),
+                };
+                let trailing: Vec<AnyElement> = match section {
+                    Section::Conflicted => Vec::new(),
+                    Section::Staged => {
+                        let repo = repo.clone();
+                        vec![self.icon_button(
+                            "unstage-all",
+                            "minus",
+                            20.,
+                            12.,
+                            cx,
+                            move |wb, window, cx| wb.git_unstage_all(&repo, window, cx),
+                        )]
+                    }
+                    Section::Unstaged => {
+                        let (r1, r2) = (repo.clone(), repo.clone());
+                        let (c1, c2) = (changes.to_vec(), changes.to_vec());
+                        vec![
+                            self.icon_button(
+                                "discard-all",
+                                "undo-2",
+                                20.,
+                                12.,
+                                cx,
+                                move |wb, window, cx| {
+                                    wb.git_discard(&r1, c1.clone(), false, window, cx)
+                                },
+                            ),
+                            self.icon_button(
+                                "stage-all",
+                                "plus",
+                                20.,
+                                12.,
+                                cx,
+                                move |wb, window, cx| wb.git_stage(&r2, &c2, window, cx),
+                            ),
+                        ]
+                    }
+                    Section::Untracked => {
+                        let (repo, changes) = (repo.clone(), changes.to_vec());
+                        vec![self.icon_button(
+                            "stage-untracked",
+                            "plus",
+                            20.,
+                            12.,
+                            cx,
+                            move |wb, window, cx| wb.git_stage(&repo, &changes, window, cx),
+                        )]
+                    }
+                };
+                self.section_header(
+                    id,
+                    title,
+                    count,
+                    expanded,
+                    move |wb| {
+                        if !wb.git.collapsed.remove(&section) {
+                            wb.git.collapsed.insert(section);
+                        }
+                    },
+                    trailing,
+                    cx,
+                )
+            }
+            ChangeItem::Row(section, index, _) => {
+                let change = &section.changes(snapshot)[*index];
+                self.change_row(repo, change, *section, focused, cx)
+            }
+            ChangeItem::Stashes => {
+                let expanded = self.git.stashes_expanded;
+                self.section_header(
+                    "sec-stashes",
+                    "Stashes".into(),
+                    Some(snapshot.stash_count),
+                    expanded,
+                    |wb| wb.git.stashes_expanded = !wb.git.stashes_expanded,
+                    Vec::new(),
+                    cx,
+                )
+            }
+            ChangeItem::Stash(index) => match self.git.stashes.get(*index) {
+                Some(entry) => self.stash_row(repo, entry.clone(), cx),
+                None => div().into_any_element(),
+            },
+        }
     }
 
     fn change_row(

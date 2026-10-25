@@ -207,7 +207,7 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           operations serialized with safety snapshots, CLI
                           reads through RepositoryState::read_git, restricted
                           in untrusted folders; changes_panel.rs: the Changes
-                          panel and commit composer, rows opening Review,
+                          panel (a GPUI list of ChangeItems) and commit composer, rows opening Review,
                           the list's keys (Show Changes focuses it, the
                           first row selected) and Move to New Task for one
                           file (TaskSheet::move_paths);

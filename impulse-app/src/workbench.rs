@@ -108,7 +108,7 @@ pub struct Workbench {
     undo_close: Option<(u64, std::time::Instant)>,
     /// The settings.json warning dismissed (`SettingsStore::warning`'s count).
     pub(crate) dismissed_settings_warning: Option<u64>,
-    pub(crate) tree_scroll: gpui_kit::ScrollHandle,
+    pub(crate) tree_scroll: gpui_kit::UniformListScrollHandle,
     /// Closed tabs and workspaces, newest last, each with its id.
     closed: Vec<(u64, Closed)>,
     /// The last close recorded: its id and what to call it (for the Undo
@@ -243,7 +243,7 @@ impl Workbench {
             panel: SidebarPanel::Files,
             tree_focus: cx.focus_handle(),
             tree_selection: None,
-            tree_scroll: gpui_kit::ScrollHandle::new(),
+            tree_scroll: gpui_kit::UniformListScrollHandle::new(),
             dismissed_settings_warning: None,
             undo_close: None,
             lsp_config_stamp: None,

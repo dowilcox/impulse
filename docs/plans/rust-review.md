@@ -47,7 +47,11 @@ real desktop, since Xvfb's windows are decorated by the server).
 
 Performance: P3 (a repository notifies only when a refresh changed
 something, `RepositoryState::generation`; editors re-read only then, and
-blame again only when HEAD or the file on disk moved). Git: G3 (waiting
+blame again only when HEAD or the file on disk moved), P5 (the file
+tree is a `uniform_list` building only the rows on screen; Scratch lists
+a new folder once), P11 (the Changes panel is a `list` over
+`ChangeItem`s, spliced where they changed; the Problems counts are kept
+in the store) and P14 (saving no longer lists the tree again). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 

@@ -30,6 +30,8 @@ const MONO_FONT: &str = "JetBrains Mono";
 #[derive(Default)]
 pub struct ProblemStore {
     by_path: HashMap<String, BTreeMap<String, Vec<Problem>>>,
+    /// Kept with each change: the status bar reads them every frame.
+    counts: ProblemCounts,
 }
 
 impl ProblemStore {
@@ -47,6 +49,17 @@ impl ProblemStore {
         if servers.is_empty() {
             self.by_path.remove(path);
         }
+        if changed {
+            let mut counts = ProblemCounts::default();
+            for problem in self.by_path.values().flat_map(|s| s.values().flatten()) {
+                match problem.severity {
+                    Severity::Error => counts.errors += 1,
+                    Severity::Warning => counts.warnings += 1,
+                    Severity::Info | Severity::Hint => counts.others += 1,
+                }
+            }
+            self.counts = counts;
+        }
         changed
     }
 
@@ -58,7 +71,7 @@ impl ProblemStore {
     }
 
     pub fn counts(&self) -> ProblemCounts {
-        problems::counts(&self.all())
+        self.counts
     }
 
     /// The files any server reported on.

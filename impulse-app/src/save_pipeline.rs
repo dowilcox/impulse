@@ -109,7 +109,8 @@ impl Workbench {
     }
 
     /// After the write (and formatter): the commands on save, in trusted
-    /// folders, and the file tree's git marks.
+    /// folders. The tree's watcher and the repository's refresh show the
+    /// file's new state.
     fn after_save(
         &mut self,
         editor: &Entity<EditorTab>,
@@ -117,7 +118,6 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.reload_tree(cx);
         let file = path.to_string_lossy().into_owned();
         if !self.trust.is_trusted(&file) {
             return;
