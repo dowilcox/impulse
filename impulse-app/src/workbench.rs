@@ -303,6 +303,43 @@ impl Workbench {
         self.add_tab(0, terminal, window, cx);
     }
 
+    /// What a launch asked for, on top of a restored session: `cwd`'s
+    /// workspace (added if it's new), `commands` in a new terminal there,
+    /// and `open`'s files (relative to `cwd`, else the process's folder).
+    pub(crate) fn apply_launch(
+        &mut self,
+        cwd: Option<String>,
+        commands: Vec<String>,
+        open: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base = cwd
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok())
+            .map(|p| crate::workspace::normalize(&p));
+        if let Some(folder) = cwd.as_deref() {
+            let folder = crate::workspace::normalize(Path::new(folder));
+            if folder != crate::workspace::home() {
+                self.open_workspace(&folder, window, cx);
+            }
+        }
+        if !commands.is_empty() {
+            let dir = self.workspace().default_directory();
+            let terminal = self.new_terminal(dir, commands, window, cx);
+            let active = self.active;
+            self.add_tab(active, terminal, window, cx);
+        }
+        for path in open {
+            let path = match &base {
+                Some(base) => base.join(path),
+                None => PathBuf::from(path),
+            };
+            self.open_file(&path, window, cx);
+        }
+    }
+
     pub(crate) fn next_id(&mut self) -> u64 {
         self.next_id += 1;
         self.next_id
@@ -1431,7 +1468,8 @@ impl Workbench {
             "find" if self.active_editor().is_some() => {
                 if let Some(editor) = self.active_editor().cloned() {
                     editor.update(cx, |tab, cx| {
-                        tab.state.update(cx, |state, cx| state.open_search(false, cx))
+                        tab.state
+                            .update(cx, |state, cx| state.open_search(false, cx))
                     });
                 }
             }

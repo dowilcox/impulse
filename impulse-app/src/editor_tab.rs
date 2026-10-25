@@ -722,7 +722,13 @@ impl EditorTab {
         cx.spawn_in(window, async move |tab, cx| match task.await {
             Ok(edits) => {
                 let _ = cx.update(|window, cx| {
-                    crate::lsp_hub::apply_edits(&state, &edits, utf32, window, cx)
+                    // The edits are for the text as it was asked about: typed
+                    // over since, they'd land in the wrong places, so they're
+                    // dropped, as Monaco cancels a format when its model
+                    // changes.
+                    if *state.read(cx).text() == text {
+                        crate::lsp_hub::apply_edits(&state, &edits, utf32, window, cx)
+                    }
                 });
             }
             Err(error) => {
@@ -1107,23 +1113,28 @@ impl EditorTab {
             self.read_only = true;
         }
         self.line_ending = LineEnding::detect(&file.text);
+        self.bom = file.bom;
         let disk = LineEnding::normalize(&file.text);
-        let state = self.state.clone();
-        self.reloading = true;
-        state.update(cx, |state, cx| {
-            let old = state.value().to_string();
-            let (range, replacement) = impulse_lsp::edits::changed_span(&old, &disk);
-            if range.is_empty() && replacement.is_empty() {
-                return;
-            }
+        let old = self.state.read(cx).value().to_string();
+        let (range, replacement) = impulse_lsp::edits::changed_span(&old, &disk);
+        // Only a reload that changes the buffer raises the change event the
+        // flag answers; set with nothing to change, it would swallow the
+        // user's next edit.
+        if !(range.is_empty() && replacement.is_empty()) {
+            self.reloading = true;
             let utf16 = |byte: usize| old[..byte].encode_utf16().count();
-            state.replace_text_in_range(
-                Some(utf16(range.start)..utf16(range.end)),
-                replacement,
-                window,
-                cx,
-            );
-        });
+            self.state.update(cx, |state, cx| {
+                state.replace_text_in_range(
+                    Some(utf16(range.start)..utf16(range.end)),
+                    replacement,
+                    window,
+                    cx,
+                );
+            });
+            if self.diff.is_some() {
+                self.refresh_diff(std::time::Duration::ZERO, cx);
+            }
+        }
         // Reloading isn't an edit of the user's.
         self.dirty = false;
         self.stamp = text_file::stamp(&self.path);
@@ -1937,8 +1948,12 @@ impl EditorTab {
             let state = self.state.read(cx);
             let offset = state.cursor();
             let text = state.text();
+            // The character before the cursor (whole, however many bytes).
             let before = (offset > 0)
-                .then(|| text.slice(offset.saturating_sub(4)..offset).to_string())
+                .then(|| {
+                    let start = text.floor_char_boundary(offset - 1);
+                    text.slice(start..offset).to_string()
+                })
                 .and_then(|s| s.chars().last());
             (before, offset)
         };
@@ -2156,6 +2171,21 @@ struct WordCompletions {
 struct OpenDocuments(Vec<gpui_kit::WeakEntity<EditorTab>>);
 
 impl gpui_kit::Global for OpenDocuments {}
+
+/// The files with unsaved edits in any window's editor.
+pub(crate) fn unsaved_paths(cx: &gpui_kit::App) -> Vec<PathBuf> {
+    cx.try_global::<OpenDocuments>()
+        .map(|docs| {
+            docs.0
+                .iter()
+                .filter_map(|tab| tab.upgrade())
+                .map(|tab| tab.read(cx))
+                .filter(|tab| tab.dirty)
+                .map(|tab| tab.path.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// Very large documents aren't scanned on every keystroke.
 const MAX_WORD_SCAN: usize = 2 * 1024 * 1024;

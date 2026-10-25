@@ -137,7 +137,8 @@ fn paint_lines(
     for (i, row) in (layout.first..layout.total.min(layout.first + fits)).enumerate() {
         let start = text.line_start_offset(row);
         // Only as much of the line as can show.
-        let end = start + text.line_len(row).min(MAX_COLUMNS * 4);
+        // (cut on a character boundary).
+        let end = text.floor_char_boundary(start + text.line_len(row).min(MAX_COLUMNS * 4));
         let line = text.slice(start..end).to_string();
         let y = bounds.top() + px(i as f32 * ROW_HEIGHT);
         for (column, columns) in minimap::runs(&line, tab_size, MAX_COLUMNS) {

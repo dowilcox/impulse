@@ -334,6 +334,73 @@ impl Workbench {
         );
     }
 
+    /// Stage, unstage or revert part of a file (Review): a revert takes a
+    /// snapshot first and offers Undo; a failure shows as a dialog (Swift's
+    /// `GitActions.apply`). `done` gets whether it worked.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn git_apply(
+        &mut self,
+        repo: &Entity<RepositoryState>,
+        target: operations::PatchTarget,
+        selection: impulse_git::patch::PatchSelection,
+        change: FileChange,
+        expected: std::collections::HashMap<usize, String>,
+        options: impulse_git::scoped_diff::DiffOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Workbench, bool, &mut Window, &mut Context<Workbench>) + 'static,
+    ) {
+        let discard = target == operations::PatchTarget::Discard;
+        let reason = discard.then(|| format!("Revert changes in {}", change.path));
+        let (path, old_path) = (change.path.clone(), change.old_path.clone());
+        let repo_for_undo = repo.clone();
+        self.git_run(
+            repo,
+            None,
+            reason,
+            discard,
+            move |root, _| {
+                operations::apply(
+                    target,
+                    &selection,
+                    &path,
+                    old_path.as_deref(),
+                    &expected,
+                    &options,
+                    root,
+                )
+            },
+            window,
+            cx,
+            move |this, result, snapshot, window, cx| {
+                let worked = result.is_ok();
+                match result {
+                    Ok(()) => {
+                        if let (true, Some(snapshot)) = (discard, snapshot) {
+                            this.offer_restore(
+                                &repo_for_undo,
+                                format!("Reverted changes in {}", file_name(&change.path)),
+                                snapshot,
+                                vec![change.path.clone()],
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        let title = match target {
+                            operations::PatchTarget::Stage => "Couldn't stage the selection",
+                            operations::PatchTarget::Unstage => "Couldn't unstage the selection",
+                            operations::PatchTarget::Discard => "Couldn't revert the selection",
+                        };
+                        this.present_git_error(&error, title, window, cx);
+                    }
+                }
+                done(this, worked, window, cx);
+            },
+        );
+    }
+
     // MARK: Discarding files
 
     /// Discard working-tree changes (tracked) or move untracked files to the

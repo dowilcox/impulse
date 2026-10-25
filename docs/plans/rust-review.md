@@ -13,6 +13,14 @@ Each finding was checked against the code on both sides. The ones marked
 reproduced in the running app. Paths are under `impulse-app/src/` unless
 another crate is named.
 
+## Progress
+
+Fixed so far: E1, E6 (crashes on multibyte text), G1 with G2, G6 and G7
+(Review's stage, unstage and revert go through the workbench's git
+actions: confirmation, snapshot and Undo for reverts, errors as dialogs,
+busy marks kept through refreshes), G5, W3, E4 (with the BOM and Diff
+View parts of E11 and E7), E3, W16.
+
 ## What to fix first
 
 1. **Crashes and lost work**: the editor crash on non-ASCII typing (E1),

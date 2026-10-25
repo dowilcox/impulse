@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use gpui_kit::{AppContext as _, Context, Window};
+use gpui_kit::{AppContext as _, Context, Entity, Window};
 use impulse_git::types::DiffScope;
 
 use crate::history_view::HistoryView;
@@ -120,8 +120,8 @@ impl Workbench {
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
         let review = cx.new(|cx| ReviewView::new(root, scope, &theme, &palette, cx));
         cx.observe(&review, |_, _, cx| cx.notify()).detach();
-        cx.subscribe_in(&review, window, |workbench, _, event, window, cx| {
-            workbench.review_event(event, window, cx)
+        cx.subscribe_in(&review, window, |workbench, review, event, window, cx| {
+            workbench.review_event(review, event, window, cx)
         })
         .detach();
         Surface::Review(review)
@@ -215,15 +215,21 @@ impl Workbench {
         })
         .detach();
         let review = history.read(cx).review().clone();
-        cx.subscribe_in(&review, window, |workbench, _, event, window, cx| {
-            workbench.review_event(event, window, cx)
+        cx.subscribe_in(&review, window, |workbench, review, event, window, cx| {
+            workbench.review_event(review, event, window, cx)
         })
         .detach();
         Surface::History(history)
     }
 
     /// What a Review (or History's) asks of the workbench.
-    fn review_event(&mut self, event: &ReviewEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn review_event(
+        &mut self,
+        review: &Entity<crate::review_view::ReviewView>,
+        event: &ReviewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event {
             ReviewEvent::OpenFile(path, line) => {
                 self.open_file(&PathBuf::from(path), window, cx);
@@ -234,6 +240,57 @@ impl Workbench {
             }
             ReviewEvent::OpenDiff(path) => self.open_diff_editor(path, window, cx),
             ReviewEvent::ShowChanges => self.run_command("show_changes", window, cx),
+            ReviewEvent::Git(request) => self.review_git(review, request.clone(), window, cx),
+        }
+    }
+
+    /// Review's stage, unstage or revert, on the repository's queue (Swift's
+    /// `reviewFileAction` and `reviewHunkAction`).
+    fn review_git(
+        &mut self,
+        review: &Entity<crate::review_view::ReviewView>,
+        request: crate::review_view::ReviewGit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::review_view::Action;
+        use impulse_git::operations::PatchTarget;
+        let root = review.read(cx).root.clone();
+        let repo = crate::repository_state::RepositoryStore::state(&root, cx);
+        let path = request.change.path.clone();
+        let review = review.downgrade();
+        let done =
+            move |_: &mut Workbench, _: bool, _: &mut Window, cx: &mut Context<Workbench>| {
+                let _ = review.update(cx, |review, cx| review.git_done(&path, cx));
+            };
+        match request.part {
+            None => {
+                let changes = vec![request.change];
+                match request.action {
+                    Action::Stage => self.git_stage(&repo, &changes, window, cx),
+                    Action::Unstage => self.git_unstage(&repo, &changes, window, cx),
+                    Action::Revert => self.git_discard(&repo, changes, false, window, cx),
+                }
+                done(self, true, window, cx);
+            }
+            Some((selection, expected)) => {
+                let target = match request.action {
+                    Action::Stage => PatchTarget::Stage,
+                    Action::Unstage => PatchTarget::Unstage,
+                    Action::Revert => PatchTarget::Discard,
+                };
+                self.git_apply(
+                    &repo,
+                    target,
+                    selection,
+                    request.change,
+                    expected,
+                    request.options,
+                    window,
+                    cx,
+                    done,
+                );
+            }
         }
     }
 }

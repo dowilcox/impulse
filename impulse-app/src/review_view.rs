@@ -45,10 +45,24 @@ enum Layout {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Action {
+pub enum Action {
     Stage,
     Unstage,
     Revert,
+}
+
+/// A stage, unstage or revert for the workbench to run on the repository's
+/// queue, as Swift's `GitActions` does for Review: a whole file goes
+/// through the Changes panel's actions (Revert confirms, snapshots and
+/// offers Undo), part of one through `operations::apply` (a revert takes a
+/// snapshot first and offers Undo), and failures show as a dialog.
+#[derive(Clone)]
+pub struct ReviewGit {
+    pub action: Action,
+    pub change: FileChange,
+    /// The hunk's lines, or whole hunks, and their ids as shown.
+    pub part: Option<(impulse_git::patch::PatchSelection, HashMap<usize, String>)>,
+    pub options: DiffOptions,
 }
 
 /// One changed file and its view state.
@@ -305,6 +319,8 @@ pub enum ReviewEvent {
     OpenDiff(PathBuf),
     /// The Changes panel, to commit.
     ShowChanges,
+    /// Stage, unstage or revert; `git_done` follows when it's finished.
+    Git(ReviewGit),
 }
 
 impl gpui_kit::EventEmitter<ReviewEvent> for ReviewView {}
@@ -445,6 +461,7 @@ impl ReviewView {
                     }
                     Err(error) => {
                         view.files.clear();
+                        view.focused = None;
                         view.message = Some(error);
                     }
                 }
@@ -520,6 +537,13 @@ impl ReviewView {
             .iter()
             .map(|f| (f.change.path.clone(), (f.expanded, f.viewed)))
             .collect();
+        // A stage or revert still running stays guarded through a refresh.
+        let busy: HashSet<String> = self
+            .files
+            .iter()
+            .filter(|f| f.busy)
+            .map(|f| f.change.path.clone())
+            .collect();
         self.files = changes
             .into_iter()
             .zip(diffs)
@@ -539,7 +563,7 @@ impl ReviewView {
                     changed_since_viewed: viewed_at.is_some() && !is_viewed,
                     viewed: is_viewed,
                     expanded,
-                    busy: false,
+                    busy: busy.contains(&change.path),
                     error,
                     diff,
                     change,
@@ -726,69 +750,40 @@ impl ReviewView {
             return;
         }
         file.selection = None;
-        file.busy = true;
-        let root = self.root.clone();
-        let path = file.change.path.clone();
-        let old_path = file.change.old_path.clone();
-        let untracked = file.change.status == ChangeStatus::Untracked;
-        let options = self.options;
-        let expected: HashMap<usize, String> = hunk
-            .and_then(|h| {
-                file.diff
-                    .as_ref()
-                    .and_then(|d| d.hunk_ids.get(h))
-                    .map(|id| (h, id.clone()))
-            })
-            .into_iter()
-            .collect();
-        cx.notify();
-        let task = cx.background_spawn(async move {
-            use impulse_git::operations as ops;
-            let result = match (action, hunk) {
-                (Action::Stage, None) => ops::stage(&[path.as_str()], &root),
-                (Action::Unstage, None) => ops::unstage(&[path.as_str()], &root, false),
-                (Action::Revert, None) if untracked => {
-                    // An untracked file "reverted" is a file removed: to the trash.
-                    trash::delete(std::path::Path::new(&root).join(&path))
-                        .map_err(|e| impulse_git::OperationError::Invalid(e.to_string()))
-                }
-                (Action::Revert, None) => ops::discard_working_tree(&[path.as_str()], &root),
-                (action, Some(h)) => {
-                    let target = match action {
-                        Action::Stage => ops::PatchTarget::Stage,
-                        Action::Unstage => ops::PatchTarget::Unstage,
-                        Action::Revert => ops::PatchTarget::Discard,
-                    };
-                    let selection = match &lines {
-                        Some(lines) => impulse_git::patch::PatchSelection::lines(lines, h),
-                        None => impulse_git::patch::PatchSelection::whole_hunks(&[h]),
-                    };
-                    ops::apply(
-                        target,
-                        &selection,
-                        &path,
-                        old_path.as_deref(),
-                        &expected,
-                        &options,
-                        &root,
-                    )
-                }
+        let part = hunk.map(|h| {
+            let selection = match &lines {
+                Some(lines) => impulse_git::patch::PatchSelection::lines(lines, h),
+                None => impulse_git::patch::PatchSelection::whole_hunks(&[h]),
             };
-            result.map_err(|e| e.message())
+            let expected = file
+                .diff
+                .as_ref()
+                .and_then(|d| d.hunk_ids.get(h))
+                .map(|id| (h, id.clone()))
+                .into_iter()
+                .collect();
+            (selection, expected)
         });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |view, cx| {
-                if let Some(file) = view.files.get_mut(index) {
-                    file.busy = false;
-                }
-                if let Err(error) = result {
-                    view.message = Some(error);
-                }
-                view.refresh(cx);
-            });
-        })
-        .detach();
+        // A file's own actions ask first or finish at once; a hunk's run.
+        if part.is_some() {
+            file.busy = true;
+        }
+        let request = ReviewGit {
+            action,
+            change: file.change.clone(),
+            part,
+            options: self.options,
+        };
+        cx.emit(ReviewEvent::Git(request));
+        cx.notify();
+    }
+
+    /// A stage, unstage or revert the workbench ran has finished.
+    pub fn git_done(&mut self, path: &str, cx: &mut Context<Self>) {
+        if let Some(file) = self.files.iter_mut().find(|f| f.change.path == path) {
+            file.busy = false;
+        }
+        self.refresh(cx);
     }
 
     // MARK: Keys
@@ -869,8 +864,11 @@ impl ReviewView {
                 }
             }
             "v" => {
-                if let Some((file, _)) = focused {
-                    let viewed = !self.files[file].viewed;
+                if let Some(viewed) = focused
+                    .and_then(|(f, _)| self.files.get(f))
+                    .map(|f| !f.viewed)
+                {
+                    let file = focused.map_or(0, |(f, _)| f);
                     self.set_viewed(file, viewed, cx);
                 }
             }

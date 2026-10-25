@@ -176,7 +176,15 @@ pub struct Args {
 
 /// The arguments, and whether any asked for a particular folder, command
 /// or file (then the saved session isn't restored).
-fn parse_args() -> (Args, bool) {
+/// What a launch asked for beyond restoring the session: a folder
+/// (`--cwd`), commands (`--run`) and files (`--open`).
+struct Launch {
+    cwd: Option<String>,
+    commands: Vec<String>,
+    open: Vec<String>,
+}
+
+fn parse_args() -> (Args, Launch) {
     let mut args = Args {
         theme: None,
         cwd: std::env::current_dir()
@@ -190,7 +198,7 @@ fn parse_args() -> (Args, bool) {
             impulse_kit::paths::trusted_folders_file(cfg!(debug_assertions)),
         ))),
     };
-    let mut explicit = false;
+    let mut cwd_given = false;
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         if flag == "--trust" {
@@ -204,21 +212,20 @@ fn parse_args() -> (Args, bool) {
         match (flag.as_str(), it.next()) {
             ("--theme", Some(v)) => args.theme = Some(v),
             ("--cwd", Some(v)) => {
-                explicit = true;
+                cwd_given = true;
                 args.cwd = v
             }
-            ("--run", Some(v)) => {
-                explicit = true;
-                args.commands.push(v)
-            }
-            ("--open", Some(v)) => {
-                explicit = true;
-                args.open.push(v)
-            }
+            ("--run", Some(v)) => args.commands.push(v),
+            ("--open", Some(v)) => args.open.push(v),
             _ => {}
         }
     }
-    (args, explicit)
+    let launch = Launch {
+        cwd: cwd_given.then(|| args.cwd.clone()),
+        commands: args.commands.clone(),
+        open: args.open.clone(),
+    };
+    (args, launch)
 }
 
 fn main() {
@@ -238,7 +245,7 @@ fn main() {
     #[cfg(debug_assertions)]
     debug_snapshot::configure();
     #[allow(unused_mut)]
-    let (mut args, explicit) = parse_args();
+    let (mut args, launch) = parse_args();
     #[cfg(debug_assertions)]
     if let Some(config) = debug_snapshot::config() {
         if let Some(cwd) = config.cwd.clone() {
@@ -278,7 +285,10 @@ fn main() {
                 workbench_trust::shutdown_servers(cx)
             })
             .detach();
-            let saved = (!explicit).then(|| session::saved(cx)).flatten();
+            // The saved session comes back even when launched to open
+            // something, which then opens on top of it (as the Swift app
+            // does): otherwise the next quit would save over it.
+            let saved = session::saved(cx);
             // A snapshot opens its own session file, or the default window.
             #[cfg(debug_assertions)]
             let saved = match debug_snapshot::is_active() {
@@ -305,6 +315,27 @@ fn main() {
                         if index == active {
                             front = opened;
                         }
+                    }
+                    let target = front.or_else(|| session::workbenches(cx).first().map(|w| w.1));
+                    if let Some(workbench) = target.and_then(|handle| {
+                        session::workbenches(cx)
+                            .into_iter()
+                            .find(|(_, h)| *h == handle)
+                            .map(|(w, _)| w)
+                    }) {
+                        let _ = target.map(|handle| {
+                            handle.update(cx, |_, window, cx| {
+                                workbench.update(cx, |workbench, cx| {
+                                    workbench.apply_launch(
+                                        launch.cwd.clone(),
+                                        launch.commands.clone(),
+                                        launch.open.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            })
+                        });
                     }
                 }
                 None => {

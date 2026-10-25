@@ -97,16 +97,9 @@ impl Workbench {
         }
     }
 
-    /// Paths with an editor holding unsaved edits.
+    /// Paths with an editor holding unsaved edits, in any window.
     fn dirty_paths(&self, cx: &gpui_kit::App) -> BTreeSet<PathBuf> {
-        self.workspaces
-            .iter()
-            .flat_map(|w| w.all_surfaces())
-            .filter_map(Surface::editor)
-            .map(|e| e.read(cx))
-            .filter(|e| e.dirty)
-            .map(|e| e.path.clone())
-            .collect()
+        crate::editor_tab::unsaved_paths(cx).into_iter().collect()
     }
 
     /// Show every open editor of `paths` what's on disk now.
