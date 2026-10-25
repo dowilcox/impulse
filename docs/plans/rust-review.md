@@ -15,7 +15,16 @@ another crate is named.
 
 ## Progress
 
-Fixed so far: E1, E6 (crashes on multibyte text), G1 with G2, G6 and G7
+Every finding has been worked through. Still open, each noted in place
+below:
+- W2's edge resizing needs a check on a real Linux desktop.
+- Keyboard folding waits on GPUI Kit (E15).
+- A Services menu item needs the bundle's Info.plist (W10).
+- On macOS, `osascript` notifications can't be withdrawn (A4).
+- The macOS build is type-checked (`scripts/check-macos.sh`) but not yet
+  run on a Mac.
+
+Fixed: E1, E6 (crashes on multibyte text), G1 with G2, G6 and G7
 (Review's stage, unstage and revert go through the workbench's git
 actions: confirmation, snapshot and Undo for reverts, errors as dialogs,
 busy marks kept through refreshes), G5, W3, E4 (with the BOM and Diff
@@ -50,7 +59,7 @@ Impulse isn't in front flags the pane), A4 (desktop notifications and the
 Dock's bounce wait for Impulse itself to be out of front, not just the
 window, `agent_notify::app_in_front`; on Linux a terminal's notifications
 are withdrawn when its attention clears and only its latest ten stay up,
-by the id `notify-send --print-id` gives), A5 (each window works out its
+by the id `notify-send --print-id` gives; `osascript` gives none, so on the Mac they stay), A5 (each window works out its
 task states on its own, a refresh asked for meanwhile following the one
 running), A6 (an agent hears "declined" only when the user was asked) and
 A7 (the Quick Terminal's hooks with no window open get a window to answer
