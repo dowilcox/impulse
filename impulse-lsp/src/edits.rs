@@ -5,7 +5,7 @@
 //! and `\n`, `\r\n` and `\r` all end lines. Columns are characters (UTF-32)
 //! or UTF-16 code units, whichever the server uses.
 
-use lsp_types::{Position, TextEdit};
+use lsp_types::{Position, TextDocumentContentChangeEvent, TextEdit};
 
 /// Where each line starts, and where its content ends (before its break).
 fn lines(text: &str) -> Vec<(usize, usize)> {
@@ -105,6 +105,58 @@ pub fn changed_span<'a>(old: &str, new: &'a str) -> (std::ops::Range<usize>, &'a
         new_end += 1;
     }
     (prefix..old_end, &new[prefix..new_end])
+}
+
+/// The LSP position of byte `offset` in `text` (`\n`, `\r\n` and `\r` end
+/// lines; columns in characters or UTF-16 code units).
+pub fn position_of(text: &str, offset: usize, utf32: bool) -> Position {
+    let bytes = text.as_bytes();
+    let (mut line, mut start, mut i) = (0u32, 0usize, 0usize);
+    while i < offset {
+        match bytes[i] {
+            b'\n' => {
+                line += 1;
+                start = i + 1;
+            }
+            b'\r' => {
+                if bytes.get(i + 1) == Some(&b'\n') && i + 1 < offset {
+                    i += 1;
+                }
+                line += 1;
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let column = text[start..offset]
+        .chars()
+        .map(|c| if utf32 { 1 } else { c.len_utf16() as u32 })
+        .sum();
+    Position::new(line, column)
+}
+
+/// The change from `old` to `new` as one incremental `didChange` event:
+/// the smallest range, widened so it never splits a `\r\n`.
+pub fn content_change(old: &str, new: &str, utf32: bool) -> TextDocumentContentChangeEvent {
+    let (range, _) = changed_span(old, new);
+    let suffix = old.len() - range.end;
+    let (mut start, mut old_end) = (range.start, range.end);
+    if start > 0 && old.as_bytes()[start - 1] == b'\r' {
+        start -= 1;
+    }
+    if old_end < old.len() && old.as_bytes()[old_end] == b'\n' && old_end > 0 {
+        old_end += 1;
+    }
+    let new_end = new.len() - (old.len() - old_end).min(suffix);
+    TextDocumentContentChangeEvent {
+        range: Some(lsp_types::Range::new(
+            position_of(old, start, utf32),
+            position_of(old, old_end, utf32),
+        )),
+        range_length: None,
+        text: new[start..new_end].to_string(),
+    }
 }
 
 fn floor_boundary(text: &str, mut index: usize) -> usize {
@@ -223,6 +275,52 @@ mod tests {
             apply_text_edits(text, &edits, true).as_deref(),
             Some("fn main() {\n    let x = 1;\n}\n")
         );
+    }
+
+    /// Applying the incremental change to the old text gives the new one.
+    fn check_change(old: &str, new: &str) {
+        let change = content_change(old, new, false);
+        let edit = TextEdit {
+            range: change.range.unwrap(),
+            new_text: change.text,
+        };
+        assert_eq!(
+            apply_text_edits(old, &[edit], false).as_deref(),
+            Some(new),
+            "{old:?} -> {new:?}"
+        );
+    }
+
+    #[test]
+    fn incremental_changes_rebuild_the_text() {
+        check_change("", "a");
+        check_change("abc", "abc");
+        check_change("let x = 1;\nlet y = 2;\n", "let x = 1;\nlet yy = 2;\n");
+        check_change("one\ntwo\nthree", "one\nthree");
+        check_change("a\r\nb", "a\r\nxb");
+        check_change("a\r\nb", "a\rb");
+        check_change("a\rb", "a\r\nb");
+        check_change("a\nb", "a\r\nb");
+        check_change("😀 x", "😀 yx");
+        check_change("é\r\n\r\nz", "é\r\nz");
+        // Every pair of short texts over line breaks and wide characters.
+        let parts = ["a", "\r", "\n", "é", "😀"];
+        let mut texts = vec![String::new()];
+        for _ in 0..3 {
+            let longer: Vec<String> = texts
+                .iter()
+                .filter(|t| t.chars().count() == texts.last().unwrap().chars().count())
+                .flat_map(|t| parts.iter().map(move |p| format!("{t}{p}")))
+                .collect();
+            texts.extend(longer);
+        }
+        for old in &texts {
+            for new in &texts {
+                check_change(old, new);
+            }
+        }
+        assert_eq!(position_of("a\r\nb😀c", 8, false), Position::new(1, 3));
+        assert_eq!(position_of("a\r\nb😀c", 8, true), Position::new(1, 2));
     }
 
     #[test]

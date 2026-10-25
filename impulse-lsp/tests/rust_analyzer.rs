@@ -69,14 +69,18 @@ fn diagnostics_hover_and_completion() {
     let uri = path_uri(&main).unwrap();
     client.did_open(uri.clone(), "rust", 1, text.to_string());
 
-    // rust-analyzer's own type check reports the mismatch on line 2.
+    // rust-analyzer's own type check reports the mismatch on line 2, once
+    // the workspace is loaded (an earlier, quicker report says "expected
+    // u32" and comes before hovers can answer).
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut mismatch = None;
     while mismatch.is_none() && Instant::now() < deadline {
         match events.recv_blocking() {
             Ok(ServerEvent::Diagnostics(_, params)) if params.uri == uri => {
                 mismatch = params.diagnostics.into_iter().find(|d| {
-                    d.severity == Some(DiagnosticSeverity::ERROR) && d.range.start.line == 1
+                    d.severity == Some(DiagnosticSeverity::ERROR)
+                        && d.range.start.line == 1
+                        && d.message.contains("mismatched")
                 });
             }
             Ok(ServerEvent::Exited { .. }) | Err(_) => {
@@ -123,6 +127,20 @@ fn diagnostics_hover_and_completion() {
         labels.iter().any(|l| l.starts_with("push_str")),
         "String methods in {labels:?}"
     );
+
+    // An edit sent as a changed range (rust-analyzer syncs incrementally):
+    // the server's text is the editor's, so a new line's hover is right.
+    assert!(client.incremental_sync());
+    let edited = text.replace("    name.\n", "    let total = name.len();\n    name.\n");
+    client.did_change_from(uri.clone(), 2, text, &edited);
+    let hover = retry(|| {
+        block_on(client.request::<HoverRequest>(HoverParams {
+            text_document_position_params: position(3, 9),
+            work_done_progress_params: Default::default(),
+        }))
+    })
+    .expect("hover on `total`");
+    assert!(format!("{:?}", hover.contents).contains("usize"));
 
     block_on(client.shutdown());
 }

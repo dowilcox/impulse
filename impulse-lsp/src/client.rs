@@ -246,6 +246,17 @@ impl LspClient {
         self.capabilities.lock().unwrap().clone()
     }
 
+    /// Whether the server takes changed ranges rather than whole texts.
+    pub fn incremental_sync(&self) -> bool {
+        use lsp_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
+        let kind = match &self.capabilities.lock().unwrap().text_document_sync {
+            Some(TextDocumentSyncCapability::Kind(kind)) => Some(*kind),
+            Some(TextDocumentSyncCapability::Options(options)) => options.change,
+            None => None,
+        };
+        kind == Some(TextDocumentSyncKind::INCREMENTAL)
+    }
+
     /// Whether positions are in characters (UTF-32) rather than UTF-16.
     pub fn uses_utf32(&self) -> bool {
         *self.encoding.lock().unwrap() == PositionEncodingKind::UTF32

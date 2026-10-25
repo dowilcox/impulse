@@ -56,6 +56,19 @@ impl LspClient {
         });
     }
 
+    /// What changed from `old` to `new`, as a range when the server takes
+    /// ranges (a keystroke sends a few bytes, not the document).
+    pub fn did_change_from(&self, uri: Uri, version: i32, old: &str, new: &str) {
+        if !self.incremental_sync() {
+            return self.did_change(uri, version, new.to_string());
+        }
+        let change = crate::edits::content_change(old, new, self.uses_utf32());
+        let _ = self.notify::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri, version },
+            content_changes: vec![change],
+        });
+    }
+
     pub fn did_save(&self, uri: Uri) {
         let _ = self.notify::<DidSaveTextDocument>(DidSaveTextDocumentParams {
             text_document: TextDocumentIdentifier { uri },

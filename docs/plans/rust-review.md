@@ -21,7 +21,7 @@ actions: confirmation, snapshot and Undo for reverts, errors as dialogs,
 busy marks kept through refreshes), G5, W3, E4 (with the BOM and Diff
 View parts of E11 and E7), E3, W16.
 
-Security: S1 to S9, and the writer half of P4 (each language server has
+Security: S1 to S9, and the writer half of P4 (the other half, below) (each language server has
 a writer thread, so the UI never waits on one). Automatic snapshots
 (agent turns and checkpoints, the "reviewed" mark, overlap checks) use the
 restricted environment in folders that aren't trusted
@@ -51,7 +51,9 @@ blame again only when HEAD or the file on disk moved), P5 (the file
 tree is a `uniform_list` building only the rows on screen; Scratch lists
 a new folder once), P11 (the Changes panel is a `list` over
 `ChangeItem`s, spliced where they changed; the Problems counts are kept
-in the store) and P14 (saving no longer lists the tree again). Git: G3 (waiting
+in the store) and P14 (saving no longer lists the tree again), P4 (servers that sync
+incrementally get the changed range, `edits::content_change`, never
+splitting a `\r\n`). Git: G3 (waiting
 for a refresh always waits for one that starts after the call) and G4
 (refreshes take the repository's operation lock).
 

@@ -428,8 +428,9 @@ impl DocumentLink {
             *version
         };
         log::debug!("didChange v{version} {}", self.uri.as_str());
+        let old = self.sent.borrow().to_string();
         self.client
-            .did_change(self.uri.clone(), version, text.to_string());
+            .did_change_from(self.uri.clone(), version, &old, &text.to_string());
         *self.sent.borrow_mut() = text.clone();
     }
 
