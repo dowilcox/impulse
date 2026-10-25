@@ -244,6 +244,19 @@ impl CommandEditor {
         &self.focus
     }
 
+    /// Empty, with nothing to undo or redo: a password typed in it (or a
+    /// command typed before one was asked for) must not come back.
+    pub fn reset(&mut self, cx: &mut Context<Self>) {
+        self.text.clear();
+        self.selected = 0..0;
+        self.marked = None;
+        self.suggestion = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.typing = false;
+        cx.notify();
+    }
+
     /// Replace the text (the owner's edits: history, completion), with the
     /// cursor at the end. Undoable. Emits no `Changed`.
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {

@@ -669,6 +669,12 @@ impl TerminalView {
         };
         let cwd = self.cwd_option();
         let lookup = self.lookup.clone();
+        if self.editor.read(cx).masked != password {
+            self.bar.history_index = None;
+            self.bar.saved_draft.clear();
+            self.bar.completions.clear();
+            self.bar.completion_span = None;
+        }
         self.editor.update(cx, |editor, cx| {
             let mut changed = false;
             if editor.placeholder != placeholder {
@@ -676,7 +682,11 @@ impl TerminalView {
                 changed = true;
             }
             if editor.masked != password {
+                // Swift drops the draft on both flips: a half-typed command
+                // mustn't go out as the password, nor a half-typed password
+                // show in plain text (or come back with Undo).
                 editor.masked = password;
+                editor.reset(cx);
                 changed = true;
             }
             if editor.font != font || editor.font_size != font_size {

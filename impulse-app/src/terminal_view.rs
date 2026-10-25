@@ -103,6 +103,25 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys(bindings);
 }
 
+/// One mouse report (Swift's `mouseReport`): SGR (`CSI < Cb ; Cx ; Cy M`,
+/// `m` for a release) or the normal form (`CSI M Cb Cx Cy`, each value plus
+/// 32, a release as button 3, positions past 223 clamped).
+fn mouse_report(button: u8, col: usize, row: usize, release: bool, sgr: bool) -> Vec<u8> {
+    if sgr {
+        let end = if release { 'm' } else { 'M' };
+        return format!("\x1b[<{button};{};{}{end}", col + 1, row + 1).into_bytes();
+    }
+    let code = if release { 3 } else { button };
+    vec![
+        0x1b,
+        b'[',
+        b'M',
+        code.saturating_add(32),
+        (col + 33).min(255) as u8,
+        (row + 33).min(255) as u8,
+    ]
+}
+
 pub fn rgba(c: KitRgba) -> Rgba {
     Rgba {
         r: c.r,
@@ -318,6 +337,11 @@ pub struct TerminalView {
     pub exited: Option<i32>,
     /// A drag is selecting text (rather than reporting to the program).
     selecting: bool,
+    /// The button whose press went to the program (its drags and release
+    /// go there too).
+    press_reported: Option<u8>,
+    /// The last cell a reported drag reached.
+    motion_cell: Option<(usize, usize)>,
     /// Wheel movement not yet a whole line.
     scroll_remainder: f32,
     /// Lines of wheel scroll toward the next page key in a full-screen
@@ -603,6 +627,8 @@ impl TerminalView {
             last_duration_ms: None,
             exited: None,
             selecting: false,
+            press_reported: None,
+            motion_cell: None,
             scroll_remainder: 0.0,
             page_scroll: 0.0,
             pointer: Point::default(),
@@ -1137,38 +1163,62 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// The program wants the mouse (and Shift isn't held to select anyway).
-    fn reports_mouse(&self, modifiers: &Modifiers) -> bool {
-        !modifiers.shift
-            && self.backend.mode().intersects(
-                TerminalMode::MOUSE_REPORT_CLICK
-                    | TerminalMode::MOUSE_DRAG
-                    | TerminalMode::MOUSE_MOTION,
-            )
+    /// Mouse reporting is on (any of the click, drag and motion modes).
+    fn mouse_reporting(&self) -> bool {
+        self.backend.mode().intersects(
+            TerminalMode::MOUSE_REPORT_CLICK | TerminalMode::MOUSE_DRAG | TerminalMode::MOUSE_MOTION,
+        )
     }
 
-    fn report_mouse(&self, button: u8, col: usize, row: usize, pressed: bool, motion: bool) {
-        let code = button + if motion { 32 } else { 0 };
-        let bytes = if self.backend.mode().contains(TerminalMode::MOUSE_SGR) {
-            format!(
-                "\x1b[<{code};{};{}{}",
-                col + 1,
-                row + 1,
-                if pressed { 'M' } else { 'm' }
-            )
-            .into_bytes()
+    /// Shift or Option (Alt) held: the mouse selects text even while a
+    /// program reports it (Swift's `selectsDespiteMouseReporting`).
+    fn selects_despite_reporting(modifiers: &Modifiers) -> bool {
+        modifiers.shift || modifiers.alt
+    }
+
+    /// Send the program one mouse event if its mode asks for it (Swift's
+    /// `reportMouseEvent`): `button` 0 left, 1 middle; a drag only when it
+    /// reaches another cell; Shift, Alt and Control as bits 4, 8 and 16.
+    /// True when it was sent (or swallowed as a repeat).
+    fn report_mouse(
+        &mut self,
+        button: u8,
+        modifiers: &Modifiers,
+        (col, row): (usize, usize),
+        motion: bool,
+        release: bool,
+    ) -> bool {
+        let mode = self.backend.mode();
+        if !self.mouse_reporting() {
+            return false;
+        }
+        if motion && !mode.intersects(TerminalMode::MOUSE_DRAG | TerminalMode::MOUSE_MOTION) {
+            return false;
+        }
+        if motion {
+            if self.motion_cell == Some((col, row)) {
+                return true;
+            }
+            self.motion_cell = Some((col, row));
         } else {
-            let code = if pressed { code } else { 3 };
-            vec![
-                0x1b,
-                b'[',
-                b'M',
-                32 + code,
-                (33 + col).min(255) as u8,
-                (33 + row).min(255) as u8,
-            ]
-        };
-        self.backend.write(&bytes);
+            self.motion_cell = None;
+        }
+        let mut code = button;
+        if motion {
+            code += 32;
+        }
+        if modifiers.shift {
+            code += 4;
+        }
+        if modifiers.alt {
+            code += 8;
+        }
+        if modifiers.control {
+            code += 16;
+        }
+        let sgr = mode.contains(TerminalMode::MOUSE_SGR);
+        self.backend.write(&mouse_report(code, col, row, release, sgr));
+        true
     }
 
     fn mouse_down(
@@ -1215,14 +1265,12 @@ impl TerminalView {
                 return;
             }
         }
-        if self.reports_mouse(&event.modifiers) {
-            let button = match event.button {
-                MouseButton::Left => 0,
-                MouseButton::Middle => 1,
-                MouseButton::Right => 2,
-                _ => return,
-            };
-            self.report_mouse(button, col, row, true, false);
+        // The press goes to a program reporting the mouse; its drags and
+        // release follow it there.
+        if !Self::selects_despite_reporting(&event.modifiers)
+            && self.report_mouse(0, &event.modifiers, (col, row), false, false)
+        {
+            self.press_reported = Some(0);
             return;
         }
         if event.button != MouseButton::Left {
@@ -1253,13 +1301,9 @@ impl TerminalView {
             self.pointer = event.position;
             self.update_hover(col, row, cx);
         }
-        if event.pressed_button.is_some() && self.reports_mouse(&event.modifiers) {
-            if self
-                .backend
-                .mode()
-                .intersects(TerminalMode::MOUSE_DRAG | TerminalMode::MOUSE_MOTION)
-            {
-                self.report_mouse(0, col, row, true, true);
+        if let Some(button) = self.press_reported {
+            if event.pressed_button.is_some() {
+                self.report_mouse(button, &event.modifiers, (col, row), true, false);
             }
             return;
         }
@@ -1278,9 +1322,9 @@ impl TerminalView {
     }
 
     fn mouse_up(&mut self, event: &MouseUpEvent, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
-        if self.reports_mouse(&event.modifiers) {
-            let (col, row) = self.cell_at(event.position, bounds);
-            self.report_mouse(0, col, row, false, false);
+        if let Some(button) = self.press_reported.take() {
+            let cell = self.cell_at(event.position, bounds);
+            self.report_mouse(button, &event.modifiers, cell, false, true);
             return;
         }
         if !self.selecting {
@@ -1294,6 +1338,39 @@ impl TerminalView {
                 #[cfg(target_os = "macos")]
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
+        }
+    }
+
+    /// The middle button: to a program reporting the mouse, else (on
+    /// Linux) a paste of the primary selection, as X terminals do.
+    fn middle_down(
+        &mut self,
+        event: &MouseDownEvent,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cell = self.cell_at(event.position, bounds);
+        if self.report_mouse(1, &event.modifiers, cell, false, false) {
+            self.press_reported = Some(1);
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
+            if !text.is_empty() {
+                self.focus(window, cx);
+                self.paste_payload(&text, window, cx);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = (window, cx);
+    }
+
+    fn middle_up(&mut self, event: &MouseUpEvent, bounds: Bounds<Pixels>) {
+        if self.press_reported == Some(1) {
+            self.press_reported = None;
+            let cell = self.cell_at(event.position, bounds);
+            self.report_mouse(1, &event.modifiers, cell, false, true);
         }
     }
 
@@ -1412,12 +1489,13 @@ impl TerminalView {
             return;
         }
         let mode = self.backend.mode();
-        if self.reports_mouse(&event.modifiers) {
+        if self.mouse_reporting() {
+            // Buttons 64 and 65, one per line, at most 20 at once (Swift).
             let (col, row) = self.cell_at(event.position, bounds);
             let button = if whole > 0.0 { 64 } else { 65 };
-            for _ in 0..whole.abs() as usize {
-                self.report_mouse(button, col, row, true, false);
-            }
+            let sgr = mode.contains(TerminalMode::MOUSE_SGR);
+            let one = mouse_report(button, col, row, false, sgr);
+            self.backend.write(&one.repeat((whole.abs() as usize).min(20)));
         } else if mode.contains(TerminalMode::ALT_SCREEN) {
             // Full-screen programs without mouse support page, one page key
             // per four lines, as Swift's renderer does: arrow keys are input
@@ -1458,11 +1536,10 @@ impl TerminalView {
         if !self.blocks.selection.is_empty() {
             return self.copy_selected_blocks(cx);
         }
-        match self.backend.selected_text().filter(|t| !t.is_empty()) {
-            Some(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-            // ⌘C with nothing selected interrupts, as Ctrl+C would.
-            None if cfg!(target_os = "macos") => self.backend.write(&[0x03]),
-            None => {}
+        // Nothing selected: nothing happens (Swift's `copySelection`), not
+        // an interrupt the program didn't ask for.
+        if let Some(text) = self.backend.selected_text().filter(|t| !t.is_empty()) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
 
@@ -1558,12 +1635,19 @@ impl TerminalView {
         self.focus(window, cx);
     }
 
+    /// The screen, not the scrollback (Swift's `selectVisibleGrid`).
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
-        self.backend.select_all();
+        let (cols, rows) = self.backend.dimensions();
+        self.backend.start_selection(0, 0, SelectionKind::Simple);
+        self.backend.update_selection(
+            usize::from(cols.saturating_sub(1)),
+            usize::from(rows.saturating_sub(1)),
+        );
         cx.notify();
     }
 
-    /// ⌘K: clear the screen and the scrollback, as Terminal.app does.
+    /// ⌘K: Ctrl+L for the shell, which clears the screen (Swift's
+    /// `contextClear`).
     fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
         self.backend.write(b"\x0c");
         cx.notify();
@@ -2828,6 +2912,7 @@ impl Render for TerminalView {
         let link_cursor = self.hover_link.is_some();
         let toolbar = self.block_toolbar(cx);
         let bounds_cell = std::rc::Rc::new(std::cell::Cell::new(Bounds::<Pixels>::default()));
+        let (middle_bounds, middle_up_bounds) = (bounds_cell.clone(), bounds_cell.clone());
         let (down_bounds, move_bounds, up_bounds, wheel_bounds, menu_bounds) = (
             bounds_cell.clone(),
             bounds_cell.clone(),
@@ -2871,6 +2956,18 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(move |view, e: &MouseDownEvent, window, cx| {
                     view.context_menu_at(e, menu_bounds.get(), window, cx)
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |view, e: &MouseDownEvent, window, cx| {
+                    view.middle_down(e, middle_bounds.get(), window, cx)
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(move |view, e: &MouseUpEvent, _, _| {
+                    view.middle_up(e, middle_up_bounds.get())
                 }),
             )
             .on_mouse_move(cx.listener(move |view, e: &MouseMoveEvent, _, cx| {
@@ -3100,5 +3197,21 @@ mod session_status_tests {
         assert_eq!(status.summary().as_deref(), Some("Building: step 2"));
         status.apply(&fields(&[("status-color", "rgb:zz/00/00")]));
         assert_eq!(status.dot_color(), None);
+    }
+}
+
+#[cfg(test)]
+mod mouse_report_tests {
+    use super::mouse_report;
+
+    #[test]
+    fn sgr_and_normal_reports() {
+        // A drag of the middle button with Control, then its release.
+        assert_eq!(mouse_report(1 + 32 + 16, 4, 2, false, true), b"\x1b[<49;5;3M");
+        assert_eq!(mouse_report(1, 4, 2, true, true), b"\x1b[<1;5;3m");
+        // The normal form: plus 32, a release as button 3, far cells clamped.
+        assert_eq!(mouse_report(0, 0, 0, false, false), b"\x1b[M\x20\x21\x21");
+        assert_eq!(mouse_report(1, 0, 0, true, false), b"\x1b[M\x23\x21\x21");
+        assert_eq!(mouse_report(0, 400, 0, false, false)[4], 255);
     }
 }

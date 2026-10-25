@@ -41,6 +41,14 @@ Swift's `EditorWebView.appCommandWins` does: `commands::editor_priority`)
 and T17 (Shift with PageUp, PageDown, Home and End go to a program that
 owns the screen, and scroll the scrollback at the shell).
 
+Terminal: T2 (⌘C with nothing selected does nothing), T3 (password
+mode's start and end empty the input bar, its undo history included,
+`CommandEditor::reset`), T18 (mouse reports carry their button and
+modifiers, a release pairs with its press, drags are reported once per
+cell, wheel reports cap at 20, the middle button reports or pastes the
+primary selection on Linux) and from T19 Option-click selecting under
+mouse reporting, Select All taking the screen, and Clear's comment.
+
 Windows: W1 (closing the last window saves the session and quits) and W2
 (the Linux frame's edges and corners resize the window; to check on a
 real desktop, since Xvfb's windows are decorated by the server).
