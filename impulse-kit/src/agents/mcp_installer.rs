@@ -23,9 +23,10 @@ use std::path::Path;
 
 use serde_json::{json, Map, Value};
 
+use super::foundation_json;
 use super::hook_installer::{InstallError, Status};
 use super::jsonc_edit::{self, Malformed, Member, Object};
-use crate::git::task_registry::{join, sorted_keys};
+use crate::git::task_registry::join;
 use crate::git::{trim_blanks, trim_newlines};
 
 pub const SERVER_NAME: &str = "impulse";
@@ -92,7 +93,7 @@ pub fn claude_server(fallback_cli: &str) -> Value {
 }
 
 pub fn claude_server_json(fallback_cli: &str) -> String {
-    serde_json::to_string(&sorted_keys(claude_server(fallback_cli))).unwrap_or_else(|_| "{}".into())
+    foundation_json::compact(&claude_server(fallback_cli))
 }
 
 pub fn claude_add_arguments(scope: ClaudeScope, fallback_cli: &str) -> Vec<String> {
@@ -457,7 +458,7 @@ pub fn removing_opencode_mcp(text: &str) -> Option<String> {
 /// `mcpServers` form most of them read (their own config files differ).
 pub fn generic_snippet(fallback_cli: &str) -> String {
     let object = json!({ "mcpServers": { SERVER_NAME: claude_server(fallback_cli) } });
-    serde_json::to_string_pretty(&sorted_keys(object)).unwrap_or_else(|_| "{}".into())
+    foundation_json::pretty(&object)
 }
 
 #[cfg(test)]
@@ -505,6 +506,25 @@ mod tests {
         );
         let snippet: Value = serde_json::from_str(&generic_snippet(CLI)).unwrap();
         assert_eq!(snippet["mcpServers"]["impulse"], claude_server(CLI));
+    }
+
+    /// The testdata files are what the Swift app's `AgentMCPInstaller` gave
+    /// for the same fallback CLI: the same `claude mcp add-json` argument
+    /// and the same snippet to copy.
+    #[test]
+    fn writes_entries_as_the_swift_app_does() {
+        assert_eq!(
+            claude_server_json(CLI),
+            include_str!("testdata/claude-server.json")
+        );
+        assert_eq!(
+            generic_snippet(CLI),
+            include_str!("testdata/mcp-snippet.json")
+        );
+        assert_eq!(
+            generic_snippet("/Users/a b/Impulse \"x\"/$y`/impulse"),
+            include_str!("testdata/mcp-snippet-quoted.json")
+        );
     }
 
     #[test]

@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
-use crate::git::task_registry::sorted_keys;
-
 /// The Claude Code events Impulse listens to, each with the tools a tool
 /// event is limited to: before shell commands (a merge of a branch still
 /// being worked on asks first) and after edits and shell commands (notes
@@ -210,10 +208,11 @@ pub fn removing_claude_hooks(json: &[u8]) -> Result<Vec<u8>, InstallError> {
     Ok(serialize(Value::Object(settings)))
 }
 
-/// Pretty JSON with sorted keys and a final newline.
+/// Pretty JSON with sorted keys and a final newline, byte for byte as the
+/// Swift app writes it (`JSONSerialization`), so a file either app wrote
+/// isn't rewritten by the other.
 pub(crate) fn serialize(value: Value) -> Vec<u8> {
-    let mut data =
-        serde_json::to_vec_pretty(&sorted_keys(value)).unwrap_or_else(|_| b"{}".to_vec());
+    let mut data = super::foundation_json::pretty(&value).into_bytes();
     data.push(b'\n');
     data
 }
@@ -523,6 +522,53 @@ mod tests {
         // Removing from a file that only had ours drops "hooks" entirely.
         let only_ours = installing_claude_hooks(None).unwrap();
         assert!(!object(&removing_claude_hooks(&only_ours).unwrap()).contains_key("hooks"));
+    }
+
+    /// The testdata files are what the Swift app's `AgentHookInstaller`
+    /// wrote for the same input: Impulse writes settings.json the same way
+    /// whichever app does it.
+    #[test]
+    fn writes_settings_as_the_swift_app_does() {
+        let fresh = include_str!("testdata/claude-settings-fresh.json");
+        let installed = include_str!("testdata/claude-settings-installed.json");
+        let removed = include_str!("testdata/claude-settings-removed.json");
+        let existing = r#"{"$schema":"https://json.schemastore.org/claude-code-settings.json","env":{"CLAUDEX":"1","CLAUDE_CODE_X":"2","A_b":"3","AB":"4"},"model":"opus","alwaysThinkingEnabled":true,"cleanupPeriodDays":30,"ratio":0.1,"permissions":{"allow":["Bash(git log:*)","Read(//tmp/**)"],"deny":[]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say \"done\" \/ ok","timeout":5}]}]},"statusLine":{"type":"command","command":"~/bin/status"},"enabledPlugins":{"a@b":true,"A@c":false,"plugin10@x":true,"plugin9@x":true}}"#;
+        let text = |bytes: Vec<u8>| String::from_utf8(bytes).unwrap();
+        assert_eq!(text(installing_claude_hooks(None).unwrap()), fresh);
+        let ours = text(installing_claude_hooks(Some(existing.as_bytes())).unwrap());
+        assert_eq!(ours, installed);
+        assert_eq!(
+            text(removing_claude_hooks(ours.as_bytes()).unwrap()),
+            removed
+        );
+        // Installing over what the Swift app installed changes nothing.
+        assert_eq!(
+            text(installing_claude_hooks(Some(installed.as_bytes())).unwrap()),
+            installed
+        );
+    }
+
+    /// Detection reads the JSON, not its layout: hooks the Swift app wrote
+    /// and hooks an earlier Rust build wrote (serde's `"key": value`) are
+    /// both found, and installing again only reformats the latter.
+    #[test]
+    fn finds_hooks_whichever_app_wrote_them() {
+        let swift = include_bytes!("testdata/claude-settings-installed.json");
+        assert_eq!(claude_hook_status(Some(swift)), Status::Installed);
+        let value: Value = serde_json::from_slice(swift).unwrap();
+        let serde_pretty = serde_json::to_vec_pretty(&value).unwrap();
+        assert_ne!(serde_pretty.as_slice(), swift.as_slice());
+        assert_eq!(claude_hook_status(Some(&serde_pretty)), Status::Installed);
+        assert_eq!(
+            installing_claude_hooks(Some(&serde_pretty)).unwrap(),
+            swift.to_vec()
+        );
+        let removed = removing_claude_hooks(&serde_pretty).unwrap();
+        assert_eq!(
+            removed,
+            include_bytes!("testdata/claude-settings-removed.json").to_vec()
+        );
+        assert_eq!(claude_hook_status(Some(&removed)), Status::NotInstalled);
     }
 
     #[test]

@@ -1,0 +1,1 @@
+{"args":["-c","exec \"${IMPULSE_CLI:-/Applications/Impulse.app/Contents/Resources/bin/impulse}\" mcp"],"command":"sh","env":{"IMPULSE_CLI":"${IMPULSE_CLI:-}","IMPULSE_PANE_TOKEN":"${IMPULSE_PANE_TOKEN:-}","IMPULSE_SOCKET":"${IMPULSE_SOCKET:-}"},"type":"stdio"}

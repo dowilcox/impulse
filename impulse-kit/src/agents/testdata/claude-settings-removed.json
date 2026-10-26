@@ -1,0 +1,45 @@
+{
+  "$schema" : "https://json.schemastore.org/claude-code-settings.json",
+  "alwaysThinkingEnabled" : true,
+  "cleanupPeriodDays" : 30,
+  "enabledPlugins" : {
+    "a@b" : true,
+    "A@c" : false,
+    "plugin9@x" : true,
+    "plugin10@x" : true
+  },
+  "env" : {
+    "A_b" : "3",
+    "AB" : "4",
+    "CLAUDE_CODE_X" : "2",
+    "CLAUDEX" : "1"
+  },
+  "hooks" : {
+    "Stop" : [
+      {
+        "hooks" : [
+          {
+            "command" : "say \"done\" / ok",
+            "timeout" : 5,
+            "type" : "command"
+          }
+        ]
+      }
+    ]
+  },
+  "model" : "opus",
+  "permissions" : {
+    "allow" : [
+      "Bash(git log:*)",
+      "Read(//tmp/**)"
+    ],
+    "deny" : [
+
+    ]
+  },
+  "ratio" : 0.10000000000000001,
+  "statusLine" : {
+    "command" : "~/bin/status",
+    "type" : "command"
+  }
+}

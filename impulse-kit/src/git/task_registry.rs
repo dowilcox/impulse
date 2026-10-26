@@ -5,7 +5,8 @@
 //! made any other way aren't listed, and task features leave them alone.
 //!
 //! The file is the Swift app's: the same keys, dates as ISO 8601 in whole
-//! seconds, so both apps can share a repository.
+//! seconds, written byte for byte as Swift's `JSONEncoder` writes it
+//! ([`TaskRegistry::to_json`]), so both apps can share a repository.
 
 use std::fs;
 use std::io;
@@ -15,6 +16,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::worktree_tasks;
+use crate::agents::foundation_json;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +125,18 @@ impl TaskRegistry {
 
     pub fn file_path(common_git_directory: &str) -> String {
         join(&Self::directory(common_git_directory), "tasks.json")
+    }
+
+    /// The file's text, byte for byte as the Swift app writes it
+    /// (`JSONEncoder` with `[.prettyPrinted, .sortedKeys]`: `"key" : value`,
+    /// keys in code point order, `/` as `\/`, no final newline), so a
+    /// repository both apps use doesn't churn. Either layout reads back.
+    pub fn to_json(&self) -> io::Result<String> {
+        let value = serde_json::to_value(self).map_err(io::Error::other)?;
+        Ok(foundation_json::pretty_with(
+            &value,
+            foundation_json::Format::ENCODER,
+        ))
     }
 
     pub fn record_for_path(&self, path: &str) -> Option<&TaskRecord> {
@@ -240,12 +254,8 @@ impl TaskRegistry {
         let before = registry.clone();
         let result = body(&mut registry);
         if registry != before {
-            let value = serde_json::to_value(&registry).map_err(io::Error::other)?;
-            let mut data =
-                serde_json::to_vec_pretty(&sorted_keys(value)).map_err(io::Error::other)?;
-            data.push(b'\n');
             let temp = format!("{path}.tmp");
-            fs::write(&temp, data)?;
+            fs::write(&temp, registry.to_json()?)?;
             fs::rename(&temp, &path)?;
         }
         let _ = lock.unlock();
@@ -320,26 +330,6 @@ pub(crate) fn join(folder: &str, name: &str) -> String {
         format!("{folder}{name}")
     } else {
         format!("{folder}/{name}")
-    }
-}
-
-/// `value` with every object's keys in order, as the Swift app writes its
-/// JSON (whatever map serde_json was built with).
-pub(crate) fn sorted_keys(value: serde_json::Value) -> serde_json::Value {
-    use serde_json::Value;
-    match value {
-        Value::Object(map) => {
-            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
-            entries.sort_by(|a, b| a.0.cmp(&b.0));
-            Value::Object(
-                entries
-                    .into_iter()
-                    .map(|(k, v)| (k, sorted_keys(v)))
-                    .collect(),
-            )
-        }
-        Value::Array(items) => Value::Array(items.into_iter().map(sorted_keys).collect()),
-        other => other,
     }
 }
 
@@ -584,7 +574,7 @@ mod tests {
         assert_eq!(TaskRegistry::load(&s.git).tasks, [expected]);
         let text = fs::read_to_string(TaskRegistry::file_path(&s.git)).unwrap();
         assert!(
-            text.contains(r#""created": "2025-10-09T08:53:20Z""#),
+            text.contains(r#""created" : "2025-10-09T08:53:20Z""#),
             "{text}"
         );
         assert!(
@@ -625,6 +615,112 @@ mod tests {
             Some(Utc.with_ymd_and_hms(2025, 10, 10, 8, 0, 0).unwrap())
         );
         assert_eq!(registry.agent_task_count(), 1);
+    }
+
+    // The expected texts below are what the Swift app's encoder
+    // (`JSONEncoder`, `[.prettyPrinted, .sortedKeys]`, `.iso8601` dates)
+    // wrote for the same registries: a Swift probe with TaskRecord's
+    // fields, run on macOS 27 with Swift 6.4 when this was written.
+
+    #[test]
+    fn writes_the_file_as_the_swift_app_does() {
+        let full = TaskRecord {
+            base: Some("main".into()),
+            remote: Some("origin".into()),
+            slot: Some(3),
+            // Fractions of a second are dropped, as Swift's `.iso8601`.
+            created: Utc.timestamp_opt(1_760_000_000, 750_000_000).unwrap(),
+            start: Some("0123456789abcdef0123456789abcdef01234567".into()),
+            pushed_for_review: Some(Utc.timestamp_opt(1_760_086_400, 0).unwrap()),
+            from_remote: Some(true),
+            created_by: Some("agent".into()),
+            requested_by: Some("Claude Code in café 🚀".into()),
+            requested_from: Some("/Users/me/code/app".into()),
+            ..TaskRecord::new("/Users/me/code/app.worktrees/feature-x", "feature/x")
+        };
+        let minimal = TaskRecord {
+            slot: Some(0),
+            created: Utc.timestamp_opt(0, 0).unwrap(),
+            from_remote: Some(false),
+            created_by: Some("user".into()),
+            ..TaskRecord::new("/r.worktrees/a b", r#"a"b\c</d>"#)
+        };
+        let registry = TaskRegistry::new(vec![full, minimal]);
+        let swift = r#"{
+  "tasks" : [
+    {
+      "base" : "main",
+      "branch" : "feature\/x",
+      "created" : "2025-10-09T08:53:20Z",
+      "createdBy" : "agent",
+      "fromRemote" : true,
+      "path" : "\/Users\/me\/code\/app.worktrees\/feature-x",
+      "pushedForReview" : "2025-10-10T08:53:20Z",
+      "remote" : "origin",
+      "requestedBy" : "Claude Code in café 🚀",
+      "requestedFrom" : "\/Users\/me\/code\/app",
+      "slot" : 3,
+      "start" : "0123456789abcdef0123456789abcdef01234567"
+    },
+    {
+      "branch" : "a\"b\\c<\/d>",
+      "created" : "1970-01-01T00:00:00Z",
+      "createdBy" : "user",
+      "fromRemote" : false,
+      "path" : "\/r.worktrees\/a b",
+      "slot" : 0
+    }
+  ]
+}"#;
+        assert_eq!(registry.to_json().unwrap(), swift);
+        let read: TaskRegistry = serde_json::from_str(swift).unwrap();
+        assert_eq!(read.tasks[0].branch, "feature/x");
+        assert_eq!(read.tasks[1].branch, r#"a"b\c</d>"#);
+
+        assert_eq!(
+            TaskRegistry::default().to_json().unwrap(),
+            "{\n  \"tasks\" : [\n\n  ]\n}"
+        );
+
+        let controls: String = (0u32..0x20)
+            .chain([0x7f, 0x2028, 0x2029, 0xfeff])
+            .map(|c| char::from_u32(c).unwrap())
+            .collect();
+        let odd = TaskRegistry::new(vec![TaskRecord {
+            created: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
+            requested_by: Some(controls),
+            ..TaskRecord::new("/x", "x")
+        }]);
+        assert_eq!(
+            odd.to_json().unwrap(),
+            "{\n  \"tasks\" : [\n    {\n      \"branch\" : \"x\",\n      \"created\" : \"2023-11-14T22:13:20Z\",\n      \"path\" : \"\\/x\",\n      \"requestedBy\" : \"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\u{7f}\u{2028}\u{2029}\u{feff}\"\n    }\n  ]\n}"
+        );
+    }
+
+    #[test]
+    fn update_writes_swifts_layout_and_reads_the_older_one() {
+        let s = temporary_git_directory();
+        let path = TaskRegistry::file_path(&s.git);
+        fs::create_dir_all(parent(&path)).unwrap();
+        // What this app wrote before: serde_json's layout, a final newline.
+        fs::write(
+            &path,
+            "{\n  \"tasks\": [\n    {\n      \"branch\": \"a\",\n      \"created\": \"2025-10-09T08:53:20Z\",\n      \"path\": \"/r.worktrees/a\",\n      \"slot\": 1\n    }\n  ]\n}\n",
+        )
+        .unwrap();
+        assert_eq!(TaskRegistry::load(&s.git).tasks[0].slot, Some(1));
+        TaskRegistry::update(&s.git, |r| {
+            r.add(record("/r.worktrees/b", "b", Some(2)));
+        })
+        .unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert_eq!(written, TaskRegistry::load(&s.git).to_json().unwrap());
+        assert!(
+            written.contains(r#""path" : "\/r.worktrees\/a""#),
+            "{written}"
+        );
+        assert!(!written.ends_with('\n'), "no final newline, as Swift");
+        assert_eq!(TaskRegistry::load(&s.git).tasks.len(), 2);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! Impulse's MCP server in its own configuration, and the tasks agents ask
 //! for.
 
+pub mod foundation_json;
 pub mod hook_events;
 pub mod hook_installer;
 pub mod jsonc_edit;
