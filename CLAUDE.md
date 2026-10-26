@@ -439,7 +439,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           --install-lsp-servers;
                           scripts/spike/linux-shot.sh screenshots it on Linux
 vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide
-                          (committed; refreshed by scripts/vendor-*.sh)
+                          (committed; refreshed by scripts/vendor-*.sh);
+                          rust branch: gpui-kit/ (GPUI Kit's gpui-base and
+                          gpui-component, patched in place through
+                          [patch.crates-io]; its README lists the patches)
 assets/                   file icons + icon-mapping.json (copied into the
                           app by build.sh), logo, DMG background
 docs/                     user documentation, one Markdown page per area;
@@ -455,7 +458,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-git`, `impulse-lsp`, `impulse-protocol`, `impulse-cli` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-git`, `impulse-lsp`, `impulse-protocol`, `impulse-cli` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it, with GPUI Kit's `gpui-base` and `gpui-component` from `vendor/gpui-kit/`; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
 
 ### Why the split
 

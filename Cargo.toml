@@ -27,3 +27,10 @@ lto = true
 codegen-units = 1
 strip = true
 
+
+# GPUI Kit's editor and component crates, vendored at the version
+# impulse-app pins so its fixes can be patched in place
+# (vendor/gpui-kit/README.md lists them).
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-kit/gpui-base" }
+gpui-component = { path = "vendor/gpui-kit/gpui-component" }
