@@ -206,6 +206,10 @@ impl<M: InputModeKind> InputBaseState<M> {
         if M::accept_inline_completion(self, window, cx) {
             return;
         }
+        // Impulse: in a snippet, to its next tab stop.
+        if M::snippet_jump(self, true, window, cx) {
+            return;
+        }
         self.indent(false, window, cx);
     }
 
@@ -219,6 +223,10 @@ impl<M: InputModeKind> InputBaseState<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Impulse: in a snippet, to its previous tab stop.
+        if M::snippet_jump(self, false, window, cx) {
+            return;
+        }
         self.outdent(false, window, cx);
     }
 

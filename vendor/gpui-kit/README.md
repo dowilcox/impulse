@@ -125,6 +125,51 @@ because gpui-component builds that struct as a full literal.
   The scroll height now counts the shown rows rather than every wrap row,
   so folded and hidden lines no longer leave room past the end.
 
+- **Inlay hints** (`input/editor/inlay_hints.rs`; `display_map/inline_line.rs`,
+  `display_map/text_wrapper.rs`, `element.rs`, `editor/mod.rs`, `state.rs`):
+  Monaco's `inlayHints`. `EditorState::set_inlay_hints(Vec<InlayHint>)`
+  (`InlayHint::new(offset, label)` with `.padding_left` and
+  `.padding_right`), `inlay_hints` and `set_inlay_hints_visible`. A line
+  with hints is laid out in fragments (`InlineFragment::inlay`, an empty
+  range at the hint's offset), so the text after a hint moves right, the
+  caret at its offset sits after it (Monaco's cursor stop), a click on it
+  lands at its offset, the caret steps over it and a selection across it
+  covers it. Labels are shaped in the editor font in
+  `EditorColors::inlay_hint` over `inlay_hint_background`, with a third of
+  the font size for each padding. Soft wrapping counts their widths (the
+  wrap map's inline metrics; a line with hints still breaks at word
+  boundaries), the scroll width counts them, and they move with edits (a
+  type after a name moves on with text typed at it, a parameter name
+  stays before an argument; one inside replaced text goes).
+- **Snippets** (`input/editor/snippet.rs`; `editor/lsp/overlay.rs`,
+  `kind.rs`, `editor/mod.rs`, `indent.rs`, `state.rs`, `element.rs`): a
+  completion with `insertTextFormat: 2` goes in as Monaco's snippet
+  controller puts it, its `additionalTextEdits` beside it in one undo step.
+  LSP's snippet syntax is parsed (tab stops, placeholders, nested ones,
+  choices, variables with defaults, transforms, escapes); each line after
+  the first takes the line's indentation, a leading tab the editor's
+  indent. Its stops become a session: a stop's places selected together,
+  Tab and Shift+Tab to the next and previous (`InputModeKind::snippet_jump`),
+  Escape (`leave_snippet`), reaching `$0` or a cursor leaving every stop
+  ends it; placeholders are tinted in `EditorColors::snippet_tabstop`, and a
+  choice offers its options in the completion menu. Public:
+  `insert_snippet`, `jump_in_snippet`, `leave_snippet`, `in_snippet`,
+  `set_snippet_variables` (the host's `TM_FILENAME` and the like; the editor
+  resolves the selection, line, word, date, random and UUID ones).
+- **Smooth scrolling** (`editor_options.rs`, `state.rs`, `element.rs`,
+  `set_smooth_scrolling`, `animate_scroll_offset`): Monaco's
+  `smoothScrolling`: scrolls the editor makes itself (`scroll_to`, so keys
+  that move the cursor off screen, Page Up and Down, revealing) ease out
+  over 125 ms, stepped each animation frame as the overscroll bounce is.
+  Wheels and trackpads stay direct and take over from an animation;
+  `set_scroll_offset` stays a jump. Off by default, and with Reduce Motion.
+- **Home for every cursor** (`editor_options.rs`, `movement.rs`;
+  `select_all_cursors_to` made `pub(super)`): `EditorState::smart_home`
+  (and `smart_home(true)` for Shift+Home) takes each cursor to its own
+  line's first non-blank character, then to column 0, on a wrapped line's
+  later rows to the row's start first; `selected_ranges` reads every
+  selection. GPUI Kit's `MoveHome` is unchanged.
+
 ### gpui-component
 
 - **Hover text at the editor's size** (`input/popovers/hover_popover.rs`,

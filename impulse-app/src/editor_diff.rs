@@ -961,15 +961,17 @@ pub(crate) fn center(
     window: &mut Window,
     cx: &mut gpui_kit::App,
 ) {
-    center_at(state, Position::new(row as u32, 0), window, cx);
+    center_at(state, Position::new(row as u32, 0), false, window, cx);
 }
 
-/// The cursor to `position`, its line scrolled to the middle of the view;
-/// false before the editor's first layout, which this needs (the cursor
-/// is put there either way).
+/// The cursor to `position`, its line scrolled to the middle of the view
+/// (`animate`: smoothly, with `smooth_scrolling` on); false before the
+/// editor's first layout, which this needs (the cursor is put there either
+/// way).
 pub(crate) fn center_at(
     state: &Entity<EditorState>,
     position: Position,
+    animate: bool,
     window: &mut Window,
     cx: &mut gpui_kit::App,
 ) -> bool {
@@ -1004,7 +1006,11 @@ pub(crate) fn center_at(
             }
             _ => state.scroll_offset().x,
         };
-        state.set_scroll_offset(point(x, -top), cx);
+        if animate {
+            state.animate_scroll_offset(point(x, -top), cx);
+        } else {
+            state.set_scroll_offset(point(x, -top), cx);
+        }
         true
     })
 }

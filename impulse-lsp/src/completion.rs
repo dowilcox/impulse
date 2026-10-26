@@ -70,7 +70,11 @@ const MAX_FOLDED: usize = 64;
 ///   before `offset`), as Monaco does;
 /// - `additionalTextEdits` (an auto-import) are folded in: the edit spans
 ///   from the first of them to the last, its text that span after all of
-///   them, so the cursor still ends after the completion.
+///   them, so the cursor still ends after the completion;
+/// - a snippet (`insertTextFormat` 2) keeps its edit and its
+///   `additionalTextEdits` apart, both in characters: Impulse's GPUI Kit
+///   patch inserts it with its tab stops and makes the other edits beside
+///   it (folded, the text between them would read as snippet syntax).
 ///
 /// `text` is the document the server answered for, `utf32` whether the
 /// server counts columns in characters.
@@ -107,6 +111,21 @@ pub fn editor_completions(
                 return item;
             };
             let extra = item.additional_text_edits.take().unwrap_or_default();
+            if item.insert_text_format == Some(lsp_types::InsertTextFormat::SNIPPET) {
+                let in_chars = |edit: &TextEdit| {
+                    let start = offset_of(text, edit.range.start, utf32);
+                    let end = offset_of(text, edit.range.end, utf32).max(start);
+                    TextEdit {
+                        range: Range::new(char_position(text, start), char_position(text, end)),
+                        new_text: edit.new_text.clone(),
+                    }
+                };
+                item.text_edit = Some(CompletionTextEdit::Edit(in_chars(&main)));
+                if !extra.is_empty() {
+                    item.additional_text_edits = Some(extra.iter().map(in_chars).collect());
+                }
+                return item;
+            }
             let edit = if extra.is_empty() || folded >= MAX_FOLDED {
                 let start = offset_of(text, main.range.start, utf32);
                 let end = offset_of(text, main.range.end, utf32).max(start);
@@ -297,5 +316,35 @@ mod tests {
             "use std::collections::HashMap;\n\nfn main() {\n    HashMap\n}\n"
         );
         assert!(out[0].additional_text_edits.is_none());
+    }
+
+    #[test]
+    fn snippets_keep_their_other_edits_apart() {
+        // A UTF-16 server's positions, as characters for the editor.
+        let text = "😀\nlet v = pri";
+        let offset = text.len();
+        let item = CompletionItem {
+            label: "print".into(),
+            insert_text: Some("print(${1:value})$0".into()),
+            insert_text_format: Some(lsp_types::InsertTextFormat::SNIPPET),
+            additional_text_edits: Some(vec![TextEdit {
+                range: Range::new(Position::new(0, 2), Position::new(0, 2)),
+                new_text: " use io::{print};".into(),
+            }]),
+            ..Default::default()
+        };
+        let out = editor_completions(vec![item], text, offset, 3, false);
+        let (range, new_text) = edit_of(&out[0]);
+        assert_eq!(range, Range::new(Position::new(1, 8), Position::new(1, 11)));
+        assert_eq!(new_text, "print(${1:value})$0");
+        let extra = out[0].additional_text_edits.as_ref().unwrap();
+        assert_eq!(
+            extra[0].range,
+            Range::new(Position::new(0, 1), Position::new(0, 1))
+        );
+        assert_eq!(
+            out[0].insert_text_format,
+            Some(lsp_types::InsertTextFormat::SNIPPET)
+        );
     }
 }

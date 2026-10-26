@@ -39,6 +39,11 @@ impl InputModeKind for EditorMode {
         state.extras.hover_popover = None;
         state.extras.decorations.clear();
         state.extras.range_decorations.clear();
+        // Impulse: inlay hints and a snippet's placeholders described the
+        // old text.
+        state.inlay_hints.hints.clear();
+        state.inlay_hints.revision += 1;
+        state.snippet = None;
     }
 
     fn editing_syntax_context(state: &InputBaseState<Self>, offset: usize) -> super::SyntaxContext {
@@ -55,6 +60,11 @@ impl InputModeKind for EditorMode {
             .extras
             .range_decorations
             .adjust_for_edit(range, new_len);
+        // Impulse: inlay hints and a snippet's placeholders move with it.
+        state.inlay_hints.adjust_for_edit(range, new_len);
+        if let Some(snippet) = state.snippet.as_mut() {
+            snippet.adjust_for_edit(range, new_len);
+        }
     }
 
     fn refresh_language_features(
@@ -76,6 +86,22 @@ impl InputModeKind for EditorMode {
 
     fn has_inline_completion(state: &InputBaseState<Self>) -> bool {
         state.has_inline_completion()
+    }
+
+    fn snippet_jump(
+        state: &mut InputBaseState<Self>,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut gpui::Context<InputBaseState<Self>>,
+    ) -> bool {
+        state.jump_in_snippet(forward, window, cx)
+    }
+
+    fn leave_snippet(
+        state: &mut InputBaseState<Self>,
+        cx: &mut gpui::Context<InputBaseState<Self>>,
+    ) -> bool {
+        state.leave_snippet(cx)
     }
 
     fn on_click(

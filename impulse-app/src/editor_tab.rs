@@ -145,6 +145,8 @@ pub struct EditorTab {
     /// Where `go_to` put the cursor before the editor's first layout: its
     /// line is centered once there is one.
     pending_center: Option<Position>,
+    /// The language server's inlay hints (`editor_inlay`).
+    pub(crate) inlay: crate::editor_inlay::InlayState,
 }
 
 impl EventEmitter<EditorTabChanged> for EditorTab {}
@@ -198,6 +200,20 @@ pub(crate) fn apply_editor_options(
             inactive_selection: Some(theme.selection.opacity(0.5)),
             // `editorCursor.background`: the editor's background.
             block_caret_text: Some(theme.background),
+            // Monaco's `editorInlayHint.foreground` and `.background` (the
+            // badge background at 10%), and its
+            // `editor.snippetTabstopHighlightBackground`.
+            inlay_hint: Some(gpui_kit::rgb(0x969696).into()),
+            inlay_hint_background: Some(if theme.mode.is_dark() {
+                gpui_kit::rgba(0x4d4d4d1a).into()
+            } else {
+                gpui_kit::rgba(0xc4c4c41a).into()
+            }),
+            snippet_tabstop: Some(if theme.mode.is_dark() {
+                gpui_kit::rgba(0x7c7c7c4d).into()
+            } else {
+                gpui_kit::rgba(0x0a326433).into()
+            }),
         }
     };
     state.set_editor_colors(colors, cx);
@@ -237,6 +253,37 @@ pub(crate) fn apply_editor_options(
     state.set_scroll_predominant_axis(true);
     state.set_hide_column_select_pointer(true, cx);
     state.set_hover_delay(std::time::Duration::from_millis(300));
+    state.set_smooth_scrolling(settings.smooth_scrolling);
+}
+
+/// The variables a snippet can use that only the tab knows: the file's
+/// name and folder, and the language's comment tokens.
+fn snippet_variables(path: &Path, language: &str) -> std::collections::HashMap<String, String> {
+    let mut variables = std::collections::HashMap::new();
+    let mut set = |name: &str, value: String| {
+        variables.insert(name.to_string(), value);
+    };
+    if !path.as_os_str().is_empty() {
+        let text = |s: Option<&std::ffi::OsStr>| s.map(|s| s.to_string_lossy().into_owned());
+        set("TM_FILEPATH", path.to_string_lossy().into_owned());
+        if let Some(name) = text(path.file_name()) {
+            set("TM_FILENAME", name);
+        }
+        if let Some(stem) = text(path.file_stem()) {
+            set("TM_FILENAME_BASE", stem);
+        }
+        if let Some(folder) = path.parent() {
+            set("TM_DIRECTORY", folder.to_string_lossy().into_owned());
+        }
+    }
+    if let Some(prefix) = impulse_kit::line_edits::line_comment(language) {
+        set("LINE_COMMENT", prefix.to_string());
+    }
+    if let Some((open, close)) = impulse_kit::line_edits::block_comment(language) {
+        set("BLOCK_COMMENT_START", open.to_string());
+        set("BLOCK_COMMENT_END", close.to_string());
+    }
+    variables
 }
 
 impl EditorTab {
@@ -297,6 +344,7 @@ impl EditorTab {
             }
             tab.git_text_changed(cx);
             tab.find_text_changed(cx);
+            tab.refresh_inlay_hints(crate::editor_inlay::EDIT_DELAY, cx);
             if tab.settings_file {
                 tab.recheck_settings_file(cx);
             }
@@ -329,6 +377,7 @@ impl EditorTab {
             });
         let observe_state = cx.observe(&state, |tab, _, cx| {
             tab.selection_moved(cx);
+            tab.inlay_view_moved(cx);
             // Laid out at last: render centers `go_to`'s line.
             if tab.pending_center.is_some() {
                 cx.notify();
@@ -389,6 +438,7 @@ impl EditorTab {
             settings_file: false,
             preview_scroll: gpui_kit::ScrollHandle::new(),
             pending_center: None,
+            inlay: Default::default(),
         };
         tab.apply_settings(&settings, window, cx);
         tab.refresh_git(cx);
@@ -452,7 +502,9 @@ impl EditorTab {
                 cx,
             );
             state.set_auto_close(settings.editor_auto_closing_brackets != "never", window, cx);
+            state.set_snippet_variables(snippet_variables(&self.path, &self.language));
         });
+        self.set_inlay_mode(&settings.editor_inlay_hints, cx);
         // The theme may have changed with the settings.
         self.find_retheme(cx);
         // Without a language server, the document's own words (settings.json
@@ -560,6 +612,7 @@ impl EditorTab {
             });
         }
         self.links.push((id, link));
+        self.refresh_inlay_hints(std::time::Duration::ZERO, cx);
     }
 
     /// Whether server `id` serves this file.
@@ -609,6 +662,15 @@ impl EditorTab {
         });
         self._lsp_start.clear();
         self.lsp_pending.clear();
+        self.inlay_server_gone(cx);
+    }
+
+    /// The document's servers, each with whether it's the primary one.
+    pub(crate) fn document_links(&self) -> Vec<(bool, Rc<DocumentLink>)> {
+        self.links
+            .iter()
+            .map(|(id, link)| (Some(id) == self.primary.as_ref(), link.clone()))
+            .collect()
     }
 
     fn primary_link(&self) -> Option<Rc<DocumentLink>> {
@@ -1108,7 +1170,7 @@ impl EditorTab {
     /// definitions: Swift's `revealPositionInCenter`). A tab not laid out
     /// yet centers it after its first layout.
     pub fn go_to(&mut self, position: Position, window: &mut Window, cx: &mut Context<Self>) {
-        let centered = crate::editor_diff::center_at(&self.state, position, window, cx);
+        let centered = crate::editor_diff::center_at(&self.state, position, true, window, cx);
         self.pending_center = (!centered).then_some(position);
         cx.notify();
     }
@@ -1125,7 +1187,7 @@ impl EditorTab {
         }
         self.pending_center = None;
         if state.cursor_position() == position {
-            crate::editor_diff::center_at(&self.state, position, window, cx);
+            crate::editor_diff::center_at(&self.state, position, false, window, cx);
         }
     }
 
@@ -1297,7 +1359,10 @@ impl EditorTab {
     /// line: `cursor L:C`, `select L:C-L:C` (1-based, columns in
     /// characters), `type TEXT` and `paste TEXT` (`\n` for a line break,
     /// replacing the selection), `undo`, `redo`, `find TEXT` (the find bar
-    /// with that query). Answers the buffer's text.
+    /// with that query), `add-cursor L:C` and `add-select L:C-L:C` (another
+    /// cursor), `home` and `home-select` (Home and Shift+Home), `snippet
+    /// TEXT` (a snippet in place of the selection, `\t` a tab), `tab`,
+    /// `shift-tab` and `escape` (in a snippet). Answers the buffer's text.
     #[cfg(debug_assertions)]
     pub(crate) fn debug_edit(
         &mut self,
@@ -1331,12 +1396,35 @@ impl EditorTab {
             let argument = argument.replace("\\n", "\n");
             let text = self.text(cx);
             match command {
-                "cursor" | "select" => {
+                "cursor" | "select" | "add-cursor" | "add-select" => {
                     let (from, to) = argument.split_once('-').unwrap_or((&argument, &argument));
                     if let (Some(from), Some(to)) = (offset(&text, from), offset(&text, to)) {
-                        self.state
-                            .update(cx, |state, cx| state.set_selected_range(from..to, cx));
+                        let add = command.starts_with("add-");
+                        self.state.update(cx, |state, cx| {
+                            if add {
+                                state.add_selection(from..to, cx)
+                            } else {
+                                state.set_selected_range(from..to, cx)
+                            }
+                        });
                     }
+                }
+                "home" | "home-select" => self.state.update(cx, |state, cx| {
+                    state.smart_home(command == "home-select", window, cx)
+                }),
+                "snippet" => {
+                    let snippet = argument.replace("\\t", "\t");
+                    self.state.update(cx, |state, cx| {
+                        state.insert_snippet(state.selected_range(), &snippet, window, cx)
+                    });
+                }
+                "tab" | "shift-tab" => {
+                    self.state.update(cx, |state, cx| {
+                        state.jump_in_snippet(command == "tab", window, cx);
+                    });
+                }
+                "escape" => {
+                    self.state.update(cx, |state, cx| state.leave_snippet(cx));
                 }
                 "type" | "paste" => self
                     .state
@@ -1391,6 +1479,21 @@ impl EditorTab {
                         lsp_types::HoverContents::Array(a) => a.into_iter().map(marked).collect(),
                     };
                     json!(texts)
+                })
+            }
+            // The server's inlay hints for the whole file, and how many the
+            // editor shows.
+            "inlay" => {
+                let shown = self.state.read(cx).inlay_hints().len();
+                let request = link.inlay_hints(&text, 0..text.lines_len(), cx);
+                cx.background_spawn(async move {
+                    match request.await {
+                        Ok(hints) => json!({
+                            "shown": shown,
+                            "server": hints.into_iter().map(|h| h.label).collect::<Vec<_>>(),
+                        }),
+                        Err(error) => json!({ "shown": shown, "error": error }),
+                    }
                 })
             }
             "completion" => {
@@ -1776,6 +1879,13 @@ impl Render for EditorTab {
         gpui_kit::div()
             .key_context(crate::editor_keys::CONTEXT)
             .size_full()
+            // Ctrl+Alt (⌃⌥) shows or hides the inlay hints, by the setting.
+            .on_modifiers_changed(cx.listener(
+                |tab, event: &gpui_kit::ModifiersChangedEvent, _, cx| {
+                    let pressed = event.modifiers.control && event.modifiers.alt;
+                    tab.inlay_modifiers(pressed, cx);
+                },
+            ))
             .on_action(cx.listener(Self::toggle_line_comment))
             .on_action(cx.listener(Self::move_lines_up))
             .on_action(cx.listener(Self::move_lines_down))
@@ -1797,6 +1907,7 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::cursors_at_line_ends))
             .on_action(cx.listener(Self::trim_trailing_whitespace))
             .on_action(cx.listener(Self::cursor_home))
+            .on_action(cx.listener(Self::cursor_home_select))
             .on_action(cx.listener(Self::expand_line_selection))
             .on_action(cx.listener(Self::fold))
             .on_action(cx.listener(Self::unfold))

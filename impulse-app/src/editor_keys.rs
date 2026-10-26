@@ -54,6 +54,7 @@ actions!(
         CursorsAtLineEnds,
         TrimTrailingWhitespace,
         CursorHome,
+        CursorHomeSelect,
         ExpandLineSelection,
         Fold,
         Unfold,
@@ -82,6 +83,8 @@ pub fn bind_keys(cx: &mut App) {
         cx.bind_keys([
             KeyBinding::new("home", CursorHome, buffer),
             KeyBinding::new("cmd-left", CursorHome, buffer),
+            KeyBinding::new("shift-home", CursorHomeSelect, buffer),
+            KeyBinding::new("shift-cmd-left", CursorHomeSelect, buffer),
             KeyBinding::new("cmd-l", ExpandLineSelection, buffer),
             KeyBinding::new("ctrl-f", MoveRight, c),
             KeyBinding::new("ctrl-b", MoveLeft, c),
@@ -126,6 +129,7 @@ pub fn bind_keys(cx: &mut App) {
     } else {
         cx.bind_keys([
             KeyBinding::new("home", CursorHome, buffer),
+            KeyBinding::new("shift-home", CursorHomeSelect, buffer),
             KeyBinding::new("ctrl-l", ExpandLineSelection, buffer),
             KeyBinding::new("ctrl-/", ToggleLineComment, c),
             KeyBinding::new("alt-up", MoveLinesUp, c),

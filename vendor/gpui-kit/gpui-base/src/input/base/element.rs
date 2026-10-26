@@ -988,6 +988,19 @@ impl<M: InputModeKind> TextElement<M> {
                 }
             }
         }
+        // Impulse: a snippet's placeholders, while it's filled in.
+        if let Some(snippet) = state.snippet.as_ref() {
+            let color = state
+                .editor_options
+                .colors
+                .snippet_tabstop
+                .unwrap_or(gpui::hsla(0., 0., 124. / 255., 0.3));
+            for range in snippet.placeholders() {
+                if let Some(path) = Self::layout_match_range(range.clone(), last_layout, bounds) {
+                    fills.push((path, color));
+                }
+            }
+        }
         (fills, frames)
     }
 
@@ -2081,6 +2094,7 @@ impl<M: InputModeKind> TextElement<M> {
                                 x,
                                 width,
                                 text: Some(shaped),
+                                inlay: None,
                             });
                             x += width;
                         }
@@ -2090,6 +2104,7 @@ impl<M: InputModeKind> TextElement<M> {
                             x,
                             width,
                             text: None,
+                            inlay: None,
                         });
                         x += width;
                         offset = local.end;
@@ -2108,6 +2123,7 @@ impl<M: InputModeKind> TextElement<M> {
                             x,
                             width,
                             text: Some(shaped),
+                            inlay: None,
                         });
                     }
                     lines.push(InputLine::inline(text[range].to_owned().into(), fragments));
@@ -2212,6 +2228,119 @@ impl<M: InputModeKind> TextElement<M> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Impulse: shape the inlay hints' labels and give the wrap map their
+    /// widths, so soft wrapping counts them (`set_inlay_hints`).
+    fn sync_inlay_hints(&self, font_size: Pixels, window: &mut Window, cx: &mut App) {
+        if !M::CODE_EDITOR {
+            return;
+        }
+        let font = window.text_style().font();
+        self.state.update(cx, |state, cx| {
+            let hints = &mut state.inlay_hints;
+            if hints.hints.is_empty() && hints.synced.is_none() {
+                return;
+            }
+            let color = state
+                .editor_options
+                .colors
+                .inlay_hint
+                .unwrap_or(state.editor_style.muted_foreground);
+            hints.shape(&font, font_size, color, window);
+            if hints.synced != Some(hints.revision) {
+                hints.synced = Some(hints.revision);
+                let metrics = hints.metrics();
+                state.display_map.set_inline_metrics(metrics, cx);
+            }
+        });
+    }
+
+    /// Impulse: a line with inlay hints as rows of fragments: the text's,
+    /// shaped in pieces with its runs, and each hint's between them, with
+    /// an empty range at its offset. A hint at a wrap boundary starts the
+    /// next row. Also whether any run carries a background.
+    #[allow(clippy::too_many_arguments)]
+    fn layout_inlay_line(
+        line_text: &str,
+        line_start: usize,
+        wrapped: &[Range<usize>],
+        hints: &[crate::input::inlay_hints::PlacedHint],
+        background: Option<Hsla>,
+        font_size: Pixels,
+        (runs, run_offset): (&[TextRun], usize),
+        bg_segments: &[(Range<usize>, Hsla)],
+        window: &mut Window,
+    ) -> (SmallVec<[crate::input::display_map::InputLine; 1]>, bool) {
+        use crate::input::display_map::{InlayLabel, InlineFragment, InputLine};
+        let mut lines = SmallVec::new();
+        let mut line_has_background = false;
+        for (ix, range) in wrapped.iter().enumerate() {
+            let last = ix + 1 == wrapped.len();
+            let mut fragments = Vec::new();
+            let mut x = px(0.);
+            let mut offset = range.start;
+            let mut text_part = |part: Range<usize>,
+                                 x: &mut Pixels,
+                                 fragments: &mut Vec<InlineFragment>,
+                                 window: &mut Window| {
+                let part_runs = runs_for_range(runs, run_offset, &part);
+                let part_runs = if bg_segments.is_empty() {
+                    part_runs
+                } else {
+                    split_runs_by_bg_segments(line_start + part.start, &part_runs, bg_segments)
+                };
+                let text: SharedString = line_text[part.clone()].to_string().into();
+                let part_runs =
+                    align_runs_to_char_boundaries(&text, &part_runs).unwrap_or(part_runs);
+                line_has_background |= has_background(&part_runs);
+                let shaped = window
+                    .text_system()
+                    .shape_line(text, font_size, &part_runs, None);
+                let width = shaped.width;
+                fragments.push(InlineFragment {
+                    range: part.start - range.start..part.end - range.start,
+                    x: *x,
+                    width,
+                    text: Some(shaped),
+                    inlay: None,
+                });
+                *x += width;
+            };
+            for hint in hints {
+                let at = hint.hint.offset() - line_start;
+                if at < range.start || at > range.end || (at == range.end && !last) {
+                    continue;
+                }
+                let Some((label, left, width)) = hint.shaped.clone() else {
+                    continue;
+                };
+                if offset < at {
+                    text_part(offset..at, &mut x, &mut fragments, window);
+                    offset = at;
+                }
+                fragments.push(InlineFragment {
+                    range: at - range.start..at - range.start,
+                    x,
+                    width,
+                    text: None,
+                    inlay: Some(InlayLabel {
+                        label,
+                        x: left,
+                        background,
+                    }),
+                });
+                x += width;
+            }
+            if offset < range.end {
+                text_part(offset..range.end, &mut x, &mut fragments, window);
+            }
+            lines.push(InputLine::inline(
+                line_text[range.clone()].to_string().into(),
+                fragments,
+            ));
+        }
+        (lines, line_has_background)
+    }
+
     fn layout_lines(
         state: &InputBaseState<M>,
         display_text: &Rope,
@@ -2281,6 +2410,48 @@ impl<M: InputModeKind> TextElement<M> {
                 .expect("line should exists in wrapper");
 
             debug_assert_eq!(line_item.len(), line_text.len());
+
+            // Impulse: a line with inlay hints is laid out in fragments.
+            let line_start = last_layout.visible_line_byte_offsets[vi];
+            let hints = if state.is_code_editor() {
+                state
+                    .inlay_hints
+                    .in_range(line_start..line_start + line_text.len())
+            } else {
+                &[]
+            };
+            if !hints.is_empty() {
+                let (inline, line_has_background) = Self::layout_inlay_line(
+                    &line_text,
+                    line_start,
+                    &line_item.wrapped_lines,
+                    hints,
+                    state.editor_options.colors.inlay_hint_background,
+                    font_size,
+                    (runs, run_offset),
+                    bg_segments,
+                    window,
+                );
+                let wrap_indent = if line_item.indent > 0 && inline.len() > 1 {
+                    let indent_byte_len = line_text
+                        .char_indices()
+                        .nth(line_item.indent as usize)
+                        .map(|(ix, _)| ix)
+                        .unwrap_or(line_text.len());
+                    inline[0].x_for_index(indent_byte_len)
+                } else {
+                    px(0.)
+                };
+                lines.push(
+                    LineLayout::new()
+                        .inline_lines(inline)
+                        .wrap_indent(wrap_indent)
+                        .with_background(line_has_background)
+                        .with_whitespaces(whitespace_indicators.clone(), line_start),
+                );
+                run_offset += line_text.len() + 1;
+                continue;
+            }
 
             let mut wrapped_lines: SmallVec<[ShapedLine; 1]> = SmallVec::with_capacity(1);
             let mut line_has_background = false;
@@ -2777,6 +2948,26 @@ impl<M: InputModeKind> Element for TextElement<M> {
             } else if state.overscroll.step(cx.background_executor().now()) {
                 window.request_animation_frame();
             }
+            // Impulse: a cursor moved out of a snippet's places ends it.
+            if let Some(snippet) = state.snippet.as_ref() {
+                let inside = state.selections.iter().all(|sel| {
+                    let range: Range<usize> = (*sel).into();
+                    snippet.contains(&range)
+                });
+                if !inside {
+                    state.snippet = None;
+                }
+            }
+            // Impulse: an animated scroll's next step (`set_smooth_scrolling`).
+            if let Some(scroll) = state.editor_options.smooth_scroll {
+                let (offset, arrived) = scroll.now();
+                state.deferred_scroll_offset = Some(offset);
+                if arrived {
+                    state.editor_options.smooth_scroll = None;
+                } else {
+                    window.request_animation_frame();
+                }
+            }
             state.overscroll.offset()
         });
 
@@ -2836,6 +3027,8 @@ impl<M: InputModeKind> Element for TextElement<M> {
             });
         }
 
+        // Impulse: the inlay hints' labels shaped, their widths in the wrap map.
+        self.sync_inlay_hints(text_size, window, cx);
         let line_height = window.line_height();
         let token_elements = self.measure_tokens(
             (bounds.size.width - line_number_width - RIGHT_MARGIN).max(px(1.)),
@@ -3036,6 +3229,12 @@ impl<M: InputModeKind> Element for TextElement<M> {
                     .as_ref()
                     .map_or(px(0.), |cache| cache.unwrapped_width)
             };
+        }
+        // Impulse: lines with inlay hints are wider than their text.
+        if (state.is_single_line() || !state.soft_wrap) && !state.inlay_hints.shown().is_empty() {
+            if let Some(widest) = lines.iter().map(|line| line.longest_width).max() {
+                longest_line_width = longest_line_width.max(widest);
+            }
         }
         last_layout.lines = Rc::new(lines);
 

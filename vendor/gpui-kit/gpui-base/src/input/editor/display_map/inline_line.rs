@@ -1,5 +1,5 @@
 //! A visual row whose offsets remain in source UTF-8 bytes.
-use gpui::{App, Pixels, Point, ShapedLine, SharedString, TextAlign, Window, point, px};
+use gpui::{App, Hsla, Pixels, Point, ShapedLine, SharedString, TextAlign, Window, point, px};
 use std::ops::Range;
 
 pub(crate) struct InlineFragment {
@@ -7,6 +7,18 @@ pub(crate) struct InlineFragment {
     pub(crate) x: Pixels,
     pub(crate) width: Pixels,
     pub(crate) text: Option<ShapedLine>,
+    /// Impulse: an inlay hint's label, drawn in a fragment with an empty
+    /// range (no text of the buffer's), so the offset it sits at lands after
+    /// it and a click on it lands at that offset.
+    pub(crate) inlay: Option<InlayLabel>,
+}
+
+/// Impulse: an inlay hint as a line draws it: its label, how far into the
+/// fragment it starts (the room before it), and what's behind it.
+pub(crate) struct InlayLabel {
+    pub(crate) label: ShapedLine,
+    pub(crate) x: Pixels,
+    pub(crate) background: Option<Hsla>,
 }
 
 pub(crate) struct InputLine {
@@ -148,6 +160,26 @@ impl InputLine {
                             window,
                             cx,
                         );
+                    }
+                    // Impulse: an inlay hint's label over its background,
+                    // the height of its glyphs, as Monaco's span.
+                    if let Some(inlay) = f.inlay.as_ref().filter(|_| !background) {
+                        let origin = pos + point(offset + f.x + inlay.x, px(0.));
+                        if let Some(color) = inlay.background {
+                            let glyphs = inlay.label.ascent + inlay.label.descent;
+                            let top = ((height - glyphs) / 2.).max(px(0.));
+                            window.paint_quad(gpui::fill(
+                                gpui::Bounds::new(
+                                    origin + point(px(0.), top),
+                                    gpui::size(inlay.label.width, glyphs.min(height)),
+                                ),
+                                color,
+                            ));
+                        }
+                        let _ =
+                            inlay
+                                .label
+                                .paint(origin, height, TextAlign::Left, None, window, cx);
                     }
                 }
             }

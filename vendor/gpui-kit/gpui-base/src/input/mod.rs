@@ -34,6 +34,9 @@ mod element;
 mod highlighting;
 #[path = "editor/indent.rs"]
 mod indent;
+// Impulse: inlay hints (Monaco's `inlayHints`).
+#[path = "editor/inlay_hints.rs"]
+mod inlay_hints;
 #[path = "base/inline_tokens.rs"]
 mod inline_tokens;
 mod input;
@@ -67,6 +70,9 @@ mod native;
 mod rope_ext;
 #[path = "editor/search.rs"]
 mod search;
+// Impulse: snippets with tab stops (Monaco's snippet controller).
+#[path = "editor/snippet.rs"]
+mod snippet;
 #[path = "base/selection.rs"]
 mod selection;
 #[path = "base/state.rs"]
@@ -99,6 +105,9 @@ pub use display_map::{BufferPoint, DisplayMap, DisplayPoint, FoldRange, Wrapping
 // Impulse: view zones (Monaco's `changeViewZones`).
 pub use display_map::{ViewZone, ViewZoneContext, ViewZoneId, ViewZoneRenderer};
 pub use editor::{Editor, EditorState};
+pub(crate) use inlay_hints::InlayHints;
+pub(crate) use snippet::SnippetSession;
+pub use inlay_hints::InlayHint;
 // Impulse: Monaco's editor options (see `editor_options`).
 pub(crate) use editor_options::EditorOptions;
 pub use editor_options::{

@@ -382,6 +382,57 @@ impl TextWrapper {
             range,
             new_text,
             &mut |line_str, wrap_width, line_start| {
+                let measure = |text: &str| {
+                    text_system
+                        .layout_line(
+                            text,
+                            font_size,
+                            &[gpui::TextRun {
+                                len: text.len(),
+                                font: font.clone(),
+                                color: gpui::black(),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }],
+                            None,
+                        )
+                        .width
+                };
+                // Impulse: inlay hints (empty ranges) on a line without
+                // tokens wrap at the same word boundaries as other lines,
+                // each piece measured with the hints inside it. A hint at a
+                // row's end starts the next row, as the element lays it out.
+                let line_end = line_start + line_str.len();
+                let first_hint = metrics.partition_point(|(r, _)| r.start < line_start);
+                let in_line = metrics[first_hint..]
+                    .iter()
+                    .take_while(|(r, _)| r.start <= line_end);
+                if in_line.clone().next().is_some() && in_line.clone().all(|(r, _)| r.is_empty()) {
+                    let hints: Vec<(usize, Pixels)> = in_line
+                        .map(|(r, width)| (r.start - line_start, *width))
+                        .collect();
+                    return measured_wrap_boundaries(
+                        line_str,
+                        wrap_width,
+                        wrapping_indent,
+                        |text| {
+                            // `text` is a slice of `line_str`: where it starts in
+                            // the line, from the two pointers.
+                            let start = text.as_ptr() as usize - line_str.as_ptr() as usize;
+                            let end = start + text.len();
+                            let inlays = hints
+                                .iter()
+                                .filter(|(at, _)| {
+                                    (*at >= start && *at < end)
+                                        || (*at == end && end == line_str.len())
+                                })
+                                .map(|(_, width)| *width)
+                                .fold(px(0.), |sum, width| sum + width);
+                            measure(text) + inlays
+                        },
+                    );
+                }
                 let mut fragments = Vec::new();
                 let mut offset = 0;
                 let first = metrics.partition_point(|(r, _)| r.end <= line_start);
@@ -409,23 +460,7 @@ impl TextWrapper {
                         line_str,
                         wrap_width,
                         wrapping_indent,
-                        |text| {
-                            text_system
-                                .layout_line(
-                                    text,
-                                    font_size,
-                                    &[gpui::TextRun {
-                                        len: text.len(),
-                                        font: font.clone(),
-                                        color: gpui::black(),
-                                        background_color: None,
-                                        underline: None,
-                                        strikethrough: None,
-                                    }],
-                                    None,
-                                )
-                                .width
-                        },
+                        measure,
                     );
                 }
                 if offset < line_str.len() {

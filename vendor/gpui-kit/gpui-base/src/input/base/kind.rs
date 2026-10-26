@@ -237,6 +237,26 @@ pub trait InputModeKind: sealed::Sealed + Sized + 'static {
         false
     }
 
+    /// Impulse: Tab (`forward`) or Shift+Tab in a snippet being filled in
+    /// moves to its next or previous tab stop. Whether it did.
+    fn snippet_jump(
+        _state: &mut InputBaseState<Self>,
+        _forward: bool,
+        _window: &mut Window,
+        _cx: &mut gpui::Context<InputBaseState<Self>>,
+    ) -> bool {
+        false
+    }
+
+    /// Impulse: Escape leaves a snippet being filled in. Whether there was
+    /// one.
+    fn leave_snippet(
+        _state: &mut InputBaseState<Self>,
+        _cx: &mut gpui::Context<InputBaseState<Self>>,
+    ) -> bool {
+        false
+    }
+
     /// Whether an inline completion is waiting to be accepted.
     fn has_inline_completion(_state: &InputBaseState<Self>) -> bool {
         false

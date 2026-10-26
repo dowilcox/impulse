@@ -375,8 +375,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           impulse_kit::git::editor_marks; Monaco's keys
                           (editor_actions.rs: block comment, Go to
                           Bracket, F8, Expand/Shrink Selection, Cursor
-                          Undo, trim trailing whitespace…, Home to the
-                          first non-blank, ⌘L Expand Line Selection, the
+                          Undo, trim trailing whitespace…, Home and ⇧Home
+                          to each cursor's first non-blank (gpui-base's
+                          smart_home), ⌘L Expand Line Selection, the
                           Mac's ⌃ text keys, keyboard folding (⌥⌘[ ⌥⌘]
                           ⌘K ⌘0 ⌘K ⌘J), and linked HTML
                           tag names over impulse_kit::linked_tags), font
@@ -424,7 +425,16 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           lines" view zone; the git peek and conflict actions
                           sit in view zones too),
                           signature help over the caret with
-                          impulse_lsp::signature; Vim mode in
+                          impulse_lsp::signature; inlay hints
+                          (editor_inlay.rs: DocumentLink::inlay_hints for
+                          the lines on screen and 30 around, again after
+                          edits and scrolls, drawn by gpui-base's
+                          set_inlay_hints; editor_inlay_hints' Ctrl+Alt
+                          modes); completion snippets with tab stops
+                          (gpui-base's insert_snippet, the tab's
+                          set_snippet_variables); smooth_scrolling
+                          (gpui-base's set_smooth_scrolling, Go to Line
+                          through animate_scroll_offset); Vim mode in
                           editor_vim.rs over impulse_kit::vim, its keys
                           taken ahead of GPUI Kit's in the VimNormal
                           context, the mode in the status bar), workspace trust, language
@@ -441,7 +451,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           $/cancelRequest, documents sync by changed
                           ranges where the server takes them, and
                           completions reach GPUI Kit's editor as one
-                          character-column edit each,
+                          character-column edit each (a snippet's
+                          additionalTextEdits kept apart),
                           impulse_lsp::completion::editor_completions) (code actions, formatting, rename in
                           Monaco's inline box (EditorTab's RenameBox) and
                           references with edits across files), the

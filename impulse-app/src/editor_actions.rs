@@ -7,14 +7,13 @@
 
 use std::ops::Range;
 
-use gpui_kit::component::input::MoveHome;
-use gpui_kit::{Context, EntityInputHandler as _, Focusable as _, Window};
+use gpui_kit::{Context, EntityInputHandler as _, Window};
 use impulse_kit::{line_edits, linked_tags};
 
 use crate::editor_keys::{
-    CursorHome, CursorUndo, CursorsAtLineEnds, ExpandLineSelection, ExpandSelection, Fold, FoldAll,
-    GoToBracket, NextProblem, PreviousProblem, ShowParameterHints, ShrinkSelection,
-    ToggleBlockComment, TrimTrailingWhitespace, Unfold, UnfoldAll,
+    CursorHome, CursorHomeSelect, CursorUndo, CursorsAtLineEnds, ExpandLineSelection,
+    ExpandSelection, Fold, FoldAll, GoToBracket, NextProblem, PreviousProblem, ShowParameterHints,
+    ShrinkSelection, ToggleBlockComment, TrimTrailingWhitespace, Unfold, UnfoldAll,
 };
 use crate::editor_tab::EditorTab;
 
@@ -370,33 +369,30 @@ impl EditorTab {
 }
 
 impl EditorTab {
-    /// Home and ⌘←: to the line's first non-blank character, then from
-    /// there to column 0 (Monaco's `cursorHome`). Where that's the line's
-    /// start anyway, and on a wrapped line's later rows, GPUI Kit's own
-    /// move does it for every cursor; otherwise only the active cursor
-    /// moves (GPUI Kit doesn't let others be read or moved one by one).
+    /// Home and ⌘←: every cursor to its line's first non-blank character,
+    /// then from there to column 0 (Monaco's `cursorHome`); on a wrapped
+    /// line's later rows, to the row's start first. Impulse's GPUI Kit
+    /// patch moves each cursor (`EditorState::smart_home`).
     pub(crate) fn cursor_home(
         &mut self,
         _: &CursorHome,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (target, line_start, wrapped) = {
-            let state = self.state.read(cx);
-            let text = state.value();
-            let cursor = state.cursor();
-            let line_start = line_start(&text, cursor);
-            let top = |offset: usize| state.range_to_bounds(&(offset..offset)).map(|b| b.top());
-            let wrapped = matches!((top(line_start), top(cursor)), (Some(a), Some(b)) if a != b);
-            (home_target(&text, cursor), line_start, wrapped)
-        };
-        if target == line_start || wrapped {
-            let focus = self.state.focus_handle(cx);
-            focus.dispatch_action(&MoveHome, window, cx);
-            return;
-        }
         self.state
-            .update(cx, |state, cx| state.set_selected_range(target..target, cx));
+            .update(cx, |state, cx| state.smart_home(false, window, cx));
+    }
+
+    /// ⇧Home and ⇧⌘←: every selection extended to where Home goes
+    /// (Monaco's `cursorHomeSelect`).
+    pub(crate) fn cursor_home_select(
+        &mut self,
+        _: &CursorHomeSelect,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.state
+            .update(cx, |state, cx| state.smart_home(true, window, cx));
     }
 
     /// ⌘L: select the cursor's line, line end included; again, the next
@@ -422,25 +418,6 @@ fn line_start(text: &str, offset: usize) -> usize {
     text[..offset].rfind('\n').map_or(0, |i| i + 1)
 }
 
-/// Where Home takes a cursor at `cursor`: the line's first non-blank
-/// character, or its start when it's there already (or the line is
-/// blank).
-fn home_target(text: &str, cursor: usize) -> usize {
-    let start = line_start(text, cursor);
-    let line = text[start..].split('\n').next().unwrap_or("");
-    let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
-    let first = if indent == line.len() {
-        start
-    } else {
-        start + indent
-    };
-    if cursor == first {
-        start
-    } else {
-        first
-    }
-}
-
 /// `selection` grown to whole lines: from its first line's start to the
 /// start of the line after its last (the end of the text on the last
 /// line). A selection ending at a line's start takes that line as well, so
@@ -456,22 +433,6 @@ fn line_selection(text: &str, selection: Range<usize>) -> Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn home_goes_to_the_first_non_blank_then_column_zero() {
-        let text = "fn a() {\n    let x = 1;\n\n  \n}";
-        // From inside the line, to its first non-blank character.
-        assert_eq!(home_target(text, 20), 13);
-        // From there, to the line's start, and back.
-        assert_eq!(home_target(text, 13), 9);
-        assert_eq!(home_target(text, 9), 13);
-        // Inside the indent, to the first non-blank character.
-        assert_eq!(home_target(text, 11), 13);
-        // Unindented and blank lines start at their first character.
-        assert_eq!(home_target(text, 4), 0);
-        assert_eq!(home_target(text, 24), 24);
-        assert_eq!(home_target(text, 26), 25);
-    }
 
     #[test]
     fn each_line_selection_takes_one_more_line() {

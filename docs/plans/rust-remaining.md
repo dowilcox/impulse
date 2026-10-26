@@ -121,15 +121,26 @@ Work that doesn't depend on anyone else.
 
 Each needs a change in GPUI Kit, now vendored (`vendor/gpui-kit/`; its
 README lists the patches made so far: caret styles and blinking, whitespace
-modes, auto-closing modes, keyboard folding and more). The settings named
-here exist and are saved, but the Rust app doesn't act on them yet.
+modes, auto-closing modes, keyboard folding, view zones, inlay hints,
+snippets, smooth scrolling, Home for every cursor and more).
 
 | What | Why it waits | Setting |
 |---|---|---|
-| Inlay hints | the editor can't insert text into a line's layout | `editor_inlay_hints` |
-| Snippets in completions | snippet handling is off until it's checked; completions insert plain text | |
 | Announcing agent state to screen readers | GPUI has no live regions | |
-| Smooth scrolling | not supported | `smooth_scrolling` |
+
+Left of the editor work done here:
+
+- [ ] **Inlay hints' extras.** No tooltip on a hint, no ⌘-click on a label
+  part's location or command, and no `workspace/inlayHint/refresh`
+  (advertising it needs a `ServerEvent` the workbench handles), so a
+  server's hints that change without an edit (rust-analyzer after
+  indexing) show after the next edit or scroll. TypeScript sends none
+  with Impulse's settings, in either app: its `includeInlay…`
+  preferences are off unless `lsp.json` turns them on
+  (`initialization_options.preferences`).
+- [ ] **Nested snippet sessions.** A snippet inserted inside another's
+  placeholder replaces the session, where Monaco merges them; choices
+  with mirrors update only the first place.
 
 ## 4. Known issues
 

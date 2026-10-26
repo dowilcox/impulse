@@ -401,6 +401,27 @@ impl<M: InputModeKind> InputBaseState<M> {
         );
     }
 
+    /// Impulse: where Monaco's Home takes a cursor at `offset`: on a soft
+    /// wrapped line's later row, that row's start; otherwise the line's
+    /// first non-blank character, or the line's start when it's there
+    /// already (or the line is blank).
+    pub(super) fn smart_home_target(&self, offset: usize, line_end_affinity: bool) -> usize {
+        let start = self.start_of_line_at(offset, line_end_affinity);
+        let row = self.text.offset_to_point(offset).row;
+        let line_start = self.text.line_start_offset(row);
+        if start != line_start {
+            return start;
+        }
+        let line = self.text.slice_line(row).to_string();
+        let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let first = line_start + indent;
+        if indent == line.len() || offset == first {
+            line_start
+        } else {
+            first
+        }
+    }
+
     pub(super) fn end(&mut self, _: &MoveEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.move_all_cursors(
             |s, sel| {

@@ -527,8 +527,10 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             completion: Some(CompletionClientCapabilities {
+                // Snippets with tab stops (Impulse's GPUI Kit patch inserts
+                // them as Monaco does).
                 completion_item: Some(CompletionItemCapability {
-                    snippet_support: Some(false),
+                    snippet_support: Some(true),
                     documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
                     ..Default::default()
                 }),
@@ -598,6 +600,9 @@ fn client_capabilities() -> ClientCapabilities {
                 ..Default::default()
             }),
             document_highlight: Some(Default::default()),
+            // Types and parameter names drawn in the text (Monaco's inlay
+            // hints).
+            inlay_hint: Some(lsp_types::InlayHintClientCapabilities::default()),
             ..Default::default()
         }),
         // Long-running work (indexing) shown in the status bar.

@@ -692,6 +692,63 @@ impl DocumentLink {
         })
     }
 
+    /// Whether the server draws inlay hints (`inlayHintProvider`).
+    pub fn has_inlay_hints(&self) -> bool {
+        self.client
+            .capabilities()
+            .inlay_hint_provider
+            .is_some_and(|provider| !matches!(provider, lsp_types::OneOf::Left(false)))
+    }
+
+    /// The server's inlay hints for the lines `rows` (Monaco's inlay hints
+    /// provider): byte offsets in `text`, their labels (a label in parts
+    /// joined) and whether each has room before and after it.
+    pub fn inlay_hints(
+        &self,
+        text: &Rope,
+        rows: std::ops::Range<usize>,
+        cx: &App,
+    ) -> Task<Result<Vec<InlayHintAt>, String>> {
+        self.sync(text);
+        let last = text.lines_len().saturating_sub(1);
+        let first = rows.start.min(last);
+        let start = text.line_start_offset(first);
+        let end = text.line_end_offset(rows.end.saturating_sub(1).clamp(first, last));
+        let params = lsp_types::InlayHintParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.uri.clone(),
+            },
+            range: lsp_types::Range::new(self.position(text, start), self.position(text, end)),
+            work_done_progress_params: Default::default(),
+        };
+        let client = self.client.clone();
+        let source = text.to_string();
+        cx.background_executor().spawn(async move {
+            let hints = client
+                .request::<lsp_types::request::InlayHintRequest>(params)
+                .await?
+                .unwrap_or_default();
+            let utf32 = client.uses_utf32();
+            Ok(hints
+                .into_iter()
+                .map(|hint| {
+                    let label = match hint.label {
+                        lsp_types::InlayHintLabel::String(label) => label,
+                        lsp_types::InlayHintLabel::LabelParts(parts) => {
+                            parts.into_iter().map(|part| part.value).collect()
+                        }
+                    };
+                    InlayHintAt {
+                        offset: impulse_lsp::edits::offset_of(&source, hint.position, utf32),
+                        label,
+                        padding_left: hint.padding_left.unwrap_or(false),
+                        padding_right: hint.padding_right.unwrap_or(false),
+                    }
+                })
+                .collect())
+        })
+    }
+
     /// The file's symbols in document order (the palette's @ mode).
     pub fn document_symbols(
         &self,
@@ -1104,3 +1161,13 @@ fn link(location: lsp_types::Location) -> LocationLink {
 
 /// A document highlight: its range, and whether it's a write.
 type Highlight = (std::ops::Range<usize>, bool);
+
+/// An inlay hint from the server, at a byte offset of the text it was asked
+/// for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InlayHintAt {
+    pub offset: usize,
+    pub label: String,
+    pub padding_left: bool,
+    pub padding_right: bool,
+}

@@ -109,6 +109,15 @@ pub struct EditorColors {
     /// The character under a [`CaretStyle::Block`] caret
     /// (`editorCursor.background`). Default: the style's `background`.
     pub block_caret_text: Option<Hsla>,
+    /// Inlay hints' labels (`editorInlayHint.foreground`). Default: the
+    /// style's `muted_foreground`.
+    pub inlay_hint: Option<Hsla>,
+    /// Behind inlay hints' labels (`editorInlayHint.background`). Default:
+    /// none.
+    pub inlay_hint_background: Option<Hsla>,
+    /// A snippet's placeholders (`editor.snippetTabstopHighlightBackground`).
+    /// Default: Monaco's dark one, a grey at 30%.
+    pub snippet_tabstop: Option<Hsla>,
 }
 
 /// The options above, as the state holds them.
@@ -130,6 +139,41 @@ pub(crate) struct EditorOptions {
     pub(crate) hide_column_select_pointer: bool,
     /// When the scrollbars show; `None`: the theme's `scrollbar_mode`.
     pub(crate) scrollbar_mode: Option<crate::ScrollbarMode>,
+    /// Animate scrolls the editor makes itself (Monaco's
+    /// `smoothScrolling`); wheels and trackpads stay direct.
+    pub(crate) smooth_scrolling: bool,
+    /// The animated scroll under way.
+    pub(crate) smooth_scroll: Option<SmoothScroll>,
+}
+
+/// How long an animated scroll takes (Monaco's `smoothScrollDuration`).
+pub(crate) const SMOOTH_SCROLL_DURATION: Duration = Duration::from_millis(125);
+
+/// An animated scroll: from where it started to where it goes, eased out.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SmoothScroll {
+    pub(crate) from: gpui::Point<gpui::Pixels>,
+    pub(crate) to: gpui::Point<gpui::Pixels>,
+    pub(crate) start: Instant,
+}
+
+impl SmoothScroll {
+    /// The offset at `now`, and whether it has arrived.
+    pub(crate) fn at(&self, now: Instant) -> (gpui::Point<gpui::Pixels>, bool) {
+        let elapsed = now.saturating_duration_since(self.start);
+        if elapsed >= SMOOTH_SCROLL_DURATION {
+            return (self.to, true);
+        }
+        let t = elapsed.as_secs_f32() / SMOOTH_SCROLL_DURATION.as_secs_f32();
+        // Monaco's ease out cubic.
+        let eased = 1. - (1. - t).powi(3);
+        (self.from + (self.to - self.from) * eased, false)
+    }
+
+    /// The offset now, and whether it has arrived.
+    pub(crate) fn now(&self) -> (gpui::Point<gpui::Pixels>, bool) {
+        self.at(Instant::now())
+    }
 }
 
 /// A pause without events that ends a gesture, as `overscroll`'s
@@ -220,6 +264,59 @@ impl<M: InputModeKind> InputBaseState<M> {
         }
     }
 
+    /// Impulse: animate the scrolls the editor makes itself (keys that move
+    /// the cursor off screen, revealing a line, [`Self::animate_scroll_offset`])
+    /// over 125 ms, as Monaco's `smoothScrolling`. Wheels and trackpads stay
+    /// direct.
+    pub fn set_smooth_scrolling(&mut self, smooth: bool) {
+        self.editor_options.smooth_scrolling = smooth;
+        if !smooth {
+            self.editor_options.smooth_scroll = None;
+        }
+    }
+
+    /// Impulse: scroll to `offset` as [`Self::set_scroll_offset`] does,
+    /// animated when [`Self::set_smooth_scrolling`] is on.
+    pub fn animate_scroll_offset(
+        &mut self,
+        offset: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_scroll_target(offset, cx);
+    }
+
+    /// Scroll to `target` (already clamped), through an animation when the
+    /// option is on and it moves.
+    pub(crate) fn set_scroll_target(
+        &mut self,
+        target: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let now = Instant::now();
+        let current = match self.editor_options.smooth_scroll {
+            Some(scroll) => scroll.at(now).0,
+            None => self
+                .deferred_scroll_offset
+                .unwrap_or(self.scroll_handle.offset()),
+        };
+        if !self.editor_options.smooth_scrolling || cx.reduce_motion() || current == target {
+            self.editor_options.smooth_scroll = None;
+            self.deferred_scroll_offset = Some(target);
+        } else if self
+            .editor_options
+            .smooth_scroll
+            .is_none_or(|scroll| scroll.to != target)
+        {
+            self.editor_options.smooth_scroll = Some(SmoothScroll {
+                from: current,
+                to: target,
+                start: now,
+            });
+            self.deferred_scroll_offset = Some(current);
+        }
+        cx.notify();
+    }
+
     /// Impulse: which whitespace gets a marker. [`Self::set_show_whitespaces`]
     /// sets `All` or `None`.
     pub fn set_render_whitespace(&mut self, mode: RenderWhitespace, cx: &mut Context<Self>) {
@@ -246,6 +343,39 @@ impl InputBaseState<EditorMode> {
     /// asked for. GPUI Kit's: 150 ms.
     pub fn set_hover_delay(&mut self, delay: Duration) {
         self.extras.lsp.hover_delay = delay;
+    }
+
+    /// Impulse: Monaco's Home, for every cursor: to its line's first
+    /// non-blank character, or to the line's start when it's there already
+    /// (or the line is blank); on a soft-wrapped line's later rows, to the
+    /// row's start first. With `select`, each selection extends to there
+    /// instead (Shift+Home). GPUI Kit's `MoveHome` goes to the start.
+    pub fn smart_home(&mut self, select: bool, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        if select {
+            self.undo_manager.break_transaction_coalescing();
+            self.select_all_cursors_to(
+                |s, sel| s.smart_home_target(sel.cursor_offset(), s.line_end_affinity_for(sel)),
+                cx,
+            );
+        } else {
+            self.move_all_cursors(
+                |s, sel| {
+                    let offset =
+                        s.smart_home_target(sel.cursor_offset(), s.line_end_affinity_for(sel));
+                    (offset, s.preferred_column_for(offset), false)
+                },
+                Some(super::movement::MoveDirection::Up),
+                window,
+                cx,
+            );
+        }
+    }
+
+    /// Impulse: every selection, as byte ranges (start before end), in the
+    /// order they were made; the active one is
+    /// [`Self::selected_range`].
+    pub fn selected_ranges(&self) -> Vec<std::ops::Range<usize>> {
+        self.selections.iter().map(|sel| (*sel).into()).collect()
     }
 
     /// Impulse: fold the innermost unfolded range holding the cursor's line
@@ -336,6 +466,8 @@ impl InputBaseState<EditorMode> {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
+    use gpui::AppContext as _;
     use gpui::{TouchPhase, point, px};
     use instant::Duration;
 
@@ -428,6 +560,109 @@ mod tests {
                 assert_eq!(state.display_map.folded_ranges().len(), 2);
             });
         });
+    }
+
+    #[gpui::test]
+    fn home_takes_every_cursor_to_its_first_non_blank(cx: &mut gpui::TestAppContext) {
+        use crate::input::inlay_hints::tests::editor;
+
+        let (state, mut cx) = editor("  foo\n    bar\nbaz\n   ", cx);
+        let cursors = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                let mut ranges = state.read(cx).selected_ranges();
+                ranges.sort_by_key(|r| r.start);
+                ranges
+            })
+        };
+        cx.update(|_, cx| {
+            state.update(cx, |state, cx| {
+                state.set_selected_range(4..4, cx);
+                state.add_selection(12..12, cx);
+                state.add_selection(16..16, cx);
+                state.add_selection(20..20, cx);
+            })
+        });
+        let home = |cx: &mut gpui::VisualTestContext, select: bool| {
+            cx.update(|window, cx| {
+                state.update(cx, |state, cx| state.smart_home(select, window, cx))
+            })
+        };
+        home(&mut cx, false);
+        // A blank line's cursor goes to its start.
+        assert_eq!(cursors(&mut cx), vec![2..2, 10..10, 14..14, 18..18]);
+        home(&mut cx, false);
+        assert_eq!(cursors(&mut cx), vec![0..0, 6..6, 14..14, 18..18]);
+        home(&mut cx, false);
+        assert_eq!(cursors(&mut cx), vec![2..2, 10..10, 14..14, 18..18]);
+
+        // Shift+Home selects to there.
+        cx.update(|_, cx| {
+            state.update(cx, |state, cx| {
+                state.set_selected_range(4..4, cx);
+                state.add_selection(12..12, cx);
+            })
+        });
+        home(&mut cx, true);
+        assert_eq!(cursors(&mut cx), vec![2..4, 10..12]);
+    }
+
+    #[gpui::test]
+    fn scrolls_the_editor_makes_animate(cx: &mut gpui::TestAppContext) {
+        use crate::input::{Position, inlay_hints::tests::editor};
+
+        let text = (0..400)
+            .map(|ix| ix.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (state, mut cx) = editor(&text, cx);
+        let draw =
+            |cx: &mut gpui::VisualTestContext| cx.update(|window, cx| window.draw(cx).clear(cx));
+        let offset =
+            |cx: &mut gpui::VisualTestContext| cx.update(|_, cx| state.read(cx).scroll_offset().y);
+        // Off: a jump.
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_cursor_position(Position::new(300, 0), window, cx)
+            })
+        });
+        draw(&mut cx);
+        let target = offset(&mut cx);
+        assert!(target < px(0.));
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_cursor_position(Position::new(0, 0), window, cx)
+            })
+        });
+        draw(&mut cx);
+        assert_eq!(offset(&mut cx), px(0.));
+
+        // On: from where it is to where it goes over 125 ms.
+        cx.update(|window, cx| {
+            state.update(cx, |state, cx| {
+                state.set_smooth_scrolling(true);
+                state.set_cursor_position(Position::new(300, 0), window, cx);
+                assert!(state.editor_options.smooth_scroll.is_some());
+            })
+        });
+        draw(&mut cx);
+        let early = offset(&mut cx);
+        assert!(early > target && early <= px(0.), "{early:?}");
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        draw(&mut cx);
+        assert_eq!(offset(&mut cx), target);
+        assert!(cx.update(|_, cx| state.read(cx).editor_options.smooth_scroll.is_none()));
+
+        // Setting the offset directly is a jump.
+        cx.update(|_, cx| {
+            state.update(cx, |state, cx| {
+                state.animate_scroll_offset(gpui::point(px(0.), px(0.)), cx);
+                assert!(state.editor_options.smooth_scroll.is_some());
+                state.set_scroll_offset(gpui::point(px(0.), px(-40.)), cx);
+                assert!(state.editor_options.smooth_scroll.is_none());
+            })
+        });
+        draw(&mut cx);
+        assert_eq!(offset(&mut cx), px(-40.));
     }
 
     #[gpui::test]

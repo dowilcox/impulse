@@ -484,6 +484,12 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) show_whitespaces: bool,
     /// Impulse: Monaco's editor options, GPUI Kit's behavior by default.
     pub(crate) editor_options: crate::input::EditorOptions,
+    /// Impulse: the host's inlay hints (`set_inlay_hints`).
+    pub(crate) inlay_hints: crate::input::InlayHints,
+    /// Impulse: the snippet being filled in (`insert_snippet`), and the
+    /// variables the host gives snippets (`set_snippet_variables`).
+    pub(crate) snippet: Option<crate::input::SnippetSession>,
+    pub(crate) snippet_variables: std::collections::HashMap<String, String>,
     /// This flag tells the renderer to prefer the end of the current visual line.
     pub(crate) cursor_line_end_affinity: bool,
     pub(super) pattern: Option<regex::Regex>,
@@ -904,6 +910,9 @@ impl<M: InputModeKind> InputBaseState<M> {
             autocapitalize: None,
             show_whitespaces: false,
             editor_options: Default::default(),
+            inlay_hints: Default::default(),
+            snippet: None,
+            snippet_variables: Default::default(),
             loading: false,
             pattern: None,
             validate: None,
@@ -2319,6 +2328,11 @@ impl<M: InputModeKind> InputBaseState<M> {
         // Escape also dismisses a request whose popup has not arrived yet.
         M::hide_context_menu(self, cx);
 
+        // Impulse: then it leaves a snippet being filled in.
+        if M::leave_snippet(self, cx) {
+            return;
+        }
+
         // Collapse extra cursors back to the active one first.
         if !self.selections.is_single() {
             self.undo_manager.break_transaction_coalescing();
@@ -2747,6 +2761,12 @@ impl<M: InputModeKind> InputBaseState<M> {
             .map(|layout| layout.line_height)
             .unwrap_or(window.line_height());
         let delta = event.delta.pixel_delta(line_height);
+        // Impulse: the wheel takes over from an animated scroll, where it is.
+        if let Some(scroll) = self.editor_options.smooth_scroll.take() {
+            let offset = scroll.now().0;
+            self.scroll_handle.set_offset(offset);
+            self.deferred_scroll_offset = None;
+        }
 
         let old_offset = self.scroll_handle.offset();
         let precise = matches!(event.delta, gpui::ScrollDelta::Pixels(_));
@@ -2991,8 +3011,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         let safe_y_min = (-self.scroll_size.height + self.input_bounds.size.height).min(px(0.));
         scroll_offset.x = scroll_offset.x.min(px(0.));
         scroll_offset.y = scroll_offset.y.clamp(safe_y_min, px(0.));
-        self.deferred_scroll_offset = Some(scroll_offset);
-        cx.notify();
+        // Impulse: animated when the host asks (`set_smooth_scrolling`).
+        self.set_scroll_target(scroll_offset, cx);
     }
 
     pub(super) fn show_character_palette(
@@ -3368,6 +3388,8 @@ impl<M: InputModeKind> InputBaseState<M> {
     ///
     /// The offset will be clamped to the valid range, and applied after the next layout.
     pub fn set_scroll_offset(&mut self, offset: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        // Impulse: it replaces an animated scroll under way.
+        self.editor_options.smooth_scroll = None;
         self.deferred_scroll_offset = Some(offset);
         cx.notify();
     }
@@ -3654,7 +3676,8 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     /// Extend every selection to the offset produced by `f`, then merge any
     /// selections that now overlap. Used by keyboard selection commands.
-    fn select_all_cursors_to(
+    /// Impulse: `pub(super)` for `smart_home` (`editor_options.rs`).
+    pub(super) fn select_all_cursors_to(
         &mut self,
         f: impl Fn(&Self, &CursorSelection) -> usize,
         cx: &mut Context<Self>,
