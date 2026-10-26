@@ -526,6 +526,9 @@ pub struct InputBaseState<M: InputModeKind> {
     /// its default mask when the user has not made an explicit choice.
     pub(super) mask_pattern_set: bool,
     pub(super) placeholder: SharedString,
+    /// Impulse: the placeholder's color, when the host wants other than
+    /// `muted_foreground` (a search field's, as an NSSearchField draws it).
+    pub(super) placeholder_color: Option<gpui::Hsla>,
 
     /// Diagnostic currently requested by pointer hover; applications render it.
     pub(super) diagnostic_popover: Option<Rc<crate::input::DiagnosticEntry>>,
@@ -923,6 +926,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             editor_paddings: Edges::default(),
             deferred_scroll_offset: None,
             placeholder: SharedString::default(),
+            placeholder_color: None,
             mask_pattern: MaskPattern::default(),
             mask_pattern_set: false,
             editor_style: InputEditorStyle::default(),
@@ -967,6 +971,12 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Set placeholder
     pub fn placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// Impulse: set the placeholder's color (`muted_foreground` when unset).
+    pub fn placeholder_color(mut self, color: Option<gpui::Hsla>) -> Self {
+        self.placeholder_color = color;
         self
     }
 

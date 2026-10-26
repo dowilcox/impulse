@@ -78,6 +78,10 @@ because gpui-component builds that struct as a full literal.
   hover) whatever the theme's `scrollbar_mode`, as Monaco's vertical slider
   stays shown. `None` (the default) follows the theme.
 
+- **Placeholder color** (`input/base/state.rs`, `input/base/element.rs`):
+  `InputState::placeholder_color`, for a field whose placeholder isn't
+  `muted_foreground` (Impulse's search fields, as NSSearchField draws them).
+
 ### gpui-component
 
 - **Hover text at the editor's size** (`input/popovers/hover_popover.rs`,

@@ -551,7 +551,7 @@ fn card(name: &str, increase_contrast: bool) -> impl IntoElement {
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .child(icon("git-branch", 11., p.text_secondary))
+                .child(icon("split", 11., p.text_secondary))
                 .child("main"),
         )
         .child("3 changes")

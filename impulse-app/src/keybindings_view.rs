@@ -142,6 +142,8 @@ impl KeybindingsView {
         let search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search commands")
+                // A search field's placeholder, as NSSearchField draws it.
+                .placeholder_color(Some(crate::workbench_chrome::hsla(palette.text_secondary)))
                 .clean_on_escape()
         });
         let view = cx.entity().downgrade();

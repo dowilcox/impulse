@@ -159,6 +159,8 @@ impl ProblemsView {
         let filter = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Filter")
+                // A search field's placeholder, as NSSearchField draws it.
+                .placeholder_color(Some(crate::workbench_chrome::hsla(palette.text_secondary)))
                 .clean_on_escape()
         });
         let subscriptions = vec![

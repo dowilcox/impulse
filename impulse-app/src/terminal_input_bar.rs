@@ -899,7 +899,7 @@ impl TerminalView {
             chips.push((Some("folder"), abbreviate_home(&self.cwd), false, None));
         }
         if let Some(branch) = self.branch.as_ref().filter(|b| !b.is_empty()) {
-            chips.push((Some("git-branch"), branch.clone(), true, None));
+            chips.push((Some("split"), branch.clone(), true, None));
         }
         // The repository's changes (Swift's ReviewChip), opening Review.
         let review = (!self.cwd.is_empty())
@@ -1396,7 +1396,7 @@ fn candidate_icon(
         "command" => "square-terminal",
         "subcommand" => "chevron-right",
         "option" => "flag",
-        "branch" => "git-branch",
+        "branch" => "split",
         "tag" => "tag",
         "remote" | "host" => "globe",
         "script" => "play",

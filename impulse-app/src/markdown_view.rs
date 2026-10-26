@@ -117,7 +117,11 @@ pub(crate) fn preview(
         .font_family(crate::workbench::UI_FONT)
         .text_size(px(BODY))
         .line_height(gpui_kit::relative(1.6))
-        .px(px(28.))
+        // Swift's page CSS: `padding: 24px clamp(16px, 3vw, 40px)`, from
+        // the preview's width as last laid out.
+        .px(px(
+            (f32::from(scroll.bounds().size.width) * 0.03).clamp(16., 40.)
+        ))
         .py(px(24.))
         // Each block a child of the scroll, so an anchor scrolls to its
         // heading by index.

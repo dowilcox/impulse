@@ -237,8 +237,6 @@ pub(crate) fn apply_editor_options(
     state.set_scroll_predominant_axis(true);
     state.set_hide_column_select_pointer(true, cx);
     state.set_hover_delay(std::time::Duration::from_millis(300));
-    // Monaco's vertical slider stays shown, not only while scrolling.
-    state.set_scrollbar_mode(Some(gpui_kit::base::ScrollbarMode::Always), cx);
 }
 
 impl EditorTab {
