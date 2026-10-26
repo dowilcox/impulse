@@ -6,8 +6,9 @@ Run by capture.py:
     imagetool.py spec.json
 
 The spec is imagetool.swift's: a base window with overlays (rounded,
-shadowed), an optional crop, then rounded corners, a hairline edge and a
-shadow on a transparent margin; or finished images set side by side.
+shadowed) and shadows under frames it drew itself, an optional crop, then
+rounded corners, a hairline edge and a shadow on a transparent margin; or
+finished images set side by side.
 """
 
 from __future__ import annotations
@@ -78,6 +79,20 @@ def main() -> None:
     for overlay in spec.get("overlays", []):
         draw(full, Image.open(overlay["path"]), overlay["x"] * s, overlay["y"] * s,
              overlay.get("radius", 0) * s, overlay.get("shadow", False), s)
+    # An overlay's shadow, around a frame the base drew: everywhere but
+    # over the frame, which stays as it is.
+    for shade in spec.get("shadows", []):
+        x, y, w, h = (round(shade[k] * s) for k in ("x", "y", "w", "h"))
+        frame = Image.new("L", full.size, 0)
+        ImageDraw.Draw(frame).rounded_rectangle(
+            (x, y, x + w - 1, y + h - 1), radius=max(0, shade.get("radius", 0) * s), fill=255)
+        alpha = Image.new("L", full.size, 0)
+        alpha.paste(frame.point(lambda a: a * 0.45), (0, round(14 * s)))
+        # Core Graphics' blur is about twice a Gaussian's radius.
+        alpha = alpha.filter(ImageFilter.GaussianBlur(44 * s / 2))
+        layer = Image.new("RGBA", full.size, (0, 0, 0, 0))
+        layer.putalpha(ImageChops.multiply(alpha, ImageChops.invert(frame)))
+        full.alpha_composite(layer)
     image = full
 
     # 2. Crop.

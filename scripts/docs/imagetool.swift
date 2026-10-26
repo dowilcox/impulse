@@ -9,6 +9,9 @@
 //       "scale": 2,
 //       "base": "window-0.png",
 //       "overlays": [{"path": "window-3.png", "x": 400, "y": 40}],
+//       "shadows": [{"x": 400, "y": 40, "w": 640, "h": 120, "radius": 10}],
+//                                     // optional: an overlay's shadow under
+//                                     // a frame already drawn in the base
 //       "crop": {"x": 0, "y": 0, "w": 1280, "h": 800},      // optional
 //       "radius": 12,                                       // corner radius
 //       "shadow": true,                                     // window shadow
@@ -38,12 +41,20 @@ struct Overlay: Decodable {
 
 struct Rect: Decodable { let x, y, w, h: Double }
 
+/// A frame the base window drew itself (the Rust app's dialogs and
+/// palette), to shadow as an overlay window is.
+struct Shadow: Decodable {
+  let x, y, w, h: Double
+  let radius: Double?
+}
+
 struct Spec: Decodable {
   let scale: Double
   let base: String?
   let beside: [String]?
   let gap: Double?
   let overlays: [Overlay]?
+  let shadows: [Shadow]?
   let crop: Rect?
   let radius: Double?
   let shadow: Bool?
@@ -140,6 +151,24 @@ for overlay in spec.overlays ?? [] {
   draw(
     load(overlay.path), in: full, x: overlay.x * s, y: overlay.y * s, height: fullHeight,
     radius: (overlay.radius ?? 0) * s, shadow: overlay.shadow ?? false, scale: s)
+}
+// An overlay's shadow, around a frame the base drew: drawn everywhere but
+// over the frame, which stays as it is.
+for shade in spec.shadows ?? [] {
+  let rect = CGRect(x: shade.x * s, y: fullHeight - (shade.y + shade.h) * s, width: shade.w * s, height: shade.h * s)
+  let radius = (shade.radius ?? 0) * s
+  let path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+  full.saveGState()
+  full.addRect(CGRect(x: 0, y: 0, width: base.width, height: base.height))
+  full.addPath(path)
+  full.clip(using: .evenOdd)
+  full.setShadow(
+    offset: CGSize(width: 0, height: -14 * s), blur: 44 * s,
+    color: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.45))
+  full.addPath(path)
+  full.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+  full.fillPath()
+  full.restoreGState()
 }
 var image = full.makeImage()!
 

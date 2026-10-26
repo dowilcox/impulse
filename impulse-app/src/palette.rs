@@ -1673,13 +1673,15 @@ impl Render for Palette {
     }
 }
 
-/// The Swift `KeyHint`: a shortcut or label in a hairline box.
+/// The Swift `KeyHint`: a shortcut or label in a hairline box. SwiftUI
+/// strokes the border inside its 4-point padding; GPUI's border adds to
+/// the padding, so 3 here.
 fn key_hint(text: String, p: &ChromePalette) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
         .items_center()
-        .px(px(4.))
+        .px(px(3.))
         .h(px(16.))
         .rounded(px(3.))
         .border_1()

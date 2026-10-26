@@ -67,7 +67,11 @@ pub fn apply(
     c.accent = hsla(p.hover);
     c.accent_foreground = text;
     c.muted = hsla(p.raised);
-    c.muted_foreground = secondary_text;
+    // Placeholders, disabled menu items, hints and the editor widgets'
+    // descriptions: Swift's tertiary text (the system placeholder color's
+    // place). The secondary color is brighter than body text in some themes
+    // (Nord's fg_muted), which would make placeholders stand out.
+    c.muted_foreground = hsla(p.text_tertiary);
 
     c.popover = hsla(p.overlay.mix(p.text, 0.02));
     c.popover_foreground = text;

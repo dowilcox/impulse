@@ -186,9 +186,14 @@ struct Colors {
     button: Hsla,
     button_hover: Hsla,
     button_pressed: Hsla,
+    /// A plain button's title (`labelColor`).
+    button_text: Hsla,
     default: Hsla,
     default_hover: Hsla,
-    danger: Hsla,
+    /// A destructive button's fill and title: red, as `NSAlert` tints it.
+    danger_fill: Hsla,
+    danger_fill_hover: Hsla,
+    danger_text: Hsla,
 }
 
 impl Colors {
@@ -198,13 +203,17 @@ impl Colors {
         Colors {
             background: rgba(if light { "#F5F5F5" } else { "#1C1C1C" }),
             border: hsla(ink.opacity(if light { 0.12 } else { 0.16 })),
-            text: hsla(ink.opacity(0.88)),
+            // NSAlert's title and message: #FAFAFA on its dark background.
+            text: hsla(ink.opacity(if light { 0.88 } else { 0.98 })),
             button: hsla(ink.opacity(if light { 0.06 } else { 0.08 })),
             button_hover: hsla(ink.opacity(if light { 0.1 } else { 0.12 })),
             button_pressed: hsla(ink.opacity(if light { 0.14 } else { 0.16 })),
+            button_text: hsla(ink.opacity(0.85)),
             default: rgba(if light { "#007AFF" } else { "#0A84FF" }),
             default_hover: rgba(if light { "#1A87FF" } else { "#2490FF" }),
-            danger: rgba(if light { "#FF3B30" } else { "#FF453A" }),
+            danger_fill: rgba(if light { "#F6D3D1" } else { "#562927" }),
+            danger_fill_hover: rgba(if light { "#F2C4C1" } else { "#63302D" }),
+            danger_text: rgba(if light { "#E0241B" } else { "#F01D15" }),
         }
     }
 }
@@ -272,6 +281,8 @@ fn body(
             let default = index == 0 && !destructive;
             let (fill, hover) = if default {
                 (colors.default, colors.default_hover)
+            } else if destructive {
+                (colors.danger_fill, colors.danger_fill_hover)
             } else {
                 (colors.button, colors.button_hover)
             };
@@ -285,14 +296,16 @@ fn body(
                 .rounded_full()
                 .bg(fill)
                 .hover(move |s| s.bg(hover))
-                .when(!default, |d| d.active(move |s| s.bg(colors.button_pressed)))
+                .when(!default && !destructive, |d| {
+                    d.active(move |s| s.bg(colors.button_pressed))
+                })
                 .text_size(px(13.))
                 .text_color(if default {
                     gpui_kit::white()
                 } else if destructive {
-                    colors.danger
+                    colors.danger_text
                 } else {
-                    colors.text
+                    colors.button_text
                 })
                 .when(side_by_side, |d| d.flex_1())
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())

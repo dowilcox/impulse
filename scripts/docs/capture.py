@@ -228,7 +228,9 @@ def read_windows(folder: Path) -> list[dict]:
 def drawn_overlay(window: dict, scale: int) -> tuple[float, float, float, float]:
     """The frame of a dialog or palette the Rust app drew inside `window`:
     from the rectangle it reported, outward to where the frame's own
-    background ends (its border), along lines through its padding."""
+    background ends, along lines through its padding, then out over its
+    one-point border (`scale` pixels). The top and bottom are found 16
+    points in from the left, past the corners' curve (radii up to 14)."""
     from PIL import Image
     image = Image.open(window["path"]).convert("RGB")
     x, y, w, h = (round(v * scale) for v in window["overlay"])
@@ -245,10 +247,11 @@ def drawn_overlay(window: dict, scale: int) -> tuple[float, float, float, float]
         return px, py
 
     middle = (top + bottom) // 2
-    left = walk(left + inset, middle, -1, 0)[0] - 1
-    right = walk(right - inset, middle, 1, 0)[0] + 1
-    top = walk(x + inset, top + inset, 0, -1)[1] - 1
-    bottom = walk(x + inset, bottom - inset, 0, 1)[1] + 1
+    column = min(x + 16 * scale, (left + right) // 2)
+    left = walk(left + inset, middle, -1, 0)[0] - scale
+    right = walk(right - inset, middle, 1, 0)[0] + scale
+    top = walk(column, top + inset, 0, -1)[1] - scale
+    bottom = walk(column, bottom - inset, 0, 1)[1] + scale
     return (left / scale, top / scale, (right - left + 1) / scale, (bottom - top + 1) / scale)
 
 
@@ -328,6 +331,7 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
             "radius": 14 if w["sheet"] else 10, "shadow": True,
         })
     crop = shot.get("crop")
+    shadows = []
     if crop == "overlay":
         # The first floating window plus a margin of the window around it.
         pad = shot.get("pad", 24)
@@ -338,7 +342,12 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
             with open(main["path"], "rb") as png:
                 scale = round(int.from_bytes(png.read(24)[16:20], "big") / width) or 1
             x, y, w, h = drawn_overlay(main, scale)
+            # The Swift app's floating window can be larger than what it
+            # draws (the toast panel's margin): the crop keeps that room.
+            pad += shot.get("panel", 0)
             crop = (x - pad, y - pad, w + 2 * pad, h + 2 * pad)
+            # And it gets the shadow the Swift app's windows get as overlays.
+            shadows.append({"x": x, "y": y, "w": w, "h": h, "radius": 10})
         else:
             sys.exit(f"{shot['name']}: no floating window to crop to in {folder}")
     style = shot.get("style", "window" if crop is None else "crop")
@@ -349,6 +358,7 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
         "scale": round(pixels / width) or 1,
         "base": main["path"],
         "overlays": [{k: v for k, v in o.items() if k not in ("w", "h")} for o in overlays],
+        "shadows": shadows,
         "radius": {"window": 16, "crop": 10}.get(style, 10),
         "shadow": style == "window",
         "border": True,

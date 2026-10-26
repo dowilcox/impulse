@@ -809,19 +809,30 @@ impl Render for AgentIntegration {
                 }
             },
         );
+        // NSPopUpButton is as wide as its longest item, centered in the
+        // Picker's 170 frame (46 around SF Pro's "This project only"), and
+        // 24 high here.
+        let widest = ["All projects", "This project only"]
+            .into_iter()
+            .map(|title| crate::alert::text_width(&title.into(), FontWeight::NORMAL, window))
+            .fold(0., f32::max);
         let scope_picker = (m.agent == Agent::Claude).then(|| {
             div()
                 .w(px(170.))
                 .h(px(24.))
                 .flex()
                 .items_center()
+                .justify_center()
                 .when(m.project_root.is_none(), |d| d.opacity(0.5))
                 .child(
-                    crate::settings_view::popup_frame(&p).w_full().child(
-                        crate::settings_view::popup(&self.scope)
-                            .disabled(m.project_root.is_none())
-                            .menu_width(px(200.)),
-                    ),
+                    crate::settings_view::popup_frame(&p)
+                        .h(px(24.))
+                        .w(px((widest + 46.).min(170.)))
+                        .child(
+                            crate::settings_view::popup(&self.scope)
+                                .disabled(m.project_root.is_none())
+                                .menu_width(px(200.)),
+                        ),
                 )
         });
         let old_entry = m.part == Part::Mcp && m.agent == Agent::Opencode;
@@ -940,7 +951,7 @@ impl Render for AgentIntegration {
                     .text_size(px(11.5))
                     .text_color(hsla(p.text_secondary))
                     .child(match m.part {
-                        Part::Hooks => "Hooks make the agent tell Impulse exactly when it starts working, needs you, and finishes, with no guessing from output. They only do anything inside Impulse terminals.",
+                        Part::Hooks => "Hooks make the agent tell Impulse exactly when it starts working, needs you, and finishes — no guessing from output. They only do anything inside Impulse terminals.",
                         Part::Mcp => "The MCP server gives the agent Impulse's tools: the repository's tasks (and starting one, which asks you first), your review comments, the language servers' problems, other terminals' output, unsaved files and the project's scripts. It only has tools inside Impulse terminals.",
                     }),
             )

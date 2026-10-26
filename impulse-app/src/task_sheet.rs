@@ -631,11 +631,11 @@ impl TaskSheet {
     }
 }
 
-/// A `.roundedBorder` TextField: its bezel 26 high around the 22 the
-/// row lays out.
+/// A `.roundedBorder` TextField: its bezel 26 high around the 24 the
+/// row lays out (the form's rows are 38 apart, as the Swift sheet's).
 fn ns_field(state: &Entity<InputState>, width: f32, light: bool) -> impl IntoElement {
     div()
-        .h(px(22.))
+        .h(px(24.))
         .flex()
         .items_center()
         .child(crate::alert::field(state, width, 26., light))
@@ -749,7 +749,7 @@ impl Render for TaskSheet {
                     .text_color(hsla(p.text_secondary))
                     .whitespace_normal()
                     .child(
-                        "A branch checked out in its own folder, opened as a workspace: work on it \
+                        "A branch checked out in its own folder, opened as a workspace — work on it \
                          (or let an agent) without touching your current checkout.",
                     ),
             )
@@ -821,16 +821,36 @@ impl Render for TaskSheet {
                         .flex()
                         .flex_col()
                         .gap(px(4.))
-                        .child(
+                        .child(if unavailable.is_some() {
+                            // Disabled, only the box dims: the label keeps
+                            // its color, as the Swift Toggle's own Text.
+                            div()
+                                .flex()
+                                .items_start()
+                                .gap(px(6.5))
+                                .child(
+                                    ChromeCheckbox::new("task-move")
+                                        .checked(moving)
+                                        .disabled(true),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .text_size(px(12.))
+                                        .text_color(hsla(p.text))
+                                        .child(move_label),
+                                )
+                                .into_any_element()
+                        } else {
                             ChromeCheckbox::new("task-move")
                                 .label(move_label)
                                 .checked(moving)
-                                .disabled(unavailable.is_some())
                                 .on_change(cx.listener(|sheet, checked: &bool, _, cx| {
                                     sheet.moves_changes = *checked;
                                     cx.notify();
-                                })),
-                        )
+                                }))
+                                .into_any_element()
+                        })
                         .children(unavailable.clone().map(|reason| {
                             let blocked = self.move_blocker.is_some();
                             div()
@@ -888,14 +908,14 @@ impl Render for TaskSheet {
                     .bg(hsla(p.raised))
                     .child(self.detail(
                         "Branch",
-                        if titled { self.branch(cx) } else { "-".into() },
+                        if titled { self.branch(cx) } else { "\u{2014}".into() },
                     ))
                     .child(self.detail(
                         "Folder",
                         if titled {
                             abbreviate_home(&self.path(cx))
                         } else {
-                            "-".into()
+                            "\u{2014}".into()
                         },
                     ))
                     .child(self.detail("Copies", copies))

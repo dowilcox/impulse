@@ -1086,13 +1086,13 @@ impl SettingsView {
                             .flex()
                             .items_center()
                             .px(px(6.))
-                            .rounded(px(5.))
+                            .rounded(px(metrics::RADIUS))
                             .border_1()
                             .border_color(hsla(
                                 if state.read(cx).focus_handle(cx).is_focused(window) {
                                     self.palette.focus_ring
                                 } else {
-                                    self.palette.hairline_strong
+                                    self.palette.hairline
                                 },
                             ))
                             .bg(hsla(if self.palette.is_light {
@@ -1647,10 +1647,14 @@ pub(crate) fn text_field(state: &Entity<InputState>) -> TextField {
     }
 }
 
-/// A pop-up button's frame (Swift's `Picker`): filled, 22 high; the
+/// A pop-up button's frame (Swift's `Picker`): filled, 22 high, with
+/// NSPopUpButton's up-and-down chevrons at its trailing edge in the label
+/// color (GPUI Kit's `Select` draws its icon extra small in the muted
+/// color, so `popup` leaves that slot empty and the frame draws them); the
 /// `Select` inside it goes without its own look.
 pub(crate) fn popup_frame(p: &ChromePalette) -> gpui_kit::Div {
     div()
+        .relative()
         .h(px(22.))
         .flex()
         .items_center()
@@ -1660,7 +1664,22 @@ pub(crate) fn popup_frame(p: &ChromePalette) -> gpui_kit::Div {
         } else {
             Rgba::WHITE.opacity(0.075)
         }))
+        // Lucide's chevrons fill 10 by 16 of its 24: at 16 points they're
+        // SF Symbols' 7 by 11, their trailing edge 9 in from the frame's.
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(4.))
+                .flex()
+                .items_center()
+                .child(icon("chevrons-up-down", 16., p.text)),
+        )
 }
+
+/// An icon that draws nothing (`popup`'s chevron slot).
+const EMPTY_SVG: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"></svg>"#;
 
 /// The `Select` for a `popup_frame`.
 pub(crate) fn popup<D>(state: &Entity<SelectState<D>>) -> Select<D>
@@ -1670,7 +1689,8 @@ where
     Select::new(state)
         .small()
         .appearance(false)
-        .icon(gpui_kit::component::Icon::empty().path("icons/chevrons-up-down.svg"))
+        // An empty slot where `popup_frame` draws the chevrons.
+        .icon(gpui_kit::component::Icon::empty().data(EMPTY_SVG))
         .w_full()
         .h_full()
         .text_size(px(13.))
@@ -1704,11 +1724,13 @@ impl RenderOnce for TextField {
             .flex()
             .items_center()
             .px(px(6.))
-            .rounded(px(5.))
+            // `.roundedBorder` on macOS 26: 6-point corners and a faint
+            // hairline (`ChromePalette.hairline`, GPUI Kit's `border`).
+            .rounded(px(metrics::RADIUS))
             .border_1()
             // The hairline turns into the focus ring (`ChromePalette`'s,
             // GPUI Kit's `ring`).
-            .border_color(if focused { theme.ring } else { theme.input })
+            .border_color(if focused { theme.ring } else { theme.border })
             .bg(background)
             .child(
                 Input::new(&self.state)

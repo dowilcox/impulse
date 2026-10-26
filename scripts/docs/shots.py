@@ -10,6 +10,9 @@ Each shot:
   crop      (x, y, w, h) in points from the window's top-left, or "overlay"
             (the first floating window: palette, sheet, popover, menu panel,
             plus `pad` points of the window around it)
+  panel     points the Swift app's floating window leaves around what it
+            draws (the toast panel's margin): the Rust app draws overlays
+            in its window, so its "overlay" crops add this to `pad`
   style     "window" (rounded, shadowed; the default without a crop) or
             "crop" (rounded edge only; the default with one)
   overlays  class names of floating windows to composite (default: all)
@@ -37,6 +40,12 @@ CONTENT = (SIDEBAR_W, TITLE_H, W - SIDEBAR_W, H - TITLE_H - STATUS_H)
 CONTENT_NO_SIDEBAR = (0, TITLE_H, W, H - TITLE_H - STATUS_H)
 # Where a terminal's output ends: the input bar sits below.
 GRID_BOTTOM = 700
+# `impulse help` whole: its block (the folder line, the command and the
+# usage's 36 lines, 19 points each, with the block's padding) in a window
+# tall enough that it doesn't scroll. Output meets the input bar, so the
+# block ends the same distance above the window's bottom.
+CLI_H = 960
+CLI_HELP_H = 754
 # The Nord card in the Component Gallery's dark themes.
 NORD_CARD = (10, 376, 574, 280)
 
@@ -140,7 +149,7 @@ SHOTS = [
     {"name": "workspaces-and-tabs-undo-close-toast",
      "session": session([trailhead(("terminal", "trailhead"), ("file", "trailhead/src/forecast.ts"), active_tab=1)]),
      "actions": [*THREE_BLOCKS, "close-pane"], "delay": 8, "overlays": ["ToastPanel"], "crop": "overlay",
-     "pad": 40},
+     "pad": 40, "panel": 10},
     {"name": "workspaces-and-tabs-status-bar", "session": ONE, "actions": [DEV_SERVER_BG], "delay": 12,
      "crop": STATUSBAR},
 
@@ -230,8 +239,8 @@ SHOTS = [
     {"name": "project-config-actions-palette", "session": ONE, "actions": ["palette=a:"], "crop": "overlay"},
     {"name": "cli-editor-setting", "session": ONE, "actions": ["no-sidebar", "settings=$EDITOR"],
      "crop": (0, TITLE_H, W, 300)},
-    {"name": "cli-help", "session": ONE, "actions": ["run=impulse help"],
-     "crop": (SIDEBAR_W, GRID_BOTTOM - 412, W - SIDEBAR_W, 412)},
+    {"name": "cli-help", "session": ONE, "actions": ["run=impulse help"], "size": (W, CLI_H),
+     "crop": (SIDEBAR_W, CLI_H - (H - GRID_BOTTOM) - CLI_HELP_H, W - SIDEBAR_W, CLI_HELP_H)},
 
     # ------------------------------------------------------------ git
     {"name": "git-titlebar", "session": ONE, "actions": ["no-sidebar"], "crop": TITLEBAR},
