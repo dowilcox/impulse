@@ -8,6 +8,10 @@ use super::{WrappingIndent, display_map::LineLayout};
 pub(crate) struct WhitespaceIndicators {
     pub(crate) space: ShapedLine,
     pub(crate) tab: ShapedLine,
+    /// Impulse: which whitespace gets a marker, and the selected byte ranges
+    /// [`super::RenderWhitespace::Selection`] keeps them in.
+    pub(crate) mode: super::RenderWhitespace,
+    pub(crate) selected: Rc<[Range<usize>]>,
 }
 
 #[derive(Clone)]

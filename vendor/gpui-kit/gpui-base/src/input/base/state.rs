@@ -482,6 +482,8 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) autocorrect: Option<bool>,
     pub(super) autocapitalize: Option<Autocapitalize>,
     pub(super) show_whitespaces: bool,
+    /// Impulse: Monaco's editor options, GPUI Kit's behavior by default.
+    pub(crate) editor_options: crate::input::EditorOptions,
     /// This flag tells the renderer to prefer the end of the current visual line.
     pub(crate) cursor_line_end_affinity: bool,
     pub(super) pattern: Option<regex::Regex>,
@@ -898,6 +900,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             autocorrect: None,
             autocapitalize: None,
             show_whitespaces: false,
+            editor_options: Default::default(),
             loading: false,
             pattern: None,
             validate: None,
@@ -1383,6 +1386,12 @@ impl<M: InputModeKind> InputBaseState<M> {
     /// Update whether to show whitespace characters.
     pub fn set_show_whitespaces(&mut self, show: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.show_whitespaces = show;
+        // Impulse: markers for every space, as before `set_render_whitespace`.
+        self.editor_options.render_whitespace = if show {
+            crate::input::RenderWhitespace::All
+        } else {
+            crate::input::RenderWhitespace::None
+        };
         cx.notify();
     }
 
@@ -1930,19 +1939,26 @@ impl<M: InputModeKind> InputBaseState<M> {
             return None;
         }
         let rules = self.mode.language_config()?;
-        if self
-            .text
-            .chars_at(range.start)
-            .next()
-            .is_some_and(|c| !c.is_whitespace() && !rules.auto_close_before.contains(c))
-        {
-            return None;
-        }
+        // Impulse: brackets close by the host's rule (`set_auto_close_brackets`,
+        // Monaco's `autoClosingBrackets`); quotes keep the language's.
+        let next = self.text.chars_at(range.start).next();
+        let closes_before = |quote: bool| match next {
+            None => true,
+            Some(c) if c.is_whitespace() => true,
+            Some(c) => match (quote, self.editor_options.auto_close_brackets) {
+                (false, crate::input::AutoCloseBrackets::Always) => true,
+                (false, crate::input::AutoCloseBrackets::BeforeWhitespace) => false,
+                _ => rules.auto_close_before.contains(c),
+            },
+        };
         for (open, close, not_in) in rules.closing_pairs() {
             let Some(prefix) = open.strip_suffix(text) else {
                 continue;
             };
             if !self.text_before_matches(range.start, prefix) {
+                continue;
+            }
+            if !closes_before(open == close) {
                 continue;
             }
             let start = range.start - prefix.len();
@@ -2718,6 +2734,16 @@ impl<M: InputModeKind> InputBaseState<M> {
 
         let old_offset = self.scroll_handle.offset();
         let precise = matches!(event.delta, gpui::ScrollDelta::Pixels(_));
+        // Impulse: a trackpad's sideways drift doesn't scroll the text
+        // sideways when the host asks (`set_scroll_predominant_axis`).
+        let delta = self
+            .editor_options
+            .predominant_axis(
+                delta,
+                precise,
+                event.touch_phase,
+                cx.background_executor().now(),
+            );
         if !precise || !self.scroll_bounce || cx.reduce_motion() || !self.overflows_vertically() {
             let displaced = self.overscroll.offset() != 0.;
             self.overscroll.reset();
@@ -4940,7 +4966,11 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
                 this.on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             })
             .when(!self.disabled, |this| {
-                if self.is_multi_line() && window.modifiers().alt {
+                // Impulse: hosts can keep the I-beam, as Monaco does.
+                if self.is_multi_line()
+                    && window.modifiers().alt
+                    && !self.editor_options.hide_column_select_pointer
+                {
                     this.cursor_crosshair()
                 } else {
                     this.cursor_text()

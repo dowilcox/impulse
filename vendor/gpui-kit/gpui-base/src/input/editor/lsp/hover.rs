@@ -1,6 +1,5 @@
 use anyhow::Result;
 use gpui::{App, Context, MouseMoveEvent, Task, Window};
-use instant::Duration;
 use ropey::Rope;
 
 use crate::input::{EditorMode, HoverPopoverState, InputBaseState, RopeExt};
@@ -47,13 +46,13 @@ impl InputBaseState<EditorMode> {
         let mut symbol_range = self.text.word_range(offset).unwrap_or(offset..offset);
         let editor = cx.entity();
         let should_delay = self.extras.hover_popover.is_none();
+        // Impulse: the host's delay (`set_hover_delay`).
+        let delay = self.extras.lsp.hover_delay;
         // Ask the provider only after the delay: every mouse move replaces this
         // task, so positions the pointer merely passes over never reach it.
         self.extras.lsp._hover_task = cx.spawn_in(window, async move |this, cx| {
             if should_delay {
-                cx.background_executor()
-                    .timer(Duration::from_millis(150))
-                    .await;
+                cx.background_executor().timer(delay).await;
             }
 
             let task = this.update_in(cx, |_, window, cx| {

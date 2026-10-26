@@ -26,6 +26,8 @@ mod diagnostics;
 #[path = "editor/display_map/mod.rs"]
 mod display_map;
 mod editor;
+#[path = "base/editor_options.rs"]
+mod editor_options;
 #[path = "base/element.rs"]
 mod element;
 #[path = "editor/highlighting.rs"]
@@ -92,6 +94,11 @@ pub use diagnostics::{
 };
 pub use display_map::{BufferPoint, DisplayMap, DisplayPoint, FoldRange, WrappingIndent};
 pub use editor::{Editor, EditorState};
+// Impulse: Monaco's editor options (see `editor_options`).
+pub(crate) use editor_options::EditorOptions;
+pub use editor_options::{
+    AutoCloseBrackets, CaretStyle, CursorBlinking, EditorColors, FoldingControls, RenderWhitespace,
+};
 pub use highlighting::{
     DiagnosticColors, FoldIconRenderer, HighlightStyleResolver, InputEditorStyle, InputHighlighter,
     InputHighlighterFactory, SharedHighlightStyleResolver, SyntaxContext, SyntaxContextProvider,

@@ -21,6 +21,45 @@ again (or drop the ones upstream now has), and update this file.
 
 Each is marked `// Impulse:` in the code.
 
+### gpui-base
+
+Monaco's editor options live in a new file, `input/base/editor_options.rs`
+(enums, `EditorColors`, their setters, and folding from code), stored in the
+state's `editor_options`; every option defaults to GPUI Kit's behavior. Colors
+go through `set_editor_colors` rather than new `InputEditorStyle` fields,
+because gpui-component builds that struct as a full literal.
+
+- **Line number colors** (`input/base/element.rs`): the theme's
+  `editor.line_number` and `editor.active_line_number` when the host sets them
+  (Monaco's `editorLineNumber.*`), instead of `muted_foreground`.
+- **One scroll axis per gesture** (`input/base/state.rs`,
+  `EditorOptions::predominant_axis`): a trackpad gesture locks to its first
+  movement's axis through its momentum, as VS Code's `scrollPredominantAxis`.
+- **Selection in an inactive window** (`input/base/element.rs`): the selection
+  and search matches stay, in the host's inactive color
+  (`editor.inactiveSelectionBackground`); the caret stays hidden.
+- **Fold chevrons on mouseover** (`input/base/element.rs`,
+  `set_folding_controls`): Monaco's `showFoldingControls`.
+- **Arrow over the gutter** (`input/base/element.rs`): not the text's I-beam.
+  The one patch that isn't an option, since an I-beam there is a bug.
+- **No crosshair under ⌥** (`input/base/state.rs`): the host can keep the
+  I-beam, as Monaco does; ⌥-drag still selects a column.
+- **Hover delay** (`input/editor/lsp/mod.rs`, `input/editor/lsp/hover.rs`,
+  `set_hover_delay`): 150 ms by default.
+- **Folding from the keyboard** (`editor_options.rs`,
+  `input/editor/display_map/display_map.rs`): fold and unfold at the cursor,
+  fold and unfold all, over the ranges the display map exposes.
+- **Caret styles and blinking** (`input/base/element.rs`,
+  `input/base/blink_cursor.rs`): Monaco's `cursorStyle` (line, block,
+  underline, line-thin, block-outline, underline-thin) and `cursorBlinking`
+  (blink, smooth, phase, expand, solid), timed as Monaco's CSS.
+- **Whitespace markers** (`input/base/element.rs`, `input/base/layout.rs`,
+  `input/editor/display_map/text_wrapper.rs`): Monaco's `renderWhitespace`
+  (none, all, boundary, selection, trailing).
+- **Auto-closing brackets** (`input/base/state.rs`,
+  `set_auto_close_brackets`): Monaco's `autoClosingBrackets`
+  (languageDefined, beforeWhitespace, always); quotes keep the language's.
+
 ### gpui-component
 
 - **Hover popover placement** (`input/popovers/hover_popover.rs`): the room

@@ -69,6 +69,8 @@ pub struct Lsp {
     /// names. Color is resolved from the name at paint time so theme switches
     /// take effect without a refetch.
     pub(crate) semantic_tokens: Vec<(lsp_types::Range, SharedString)>,
+    // Impulse: Monaco waits 300 ms; `InputBaseState::set_hover_delay` sets it.
+    pub(crate) hover_delay: instant::Duration,
     pub(crate) _hover_task: Task<Result<()>>,
     pub(crate) _definition_task: Task<Result<()>>,
     pub(crate) _document_color_task: Task<()>,
@@ -89,6 +91,8 @@ impl Default for Lsp {
             show_document: None,
             document_colors: vec![],
             semantic_tokens: vec![],
+            // Impulse: GPUI Kit's delay, as before it could be set.
+            hover_delay: instant::Duration::from_millis(150),
             _hover_task: Task::ready(Ok(())),
             _definition_task: Task::ready(Ok(())),
             _document_color_task: Task::ready(()),

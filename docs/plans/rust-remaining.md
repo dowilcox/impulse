@@ -116,19 +116,17 @@ Work that doesn't depend on anyone else.
 
 ## 3. Waiting on GPUI Kit
 
-Each needs a change in GPUI Kit (upstream, or a fork if it doesn't come).
-The settings named here exist and are saved, but the Rust app doesn't act
-on them yet.
+Each needs a change in GPUI Kit, now vendored (`vendor/gpui-kit/`; its
+README lists the patches made so far: caret styles and blinking, whitespace
+modes, auto-closing modes, keyboard folding and more). The settings named
+here exist and are saved, but the Rust app doesn't act on them yet.
 
 | What | Why it waits | Setting |
 |---|---|---|
 | Inlay hints | the editor can't insert text into a line's layout | `editor_inlay_hints` |
-| Caret style and blinking | the caret has no styles, and only the primary caret's place is public | `editor_cursor_style`, `editor_cursor_blinking` |
-| Whitespace markers for `boundary`, `selection` and `trailing` | markers are drawn everywhere or nowhere | `render_whitespace` |
-| Auto-closing `always` and `beforeWhitespace` | one global rule, Monaco's `languageDefined` | `editor_auto_closing_brackets` |
 | Snippets in completions | snippet handling is off until it's checked; completions insert plain text | |
 | Padding lines in the Diff View | no view zones, so one side holds still through the other's insertion | |
-| Hidden unchanged lines side by side in the Diff View | folds can be offered (`apply_highlighter_fold_candidates`) but only a gutter click folds one, and the highlighter replaces them on each reparse, so the live buffer can't hide lines from outside | |
+| Hidden unchanged lines side by side in the Diff View | folds can now be set from code (the vendored gpui-base's `editor_options.rs`), but the highlighter replaces them on each reparse, so the live buffer can't hide lines from outside | |
 | Announcing agent state to screen readers | GPUI has no live regions | |
 | Smooth scrolling | not supported | `smooth_scrolling` |
 

@@ -2,8 +2,8 @@
 //! `impulse_kit::line_edits`: Toggle Block Comment, Go to Bracket, Next
 //! and Previous Problem, Expand and Shrink Selection, parameter hints,
 //! Cursor Undo, cursors at line ends, Trim Trailing Whitespace, Home to the
-//! first non-blank character and Expand Line Selection (their keys are in
-//! `editor_keys`).
+//! first non-blank character, Expand Line Selection, and folding from the
+//! keyboard (their keys are in `editor_keys`).
 
 use std::ops::Range;
 
@@ -12,9 +12,9 @@ use gpui_kit::{Context, EntityInputHandler as _, Focusable as _, Window};
 use impulse_kit::{line_edits, linked_tags};
 
 use crate::editor_keys::{
-    CursorHome, CursorUndo, CursorsAtLineEnds, ExpandLineSelection, ExpandSelection, GoToBracket,
-    NextProblem, PreviousProblem, ShowParameterHints, ShrinkSelection, ToggleBlockComment,
-    TrimTrailingWhitespace,
+    CursorHome, CursorUndo, CursorsAtLineEnds, ExpandLineSelection, ExpandSelection, Fold, FoldAll,
+    GoToBracket, NextProblem, PreviousProblem, ShowParameterHints, ShrinkSelection,
+    ToggleBlockComment, TrimTrailingWhitespace, Unfold, UnfoldAll,
 };
 use crate::editor_tab::EditorTab;
 
@@ -63,6 +63,28 @@ pub(crate) struct LinkedTags {
 }
 
 impl EditorTab {
+    /// Monaco's Fold: the innermost open range at the cursor.
+    pub(crate) fn fold(&mut self, _: &Fold, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.fold_at_cursor(cx);
+        });
+    }
+
+    /// Monaco's Unfold: the innermost folded range at the cursor.
+    pub(crate) fn unfold(&mut self, _: &Unfold, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.unfold_at_cursor(cx);
+        });
+    }
+
+    pub(crate) fn fold_all(&mut self, _: &FoldAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| state.fold_all(cx));
+    }
+
+    pub(crate) fn unfold_all(&mut self, _: &UnfoldAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| state.unfold_all(cx));
+    }
+
     fn links_tags(&self) -> bool {
         linked_tags::applies(&self.language) && !self.read_only
     }

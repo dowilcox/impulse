@@ -9,8 +9,9 @@
 //! leave out the find field inside the editor (`mode == editor`). On the
 //! Mac, the Emacs keys every text view has (⌃F ⌃B ⌃N ⌃P ⌃D ⌃H ⌃K; GPUI
 //! Kit binds ⌃A and ⌃E) name GPUI Kit's own moves and deletes. Folding
-//! from the keyboard waits on GPUI Kit (its folds are set only by a gutter
-//! click).
+//! from the keyboard (Monaco's Fold, Unfold, Fold All and Unfold All) goes
+//! through Impulse's GPUI Kit patch (`EditorState::fold_at_cursor` and the
+//! rest).
 
 use gpui_kit::component::input::{
     Backspace, Delete, DeleteToEndOfLine, GoToDefinition, MoveDown, MoveLeft, MoveRight, MoveUp,
@@ -52,6 +53,10 @@ actions!(
         TrimTrailingWhitespace,
         CursorHome,
         ExpandLineSelection,
+        Fold,
+        Unfold,
+        FoldAll,
+        UnfoldAll,
     ]
 );
 
@@ -100,6 +105,10 @@ pub fn bind_keys(cx: &mut App) {
             KeyBinding::new("cmd-u", CursorUndo, c),
             KeyBinding::new("shift-alt-i", CursorsAtLineEnds, c),
             KeyBinding::new("cmd-k cmd-x", TrimTrailingWhitespace, c),
+            KeyBinding::new("alt-cmd-[", Fold, buffer),
+            KeyBinding::new("alt-cmd-]", Unfold, buffer),
+            KeyBinding::new("cmd-k cmd-0", FoldAll, buffer),
+            KeyBinding::new("cmd-k cmd-j", UnfoldAll, buffer),
             KeyBinding::new("f1", RunCommand::new("command_palette"), c),
         ]);
     } else {
@@ -132,6 +141,10 @@ pub fn bind_keys(cx: &mut App) {
             KeyBinding::new("ctrl-u", CursorUndo, c),
             KeyBinding::new("shift-alt-i", CursorsAtLineEnds, c),
             KeyBinding::new("ctrl-k ctrl-x", TrimTrailingWhitespace, c),
+            KeyBinding::new("ctrl-shift-[", Fold, buffer),
+            KeyBinding::new("ctrl-shift-]", Unfold, buffer),
+            KeyBinding::new("ctrl-k ctrl-0", FoldAll, buffer),
+            KeyBinding::new("ctrl-k ctrl-j", UnfoldAll, buffer),
             KeyBinding::new("f1", RunCommand::new("command_palette"), c),
         ]);
     }

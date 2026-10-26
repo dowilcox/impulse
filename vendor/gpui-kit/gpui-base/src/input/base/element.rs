@@ -750,15 +750,58 @@ impl<M: InputModeKind> TextElement<M> {
             // Apply the final horizontal offset to every caret after cursor-follow and
             // deferred scrolling have been resolved, regardless of selection order.
             let cursor_x = bounds.left() + cursor_pos.x + line_number_width;
-            cursor_infos.push(CursorRenderInfo {
-                bounds: Bounds::new(
-                    point(
-                        cursor_x,
-                        bounds.top() + cursor_pos.y + ((line_height - cursor_height) / 2.),
-                    ),
+            // Impulse: the caret's shape (`set_caret_style`). A block or an
+            // underline spans the character after the caret.
+            let caret_style = if state.masked {
+                crate::input::CaretStyle::LineThin
+            } else {
+                state.editor_options.caret_style
+            };
+            let spans_char = !matches!(
+                caret_style,
+                crate::input::CaretStyle::LineThin | crate::input::CaretStyle::Line
+            );
+            let next_char = (spans_char
+                && cursor <= state.text.len()
+                && state.text.is_char_boundary(cursor))
+            .then(|| state.text.chars_at(cursor).next())
+            .flatten()
+            .filter(|c| *c != '\n');
+            let char_width = next_char
+                .map(|c| caret_for(cursor_row, cursor + c.len_utf8(), false))
+                .filter(|end| end.y == cursor_pos.y && end.x > cursor_pos.x)
+                .map_or(last_layout.space_width, |end| end.x - cursor_pos.x);
+            let (caret_top, caret_size) = match caret_style {
+                crate::input::CaretStyle::LineThin => (
+                    (line_height - cursor_height) / 2.,
                     size(CURSOR_WIDTH, cursor_height),
                 ),
+                crate::input::CaretStyle::Line => (
+                    (line_height - cursor_height) / 2.,
+                    size(CURSOR_WIDTH * 2., cursor_height),
+                ),
+                crate::input::CaretStyle::Block | crate::input::CaretStyle::BlockOutline => {
+                    (px(0.), size(char_width, line_height))
+                }
+                crate::input::CaretStyle::Underline => {
+                    (line_height - px(2.), size(char_width, px(2.)))
+                }
+                crate::input::CaretStyle::UnderlineThin => {
+                    (line_height - px(1.), size(char_width, px(1.)))
+                }
+            };
+            let glyph_offset = (caret_style == crate::input::CaretStyle::Block)
+                .then_some(())
+                .and(next_char.filter(|c| *c != '\t'))
+                .map(|c| cursor..cursor + c.len_utf8());
+            cursor_infos.push(CursorRenderInfo {
+                bounds: Bounds::new(
+                    point(cursor_x, bounds.top() + cursor_pos.y + caret_top),
+                    caret_size,
+                ),
                 is_active,
+                glyph_range: glyph_offset,
+                glyph: None,
             });
         }
 
@@ -1213,6 +1256,21 @@ impl<M: InputModeKind> TextElement<M> {
         if !state.show_whitespaces {
             return None;
         }
+        // Impulse: the selections `RenderWhitespace::Selection` marks in.
+        let mode = state.editor_options.render_whitespace;
+        let selected: Rc<[Range<usize>]> = if mode == crate::input::RenderWhitespace::Selection {
+            state
+                .selections
+                .iter()
+                .filter(|selection| selection.start != selection.end)
+                .map(|selection| selection.start..selection.end)
+                .collect()
+        } else {
+            Rc::from([])
+        };
+        if mode == crate::input::RenderWhitespace::Selection && selected.is_empty() {
+            return None;
+        }
 
         let invisible_color = state
             .editor_style
@@ -1252,7 +1310,12 @@ impl<M: InputModeKind> TextElement<M> {
             None,
         );
 
-        Some(WhitespaceIndicators { space, tab })
+        Some(WhitespaceIndicators {
+            space,
+            tab,
+            mode,
+            selected,
+        })
     }
 
     /// Compute inline completion ghost lines for rendering.
@@ -1514,10 +1577,17 @@ impl<M: InputModeKind> TextElement<M> {
                 }
             });
         }
+        // Impulse: Monaco's `showFoldingControls` (`set_folding_controls`).
+        let controls = self.state.read(cx).editor_options.folding_controls;
         for (display_row, is_folded, icon) in fold_icon_layout.icons.iter_mut() {
-            let is_current_line = current_row == Some(*display_row);
+            let is_current_line = current_row == Some(*display_row)
+                && controls == crate::input::FoldingControls::MouseoverAndCursorLine;
 
-            if !is_hovered && !is_current_line && !*is_folded {
+            if controls != crate::input::FoldingControls::Always
+                && !is_hovered
+                && !is_current_line
+                && !*is_folded
+            {
                 continue;
             }
 
@@ -2092,7 +2162,7 @@ impl<M: InputModeKind> TextElement<M> {
             let line_layout = LineLayout::new()
                 .lines(smallvec::smallvec![shaped_line])
                 .with_background(has_background(line_runs))
-                .with_whitespaces(whitespace_indicators);
+                .with_whitespaces(whitespace_indicators, 0);
             return vec![line_layout];
         }
 
@@ -2117,7 +2187,7 @@ impl<M: InputModeKind> TextElement<M> {
             let line_layout = LineLayout::new()
                 .lines(placeholder_lines)
                 .with_background(line_has_background)
-                .with_whitespaces(whitespace_indicators);
+                .with_whitespaces(whitespace_indicators, 0);
             return vec![line_layout];
         }
 
@@ -2178,7 +2248,10 @@ impl<M: InputModeKind> TextElement<M> {
                 .lines(wrapped_lines)
                 .wrap_indent(wrap_indent)
                 .with_background(line_has_background)
-                .with_whitespaces(whitespace_indicators.clone());
+                .with_whitespaces(
+                    whitespace_indicators.clone(),
+                    last_layout.visible_line_byte_offsets[vi],
+                );
             lines.push(line_layout);
 
             // +1 for the `\n`
@@ -2346,6 +2419,10 @@ impl<M: InputModeKind> TextElement<M> {
 struct CursorRenderInfo {
     bounds: Bounds<Pixels>,
     is_active: bool,
+    /// Impulse: the character a block caret covers, and its shape in the
+    /// block's text colour, to paint over the block.
+    glyph_range: Option<Range<usize>>,
+    glyph: Option<ShapedLine>,
 }
 
 pub(super) struct PrepaintState {
@@ -2395,6 +2472,8 @@ impl PrepaintState {
                 CursorRenderInfo {
                     bounds,
                     is_active: info.is_active,
+                    glyph_range: info.glyph_range.clone(),
+                    glyph: info.glyph.clone(),
                 }
             })
             .collect()
@@ -2955,8 +3034,45 @@ impl<M: InputModeKind> Element for TextElement<M> {
         // text, its carets, selections, and gutter contents are displaced.
         bounds.origin.y += px(stretch);
 
-        let (cursor_infos, cursor_scroll_offset, current_row, resize_reveal_owned) =
+        let (mut cursor_infos, cursor_scroll_offset, current_row, resize_reveal_owned) =
             self.layout_cursors(&last_layout, &mut bounds, scroll_size, window, cx);
+        // Impulse: shape the characters block carets cover, in the block's
+        // text colour (`EditorColors::block_caret_text`).
+        {
+            let state = self.state.read(cx);
+            let mut color = state
+                .editor_options
+                .colors
+                .block_caret_text
+                .unwrap_or(state.editor_style.background);
+            // A fading block lets the text under it show back through.
+            let blink = state.blink_cursor.read(cx);
+            if matches!(
+                blink.blinking(),
+                crate::input::CursorBlinking::Smooth | crate::input::CursorBlinking::Phase
+            ) {
+                color = color.opacity(blink.presence());
+            }
+            for info in &mut cursor_infos {
+                let Some(range) = info.glyph_range.clone() else {
+                    continue;
+                };
+                let text: SharedString = state.text.slice(range).to_string().into();
+                let run = TextRun {
+                    len: text.len(),
+                    font: style.font(),
+                    color,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                info.glyph = Some(
+                    window
+                        .text_system()
+                        .shape_line(text, text_size, &[run], None),
+                );
+            }
+        }
         // Completion/code-action menus position at the active caret.
         last_layout.cursor_bounds = cursor_infos
             .iter()
@@ -3010,10 +3126,15 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let state = self.state.read(cx);
         let line_numbers = if state.mode.line_number() {
             let mut line_numbers = Vec::with_capacity(last_layout.visible_buffer_lines.len());
+            // Impulse: the theme's line number colours when the host sets
+            // them (Monaco's `editorLineNumber.*`).
+            let colors = state.editor_options.colors;
             let other_line_runs = vec![TextRun {
                 len: line_number_len,
                 font: style.font(),
-                color: state.editor_style.muted_foreground,
+                color: colors
+                    .line_number
+                    .unwrap_or(state.editor_style.muted_foreground),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -3021,7 +3142,9 @@ impl<M: InputModeKind> Element for TextElement<M> {
             let current_line_runs = vec![TextRun {
                 len: line_number_len,
                 font: style.font(),
-                color: state.editor_style.foreground,
+                color: colors
+                    .active_line_number
+                    .unwrap_or(state.editor_style.foreground),
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -3123,6 +3246,17 @@ impl<M: InputModeKind> Element for TextElement<M> {
                 *state.active_selection(),
                 state.editor_style.clone(),
                 state.editor_paddings,
+            )
+        };
+        // Impulse: the host's editor options, and how much of a fading or
+        // expanding caret shows.
+        let (editor_options, cursor_blinking, caret_presence) = {
+            let state = self.state.read(cx);
+            let blink = state.blink_cursor.read(cx);
+            (
+                state.editor_options.clone(),
+                blink.blinking(),
+                blink.presence(),
             )
         };
         let focused = focus_handle.is_focused(window);
@@ -3234,21 +3368,30 @@ impl<M: InputModeKind> Element for TextElement<M> {
         }
 
         // Paint selections
-        if window.is_window_active() {
+        //
+        // Impulse: an inactive window keeps them, in the host's inactive
+        // colour (Monaco's `editor.inactiveSelectionBackground`), when it
+        // sets one; GPUI Kit hides them.
+        let selection_color = if window.is_window_active() {
+            Some(editor_style.selection)
+        } else {
+            editor_options.colors.inactive_selection
+        };
+        if let Some(selection_color) = selection_color {
             let secondary_selection = Hsla {
                 s: 0.1,
-                ..editor_style.selection
+                ..selection_color
             };
             for (path, is_active) in prepaint.search_match_paths.iter() {
                 window.paint_path(path.clone(), secondary_selection);
 
                 if *is_active {
-                    window.paint_path(path.clone(), editor_style.selection);
+                    window.paint_path(path.clone(), selection_color);
                 }
             }
 
             for path in prepaint.selection_paths.drain(..) {
-                window.paint_path(path, editor_style.selection);
+                window.paint_path(path, selection_color);
             }
 
             // Paint hover highlight
@@ -3336,11 +3479,42 @@ impl<M: InputModeKind> Element for TextElement<M> {
 
         // Paint blinking cursors (shared blink state for all carets)
         if focused && show_cursor {
+            // Impulse: a fading caret fades, an expanding one shrinks to its
+            // middle, and the caret takes its shape (`set_caret_style`,
+            // `set_cursor_blinking`).
+            let mut caret_color = editor_style.caret;
+            if matches!(
+                cursor_blinking,
+                crate::input::CursorBlinking::Smooth | crate::input::CursorBlinking::Phase
+            ) {
+                caret_color = caret_color.opacity(caret_presence);
+            }
             for cursor_info in prepaint.cursor_infos_with_scroll() {
-                window.paint_quad(fill(
-                    snap_caret_to_device_pixels(cursor_info.bounds, window.scale_factor()),
-                    editor_style.caret,
-                ));
+                let mut caret = cursor_info.bounds;
+                if cursor_blinking == crate::input::CursorBlinking::Expand {
+                    let height = caret.size.height * caret_presence;
+                    caret.origin.y += (caret.size.height - height).half();
+                    caret.size.height = height;
+                }
+                let caret = snap_caret_to_device_pixels(caret, window.scale_factor());
+                if editor_options.caret_style == crate::input::CaretStyle::BlockOutline {
+                    window.paint_quad(gpui::outline(caret, caret_color, gpui::BorderStyle::Solid));
+                } else {
+                    window.paint_quad(fill(caret, caret_color));
+                }
+                // Kept inside the block, which an expanding caret shrinks.
+                if let Some(glyph) = cursor_info.glyph.as_ref() {
+                    window.with_content_mask(Some(gpui::ContentMask { bounds: caret }), |window| {
+                        _ = glyph.paint(
+                            cursor_info.bounds.origin,
+                            line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    });
+                }
             }
         }
 
@@ -3396,6 +3570,15 @@ impl<M: InputModeKind> Element for TextElement<M> {
                     offset_y += prepaint.ghost_lines_height;
                 }
             }
+        }
+
+        // Impulse: an arrow over the gutter, as Monaco shows, not the text's
+        // I-beam. The fold chevrons set their own pointer after this.
+        if prepaint.last_layout.line_number_width > px(0.) {
+            window.set_cursor_style(
+                gpui::CursorStyle::Arrow,
+                &prepaint.fold_icon_layout.line_number_hitbox,
+            );
         }
 
         // Paint fold icons (only visible on hover or for current line)

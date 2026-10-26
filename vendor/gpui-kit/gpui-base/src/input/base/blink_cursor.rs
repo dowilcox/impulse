@@ -1,6 +1,8 @@
 use gpui::{Context, Pixels, Task, px};
 use instant::Duration;
 
+use crate::input::CursorBlinking;
+
 static INTERVAL: Duration = Duration::from_millis(500);
 static PAUSE_DELAY: Duration = Duration::from_millis(300);
 
@@ -16,6 +18,10 @@ pub(crate) struct BlinkCursor {
     visible: bool,
     paused: bool,
     epoch: usize,
+    /// Impulse: how the caret blinks (`set_cursor_blinking`).
+    blinking: CursorBlinking,
+    /// Impulse: how much of a fading or expanding caret shows, 0 to 1.
+    presence: f32,
 
     _task: Task<()>,
 }
@@ -26,8 +32,78 @@ impl BlinkCursor {
             visible: false,
             paused: false,
             epoch: 0,
+            blinking: CursorBlinking::default(),
+            presence: 0.,
             _task: Task::ready(()),
         }
+    }
+
+    /// Impulse: change how the caret blinks, restarting a running cycle.
+    pub(crate) fn set_blinking(&mut self, blinking: CursorBlinking, cx: &mut Context<Self>) {
+        if self.blinking == blinking {
+            return;
+        }
+        self.blinking = blinking;
+        if self.epoch != 0 {
+            self.start(cx);
+        }
+    }
+
+    pub(crate) fn blinking(&self) -> CursorBlinking {
+        self.blinking
+    }
+
+    /// Impulse: how much of the caret shows, 0 to 1: all or nothing unless
+    /// it fades or expands.
+    pub(crate) fn presence(&self) -> f32 {
+        if self.paused {
+            1.
+        } else if matches!(self.blinking, CursorBlinking::Blink | CursorBlinking::Solid) {
+            if self.visible { 1. } else { 0. }
+        } else {
+            self.presence
+        }
+    }
+
+    /// Impulse: (re)start the cycle `blinking` asks for, from a shown caret.
+    fn resume(&mut self, epoch: usize, cx: &mut Context<Self>) {
+        match self.blinking {
+            CursorBlinking::Blink => self.blink(epoch, cx),
+            CursorBlinking::Solid => {
+                self.visible = true;
+                cx.notify();
+            }
+            _ => self.animate(epoch, Duration::ZERO, cx),
+        }
+    }
+
+    /// Impulse: one step of a fading or expanding caret, `elapsed` into it.
+    fn animate(&mut self, epoch: usize, elapsed: Duration, cx: &mut Context<Self>) {
+        if epoch != self.epoch {
+            return;
+        }
+        if self.paused {
+            self.visible = true;
+            return;
+        }
+        let (presence, next) = animated_presence(self.blinking, elapsed);
+        if presence != self.presence || !self.visible {
+            self.presence = presence;
+            self.visible = presence > 0.;
+            cx.notify();
+        }
+        // Visible for good once the run is over, as Monaco's is.
+        let Some(next) = next else {
+            self.visible = true;
+            return;
+        };
+        let epoch = self.next_epoch();
+        self._task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(next).await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |this, cx| this.animate(epoch, elapsed + next, cx));
+            }
+        });
     }
 
     /// Start the blinking from a visible cursor.
@@ -40,7 +116,8 @@ impl BlinkCursor {
         self.paused = false;
         self.visible = false;
         let epoch = self.next_epoch();
-        self.blink(epoch, cx);
+        // Impulse: the cycle the host chose; `Blink` is GPUI Kit's.
+        self.resume(epoch, cx);
     }
 
     /// Stop the blinking and clear the blink state, so the next [`Self::start`]
@@ -49,6 +126,7 @@ impl BlinkCursor {
         self.epoch = 0;
         self.paused = false;
         self.visible = false;
+        self.presence = 0.;
         self._task = Task::ready(());
         cx.notify();
     }
@@ -115,11 +193,63 @@ impl BlinkCursor {
                     }
 
                     this.paused = false;
-                    this.blink(epoch, cx);
+                    // Impulse: restart the host's cycle, not always a blink.
+                    this.resume(epoch, cx);
                 });
             }
         });
     }
+}
+
+/// Impulse: Monaco's fading and expanding blinks, as its CSS animates them:
+/// half a second each way, alternating, 20 times, then shown for good. Each
+/// way holds shown for its first 100 ms, then eases out until `end`.
+const ANIMATION_HALF: Duration = Duration::from_millis(500);
+const ANIMATION_HALVES: u32 = 20;
+const ANIMATION_HOLD: Duration = Duration::from_millis(100);
+/// How often a fading caret repaints: the whole editor repaints with it.
+const ANIMATION_FRAME: Duration = Duration::from_millis(33);
+
+/// How much of the caret shows `elapsed` into a fading or expanding blink,
+/// and how long until it next changes (`None`: never again).
+fn animated_presence(blinking: CursorBlinking, elapsed: Duration) -> (f32, Option<Duration>) {
+    let end = match blinking {
+        CursorBlinking::Smooth => Duration::from_millis(300),
+        CursorBlinking::Phase => Duration::from_millis(450),
+        CursorBlinking::Expand => Duration::from_millis(400),
+        CursorBlinking::Blink | CursorBlinking::Solid => return (1., None),
+    };
+    let half = ANIMATION_HALF.as_millis() as u64;
+    let elapsed = elapsed.as_millis() as u64;
+    if elapsed >= half * ANIMATION_HALVES as u64 {
+        return (1., None);
+    }
+    let within = elapsed % half;
+    let forward = (elapsed / half) % 2 == 0;
+    let (hold, end) = (ANIMATION_HOLD.as_millis() as u64, end.as_millis() as u64);
+    // Where this half's keyframe time is, and the stretch of it that moves.
+    let (time, moving) = if forward {
+        (within, hold..end)
+    } else {
+        (half - within, (half - end)..(half - hold))
+    };
+    let presence = if time <= hold {
+        1.
+    } else if time >= end {
+        0.
+    } else {
+        let t = (time - hold) as f32 / (end - hold) as f32;
+        // CSS's ease-in-out, near enough.
+        1. - t * t * (3. - 2. * t)
+    };
+    let next = if within < moving.start {
+        moving.start - within
+    } else if within < moving.end {
+        ANIMATION_FRAME.as_millis() as u64
+    } else {
+        half - within
+    };
+    (presence, Some(Duration::from_millis(next.max(1))))
 }
 
 #[cfg(test)]
@@ -268,5 +398,52 @@ mod tests {
 
         assert!(!cursor.read_with(cx, |cursor, _| cursor.visible()));
         assert_eq!(notifications.get(), 0, "a stopped cursor kept blinking");
+    }
+
+    #[test]
+    fn a_smooth_caret_fades_out_and_back_in_then_stays() {
+        let at = |ms| animated_presence(CursorBlinking::Smooth, Duration::from_millis(ms));
+        assert_eq!(at(0), (1., Some(Duration::from_millis(100))));
+        let (fading, next) = at(200);
+        assert!(fading > 0. && fading < 1., "{fading}");
+        assert_eq!(next, Some(ANIMATION_FRAME));
+        assert_eq!(at(400), (0., Some(Duration::from_millis(100))));
+        // On the way back, hidden until it fades in.
+        assert_eq!(at(600).0, 0.);
+        assert!(at(800).0 > 0.);
+        assert_eq!(at(950).0, 1.);
+        assert_eq!(at(10_000), (1., None));
+    }
+
+    #[gpui::test]
+    fn a_solid_caret_never_blinks(cx: &mut TestAppContext) {
+        let cursor = cx.new(|_| BlinkCursor::new());
+        cursor.update(cx, |cursor, cx| {
+            cursor.set_blinking(CursorBlinking::Solid, cx);
+            cursor.start(cx);
+        });
+        cx.run_until_parked();
+        for _ in 0..4 {
+            cx.executor().advance_clock(INTERVAL);
+            cx.run_until_parked();
+            assert!(cursor.read_with(cx, |cursor, _| cursor.visible()));
+        }
+    }
+
+    #[gpui::test]
+    fn an_expanding_caret_shrinks_then_grows(cx: &mut TestAppContext) {
+        let cursor = cx.new(|_| BlinkCursor::new());
+        cursor.update(cx, |cursor, cx| {
+            cursor.set_blinking(CursorBlinking::Expand, cx);
+            cursor.start(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(cursor.read_with(cx, |cursor, _| cursor.presence()), 1.);
+        cx.executor().advance_clock(Duration::from_millis(450));
+        cx.run_until_parked();
+        assert_eq!(cursor.read_with(cx, |cursor, _| cursor.presence()), 0.);
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert_eq!(cursor.read_with(cx, |cursor, _| cursor.presence()), 1.);
     }
 }

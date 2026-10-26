@@ -751,6 +751,42 @@ pub(crate) struct LineLayout {
     has_background: bool,
 }
 
+/// Impulse: which of a line's whitespace characters (by byte offset in the
+/// line) get a marker, as Monaco's `renderWhitespace` decides.
+fn whitespace_marker_filter(
+    line: &str,
+    line_start: usize,
+    mode: crate::input::RenderWhitespace,
+    selected: Rc<[Range<usize>]>,
+) -> impl Fn(usize) -> bool + '_ {
+    use crate::input::RenderWhitespace;
+    let is_space = |c: char| matches!(c, ' ' | '\t');
+    let trailing_from = line
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !is_space(*c))
+        .map_or(0, |(ix, c)| ix + c.len_utf8());
+    move |offset| match mode {
+        RenderWhitespace::None | RenderWhitespace::All => true,
+        RenderWhitespace::Trailing => offset >= trailing_from,
+        RenderWhitespace::Selection => {
+            let offset = line_start + offset;
+            selected
+                .iter()
+                .any(|range| range.start <= offset && offset < range.end)
+        }
+        RenderWhitespace::Boundary => {
+            // All but a single space between two other characters.
+            if line[offset..].starts_with('\t') {
+                return true;
+            }
+            let before = line[..offset].chars().next_back();
+            let after = line[offset + 1..].chars().next();
+            !matches!((before, after), (Some(b), Some(a)) if !is_space(b) && !is_space(a))
+        }
+    }
+}
+
 impl LineLayout {
     pub(crate) fn new() -> Self {
         Self {
@@ -814,17 +850,38 @@ impl LineLayout {
         self
     }
 
-    pub(crate) fn with_whitespaces(mut self, indicators: Option<WhitespaceIndicators>) -> Self {
+    /// Impulse: `line_start` is the line's offset in the text, for
+    /// [`crate::input::RenderWhitespace::Selection`].
+    pub(crate) fn with_whitespaces(
+        mut self,
+        indicators: Option<WhitespaceIndicators>,
+        line_start: usize,
+    ) -> Self {
         self.whitespace_indicators = indicators;
         let Some(indicators) = self.whitespace_indicators.as_ref() else {
             return self;
         };
 
         let space_indicator_offset = indicators.space.width.half();
+        // Impulse: Monaco's `renderWhitespace` modes, over the whole line.
+        let line: String = self
+            .wrapped_lines
+            .iter()
+            .map(|line| line.text.as_ref())
+            .collect();
+        let shows = whitespace_marker_filter(
+            &line,
+            line_start,
+            indicators.mode,
+            indicators.selected.clone(),
+        );
+        let mut line_offset = 0;
 
         for (line_index, wrapped_line) in self.wrapped_lines.iter().enumerate() {
+            let sub_line_start = line_offset;
+            line_offset += wrapped_line.text.len();
             for (relative_offset, c) in wrapped_line.text.char_indices() {
-                if matches!(c, ' ' | '\t') {
+                if matches!(c, ' ' | '\t') && shows(sub_line_start + relative_offset) {
                     let is_tab = c == '\t';
                     let start_x = wrapped_line.x_for_index(relative_offset);
                     let end_x = wrapped_line.x_for_index(relative_offset + c.len_utf8());
@@ -1090,6 +1147,26 @@ impl LineLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Impulse: Monaco's `renderWhitespace` modes.
+    #[test]
+    fn whitespace_markers_follow_the_mode() {
+        use crate::input::RenderWhitespace;
+        let line = "  a b  c\t ";
+        let marked = |mode, selected: Vec<Range<usize>>| -> Vec<usize> {
+            let shows = whitespace_marker_filter(line, 10, mode, selected.into());
+            line.char_indices()
+                .filter(|(ix, c)| matches!(c, ' ' | '\t') && shows(*ix))
+                .map(|(ix, _)| ix)
+                .collect()
+        };
+        assert_eq!(marked(RenderWhitespace::All, vec![]), [0, 1, 3, 5, 6, 8, 9]);
+        // The single space between words goes.
+        assert_eq!(marked(RenderWhitespace::Boundary, vec![]), [0, 1, 5, 6, 8, 9]);
+        assert_eq!(marked(RenderWhitespace::Trailing, vec![]), [8, 9]);
+        // Selections are in text offsets; the line starts at 10.
+        assert_eq!(marked(RenderWhitespace::Selection, vec![14..17]), [5, 6]);
+    }
     use std::rc::Rc;
 
     #[cfg(target_os = "linux")]

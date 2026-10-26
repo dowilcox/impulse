@@ -369,7 +369,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Bracket, F8, Expand/Shrink Selection, Cursor
                           Undo, trim trailing whitespace…, Home to the
                           first non-blank, ⌘L Expand Line Selection, the
-                          Mac's ⌃ text keys, and linked HTML
+                          Mac's ⌃ text keys, keyboard folding (⌥⌘[ ⌥⌘]
+                          ⌘K ⌘0 ⌘K ⌘J), and linked HTML
                           tag names over impulse_kit::linked_tags), font
                           settings listing families (fonts.rs), bracket pair colors (impulse_kit::bracket_pairs),
                           with its guides and the matching-bracket box

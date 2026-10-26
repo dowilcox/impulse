@@ -152,6 +152,7 @@ impl EditorTab {
                 })
                 .default_value(text);
             state.set_readonly(true, cx);
+            crate::editor_tab::apply_editor_options(&mut state, &settings, cx);
             state
         })
     }

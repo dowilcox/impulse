@@ -165,6 +165,75 @@ pub(crate) fn grammar_for<'a>(language: &'a str, path: &Path) -> &'a str {
     }
 }
 
+/// What Monaco is given in `editor.js` that GPUI Kit's editor takes through
+/// Impulse's patches (`vendor/gpui-kit/README.md`): the caret's style and
+/// blinking, whitespace markers, auto-closing brackets, fold chevrons only
+/// while the pointer is over the gutter, the theme's line number colors and
+/// a selection that stays (dimmer) when the window is inactive, one scroll
+/// axis per trackpad gesture, the I-beam kept while ⌥ is held, and a 300 ms
+/// hover. The Diff View's sides take them too.
+pub(crate) fn apply_editor_options(
+    state: &mut EditorState,
+    settings: &impulse_kit::settings::Settings,
+    cx: &mut Context<EditorState>,
+) {
+    use gpui_kit::base::input::{
+        AutoCloseBrackets, CaretStyle, CursorBlinking, EditorColors, FoldingControls,
+        RenderWhitespace,
+    };
+    use gpui_kit::component::ActiveTheme as _;
+    let colors = {
+        let theme = cx.theme();
+        let style = &theme.highlight_theme.style;
+        EditorColors {
+            line_number: style.editor_line_number,
+            active_line_number: style.editor_active_line_number,
+            // Monaco's `editor.inactiveSelectionBackground`: the selection
+            // at half its opacity.
+            inactive_selection: Some(theme.selection.opacity(0.5)),
+            // `editorCursor.background`: the editor's background.
+            block_caret_text: Some(theme.background),
+        }
+    };
+    state.set_editor_colors(colors, cx);
+    let caret = match settings.editor_cursor_style.as_str() {
+        "block" => CaretStyle::Block,
+        "underline" => CaretStyle::Underline,
+        "line-thin" => CaretStyle::LineThin,
+        "block-outline" => CaretStyle::BlockOutline,
+        "underline-thin" => CaretStyle::UnderlineThin,
+        _ => CaretStyle::Line,
+    };
+    state.set_caret_style(caret, cx);
+    let blinking = match settings.editor_cursor_blinking.as_str() {
+        "blink" => CursorBlinking::Blink,
+        "phase" => CursorBlinking::Phase,
+        "expand" => CursorBlinking::Expand,
+        "solid" => CursorBlinking::Solid,
+        _ => CursorBlinking::Smooth,
+    };
+    state.set_cursor_blinking(blinking, cx);
+    let whitespace = match settings.render_whitespace.as_str() {
+        "none" => RenderWhitespace::None,
+        "all" => RenderWhitespace::All,
+        "boundary" => RenderWhitespace::Boundary,
+        "trailing" => RenderWhitespace::Trailing,
+        _ => RenderWhitespace::Selection,
+    };
+    state.set_render_whitespace(whitespace, cx);
+    // "never" turns auto-closing off (`set_auto_close`).
+    let brackets = match settings.editor_auto_closing_brackets.as_str() {
+        "always" => AutoCloseBrackets::Always,
+        "beforeWhitespace" => AutoCloseBrackets::BeforeWhitespace,
+        _ => AutoCloseBrackets::LanguageDefined,
+    };
+    state.set_auto_close_brackets(brackets, cx);
+    state.set_folding_controls(FoldingControls::Mouseover, cx);
+    state.set_scroll_predominant_axis(true);
+    state.set_hide_column_select_pointer(true, cx);
+    state.set_hover_delay(std::time::Duration::from_millis(300));
+}
+
 impl EditorTab {
     /// A tab for `path`, read with `text_file::open` (which refuses what the
     /// editor can't show).
@@ -186,7 +255,6 @@ impl EditorTab {
                 .folding(settings.folding)
                 .indent_guides(settings.indent_guides)
                 .soft_wrap(settings.word_wrap)
-                .show_whitespaces(settings.render_whitespace == "all")
                 .tab_size(TabSize {
                     tab_size,
                     hard_tabs: !use_spaces,
@@ -361,7 +429,7 @@ impl EditorTab {
             state.set_folding(settings.folding, window, cx);
             state.set_indent_guides(settings.indent_guides, window, cx);
             state.set_soft_wrap(settings.word_wrap, window, cx);
-            state.set_show_whitespaces(settings.render_whitespace == "all", window, cx);
+            apply_editor_options(state, settings, cx);
             state.set_tab_size(tab, cx);
             state.set_scroll_beyond_last_line(
                 if settings.scroll_beyond_last_line {
@@ -1700,6 +1768,10 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::trim_trailing_whitespace))
             .on_action(cx.listener(Self::cursor_home))
             .on_action(cx.listener(Self::expand_line_selection))
+            .on_action(cx.listener(Self::fold))
+            .on_action(cx.listener(Self::unfold))
+            .on_action(cx.listener(Self::fold_all))
+            .on_action(cx.listener(Self::unfold_all))
             .on_key_down(
                 cx.listener(|tab, event: &gpui_kit::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "escape" && tab.signature.is_some() {
