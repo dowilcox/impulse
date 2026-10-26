@@ -7,6 +7,7 @@
 use std::time::Instant;
 
 use gpui_kit::component::popover::Popover;
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, Entity, EntityId, FontWeight, Window,
 };
@@ -738,7 +739,9 @@ impl Workbench {
                 .offset(px(0.))
                 .appearance(false)
                 .trigger(trigger)
-                .content(move |_, _, cx| inbox(&agents, &p, &hint, workbench.clone(), cx))
+                .content(move |_, window, cx| {
+                    inbox(&agents, &p, &hint, workbench.clone(), window, cx)
+                })
                 .into_any_element(),
         )
     }
@@ -774,8 +777,16 @@ fn inbox(
     p: &ChromePalette,
     hint: &str,
     workbench: gpui_kit::WeakEntity<Workbench>,
+    window: &mut Window,
     cx: &mut Context<gpui_kit::component::popover::PopoverState>,
 ) -> AnyElement {
+    // The list's scroll while the popover is open, for its scrollbar.
+    let scroll = window
+        .use_keyed_state("agent-inbox-scroll", cx, |_, _| {
+            gpui_kit::ScrollHandle::new()
+        })
+        .read(cx)
+        .clone();
     let mut list = div()
         .id("agent-inbox-list")
         .flex()
@@ -783,7 +794,8 @@ fn inbox(
         .gap(px(1.))
         .py(px(4.))
         .max_h(px(320.))
-        .overflow_y_scroll();
+        .overflow_y_scroll()
+        .track_scroll(&scroll);
     for (index, agent) in agents.iter().enumerate() {
         let terminal = agent.terminal.clone();
         let (reveal_workbench, review_workbench) = (workbench.clone(), workbench.clone());
@@ -911,14 +923,21 @@ fn inbox(
         .text_color(hsla(p.text))
         .font_family(crate::workbench::UI_FONT)
         .child(crate::overlays::probe())
-        .child(inbox_body(agents, list, p, hint, hooks_workbench, cx))
+        .child(inbox_body(
+            agents,
+            div().relative().child(list).vertical_scrollbar(&scroll),
+            p,
+            hint,
+            hooks_workbench,
+            cx,
+        ))
         .into_any_element()
 }
 
 /// The inbox's content, Swift's 340-wide `AgentInboxView`.
 fn inbox_body(
     agents: &[AgentSummary],
-    list: gpui_kit::Stateful<gpui_kit::Div>,
+    list: gpui_kit::Div,
     p: &ChromePalette,
     hint: &str,
     hooks_workbench: gpui_kit::WeakEntity<Workbench>,

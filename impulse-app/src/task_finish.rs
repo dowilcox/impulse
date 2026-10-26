@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FocusHandle, FontWeight, Subscription,
@@ -697,7 +698,7 @@ impl Render for TaskFinishView {
                     .id("task-finish-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .px(px(28.))
                     .py(px(20.))
                     .child(content),

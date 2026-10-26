@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, ClipboardItem, Context, FontWeight, Window};
 use impulse_kit::agents::hook_installer::{self as hooks, InstallError, OpencodePlugin, Status};
@@ -854,13 +855,9 @@ impl Render for AgentIntegration {
             .id("agent-preview")
             .flex()
             .flex_col()
-            .h(px(220.))
-            .overflow_y_scroll()
-            .p(px(8.))
-            .rounded(px(metrics::RADIUS))
-            .bg(hsla(p.content))
-            .font_family("JetBrains Mono")
-            .text_size(px(11.));
+            .size_full()
+            .overflow_y_scrollbar()
+            .p(px(8.));
         if diff.is_empty() {
             preview = preview.child(
                 div()
@@ -1010,7 +1007,16 @@ impl Render for AgentIntegration {
                         )
                     }),
             )
-            .child(preview)
+            // The box stays put while the preview scrolls inside it.
+            .child(
+                div()
+                    .h(px(220.))
+                    .rounded(px(metrics::RADIUS))
+                    .bg(hsla(p.content))
+                    .font_family("JetBrains Mono")
+                    .text_size(px(11.))
+                    .child(preview),
+            )
             .child(
                 div()
                     .flex()

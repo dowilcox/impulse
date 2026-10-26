@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Icon;
 use gpui_kit::{
@@ -642,6 +643,7 @@ impl Workbench {
             .id("changes-list")
             .track_focus(&self.git.list_focus)
             .on_key_down(cx.listener(Self::changes_key))
+            .relative()
             .flex()
             .flex_col()
             .flex_1()
@@ -653,16 +655,18 @@ impl Workbench {
             let items = self.change_items(snapshot);
             self.sync_change_list(&items);
             let (items, snapshot, repo) = (Rc::new(items), Rc::new(snapshot.clone()), repo.clone());
-            list = list.child(
-                gpui_kit::list(
-                    self.git.list_state.clone(),
-                    cx.processor(move |this, index: usize, _, cx| {
-                        this.change_item(&repo, &snapshot, &items[index], focused, cx)
-                    }),
+            list = list
+                .child(
+                    gpui_kit::list(
+                        self.git.list_state.clone(),
+                        cx.processor(move |this, index: usize, _, cx| {
+                            this.change_item(&repo, &snapshot, &items[index], focused, cx)
+                        }),
+                    )
+                    .flex_1()
+                    .pb(px(8.)),
                 )
-                .flex_1()
-                .pb(px(8.)),
-            );
+                .vertical_scrollbar(&self.git.list_state);
         }
         div()
             .flex()

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, ClickEvent, Context, Entity, FocusHandle, FontWeight,
@@ -1653,16 +1654,22 @@ impl Render for ProjectSetupView {
                 self.try_section(),
             ];
             div()
-                .id("project-setup-scroll")
+                .relative()
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&self.scroll)
-                .px(px(28.))
-                .py(px(20.))
-                .flex()
-                .flex_col()
-                .children(sections)
+                .child(
+                    div()
+                        .id("project-setup-scroll")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll)
+                        .px(px(28.))
+                        .py(px(20.))
+                        .flex()
+                        .flex_col()
+                        .children(sections),
+                )
+                .vertical_scrollbar(&self.scroll)
                 .into_any_element()
         };
         div()

@@ -6,6 +6,7 @@
 //! highlighted and kept in view.
 
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::{div, prelude::*, px, Context, FontWeight, Window};
 
 use super::{stat, status_letter, viewed_checkbox, ReviewView, NAVIGATOR_WIDTH};
@@ -204,7 +205,16 @@ impl ReviewView {
                             .bg(hsla(p.git_added)),
                     ),
             )
-            .child(list)
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(list)
+                    .vertical_scrollbar(&self.nav_scroll),
+            )
             .font_weight(FontWeight::NORMAL)
     }
 }

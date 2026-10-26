@@ -32,6 +32,7 @@ use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _
 use crate::workbench_chrome::{hsla, icon};
 use comments::{action_button, ButtonKind};
 use gpui_kit::component::button::ButtonVariants as _;
+use gpui_kit::component::scroll::ScrollableElement as _;
 
 /// More context than any file shown has lines: the whole file.
 const WHOLE_FILE: i32 = 100_000;
@@ -2501,6 +2502,7 @@ impl Render for ReviewView {
                 .overflow_hidden()
                 .child(list(self.list.clone(), cx.processor(Self::render_row)).size_full())
                 .children(self.floating_header(cx))
+                .vertical_scrollbar(&self.list)
                 .into_any_element(),
         };
         div()

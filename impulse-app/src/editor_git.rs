@@ -13,6 +13,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{
     TextDecoration, TextDecorationCollection, ViewZone, ViewZoneContext, ViewZoneId,
 };
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
     canvas, div, fill, point, prelude::*, px, size, AnyElement, App, Bounds, Context,
@@ -1110,7 +1111,7 @@ impl EditorTab {
                         div()
                             .id("peek-old")
                             .min_h_0()
-                            .overflow_y_scroll()
+                            .overflow_y_scrollbar()
                             .pl(px(14.))
                             .pr(px(10.))
                             .pt(px(2.))

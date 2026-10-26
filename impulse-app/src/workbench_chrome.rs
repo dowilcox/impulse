@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use std::rc::Rc;
 
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::{div, prelude::*, px, svg, AnyElement, Context, FontWeight, Hsla, Window};
 use impulse_kit::chrome::{metrics, Rgba as KitRgba};
 
@@ -1832,6 +1833,7 @@ impl Workbench {
                     this.tree_drop(paths.paths().to_vec(), &root_external, window, cx)
                 }),
             )
+            .relative()
             .flex()
             .flex_col()
             .flex_1()
@@ -1870,23 +1872,25 @@ impl Workbench {
             };
             // Only the rows on screen are built (Swift's LazyVStack).
             let rows = Rc::new(rows);
-            files = files.child(
-                gpui_kit::uniform_list(
-                    "file-rows",
-                    rows.len(),
-                    cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                        let open_path = this.active_editor().map(|e| e.read(cx).path.clone());
-                        range
-                            .map(|index| {
-                                this.tree_row(&rows[index], index, open_path.as_deref(), cx)
-                            })
-                            .collect::<Vec<_>>()
-                    }),
+            files = files
+                .child(
+                    gpui_kit::uniform_list(
+                        "file-rows",
+                        rows.len(),
+                        cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                            let open_path = this.active_editor().map(|e| e.read(cx).path.clone());
+                            range
+                                .map(|index| {
+                                    this.tree_row(&rows[index], index, open_path.as_deref(), cx)
+                                })
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .track_scroll(&self.tree_scroll)
+                    // Right under the header, as Swift's LazyVStack starts.
+                    .flex_1(),
                 )
-                .track_scroll(&self.tree_scroll)
-                // Right under the header, as Swift's LazyVStack starts.
-                .flex_1(),
-            );
+                .vertical_scrollbar(&self.tree_scroll);
         }
         if self.panel == SidebarPanel::Search {
             let root = root.to_string_lossy().into_owned();

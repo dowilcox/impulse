@@ -6,6 +6,7 @@
 //! and `commands::rebind_on_change` binds it right away.
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{
@@ -806,7 +807,7 @@ impl Render for KeybindingsView {
                     .id("keybindings-list")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .child(list),
             )
     }

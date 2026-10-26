@@ -22,6 +22,7 @@ use std::time::Duration;
 use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _};
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{
@@ -1301,8 +1302,18 @@ impl Render for HistoryView {
                 })
             })
             .track_scroll(&self.scroll)
-            .flex_1()
+            .size_full()
             .into_any_element(),
+        };
+        let list = match &self.error {
+            Some(_) => list,
+            None => div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(list)
+                .vertical_scrollbar(&self.scroll)
+                .into_any_element(),
         };
         div()
             .id("history-view")

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use gpui_kit::base::{SelectableText, SelectableTextDocument, SelectableTextGroup, TextSelection};
 use gpui_kit::component::highlighter::SyntaxHighlighter;
 use gpui_kit::component::input::{Copy, Rope, SelectAll};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, FontStyle, FontWeight, Hsla, KeyBinding,
     SharedString, StrikethroughStyle, TextRun,
@@ -81,12 +82,26 @@ struct Page<'a> {
     /// starts among the window's selectable text.
     document: SelectableTextDocument,
     order_base: u64,
+    /// The code blocks' sideways scrolls, by block id, for their scrollbars.
+    code_scrolls: CodeScrolls,
 }
+
+/// A preview's code blocks' sideways scrolls, kept between renders.
+type CodeScrolls = Rc<RefCell<HashMap<usize, gpui_kit::ScrollHandle>>>;
 
 impl Page<'_> {
     fn id(&mut self) -> usize {
         self.next_id += 1;
         self.next_id
+    }
+
+    /// The sideways scroll of the code block `id`.
+    fn code_scroll(&self, id: usize) -> gpui_kit::ScrollHandle {
+        self.code_scrolls
+            .borrow_mut()
+            .entry(id)
+            .or_default()
+            .clone()
     }
 
     /// The next place in reading order, for a block's text.
@@ -117,12 +132,14 @@ fn document_order(base: u64, id: usize) -> u64 {
 const CONTEXT: &str = "MarkdownPreview";
 
 /// What a preview keeps between renders: the focus a click in it takes,
-/// its select-all, and its range of reading order.
+/// its select-all, its range of reading order and its code blocks'
+/// scrolls.
 struct PreviewState {
     editor: gpui_kit::WeakEntity<EditorTab>,
     focus: gpui_kit::FocusHandle,
     document: SelectableTextDocument,
     order_base: u64,
+    code_scrolls: CodeScrolls,
 }
 
 thread_local! {
@@ -142,7 +159,12 @@ fn order_base(n: u64) -> u64 {
 /// (and its keys bound the first time any does).
 fn preview_state(
     cx: &mut Context<EditorTab>,
-) -> (gpui_kit::FocusHandle, SelectableTextDocument, u64) {
+) -> (
+    gpui_kit::FocusHandle,
+    SelectableTextDocument,
+    u64,
+    CodeScrolls,
+) {
     static BOUND: std::sync::Once = std::sync::Once::new();
     BOUND.call_once(|| {
         let c = Some(CONTEXT);
@@ -165,6 +187,7 @@ fn preview_state(
                     focus: cx.focus_handle(),
                     document: SelectableTextDocument::new(),
                     order_base: order_base(n),
+                    code_scrolls: CodeScrolls::default(),
                 },
             );
         }
@@ -173,6 +196,7 @@ fn preview_state(
             state.focus.clone(),
             state.document.clone(),
             state.order_base,
+            state.code_scrolls.clone(),
         )
     })
 }
@@ -188,7 +212,7 @@ pub(crate) fn preview(
         .try_global::<MarkdownColors>()
         .copied()
         .unwrap_or_else(|| MarkdownColors::new(&impulse_kit::theme::get_theme("")));
-    let (focus, document, order_base) = preview_state(cx);
+    let (focus, document, order_base, code_scrolls) = preview_state(cx);
     let mut page = Page {
         colors,
         folder: folder.to_path_buf(),
@@ -199,9 +223,10 @@ pub(crate) fn preview(
         anchors: std::rc::Rc::new(markdown_blocks::heading_slugs(blocks)),
         document: document.clone(),
         order_base,
+        code_scrolls,
     };
     let body = render_blocks(blocks, &mut page, cx);
-    div()
+    let content = div()
         .id("markdown-preview")
         // A click takes the keyboard, as the Swift preview's web view does,
         // so ⌘A selects the page and ⌘C copies from it.
@@ -222,9 +247,7 @@ pub(crate) fn preview(
                 cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
             }
         })
-        .flex_1()
-        .h_full()
-        .min_w_0()
+        .size_full()
         .overflow_y_scroll()
         .track_scroll(scroll)
         .flex()
@@ -242,7 +265,14 @@ pub(crate) fn preview(
         .py(px(24.))
         // Each block a child of the scroll, so an anchor scrolls to its
         // heading by index.
-        .children(body)
+        .children(body);
+    div()
+        .relative()
+        .flex_1()
+        .h_full()
+        .min_w_0()
+        .child(content)
+        .vertical_scrollbar(scroll)
         .into_any_element()
 }
 
@@ -819,6 +849,7 @@ fn code_block(
     let shell = markdown_blocks::is_shell(language);
     let command = markdown_blocks::shell_command(text);
     let id = page.id();
+    let scroll = (!shell).then(|| page.code_scroll(id));
     div()
         .relative()
         .px(px(16.))
@@ -834,17 +865,24 @@ fn code_block(
         .line_height(px(BODY * 1.6))
         .child(
             div()
-                .id(("md-code", id))
-                // Long lines scroll sideways rather than being cut off
-                // (Swift's `pre { overflow-x: auto }`); shell blocks wrap
-                // beside their Run button. A vertical swipe stays the
-                // page's (GPUI turns it sideways otherwise).
-                .when(!shell, |d| {
-                    d.whitespace_nowrap()
-                        .overflow_x_scroll()
-                        .restrict_scroll_to_axis()
-                })
-                .child(page.text(text.to_string()).runs(runs)),
+                .relative()
+                .child(
+                    div()
+                        .id(("md-code", id))
+                        // Long lines scroll sideways rather than being cut
+                        // off (Swift's `pre { overflow-x: auto }`); shell
+                        // blocks wrap beside their Run button. A vertical
+                        // swipe stays the page's (GPUI turns it sideways
+                        // otherwise).
+                        .when_some(scroll.as_ref(), |d, scroll| {
+                            d.whitespace_nowrap()
+                                .overflow_x_scroll()
+                                .restrict_scroll_to_axis()
+                                .track_scroll(scroll)
+                        })
+                        .child(page.text(text.to_string()).runs(runs)),
+                )
+                .when_some(scroll.as_ref(), |d, scroll| d.horizontal_scrollbar(scroll)),
         )
         .when(shell, |d| {
             d.child(

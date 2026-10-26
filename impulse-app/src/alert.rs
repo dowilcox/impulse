@@ -10,6 +10,7 @@
 
 use std::rc::Rc;
 
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::{
     actions, div, prelude::*, px, AnyElement, App, Entity, Hsla, KeyBinding, MouseButton,
     SharedString, Window,
@@ -490,9 +491,6 @@ pub(crate) fn command_list(text: String, lines: usize, light: bool) -> impl Into
         .id("alert-commands")
         .w(px(440.))
         .h(px(lines.clamp(2, 14) as f32 * line + 12.))
-        .overflow_y_scroll()
-        .px(px(10.))
-        .py(px(5.))
         .border_1()
         .border_color(hsla(ink.opacity(0.25)))
         .font_family(crate::settings_view::MONO_FONT)
@@ -500,5 +498,13 @@ pub(crate) fn command_list(text: String, lines: usize, light: bool) -> impl Into
         .line_height(px(line))
         .text_color(hsla(ink.opacity(0.88)))
         .whitespace_normal()
-        .child(text)
+        // The bezel stays put while the text scrolls inside it.
+        .child(
+            div()
+                .size_full()
+                .overflow_y_scrollbar()
+                .px(px(10.))
+                .py(px(5.))
+                .child(text),
+        )
 }

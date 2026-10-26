@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState, Position};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{
@@ -1502,17 +1503,22 @@ impl Palette {
         }
         let height = (self.rows.len() as f32 * ROW_HEIGHT + 10.).min(MAX_LIST_HEIGHT);
         div()
-            .id("palette-results")
-            .h(px(height))
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
-            .py(px(5.))
-            .children(
-                self.rows
-                    .iter()
-                    .enumerate()
-                    .map(|(index, row)| self.row(index, row, cx)),
+            .relative()
+            .child(
+                div()
+                    .id("palette-results")
+                    .h(px(height))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .py(px(5.))
+                    .children(
+                        self.rows
+                            .iter()
+                            .enumerate()
+                            .map(|(index, row)| self.row(index, row, cx)),
+                    ),
             )
+            .vertical_scrollbar(&self.scroll)
             .into_any_element()
     }
 

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, Window};
 use impulse_kit::chrome::{metrics, ChromePalette};
@@ -438,6 +439,7 @@ impl Workbench {
             main: task_registry::canonical(&main),
             pairs: workspace.task.overlaps.clone(),
             conflicts: HashMap::new(),
+            scroll: gpui_kit::ScrollHandle::new(),
         });
         crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             dialog
@@ -459,6 +461,8 @@ struct OverlapList {
     pairs: Vec<Pair>,
     /// Conflict checks by pair: `None` while running, the files once done.
     conflicts: HashMap<String, Option<Vec<String>>>,
+    /// The list's scroll, for its scrollbar.
+    scroll: gpui_kit::ScrollHandle,
 }
 
 impl OverlapList {
@@ -488,7 +492,8 @@ impl Render for OverlapList {
             .flex_col()
             .gap(px(14.))
             .max_h(px(420.))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll);
         for (n, pair) in self.pairs.clone().into_iter().enumerate() {
             let other = pair.other(&self.path).clone();
             let found = self.conflicts.get(&pair.key()).cloned();
@@ -615,9 +620,11 @@ impl Render for OverlapList {
             );
         }
         div()
+            .relative()
             .text_color(hsla(p.text))
             .rounded(px(metrics::RADIUS))
             .child(column)
+            .vertical_scrollbar(&self.scroll)
     }
 }
 

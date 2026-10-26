@@ -14,6 +14,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     Editor, EditorState, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle, TabSize,
 };
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, Entity, FontWeight, Window};
 use impulse_kit::uri::language_for_path;
@@ -384,7 +385,7 @@ impl EditorTab {
                                 .w(px(320.))
                                 .flex_none()
                                 .h_full()
-                                .overflow_y_scroll()
+                                .overflow_y_scrollbar()
                                 .py(px(4.))
                                 .children(rows),
                         ),

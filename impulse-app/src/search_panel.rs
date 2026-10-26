@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     div, prelude::*, px, Context, Entity, EventEmitter, FontWeight, SharedString, StyledText,
@@ -255,7 +256,7 @@ impl Render for SearchPanel {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll();
+            .overflow_y_scrollbar();
         if self.searching && self.results.is_empty() {
             list = list.child(
                 div()

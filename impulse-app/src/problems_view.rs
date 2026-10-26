@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, ClipboardItem, Context, Entity, EventEmitter,
@@ -508,7 +509,7 @@ impl Render for ProblemsView {
                 .id("problems-list")
                 .flex_1()
                 .min_h_0()
-                .overflow_y_scroll()
+                .overflow_y_scrollbar()
                 .child(list)
                 .into_any_element()
         };

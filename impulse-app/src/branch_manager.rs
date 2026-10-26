@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime};
 use crate::toasts::Toast;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Icon, Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
@@ -398,17 +399,18 @@ impl Render for BranchManager {
                     .child(div().flex_1())
                     .child(crate::alert::field(&self.filter, 180., 22., p.is_light)),
             )
+            // The box stays put while the list scrolls inside it.
             .child(
-                div()
-                    .id("branch-list")
-                    .h(px(340.))
-                    .overflow_y_scroll()
-                    .rounded(px(6.))
-                    .bg(hsla(p.content))
-                    .flex()
-                    .flex_col()
-                    .gap(px(1.))
-                    .children(visible.iter().map(|(i, b)| self.row(*i, b, cx))),
+                div().h(px(340.)).rounded(px(6.)).bg(hsla(p.content)).child(
+                    div()
+                        .id("branch-list")
+                        .size_full()
+                        .overflow_y_scrollbar()
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.))
+                        .children(visible.iter().map(|(i, b)| self.row(*i, b, cx))),
+                ),
             )
             .child(
                 div()

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{Input, InputEvent, InputState, NumberInputEvent, StepAction};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::select::{SearchableVec, Select, SelectEvent, SelectItem, SelectState};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{IndexPath, Sizable as _};
@@ -800,7 +801,7 @@ impl SettingsView {
             .flex_1()
             .min_w_0()
             .h_full()
-            .overflow_y_scroll()
+            .overflow_y_scrollbar()
             .bg(hsla(p.content))
             .child(body)
             .into_any_element()
