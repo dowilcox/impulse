@@ -14,7 +14,7 @@ pub(crate) use hover_popover::*;
 
 use gpui::{
     App, Div, ElementId, Empty, Hsla, InteractiveElement as _, SharedString, Stateful,
-    StyleRefinement, Styled as _, Window, div, px, rems,
+    StyleRefinement, Styled as _, Window, div, rems,
 };
 
 use crate::{
@@ -41,7 +41,9 @@ pub(super) fn render_markdown(
                     StyleRefinement::default()
                         .bg(cx.theme().transparent)
                         .p_0()
-                        .text_size(px(11.)),
+                        // Impulse: the editor's font size, as the prose
+                        // around it (hover_popover.rs).
+                        .text_size(cx.theme().mono_font_size),
                 ),
         )
         // Impulse: no language label in the corner of a code block. The

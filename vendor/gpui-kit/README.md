@@ -80,6 +80,11 @@ because gpui-component builds that struct as a full literal.
 
 ### gpui-component
 
+- **Hover text at the editor's size** (`input/popovers/hover_popover.rs`,
+  `input/popovers/mod.rs`): hovers, diagnostics and their code blocks use the
+  theme's `mono_font_size` (the host sets it to the editor's font size), not
+  `text_xs` and an 11px code block.
+
 - **Hover popover placement** (`input/popovers/hover_popover.rs`): the room
   above a word is measured from the editor's top, not the window's, so a
   hover on the first lines opens below the word instead of over the tabs and

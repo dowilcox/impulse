@@ -8,7 +8,7 @@ use gpui::{
 };
 
 use crate::{
-    StyledExt, ThemeStyled as _,
+    ActiveTheme, StyledExt, ThemeStyled as _,
     input::{
         EditorState,
         popovers::{editor_popover_background, render_markdown},
@@ -168,7 +168,10 @@ impl Element for Popover {
                 .flex_none()
                 .occlude()
                 .p_1()
-                .text_xs()
+                // Impulse: the editor's font size (the theme's mono size,
+                // which the host sets to it), not text_xs, so a hover reads
+                // at the size of the code it explains.
+                .text_size(cx.theme().mono_font_size)
                 .popover_style(cx)
                 // Impulse: the editor's widget background (Monaco's
                 // `editorHoverWidget.background`) when the theme sets one.
