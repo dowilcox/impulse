@@ -8,19 +8,23 @@
 //! links to files open in the editor and `#anchors` scroll to the heading.
 //! Block margins collapse between neighbors, as the page's CSS margins do,
 //! and inline code is set at 0.9em of its text, as the page's `code` is.
+//! Its text selects as a page's does (GPUI Kit's `SelectableText`): a drag
+//! across blocks, a double click on a word, ⌘A once a click in the preview
+//! has given it the keyboard, and ⌘C copies the selection as plain text.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::base::{SelectableText, SelectableTextDocument, SelectableTextGroup, TextSelection};
 use gpui_kit::component::highlighter::SyntaxHighlighter;
-use gpui_kit::component::input::Rope;
+use gpui_kit::component::input::{Copy, Rope, SelectAll};
 use gpui_kit::{
-    div, prelude::*, px, AnyElement, App, Context, FontStyle, FontWeight, Hsla, InteractiveText,
-    SharedString, StrikethroughStyle, StyledText, TextRun,
+    div, prelude::*, px, AnyElement, App, Context, FontStyle, FontWeight, Hsla, KeyBinding,
+    SharedString, StrikethroughStyle, TextRun,
 };
 use impulse_kit::markdown_blocks::{self, Align, Block, Inlines};
 
@@ -73,6 +77,10 @@ struct Page<'a> {
     editor: gpui_kit::WeakEntity<EditorTab>,
     scroll: gpui_kit::ScrollHandle,
     anchors: std::rc::Rc<Vec<(usize, String)>>,
+    /// The page's selectable text, for ⌘A, and where its reading order
+    /// starts among the window's selectable text.
+    document: SelectableTextDocument,
+    order_base: u64,
 }
 
 impl Page<'_> {
@@ -80,6 +88,93 @@ impl Page<'_> {
         self.next_id += 1;
         self.next_id
     }
+
+    /// The next place in reading order, for a block's text.
+    fn order(&mut self) -> u64 {
+        let id = self.id();
+        document_order(self.order_base, id)
+    }
+
+    /// `text` as a selectable block of the page, in reading order.
+    fn text(&mut self, text: impl Into<SharedString>) -> SelectableText {
+        let id = self.id();
+        SelectableText::new(("md-text", id), text)
+            .document_order(document_order(self.order_base, id))
+            .document(&self.document)
+    }
+}
+
+/// A block's place in the window's reading order: each preview's blocks
+/// in a range of their own, past the small numbers GPUI Kit's own
+/// selectable text counts in, so a drag in one preview never takes in
+/// another's text (or a hover's) lying between the same numbers.
+fn document_order(base: u64, id: usize) -> u64 {
+    base + id as u64
+}
+
+/// The key context ⌘A and ⌘C reach the preview in, once a click has given
+/// it the keyboard.
+const CONTEXT: &str = "MarkdownPreview";
+
+/// What a preview keeps between renders: the focus a click in it takes,
+/// its select-all, and its range of reading order.
+struct PreviewState {
+    editor: gpui_kit::WeakEntity<EditorTab>,
+    focus: gpui_kit::FocusHandle,
+    document: SelectableTextDocument,
+    order_base: u64,
+}
+
+thread_local! {
+    /// The previews' state, by editor tab.
+    static PREVIEWS: RefCell<HashMap<gpui_kit::EntityId, PreviewState>> = RefCell::default();
+    /// Previews made so far, for their reading-order ranges.
+    static PREVIEW_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Where the `n`th preview's reading order starts (from 0): 2³² blocks
+/// apart, above any order GPUI Kit counts to.
+fn order_base(n: u64) -> u64 {
+    (n + 1) << 32
+}
+
+/// The state of the editor tab's preview, made the first time it renders
+/// (and its keys bound the first time any does).
+fn preview_state(
+    cx: &mut Context<EditorTab>,
+) -> (gpui_kit::FocusHandle, SelectableTextDocument, u64) {
+    static BOUND: std::sync::Once = std::sync::Once::new();
+    BOUND.call_once(|| {
+        let c = Some(CONTEXT);
+        cx.bind_keys([
+            KeyBinding::new("secondary-a", SelectAll, c),
+            KeyBinding::new("secondary-c", Copy, c),
+        ]);
+    });
+    let id = cx.entity_id();
+    PREVIEWS.with(|previews| {
+        let mut previews = previews.borrow_mut();
+        if !previews.contains_key(&id) {
+            // Closed tabs' previews go as another opens.
+            previews.retain(|_, state| state.editor.upgrade().is_some());
+            let n = PREVIEW_COUNT.with(|count| count.replace(count.get() + 1));
+            previews.insert(
+                id,
+                PreviewState {
+                    editor: cx.weak_entity(),
+                    focus: cx.focus_handle(),
+                    document: SelectableTextDocument::new(),
+                    order_base: order_base(n),
+                },
+            );
+        }
+        let state = &previews[&id];
+        (
+            state.focus.clone(),
+            state.document.clone(),
+            state.order_base,
+        )
+    })
 }
 
 /// The preview of `blocks`, for the editor tab of a file in `folder`.
@@ -93,6 +188,7 @@ pub(crate) fn preview(
         .try_global::<MarkdownColors>()
         .copied()
         .unwrap_or_else(|| MarkdownColors::new(&impulse_kit::theme::get_theme("")));
+    let (focus, document, order_base) = preview_state(cx);
     let mut page = Page {
         colors,
         folder: folder.to_path_buf(),
@@ -101,10 +197,31 @@ pub(crate) fn preview(
         editor: cx.weak_entity(),
         scroll: scroll.clone(),
         anchors: std::rc::Rc::new(markdown_blocks::heading_slugs(blocks)),
+        document: document.clone(),
+        order_base,
     };
     let body = render_blocks(blocks, &mut page, cx);
     div()
         .id("markdown-preview")
+        // A click takes the keyboard, as the Swift preview's web view does,
+        // so ⌘A selects the page and ⌘C copies from it.
+        .key_context(CONTEXT)
+        .track_focus(&focus)
+        .on_mouse_down(gpui_kit::MouseButton::Left, move |_, window, cx| {
+            window.focus(&focus, cx)
+        })
+        .on_action(cx.listener(move |_, _: &SelectAll, window, cx| {
+            document.select_all(window, cx);
+            cx.notify();
+        }))
+        .on_action(|_: &Copy, window, cx| {
+            let text = TextSelection::selected_text(window, cx);
+            if text.is_empty() {
+                cx.propagate();
+            } else {
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+            }
+        })
         .flex_1()
         .h_full()
         .min_w_0()
@@ -361,8 +478,9 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
 }
 
 /// `text` as one paragraph at `size`: bold, italic, struck-through and code
-/// runs, and links that open when clicked. With inline code it's laid out
-/// word by word (`flowed_text`), since a text's runs share one size.
+/// runs, and links that open when clicked (a drag from one selects). With
+/// inline code it's laid out word by word (`flowed_text`), since a text's
+/// runs share one size.
 fn inline_text(
     text: &Inlines,
     page: &mut Page,
@@ -385,13 +503,13 @@ fn inline_text(
             links.push((start..string.len(), link.clone()));
         }
     }
-    let styled = StyledText::new(SharedString::from(string)).with_runs(runs);
+    let selectable = page.text(string).runs(runs);
     if links.is_empty() {
-        return styled.into_any_element();
+        return selectable.into_any_element();
     }
     let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
     let open = link_opener(page);
-    InteractiveText::new(("md-text", page.id()), styled)
+    selectable
         .on_click(ranges, move |index, _, cx: &mut App| {
             if let Some(url) = targets.get(index) {
                 open(url, cx);
@@ -477,12 +595,23 @@ fn words(text: &str) -> Vec<&str> {
     out
 }
 
+/// What a piece of a flowed paragraph shows: a hard break's newline as a
+/// space at the end of its line, which copies the line apart from the next
+/// rather than run into it. Code keeps its text.
+fn piece_text(piece: &str, code: bool) -> String {
+    if code {
+        piece.to_string()
+    } else {
+        piece.replace('\n', " ")
+    }
+}
+
 /// A paragraph with inline code, word by word in a wrapping row: each word
 /// with what's attached to it (a code span and the punctuation after it
 /// break together), code at 0.9em of `size` in its rounded background
 /// (padded 0.4em at its ends, 0.3em in a table), broken across lines the
 /// way a browser breaks an inline box, padding and corners only at its
-/// ends.
+/// ends. Its pieces select and copy as one text (a `SelectableTextGroup`).
 fn flowed_text(
     text: &Inlines,
     page: &mut Page,
@@ -517,6 +646,8 @@ fn flowed_text(
             }
         }
     }
+    let group = SelectableTextGroup::new();
+    let order = page.order();
     let mut elements = Vec::with_capacity(flow.len());
     for word in flow {
         let pieces = match word {
@@ -530,15 +661,19 @@ fn flowed_text(
         let mut row = div().flex().flex_none().items_center();
         for (i, piece, first, last) in pieces {
             let span = &text[i];
-            let shown = if span.code {
-                piece.clone()
-            } else {
-                // A hard break's newline shows as nothing.
-                piece.replace('\n', "")
-            };
+            let shown = piece_text(&piece, span.code);
             let mut run = span_run(span, page, color, bold);
             run.len = shown.len();
-            let styled = StyledText::new(SharedString::from(shown)).with_runs(vec![run]);
+            let len = shown.len();
+            let mut styled = SelectableText::new(("md-piece", page.id()), shown)
+                .runs(vec![run])
+                .group(&group)
+                .document_order(order)
+                .document(&page.document);
+            if let Some(url) = span.link.clone() {
+                let open = open.clone();
+                styled = styled.on_click(vec![0..len], move |_, _, cx| open(&url, cx));
+            }
             let element = if span.code {
                 div()
                     .bg(c.code_bg)
@@ -550,17 +685,6 @@ fn flowed_text(
                     .child(styled)
             } else {
                 div().child(styled)
-            };
-            let element = match span.link.clone() {
-                Some(url) => {
-                    let open = open.clone();
-                    element
-                        .id(("md-link", page.id()))
-                        .cursor_pointer()
-                        .on_click(move |_, _, cx| open(&url, cx))
-                        .into_any_element()
-                }
-                None => element.into_any_element(),
             };
             row = row.child(element);
         }
@@ -720,7 +844,7 @@ fn code_block(
                         .overflow_x_scroll()
                         .restrict_scroll_to_axis()
                 })
-                .child(StyledText::new(SharedString::from(text.to_string())).with_runs(runs)),
+                .child(page.text(text.to_string()).runs(runs)),
         )
         .when(shell, |d| {
             d.child(
@@ -855,5 +979,31 @@ impl crate::workbench::Workbench {
         if !run_now {
             toast(window, cx, ToastKind::Info, note.into(), None, None);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hard_breaks_copy_as_spaces_and_code_keeps_its_text() {
+        assert_eq!(piece_text("one\n", false), "one ");
+        assert_eq!(piece_text("a\nb", true), "a\nb");
+        assert_eq!(piece_text("word ", false), "word ");
+    }
+
+    #[test]
+    fn previews_read_in_ranges_of_their_own() {
+        let (first, second) = (order_base(0), order_base(1));
+        // Above the small numbers GPUI Kit's own text counts in.
+        assert!(first > u32::MAX as u64);
+        assert!(document_order(first, 1) < document_order(first, 2));
+        assert!(document_order(first, u32::MAX as usize) < document_order(second, 0));
+    }
+
+    #[test]
+    fn words_break_after_whitespace() {
+        assert_eq!(words("a  b\nc"), vec!["a  ", "b\n", "c"]);
     }
 }

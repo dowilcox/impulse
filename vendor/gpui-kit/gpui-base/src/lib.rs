@@ -171,7 +171,8 @@ pub use scrollbar::{
     ScrollbarStyles, ScrollbarThumbStyle, ScrollbarTrackStyle,
 };
 pub use select::Select;
-pub use selectable_text::SelectableText;
+// Impulse: a text in pieces, and select-all over a document.
+pub use selectable_text::{SelectableText, SelectableTextDocument, SelectableTextGroup};
 pub use sheet::Sheet;
 pub use slider::{Slider, SliderIndicator, SliderThumb, SliderTrack};
 pub use state_style::StateStyle;
