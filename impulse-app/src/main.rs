@@ -190,9 +190,15 @@ struct Launch {
 fn parse_args() -> (Args, Launch) {
     let mut args = Args {
         theme: None,
+        // A launch from Finder, the Dock or a desktop entry starts in `/`,
+        // which isn't a folder anyone means to work in: start at home then,
+        // as the Swift app does.
         cwd: std::env::current_dir()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| "/".into()),
+            .ok()
+            .filter(|p| p.parent().is_some())
+            .unwrap_or_else(crate::workspace::home)
+            .to_string_lossy()
+            .into_owned(),
         commands: Vec::new(),
         open: Vec::new(),
         trust: false,

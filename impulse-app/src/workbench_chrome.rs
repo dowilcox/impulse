@@ -1406,7 +1406,7 @@ impl Workbench {
                 .gap(px(6.))
                 // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
                 .h(px(22.))
-                .mx(px(4.))
+                .w_full()
                 .pl(px(4. + 16. * row.depth as f32))
                 .pr(px(8.))
                 .rounded(px(5.))
@@ -1509,7 +1509,13 @@ impl Workbench {
                     this.tree_drop(paths.paths().to_vec(), &external_target, window, cx)
                 }),
             );
-        row_element.context_menu(menu).into_any_element()
+        // The list lays out each row on its own, so it would shrink to its
+        // content without a full-width wrapper.
+        div()
+            .w_full()
+            .px(px(4.))
+            .child(row_element.context_menu(menu))
+            .into_any_element()
     }
 
     pub(crate) fn sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {

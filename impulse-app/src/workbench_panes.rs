@@ -204,9 +204,12 @@ impl Workbench {
             Surface::Problems(p) => p.clone().into_any_element(),
             Surface::ProjectSetup(s) => s.clone().into_any_element(),
         };
+        // Clipped: on the Mac a scroll's bounce moves the content past its
+        // edges, over the tab strip.
         div()
             .relative()
             .size_full()
+            .overflow_hidden()
             .bg(hsla(p.content))
             .on_any_mouse_down(cx.listener(move |workbench, _, _, cx| {
                 workbench.note_pane_focus(tab_id, id, cx);
