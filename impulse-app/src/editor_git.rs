@@ -101,13 +101,15 @@ struct Marks {
 /// Documents past this size get no links or bracket colors.
 const MAX_DECORATED: usize = 2 * 1024 * 1024;
 
-/// The peek's header row and a line of its original lines.
-const PEEK_HEADER: f32 = 30.;
+/// The peek's header row (`.git-peek-bar`, as the Swift app shows it)
+/// and a line of its original lines.
+const PEEK_HEADER: f32 = 27.;
 const PEEK_LINE: f32 = 16.;
 /// The peek's margin above and below, inside its zone (`.git-peek`).
 const PEEK_MARGIN: f32 = 4.;
-/// The conflict actions' zone (the Swift page's 24 px).
+/// The conflict actions' zone (the Swift page's 24 px), and its buttons.
 const CONFLICT_ZONE: f32 = 24.;
+const CONFLICT_BUTTON: f32 = 16.;
 
 /// The peek's view zone for `hunk`, as the Swift page adds it: under the
 /// change's last line (the line before a deletion), 1.6 lines plus one
@@ -907,8 +909,11 @@ impl EditorTab {
     }
 
     /// The peek in its zone, from the text column's left edge (it doesn't
-    /// scroll sideways, as Monaco's view zones don't), the zone's margins
-    /// showing the editor's background.
+    /// scroll sideways, as Monaco's view zones don't), the zone's top
+    /// margin showing the editor's background: the box fills the rest, its
+    /// content at the top, as the Swift page's `.git-peek` fills its zone
+    /// (its box is the zone's height, 4 px down, so its bottom margin
+    /// overlaps the next line; a zone's element stays inside the zone).
     fn peek_zone_element(
         &self,
         zone: ViewZoneContext,
@@ -919,9 +924,11 @@ impl EditorTab {
         Some(
             div()
                 .size_full()
+                .flex()
+                .flex_col()
                 .pl(zone.text_left)
-                .py(px(PEEK_MARGIN))
-                .child(peek)
+                .pt(px(PEEK_MARGIN))
+                .child(div().flex_1().min_h_0().child(peek))
                 .into_any_element(),
         )
     }
@@ -941,9 +948,15 @@ impl EditorTab {
         let theme = cx.theme();
         let color = theme.foreground.opacity(0.9);
         let muted = theme.foreground.opacity(0.72);
-        // Swift's .git-peek-button: transparent with a faint border.
+        // Swift's .git-peek-button: transparent with a faint border, 16 px
+        // tall in the bar's 11.5 px text.
         let button = |id: &'static str, label: &'static str| {
-            Button::new((id, start)).label(label).small().outline()
+            Button::new((id, start))
+                .label(label)
+                .small()
+                .outline()
+                .h(px(CONFLICT_BUTTON))
+                .text_size(px(11.5))
         };
         let resolve = |choice: Resolution| {
             cx.listener(
@@ -952,13 +965,14 @@ impl EditorTab {
                 },
             )
         };
+        // At the zone's top, as the Swift page's bar sits in its zone.
         let mut bar = div()
             .size_full()
             .pl(zone.text_left + px(10.))
             .flex()
-            .items_center()
+            .items_start()
             .gap(px(2.))
-            .text_size(px(12.5))
+            .text_size(px(11.5))
             .font_family(crate::workbench::UI_FONT)
             .text_color(color)
             .child(
@@ -969,14 +983,26 @@ impl EditorTab {
                     .on_click(resolve(Resolution::Incoming)),
             )
             .child(button("conflict-both", "Accept Both").on_click(resolve(Resolution::Both)))
-            .child(div().pl(px(2.)).text_color(muted).child(format!(
-                "{} \u{27f7} {}",
-                block.current_label, block.incoming_label
-            )));
+            .child(
+                div()
+                    .h(px(CONFLICT_BUTTON))
+                    .flex()
+                    .items_center()
+                    .pl(px(2.))
+                    .text_color(muted)
+                    .child(block.current_label.clone())
+                    // The arrow as small as the Swift page's system font
+                    // draws it.
+                    .child(div().px(px(3.)).text_size(px(8.)).child("\u{27f7}"))
+                    .child(block.incoming_label.clone()),
+            );
         if count > 1 {
             bar = bar
                 .child(
                     div()
+                        .h(px(CONFLICT_BUTTON))
+                        .flex()
+                        .items_center()
                         .ml(px(10.))
                         .mr(px(4.))
                         .text_color(muted)
@@ -1031,14 +1057,15 @@ impl EditorTab {
                 .border_b_1()
                 .border_color(edge)
                 .bg(widget)
-                .shadow_md()
+                .overflow_hidden()
                 .child(
                     div()
                         .flex()
                         .flex_none()
                         .items_center()
                         .gap(px(6.))
-                        .px(px(10.))
+                        .pl(px(10.))
+                        .pr(px(8.))
                         .h(px(PEEK_HEADER))
                         .text_size(px(12.))
                         .child(div().flex_1().opacity(0.8).child(hunk.title()))

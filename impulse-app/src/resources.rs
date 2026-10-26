@@ -69,10 +69,16 @@ pub(crate) fn get() -> &'static Resources {
 /// (`icons/<name>.svg`). They're compiled in, so no install step has to
 /// copy them, and they live apart from `vendor/lucide/`, which
 /// `scripts/vendor-lucide.sh` writes.
-const OWN_ICONS: [(&str, &[u8]); 1] = [(
-    "flag-checkered.svg",
-    include_bytes!("../../assets/icons/impulse/flag-checkered.svg"),
-)];
+const OWN_ICONS: [(&str, &[u8]); 2] = [
+    (
+        "flag-checkered.svg",
+        include_bytes!("../../assets/icons/impulse/flag-checkered.svg"),
+    ),
+    (
+        "symbol-variable.svg",
+        include_bytes!("../../assets/icons/impulse/symbol-variable.svg"),
+    ),
+];
 
 /// One of Impulse's own icons (`OWN_ICONS`) by file name.
 pub(crate) fn own_icon(file: &str) -> Option<&'static [u8]> {

@@ -1268,7 +1268,13 @@ impl<M: InputModeKind> TextElement<M> {
             px(0.)
         };
 
-        if state.mode.is_folding() {
+        // Impulse: the host's room right of the numbers, in place of the
+        // margin and the fold chevrons' lane (`set_line_decorations_width`).
+        if let Some(width) = state.editor_options.line_decorations_width {
+            if state.mode.line_number() || state.is_code_editor() {
+                line_number_width = line_number_width - LINE_NUMBER_RIGHT_MARGIN + width;
+            }
+        } else if state.mode.is_folding() {
             // Add extra space for fold icons
             line_number_width += FOLD_ICON_HITBOX_WIDTH
         }
@@ -1527,7 +1533,8 @@ impl<M: InputModeKind> TextElement<M> {
 
         let fold_infos: Vec<FoldInfo> = {
             let state = self.state.read(cx);
-            if !state.mode.is_folding() {
+            // Impulse: no chevron lane with the host's decorations width.
+            if !state.mode.is_folding() || state.editor_options.line_decorations_width.is_some() {
                 return icon_layout;
             }
 
@@ -3606,6 +3613,39 @@ impl<M: InputModeKind> Element for TextElement<M> {
             }
         }
 
+        // Impulse: the host's whole-line backgrounds (`set_line_backgrounds`),
+        // under the text from the text column across, each line's wrapped
+        // rows and not the view zones under it.
+        let line_backgrounds = &self.state.read(cx).editor_options.line_backgrounds;
+        if !line_backgrounds.is_empty() {
+            let left = input_bounds.origin.x + prepaint.last_layout.line_number_width;
+            let right = input_bounds.right() + editor_paddings.right;
+            let mut offset_y = invisible_top_padding;
+            for (line, &buffer_line) in prepaint
+                .last_layout
+                .lines
+                .iter()
+                .zip(prepaint.last_layout.visible_buffer_lines.iter())
+            {
+                let height = line_height * line.wrapped_lines.len().max(1) as f32;
+                for (lines, color) in line_backgrounds {
+                    if lines.contains(&buffer_line) {
+                        window.paint_quad(fill(
+                            Bounds::from_corners(
+                                point(left, origin.y + offset_y),
+                                point(right, origin.y + offset_y + height),
+                            ),
+                            *color,
+                        ));
+                    }
+                }
+                offset_y += height + line.zone_after;
+                if Some(buffer_line) == prepaint.current_row {
+                    offset_y += prepaint.ghost_lines_height;
+                }
+            }
+        }
+
         // Keep scrollbar offset always be positive，Start from the left position
         let scroll_offset = if text_align == TextAlign::Right {
             (prepaint.scroll_size.width - prepaint.bounds.size.width).max(px(0.))
@@ -4241,6 +4281,38 @@ mod tests {
             DecorationHarness(state)
         });
         (editor.unwrap(), window)
+    }
+
+    // Impulse: the host's decorations width replaces the margin and the
+    // fold chevrons' lane right of the line numbers.
+    #[gpui::test]
+    fn line_decorations_width_replaces_the_chevron_lane(cx: &mut TestAppContext) {
+        let (editor, window) = decoration_editor(cx, "a\nb\nc", false);
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        let width = |cx: &App| {
+            editor
+                .read(cx)
+                .last_layout
+                .as_ref()
+                .unwrap()
+                .line_number_width
+        };
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let gutter = width(cx);
+            editor.update(cx, |state, cx| {
+                state.set_line_decorations_width(Some(px(10.)), cx);
+                state.set_line_backgrounds(vec![(1..2, gpui::red())], cx);
+            });
+            window.draw(cx).clear(cx);
+            assert_eq!(
+                width(cx),
+                gutter - LINE_NUMBER_RIGHT_MARGIN - FOLD_ICON_HITBOX_WIDTH + px(10.)
+            );
+            editor.update(cx, |state, cx| state.set_line_decorations_width(None, cx));
+            window.draw(cx).clear(cx);
+            assert_eq!(width(cx), gutter);
+        });
     }
 
     struct TextareaHarness(Entity<crate::input::TextareaState>);

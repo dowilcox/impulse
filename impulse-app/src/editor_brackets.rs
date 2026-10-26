@@ -85,23 +85,42 @@ impl Brackets {
                 if first >= last {
                     continue;
                 }
-                let (Some(top), Some(bottom)) = (row_bounds(first), row_bounds(last - 1)) else {
-                    continue;
-                };
-                let x = top.origin.x + cell * guide.column as f32;
-                if x < bounds.left() || x > bounds.right() {
-                    continue;
-                }
                 let color = colors.levels[guide.pair.depth % 3];
                 let color = if Some(guide.pair) == active {
                     color
                 } else {
                     color.opacity(0.3)
                 };
-                window.paint_quad(fill(
-                    Bounds::from_corners(point(x, top.top()), point(x + px(1.), bottom.bottom())),
-                    color,
-                ));
+                // Line by line, joined where they touch, so the guide
+                // breaks at the view zones between them (a hidden run's
+                // row, the git peek, a conflict's actions), as Monaco's.
+                let mut run: Option<(Pixels, Pixels, Pixels)> = None;
+                let mut segments = Vec::new();
+                for row in first..last {
+                    let Some(at) = row_bounds(row) else {
+                        continue;
+                    };
+                    // To the line's last wrapped row.
+                    let bottom = text_line_bottom(state, row).unwrap_or(at.bottom());
+                    match run.as_mut() {
+                        Some((_, _, end)) if (at.top() - *end).abs() < px(0.5) => *end = bottom,
+                        _ => {
+                            segments.extend(run.take());
+                            run = Some((at.origin.x, at.top(), bottom));
+                        }
+                    }
+                }
+                segments.extend(run);
+                for (left, top, bottom) in segments {
+                    let x = left + cell * guide.column as f32;
+                    if x < bounds.left() || x > bounds.right() {
+                        continue;
+                    }
+                    window.paint_quad(fill(
+                        Bounds::from_corners(point(x, top), point(x + px(1.), bottom)),
+                        color,
+                    ));
+                }
             }
         }
         if let Some(pair) = bracket_pairs::matching(&self.pairs, cursor) {
@@ -121,4 +140,14 @@ impl Brackets {
             }
         }
     }
+}
+
+/// The bottom of buffer line `row`'s last wrapped row, from the last
+/// layout.
+fn text_line_bottom(state: &EditorState, row: usize) -> Option<Pixels> {
+    let text = state.text();
+    (row < text.lines_len())
+        .then(|| text.line_end_offset(row))
+        .and_then(|end| state.range_to_bounds(&(end..end)))
+        .map(|b| b.bottom())
 }

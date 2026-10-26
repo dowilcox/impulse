@@ -144,6 +144,13 @@ pub(crate) struct EditorOptions {
     pub(crate) smooth_scrolling: bool,
     /// The animated scroll under way.
     pub(crate) smooth_scroll: Option<SmoothScroll>,
+    /// The gutter's room right of the line numbers, in place of GPUI Kit's
+    /// margin and fold chevrons (Monaco's `lineDecorationsWidth` with
+    /// `folding: false`); `None`: GPUI Kit's.
+    pub(crate) line_decorations_width: Option<gpui::Pixels>,
+    /// Whole-line backgrounds under the text: buffer lines (end exclusive)
+    /// and their colors, painted in order.
+    pub(crate) line_backgrounds: Vec<(std::ops::Range<usize>, Hsla)>,
 }
 
 /// How long an animated scroll takes (Monaco's `smoothScrollDuration`).
@@ -337,6 +344,38 @@ impl InputBaseState<EditorMode> {
     pub fn set_folding_controls(&mut self, controls: FoldingControls, cx: &mut Context<Self>) {
         self.editor_options.folding_controls = controls;
         cx.notify();
+    }
+
+    /// Impulse: the gutter's room right of the line numbers, as Monaco's
+    /// `lineDecorationsWidth` with `folding: false` (its diff editor's): the
+    /// numbers end `width` before the text, and no fold chevrons show (folds
+    /// stay). `None` (the default): GPUI Kit's margin and chevron lane.
+    pub fn set_line_decorations_width(
+        &mut self,
+        width: Option<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editor_options.line_decorations_width != width {
+            self.editor_options.line_decorations_width = width;
+            cx.notify();
+        }
+    }
+
+    /// Impulse: whole-line backgrounds (Monaco's `isWholeLine` decorations
+    /// with a background, as its diff editor tints changed lines): buffer
+    /// lines (0-based, end exclusive) and their colors, painted in order
+    /// under the text (and the selection), from the text column's left edge
+    /// across the editor, each line's wrapped rows included and the view
+    /// zones under it not. They don't follow edits: the host sets them again.
+    pub fn set_line_backgrounds(
+        &mut self,
+        backgrounds: Vec<(std::ops::Range<usize>, Hsla)>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editor_options.line_backgrounds != backgrounds {
+            self.editor_options.line_backgrounds = backgrounds;
+            cx.notify();
+        }
     }
 
     /// Impulse: how long the pointer rests on a symbol before its hover is

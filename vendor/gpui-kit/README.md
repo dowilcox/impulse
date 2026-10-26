@@ -125,6 +125,19 @@ because gpui-component builds that struct as a full literal.
   The scroll height now counts the shown rows rather than every wrap row,
   so folded and hidden lines no longer leave room past the end.
 
+- **Line decorations width** (`editor_options.rs`, `element.rs`,
+  `set_line_decorations_width`): Monaco's `lineDecorationsWidth` with
+  `folding: false`, as its diff editor's gutter has them: the numbers end
+  that far before the text, in place of GPUI Kit's margin and fold chevron
+  lane; no chevrons show (folds stay). `None` (the default) keeps GPUI
+  Kit's.
+- **Line backgrounds** (`editor_options.rs`, `element.rs`,
+  `set_line_backgrounds`): whole-line backgrounds (Monaco's `isWholeLine`
+  decorations), buffer lines and colors painted in order under the text,
+  the selection and range fills, from the text column across the editor,
+  each line's wrapped rows and not the view zones under it. The host sets
+  them again after edits.
+
 - **Inlay hints** (`input/editor/inlay_hints.rs`; `display_map/inline_line.rs`,
   `display_map/text_wrapper.rs`, `element.rs`, `editor/mod.rs`, `state.rs`):
   Monaco's `inlayHints`. `EditorState::set_inlay_hints(Vec<InlayHint>)`

@@ -17,7 +17,8 @@ use std::time::Duration;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{
-    Editor, EditorState, Position, TabSize, ViewZone, ViewZoneContext, ViewZoneId,
+    Editor, EditorState, Position, RangeDecoration, RangeDecorationCollection,
+    RangeDecorationStyle, TabSize, ViewZone, ViewZoneContext, ViewZoneId,
 };
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
@@ -33,16 +34,71 @@ use crate::editor_tab::EditorTab;
 /// How long typing rests before the Diff View marks again.
 pub(crate) const DIFF_DELAY: Duration = Duration::from_millis(200);
 
-/// Rows (0-based, end exclusive) tinted across the editor, and the tint.
-/// What a side paints over its text: whole lines, and on top the words
-/// that changed within them (Monaco's line and character changes).
+/// What a side tints under its text (gpui-base's line backgrounds and
+/// range fills, so the text keeps its colors): whole lines, and on top
+/// the words that changed within them (Monaco's line and character
+/// changes). Rows are 0-based, end exclusive.
 #[derive(Clone, Default)]
 struct Tints {
     /// The rows, their color and the sign beside their numbers.
     rows: Vec<(std::ops::Range<u32>, Hsla, &'static str)>,
+    /// Rows changed whole (nothing on the other side lines up with them),
+    /// in the word color across the editor, as Monaco's whole-line
+    /// character changes.
+    whole: Vec<(std::ops::Range<u32>, Hsla)>,
     /// Byte ranges in the side's text.
     words: Vec<(std::ops::Range<usize>, Hsla)>,
 }
+
+impl Tints {
+    /// The line backgrounds: the line tints, the whole-line ones over them.
+    fn backgrounds(&self) -> Vec<(std::ops::Range<usize>, Hsla)> {
+        let rows = |r: &std::ops::Range<u32>| r.start as usize..r.end as usize;
+        self.rows
+            .iter()
+            .map(|(r, color, _)| (rows(r), *color))
+            .chain(self.whole.iter().map(|(r, color)| (rows(r), *color)))
+            .collect()
+    }
+
+    /// Set them on `state`: the line backgrounds, and the words in
+    /// `words`, a collection made the first time.
+    fn apply(
+        &self,
+        state: &Entity<EditorState>,
+        words: &mut Option<RangeDecorationCollection>,
+        cx: &mut gpui_kit::App,
+    ) {
+        let backgrounds = self.backgrounds();
+        state.update(cx, |state, cx| state.set_line_backgrounds(backgrounds, cx));
+        let fills: Vec<RangeDecoration> = self
+            .words
+            .iter()
+            .map(|(range, color)| {
+                RangeDecoration::new(range.clone())
+                    .with_style(RangeDecorationStyle::Fill)
+                    .with_color(*color)
+            })
+            .collect();
+        match words {
+            Some(collection) => collection.set(fills, cx),
+            None => {
+                *words = Some(state.update(cx, |state, cx| {
+                    state.create_range_decorations_collection(fills, cx)
+                }))
+            }
+        }
+    }
+}
+
+/// The gutter's room right of the line numbers in the Diff View, where the
+/// − and + sit against the code (Monaco's diff editor: its default
+/// `lineDecorationsWidth`, folding off).
+const DIFF_DECORATIONS: f32 = 10.5;
+
+/// The overview ruler at the Diff View's right edge (Monaco's diff
+/// overview, two lanes of 15 px).
+const RULER_WIDTH: f32 = 30.;
 
 /// The Diff View's other editor and its marks.
 pub(crate) struct DiffView {
@@ -53,6 +109,9 @@ pub(crate) struct DiffView {
     base_pending: Option<String>,
     base_tints: Tints,
     own_tints: Tints,
+    /// The changed words' fills on each side.
+    base_words: Option<RangeDecorationCollection>,
+    own_words: Option<RangeDecorationCollection>,
     /// The base's bracket pair colors and guides, as the buffer has them
     /// (`editor_git::bracket_marks`), worked out once per base text:
     /// `base_generation` counts the base texts, `base_marked` is the one
@@ -98,9 +157,6 @@ struct SideZones {
     key: Option<(Vec<(bool, usize, usize)>, Vec<Hidden>)>,
     own: Vec<ViewZoneId>,
     base: Vec<ViewZoneId>,
-    /// The hidden runs' rows among them (`tinted` widens them).
-    own_rows: Vec<ViewZoneId>,
-    base_rows: Vec<ViewZoneId>,
 }
 
 impl DiffView {
@@ -154,6 +210,8 @@ impl EditorTab {
             base_pending: None,
             base_tints: Tints::default(),
             own_tints: Tints::default(),
+            base_words: None,
+            own_words: None,
             base_brackets: Default::default(),
             base_bracket_marks: None,
             base_generation: 0,
@@ -165,6 +223,10 @@ impl EditorTab {
             hidden: Vec::new(),
             zones: SideZones::default(),
             _refresh: None,
+        });
+        // Monaco's diff gutter: the − and + against the code, no chevrons.
+        self.state.update(cx, |state, cx| {
+            state.set_line_decorations_width(Some(px(DIFF_DECORATIONS)), cx)
         });
         if self.diff_inline {
             self.set_diff_inline(true, window, cx);
@@ -178,6 +240,14 @@ impl EditorTab {
     fn close_diff_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(mut diff) = self.diff.take() {
             self.clear_side_zones(&mut diff, cx);
+            // The buffer's editor as it was: its tints and gutter.
+            if let Some(words) = diff.own_words.take() {
+                words.dispose(cx);
+            }
+            self.state.update(cx, |state, cx| {
+                state.set_line_backgrounds(Vec::new(), cx);
+                state.set_line_decorations_width(None, cx);
+            });
         }
         let focus = self.state.clone();
         focus.update(cx, |state, cx| state.focus(window, cx));
@@ -212,6 +282,7 @@ impl EditorTab {
                 .default_value(text);
             state.set_readonly(true, cx);
             crate::editor_tab::apply_editor_options(&mut state, &settings, cx);
+            state.set_line_decorations_width(Some(px(DIFF_DECORATIONS)), cx);
             state
         })
     }
@@ -303,7 +374,7 @@ impl EditorTab {
                 removed,
                 added,
                 (inline, inline_hidden, hidden),
-                (removed_words, added_words),
+                (removed_words, added_words, removed_whole, added_whole),
                 base_brackets,
             ) = cx
                 .background_executor()
@@ -331,20 +402,7 @@ impl EditorTab {
                     let inline = diff_view::inline(&new, &hunks);
                     let inline_hidden = inline_hidden(&inline, &inline.text, &revealed, tab_size);
                     let hidden = side_hidden(&old, &new, &hunks, &revealed, tab_size);
-                    let words = impulse_git::buffer_diff::changed_words(
-                        &old,
-                        &new,
-                        hunks.iter().map(|h| {
-                            let (o, n) = (
-                                rows(h.old_start, h.old_lines.len()),
-                                rows(h.new_start, h.new_count),
-                            );
-                            (
-                                o.start as usize..o.end as usize,
-                                n.start as usize..n.end as usize,
-                            )
-                        }),
-                    );
+                    let words = changed_words(&old, &new, &hunks);
                     (
                         hunks,
                         removed,
@@ -382,22 +440,29 @@ impl EditorTab {
                         diff.base_marked = Some(generation);
                     }
                 }
-                let red: Hsla = gpui_kit::rgba(0xff000033).into();
-                let green: Hsla = gpui_kit::rgba(0x9bb95533).into();
                 diff.hunks = hunks;
                 diff.hidden = hidden;
-                // Monaco's diff editor colors (its defaults, which the Swift
-                // app's themes leave alone).
-                let red_word: Hsla = gpui_kit::rgba(0xff000033).into();
-                let green_word: Hsla = gpui_kit::rgba(0x9ccc2c33).into();
+                let red = Hsla::from(gpui_kit::rgba(RED));
+                let green = Hsla::from(gpui_kit::rgba(GREEN));
+                let red_word = Hsla::from(gpui_kit::rgba(RED_WORD));
+                let green_word = Hsla::from(gpui_kit::rgba(GREEN_WORD));
+                let whole = |rows: Vec<std::ops::Range<u32>>, color: Hsla| {
+                    rows.into_iter().map(|r| (r, color)).collect()
+                };
                 diff.base_tints = Tints {
                     words: removed_words.into_iter().map(|r| (r, red_word)).collect(),
+                    whole: whole(removed_whole, red_word),
                     ..tints(removed, red, "−")
                 };
                 diff.own_tints = Tints {
                     words: added_words.into_iter().map(|r| (r, green_word)).collect(),
+                    whole: whole(added_whole, green_word),
                     ..tints(added, green, "+")
                 };
+                diff.base_tints
+                    .apply(&diff.base.clone(), &mut diff.base_words, cx);
+                let own = tab.state.clone();
+                diff.own_tints.apply(&own, &mut diff.own_words, cx);
                 if let Some(view) = diff.inline.as_mut() {
                     if view.rows.text != inline.text {
                         view.pending = Some(inline.text.clone());
@@ -408,6 +473,9 @@ impl EditorTab {
                     view.tints = all;
                     view.rows = inline;
                     view.hidden = inline_hidden;
+                    let backgrounds = view.tints.backgrounds();
+                    view.state
+                        .update(cx, |state, cx| state.set_line_backgrounds(backgrounds, cx));
                 }
                 cx.notify();
             });
@@ -663,11 +731,8 @@ impl EditorTab {
                     state.set_cursor_position(Position::new(line, 0), window, cx)
                 });
             }
-            let runs = key.1.len();
             diff.zones = SideZones {
                 key: Some(key),
-                own_rows: own[own.len() - runs..].to_vec(),
-                base_rows: base[base.len() - runs..].to_vec(),
                 own,
                 base,
             };
@@ -700,25 +765,57 @@ impl EditorTab {
             run.base_rows.len()
         };
         let theme = cx.theme();
-        let widget = cx
+        // Monaco's widget sits on the editor's background, in its
+        // `foreground` (which the Swift app's themes leave alone), the
+        // symbol in `symbolIcon.variableForeground`.
+        let dark = theme.mode.is_dark();
+        let text: Hsla = gpui_kit::rgb(if dark { 0xcccccc } else { 0x616161 }).into();
+        let symbol: Hsla = gpui_kit::rgb(if dark { 0x75beff } else { 0x007acc }).into();
+        let hover = theme.foreground;
+        let background = cx
             .try_global::<crate::kit_theme::EditorBackdrop>()
-            .map_or(theme.secondary, |b| b.widget);
-        let (muted, hover, symbol) = (theme.muted_foreground, theme.foreground, theme.blue);
+            .map_or(theme.background, |b| b.background);
+        // The chevrons sit in the middle of the whole gutter, the editor's
+        // inset included (the zone starts inside it).
+        let font_size = crate::settings_store::SettingsStore::get(cx).font_size as f32;
+        let inset = match &diff.inline {
+            Some(view) => diff_inset(&view.state, false, font_size, cx),
+            None if side => diff_inset(&self.state, false, font_size, cx),
+            None => diff_inset(&diff.base, true, font_size, cx),
+        };
+        let top = if side {
+            run.rows.start == 0
+        } else {
+            run.base_rows.start == 0
+        };
         let rows = run.buffer_rows.clone();
         let row = div()
             .id(("diff-hidden", first * 2 + side as usize))
-            .size_full()
+            .relative()
+            .w_full()
+            .h(px(HIDDEN_ROW))
             .flex()
             .items_center()
-            .bg(widget)
+            // The label sits a little above the row's middle, as Monaco's,
+            // but for the first row's, a little below it.
+            .map(|d| {
+                if top {
+                    d.pt(px(2.))
+                } else {
+                    d.pb(px(HIDDEN_LIFT * 2.))
+                }
+            })
+            .bg(background)
             .text_size(px(12.5))
             .font_family(crate::workbench::UI_FONT)
-            .text_color(muted)
+            .text_color(text)
             .cursor_pointer()
             .hover(move |d| d.text_color(hover))
+            .child(shadows(inset))
             .child(
                 div()
-                    .w(zone.text_left)
+                    .ml(-inset)
+                    .w(zone.text_left + inset)
                     .flex_none()
                     .flex()
                     .justify_center()
@@ -726,7 +823,7 @@ impl EditorTab {
                         gpui_kit::svg()
                             .path("icons/chevrons-up-down.svg")
                             .size(px(14.))
-                            .text_color(muted),
+                            .text_color(text),
                     ),
             )
             .child(format!("{count} hidden lines"))
@@ -734,15 +831,22 @@ impl EditorTab {
                 d.child(div().px(px(6.)).child("|"))
                     .child(
                         gpui_kit::svg()
-                            .path("icons/variable.svg")
-                            .size(px(13.))
+                            .path("icons/symbol-variable.svg")
+                            .size(px(14.))
                             .mr(px(4.))
                             .text_color(symbol),
                     )
                     .child(label)
             })
             .on_click(cx.listener(move |tab, _, _, cx| tab.reveal_hidden(rows.clone(), cx)));
-        Some(row.into_any_element())
+        // Above the first line, the editor's top padding under it.
+        Some(
+            div()
+                .size_full()
+                .bg(background)
+                .child(row)
+                .into_any_element(),
+        )
     }
 
     /// ↑ ↓: the previous or next change, wrapping around.
@@ -782,24 +886,22 @@ impl EditorTab {
         }
     }
 
-    /// The bar and the two sides (or the inline document).
+    /// The bar and the two sides (or the inline document), and the
+    /// overview ruler at the right edge.
     pub(crate) fn diff_element(&self, editor: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         let Some(diff) = self.diff.as_ref() else {
             return editor;
         };
         let settings = crate::settings_store::SettingsStore::get(cx).clone();
-        let styled = |state: &Entity<EditorState>| {
+        let font_size = settings.font_size as f32;
+        let styled = |state: &Entity<EditorState>, glyph_margin: bool| {
             let mut editor = Editor::new(state)
                 .size_full()
                 // No inset above line 1, as Monaco has none.
                 .xsmall()
                 .font_family(crate::fonts::family(&settings.font_family))
-                .text_size(px(settings.font_size as f32))
-                .pl(crate::editor_tab::gutter_inset(
-                    state,
-                    settings.font_size as f32,
-                    cx,
-                ))
+                .text_size(px(font_size))
+                .pl(diff_inset(state, glyph_margin, font_size, cx))
                 .bordered(false);
             if settings.editor_line_height > 0 {
                 editor = editor.line_height(px(settings.editor_line_height as f32));
@@ -813,32 +915,64 @@ impl EditorTab {
         let border = cx.theme().border;
         let signs = Signs {
             font: gpui_kit::font(crate::fonts::family(&settings.font_family)),
-            size: px(settings.font_size as f32),
-            color: cx.theme().muted_foreground,
+            size: px(font_size),
+            color: cx
+                .theme()
+                .highlight_theme
+                .style
+                .editor_line_number
+                .unwrap_or(cx.theme().muted_foreground),
         };
         let background = cx
             .try_global::<crate::kit_theme::EditorBackdrop>()
             .map(|b| b.background)
             .unwrap_or(cx.theme().background);
-        let widget = cx
-            .try_global::<crate::kit_theme::EditorBackdrop>()
-            .map_or(cx.theme().secondary, |b| b.widget);
+        let ruler_colors = RulerColors {
+            background,
+            // Monaco's diff overview viewport: the theme's
+            // `scrollbarSlider.background` (its comment color), as light
+            // as it shows in the Swift app.
+            viewport: signs.color.opacity(0.19),
+            // A change's mark: its character color, twice over (Monaco
+            // paints the line's and its characters').
+            removed: Hsla::from(gpui_kit::rgba(RED_WORD)).opacity(0.36 / 0.2),
+            added: Hsla::from(gpui_kit::rgba(GREEN_WORD)).opacity(0.36 / 0.2),
+        };
         let body = match &diff.inline {
-            Some(view) => div()
-                .flex_1()
-                .min_h_0()
-                .relative()
-                .child(tinted(
-                    styled(&view.state),
-                    &view.state,
-                    &view.tints,
-                    background,
-                    &signs,
-                    None,
-                    view.zones.clone(),
-                    widget,
-                ))
-                .into_any_element(),
+            Some(view) => {
+                let removed: Vec<_> = view
+                    .tints
+                    .rows
+                    .iter()
+                    .filter(|(_, _, sign)| *sign == "−")
+                    .map(|(r, _, _)| r.clone())
+                    .collect();
+                let added: Vec<_> = view
+                    .tints
+                    .rows
+                    .iter()
+                    .filter(|(_, _, sign)| *sign == "+")
+                    .map(|(r, _, _)| r.clone())
+                    .collect();
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(div().flex_1().min_w_0().h_full().child(side(
+                        styled(&view.state, false),
+                        &view.state,
+                        &view.tints,
+                        background,
+                        &signs,
+                        None,
+                    )))
+                    .child(ruler(
+                        (view.state.clone(), removed),
+                        (view.state.clone(), added),
+                        ruler_colors,
+                    ))
+                    .into_any_element()
+            }
             None => {
                 let base_brackets = (!diff.base_brackets.pairs.is_empty()).then(|| {
                     (
@@ -847,32 +981,36 @@ impl EditorTab {
                     )
                 });
                 let sync = scroll_sync(self.state.clone(), diff.base.clone(), diff.synced.clone());
+                let rows = |tints: &Tints| -> Vec<std::ops::Range<u32>> {
+                    tints.rows.iter().map(|(r, _, _)| r.clone()).collect()
+                };
                 div()
                     .flex_1()
                     .min_h_0()
                     .relative()
                     .flex()
-                    .child(div().flex_1().min_w_0().h_full().child(tinted(
-                        styled(&diff.base),
+                    .child(div().flex_1().min_w_0().h_full().child(side(
+                        styled(&diff.base, true),
                         &diff.base,
                         &diff.base_tints,
                         background,
                         &signs,
                         base_brackets,
-                        diff.zones.base_rows.clone(),
-                        widget,
                     )))
                     .child(div().w(px(1.)).h_full().bg(border))
-                    .child(div().flex_1().min_w_0().h_full().child(tinted(
+                    .child(div().flex_1().min_w_0().h_full().child(side(
                         editor,
                         &self.state,
                         &diff.own_tints,
                         background,
                         &signs,
                         None,
-                        diff.zones.own_rows.clone(),
-                        widget,
                     )))
+                    .child(ruler(
+                        (diff.base.clone(), rows(&diff.base_tints)),
+                        (self.state.clone(), rows(&diff.own_tints)),
+                        ruler_colors,
+                    ))
                     .child(sync)
                     .into_any_element()
             }
@@ -905,7 +1043,8 @@ impl EditorTab {
             .items_center()
             .gap(px(6.))
             .px(px(10.))
-            .py(px(4.))
+            // As tall as the Swift page's bar.
+            .py(px(3.5))
             .text_size(px(12.))
             .bg(widget)
             .border_b_1()
@@ -1032,6 +1171,82 @@ fn char_width(state: &EditorState) -> Option<Pixels> {
     })
 }
 
+/// Monaco's diff editor colors (its defaults, which the Swift app's
+/// themes leave alone): removed and inserted lines, then their changed
+/// characters.
+const RED: u32 = 0xff000033;
+const GREEN: u32 = 0x9bb95533;
+const RED_WORD: u32 = 0xff000033;
+const GREEN_WORD: u32 = 0x9ccc2c33;
+
+/// The words that changed in each change's lines that line up (as
+/// `align_lines` pairs them, and the padding zones place them), as byte
+/// ranges in `old` and `new`; and the rows changed whole: a change's
+/// lines with nothing to line up with, all of a change that only adds or
+/// only removes lines. A change with as many lines on each side pairs
+/// them in order, as Monaco compares a line with its edit.
+#[allow(clippy::type_complexity)]
+fn changed_words(
+    old: &str,
+    new: &str,
+    hunks: &[LineHunk],
+) -> (
+    Vec<std::ops::Range<usize>>,
+    Vec<std::ops::Range<usize>>,
+    Vec<std::ops::Range<u32>>,
+    Vec<std::ops::Range<u32>>,
+) {
+    let new_lines: Vec<&str> = new.split('\n').collect();
+    let (mut pairs, mut old_whole, mut new_whole) = (Vec::new(), Vec::new(), Vec::new());
+    for hunk in hunks {
+        let old_start = hunk.old_start.saturating_sub(1);
+        let new_start = hunk.new_start.saturating_sub(1);
+        let (old_len, new_len) = (hunk.old_lines.len(), hunk.new_count);
+        if old_len == 0 || new_len == 0 {
+            if old_len > 0 {
+                old_whole.push(old_start as u32..(old_start + old_len) as u32);
+            }
+            if new_len > 0 {
+                new_whole.push(new_start as u32..(new_start + new_len) as u32);
+            }
+            continue;
+        }
+        let matched: Vec<(usize, usize)> = if old_len == new_len {
+            (0..old_len).map(|k| (k, k)).collect()
+        } else {
+            let lines: Vec<String> = (new_start..new_start + new_len)
+                .map(|row| {
+                    new_lines
+                        .get(row)
+                        .map_or("", |l| l.trim_end_matches('\r'))
+                        .to_string()
+                })
+                .collect();
+            align_lines(&hunk.old_lines, &lines)
+        };
+        for k in 0..old_len {
+            if !matched.iter().any(|&(o, _)| o == k) {
+                let row = (old_start + k) as u32;
+                old_whole.push(row..row + 1);
+            }
+        }
+        for k in 0..new_len {
+            if !matched.iter().any(|&(_, n)| n == k) {
+                let row = (new_start + k) as u32;
+                new_whole.push(row..row + 1);
+            }
+        }
+        pairs.extend(matched.into_iter().map(|(o, n)| {
+            (
+                old_start + o..old_start + o + 1,
+                new_start + n..new_start + n + 1,
+            )
+        }));
+    }
+    let (removed, added) = impulse_git::buffer_diff::changed_words(old, new, pairs);
+    (removed, added, old_whole, new_whole)
+}
+
 fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla, sign: &'static str) -> Tints {
     Tints {
         rows: rows
@@ -1039,13 +1254,11 @@ fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla, sign: &'static str) -> Ti
             .filter(|r| !r.is_empty())
             .map(|r| (r, color, sign))
             .collect(),
+        whole: Vec::new(),
         words: Vec::new(),
     }
 }
 
-/// `editor` with `tints` painted over its rows across its whole width, as
-/// Monaco's whole-line decorations are (a range decoration stops at the
-/// end of the text).
 /// How the + and − beside the line numbers look.
 #[derive(Clone)]
 struct Signs {
@@ -1054,11 +1267,34 @@ struct Signs {
     color: Hsla,
 }
 
-/// `rows` are the hidden runs' zones, whose rows reach left past the
-/// editor's gutter to the pane's edge (the editor clips its zones to its
-/// own padding), in `row_color`.
-#[allow(clippy::too_many_arguments)]
-fn tinted(
+/// The left inset that puts a Diff View side's gutter where Monaco's diff
+/// editor has it: room for five-digit line numbers (`lineNumbersMinChars`)
+/// ending against the − and + lane (`DIFF_DECORATIONS`), and on the
+/// original side a glyph margin a line high before them, as Monaco gives
+/// the side-by-side original. Less the 4 px GPUI Kit's extra-small size
+/// pads with.
+pub(crate) fn diff_inset(
+    state: &Entity<EditorState>,
+    glyph_margin: bool,
+    font_size: f32,
+    cx: &gpui_kit::App,
+) -> Pixels {
+    let state = state.read(cx);
+    let digits = state.text().lines_len().max(1).to_string().len().max(3);
+    let digit = font_size * 0.6;
+    let margin = if glyph_margin {
+        state.line_height().map_or(font_size * 1.5, f32::from)
+    } else {
+        0.
+    };
+    px((margin + digit * (digits.max(5) - digits) as f32 - 4.).max(0.))
+}
+
+/// A Diff View side: `editor` on the editor's background (its tints are
+/// its own line backgrounds and range fills, under the text), the base's
+/// bracket guides over it, and Monaco's diff indicators, − and +, in the
+/// gutter against the code.
+fn side(
     editor: impl IntoElement,
     state: &Entity<EditorState>,
     tints: &Tints,
@@ -1068,8 +1304,6 @@ fn tinted(
         crate::editor_brackets::Brackets,
         crate::editor_brackets::BracketColors,
     )>,
-    rows: Vec<ViewZoneId>,
-    row_color: Hsla,
 ) -> AnyElement {
     let signs = signs.clone();
     let (state, tints) = (state.clone(), tints.clone());
@@ -1090,116 +1324,26 @@ fn tinted(
                     ) else {
                         return;
                     };
-                    window.with_content_mask(
-                        Some(gpui_kit::ContentMask {
-                            bounds: area.view(bounds),
-                        }),
-                        |window| {
-                            for id in &rows {
-                                if let Some(zone) = state.view_zone_bounds(*id) {
-                                    window.paint_quad(fill(
-                                        Bounds::from_corners(
-                                            point(bounds.left(), zone.top()),
-                                            point(zone.left(), zone.bottom()),
-                                        ),
-                                        row_color,
-                                    ));
-                                }
-                            }
-                        },
-                    );
+                    // The base's bracket pair guides and matching brackets,
+                    // as the buffer's own layer paints them, right of the
+                    // line numbers whatever the horizontal scroll.
+                    if let Some((brackets, colors)) = &brackets {
+                        let column = area.text_column(bounds.right());
+                        window.with_content_mask(
+                            Some(gpui_kit::ContentMask { bounds: column }),
+                            |window| brackets.paint(*colors, state, column, window),
+                        );
+                    }
                     let text = state.text();
                     let at = |row: usize| {
                         (row < text.lines_len())
                             .then(|| text.line_start_offset(row))
                             .and_then(|o| state.range_to_bounds(&(o..o)))
                     };
-                    // The tints stay right of the line numbers when the text
-                    // scrolls sideways.
-                    let column = gpui_kit::ContentMask {
-                        bounds: area.text_column(bounds.right()),
-                    };
-                    window.with_content_mask(Some(column), |window| {
-                        // The base's bracket pair guides and matching
-                        // brackets, as the buffer's own layer paints them.
-                        if let Some((brackets, colors)) = &brackets {
-                            brackets.paint(*colors, state, column.bounds, window);
-                        }
-                        for (rows, color, _) in &tints.rows {
-                            let first = (rows.start as usize).max(visible.start);
-                            let last = (rows.end as usize).min(visible.end);
-                            if first >= last {
-                                continue;
-                            }
-                            // Line by line, so the view zones between
-                            // them (the other side's padding) stay clear;
-                            // each line to its last wrapped row.
-                            for row in first..last {
-                                let end = (row < text.lines_len())
-                                    .then(|| text.line_end_offset(row))
-                                    .and_then(|o| state.range_to_bounds(&(o..o)));
-                                if let (Some(top), Some(bottom)) = (at(row), end) {
-                                    window.paint_quad(fill(
-                                        Bounds::from_corners(
-                                            point(area.text_left, top.top()),
-                                            point(bounds.right(), bottom.bottom()),
-                                        ),
-                                        *color,
-                                    ));
-                                }
-                            }
-                        }
-                        let offset = |row: usize| {
-                            if row < text.lines_len() {
-                                text.line_start_offset(row)
-                            } else {
-                                text.len()
-                            }
-                        };
-                        let shown = offset(visible.start)..offset(visible.end);
-                        for (range, color) in &tints.words {
-                            if range.end <= shown.start || range.start >= shown.end {
-                                continue;
-                            }
-                            if let Some(word) = state.range_to_bounds(range) {
-                                window.paint_quad(fill(word, *color));
-                            }
-                        }
-                    });
-                    // The diff editor's overview ruler: each change where
-                    // it falls in the whole file, in the right edge's lane
-                    // the buffer's change marks use.
-                    let view = area.view(bounds);
-                    // Where a line falls in the content, hidden lines and
-                    // view zones counted as they show.
-                    let map = state.display_map();
-                    let lh = state.line_height().unwrap_or(px(1.));
-                    // Over the content, or the view when that's taller, as
-                    // Monaco's ruler spans its scroll height.
-                    let total = f32::from(map.content_height(lh))
-                        .max(f32::from(view.size.height))
-                        .max(1.);
-                    let place = |line: usize| {
-                        let row = map.buffer_line_to_display_row(line);
-                        f32::from(map.display_row_top(row, lh)) / total
-                    };
-                    for (rows, color, _) in &tints.rows {
-                        let last = (rows.end as usize).saturating_sub(1);
-                        let top = view.top() + view.size.height * place(rows.start as usize);
-                        let bottom = (view.top()
-                            + view.size.height * (place(last) + f32::from(lh) / total))
-                            .max(top + px(3.));
-                        window.paint_quad(fill(
-                            Bounds::from_corners(
-                                point(bounds.right() - px(10.), top),
-                                point(bounds.right() - px(5.), bottom),
-                            ),
-                            Hsla { a: 0.7, ..*color },
-                        ));
-                    }
-                    // Monaco's diff indicators, in the folding lane, fixed
-                    // whatever the horizontal scroll (painted last: painting
-                    // text needs the app, which `state` holds).
+                    // Monaco's diff indicators, in the lane between the
+                    // numbers and the code, fixed whatever the horizontal
+                    // scroll (painted last: painting text needs the app,
+                    // which `state` holds).
                     let mut spots = Vec::new();
                     for (rows, _, sign) in &tints.rows {
                         for row in (rows.start as usize).max(visible.start)
@@ -1210,7 +1354,10 @@ fn tinted(
                             }
                         }
                     }
-                    let view = gpui_kit::ContentMask { bounds: view };
+                    let lane = px(DIFF_DECORATIONS);
+                    let view = gpui_kit::ContentMask {
+                        bounds: area.view(bounds),
+                    };
                     window.with_content_mask(Some(view), |window| {
                         for (line, sign) in spots {
                             let run = gpui_kit::TextRun {
@@ -1227,8 +1374,10 @@ fn tinted(
                                 &[run],
                                 None,
                             );
+                            // Centered in the lane.
+                            let x = area.text_left - lane + (lane - shaped.width) / 2.;
                             let _ = shaped.paint(
-                                point(area.text_left - px(14.), line.origin.y),
+                                point(x, line.origin.y),
                                 line.size.height,
                                 gpui_kit::TextAlign::Left,
                                 None,
@@ -1247,6 +1396,83 @@ fn tinted(
         .into_any_element()
 }
 
+/// The overview ruler's colors.
+#[derive(Clone, Copy)]
+struct RulerColors {
+    background: Hsla,
+    viewport: Hsla,
+    removed: Hsla,
+    added: Hsla,
+}
+
+/// Monaco's diff overview ruler, `RULER_WIDTH` at the Diff View's right
+/// edge: the original's removed lines in the left lane, the changed
+/// file's added ones in the right, each where it falls in its side's whole
+/// content (hidden lines and view zones counted as they show), under the
+/// viewport's shade.
+fn ruler(
+    removed: (Entity<EditorState>, Vec<std::ops::Range<u32>>),
+    added: (Entity<EditorState>, Vec<std::ops::Range<u32>>),
+    colors: RulerColors,
+) -> AnyElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, cx| {
+            window.paint_quad(fill(bounds, colors.background));
+            let lane = bounds.size.width / 2.;
+            // Over the content, or the view when that's taller, as Monaco's
+            // ruler spans its scroll height.
+            let total = |state: &EditorState| {
+                let lh = state.line_height().unwrap_or(px(1.));
+                f32::from(state.display_map().content_height(lh))
+                    .max(f32::from(state.input_bounds().size.height))
+                    .max(1.)
+            };
+            let height = bounds.size.height;
+            for (k, ((state, rows), color)) in [(&removed, colors.removed), (&added, colors.added)]
+                .into_iter()
+                .enumerate()
+            {
+                let state = state.read(cx);
+                let map = state.display_map();
+                let lh = state.line_height().unwrap_or(px(1.));
+                let total = total(state);
+                let place = |line: usize| {
+                    let row = map.buffer_line_to_display_row(line);
+                    f32::from(map.display_row_top(row, lh)) / total
+                };
+                let left = bounds.left() + lane * k as f32;
+                for rows in rows {
+                    let last = (rows.end as usize).saturating_sub(1);
+                    let top = bounds.top() + height * place(rows.start as usize);
+                    let bottom = (bounds.top() + height * (place(last) + f32::from(lh) / total))
+                        .max(top + px(2.));
+                    window.paint_quad(fill(
+                        Bounds::from_corners(point(left, top), point(left + lane, bottom)),
+                        color,
+                    ));
+                }
+            }
+            // The view's place in the content (the changed side's, which
+            // the other follows).
+            let state = added.0.read(cx);
+            let total = total(state);
+            let view = f32::from(state.input_bounds().size.height);
+            let scrolled = -f32::from(state.scroll_offset().y);
+            let top = bounds.top() + height * (scrolled / total).clamp(0., 1.);
+            let bottom = bounds.top() + height * ((scrolled + view) / total).clamp(0., 1.);
+            window.paint_quad(fill(
+                Bounds::from_corners(point(bounds.left(), top), point(bounds.right(), bottom)),
+                colors.viewport,
+            ));
+        },
+    )
+    .w(px(RULER_WIDTH))
+    .flex_none()
+    .h_full()
+    .into_any_element()
+}
+
 /// Keeps the two sides at one scroll offset: the padding zones make them
 /// the same height line for line, so matching lines sit at the same
 /// height, as in Monaco's diff editor. The side under the pointer leads
@@ -1261,7 +1487,9 @@ fn scroll_sync(
         move |bounds, _, window, cx| {
             let mouse = window.mouse_position();
             let base_leads =
-                bounds.contains(&mouse) && mouse.x < bounds.left() + bounds.size.width / 2.;
+                // The sides split what the ruler leaves.
+                bounds.contains(&mouse)
+                    && mouse.x < bounds.left() + (bounds.size.width - px(RULER_WIDTH)) / 2.;
             let (leader, follower) = if base_leads {
                 (&base, &own)
             } else {
@@ -1296,8 +1524,11 @@ fn hidden_zone(
     side: bool,
 ) -> ViewZone {
     let tab = tab.clone();
+    // Above the first line, Monaco's diff editor's top padding (4 px)
+    // shows under the row.
+    let padding = if at == 0 { DIFF_PADDING_TOP } else { 0. };
     ViewZone::new(at)
-        .px(px(HIDDEN_ROW))
+        .px(px(HIDDEN_ROW + padding))
         .element(move |zone, _, cx| {
             tab.update(cx, |tab, cx| tab.hidden_row(first, side, zone, cx))
                 .ok()
@@ -1306,8 +1537,47 @@ fn hidden_zone(
         })
 }
 
-/// A hidden run's row: Monaco's unchanged region widget is 24 px.
+/// A hidden run's row, as tall as Monaco's unchanged region widget, its
+/// label `HIDDEN_LIFT` above the middle, as the Swift app shows it.
 const HIDDEN_ROW: f32 = 24.;
+const HIDDEN_LIFT: f32 = 2.5;
+/// Monaco's diff editor's `padding.top`, which shows under a hidden run's
+/// row above the first line.
+const DIFF_PADDING_TOP: f32 = 4.;
+
+/// The hidden-lines row's inner shadows, top and bottom (Monaco's
+/// `diffEditor.unchangedRegionShadow`), as 1 px steps.
+fn shadows(inset: Pixels) -> AnyElement {
+    canvas(
+        |_, _, _| {},
+        |bounds, _, window, _| {
+            let black = gpui_kit::black();
+            for (k, alpha) in [0.12, 0.06, 0.02].into_iter().enumerate() {
+                let step = px(k as f32);
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(bounds.left(), bounds.top() + step),
+                        gpui_kit::size(bounds.size.width, px(1.)),
+                    ),
+                    black.opacity(alpha),
+                ));
+                window.paint_quad(fill(
+                    Bounds::new(
+                        point(bounds.left(), bounds.bottom() - step - px(1.)),
+                        gpui_kit::size(bounds.size.width, px(1.)),
+                    ),
+                    black.opacity(alpha + 0.02),
+                ));
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .bottom_0()
+    .right_0()
+    .left(-inset)
+    .into_any_element()
+}
 
 /// A padding zone's diagonal fill (Monaco's `diffEditor.diagonalFill`),
 /// across the text column.
@@ -1649,6 +1919,32 @@ mod tests {
         // As the Swift app's shot pairs them: the cache lines.
         assert_eq!(align_lines(&old, &new), [(1, 3)]);
         assert!(align_lines(&old, &[]).is_empty());
+    }
+
+    #[test]
+    fn lines_with_nothing_to_line_up_with_change_whole() {
+        let old = "x\nconst TTL_MS = 60_000;\nconst cache = new TTLCache<Forecast>(TTL_MS);\ny\n";
+        let new = "x\n// Ten minutes\nconst DEFAULT_TTL_MS = 10;\n\
+                   const TTL_MS = Number(process.env.X ?? DEFAULT_TTL_MS);\n\
+                   export const forecastCache = new TTLCache<Forecast>(TTL_MS);\ny\n";
+        let (removed, added, old_whole, new_whole) = changed_words(old, new, &line_hunks(old, new));
+        // The first old line lines up with nothing; the second with the
+        // last new line, which differ by words.
+        assert_eq!(old_whole, vec![1..2]);
+        assert_eq!(new_whole, vec![1..2, 2..3, 3..4]);
+        assert_eq!(
+            removed.iter().map(|r| &old[r.clone()]).collect::<Vec<_>>(),
+            vec!["cache"]
+        );
+        assert!(added.iter().any(|r| &new[r.clone()] == "forecastCache"));
+        // A change that only adds lines changes them whole.
+        let (_, _, old_whole, new_whole) = changed_words(
+            "a\nb\n",
+            "a\nnew\nb\n",
+            &line_hunks("a\nb\n", "a\nnew\nb\n"),
+        );
+        assert!(old_whole.is_empty());
+        assert_eq!(new_whole, vec![1..2]);
     }
 
     #[test]

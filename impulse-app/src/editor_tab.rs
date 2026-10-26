@@ -1821,7 +1821,12 @@ impl Render for EditorTab {
             .xsmall()
             .font_family(family)
             .text_size(px(size))
-            .pl(gutter_inset(&self.state, size, cx))
+            // Side by side in the Diff View, Monaco's diff gutter.
+            .pl(if self.diff.as_ref().is_some_and(|d| !d.is_inline()) {
+                crate::editor_diff::diff_inset(&self.state, false, size, cx)
+            } else {
+                gutter_inset(&self.state, size, cx)
+            })
             .bordered(false);
         // Set either way: the chrome around it turns ligatures off.
         editor = editor.font_features(if settings.font_ligatures {

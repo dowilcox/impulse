@@ -1,0 +1,20 @@
+<!-- Impulse's own icon in Lucide's style: a box between square brackets,
+     as Monaco's symbol-variable codicon draws a variable (the Diff View's
+     hidden-lines rows name the symbol they're in with it). -->
+<svg
+  class="lucide lucide-symbol-variable"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 4H3v16h2" />
+  <path d="M19 4h2v16h-2" />
+  <path d="M7.5 12.5 11 8.5l5.5 1.5v3L13 17l-5.5-1.5Z" />
+  <path d="m11 12.5 2.5.7-1 1Z" fill="currentColor" />
+</svg>
