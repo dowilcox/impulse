@@ -21,6 +21,11 @@ use impulse_kit::uri::language_for_path;
 
 use crate::lsp_hub::{DocumentLink, LspHub};
 
+// Find and replace, declared here rather than in main.rs (which can name
+// it directly as `mod editor_find;`).
+#[path = "editor_find.rs"]
+mod editor_find;
+
 /// Opens a `window/showDocument` target (go to definition in another file)
 /// and says whether it did.
 pub type ShowDocument = Rc<dyn Fn(&lsp_types::ShowDocumentParams, &mut Window, &mut App) -> bool>;
@@ -122,6 +127,10 @@ pub struct EditorTab {
     pub(crate) git: crate::editor_git::GitLayer,
     /// The pointer over the minimap (`editor_minimap`).
     pub(crate) minimap: crate::editor_minimap::MinimapState,
+    /// The find bar at the top, while it's open (`editor_find`).
+    pub(crate) find: Option<crate::terminal_find_bar::FindBar>,
+    /// The last find's query and toggles, for the next ⌘F and F3.
+    pub(crate) last_find: impulse_kit::terminal_find::TerminalFindQuery,
     _marking: Option<gpui_kit::Task<()>>,
     _subscription: Subscription,
     _observe_state: Subscription,
@@ -249,7 +258,9 @@ impl EditorTab {
         let tab = cx.entity().downgrade();
         cx.default_global::<OpenDocuments>().0.push(tab);
         let state = cx.new(|cx| {
+            // Find is Impulse's bar (`editor_find`), not GPUI Kit's panel.
             let mut state = EditorState::new(window, cx)
+                .searchable(false)
                 .language(grammar)
                 .line_number(settings.show_line_numbers)
                 .folding(settings.folding)
@@ -289,6 +300,7 @@ impl EditorTab {
                 link.sync(state.read(cx).text());
             }
             tab.git_text_changed(cx);
+            tab.find_text_changed(cx);
             if tab.settings_file {
                 tab.recheck_settings_file(cx);
             }
@@ -372,6 +384,8 @@ impl EditorTab {
             diff_inline: false,
             git: Default::default(),
             minimap: Default::default(),
+            find: None,
+            last_find: Default::default(),
             _marking: None,
             _subscription: subscription,
             _observe_state: observe_state,
@@ -447,6 +461,8 @@ impl EditorTab {
             );
             state.set_auto_close(settings.editor_auto_closing_brackets != "never", window, cx);
         });
+        // The theme may have changed with the settings.
+        self.find_retheme(cx);
         // Without a language server, the document's own words (settings.json
         // keeps its schema's completions).
         if self.primary_link().is_none() && !self.settings_file {
@@ -1288,7 +1304,8 @@ impl EditorTab {
     /// app's stand-in for driving Monaco with JavaScript), one command a
     /// line: `cursor L:C`, `select L:C-L:C` (1-based, columns in
     /// characters), `type TEXT` and `paste TEXT` (`\n` for a line break,
-    /// replacing the selection), `undo`, `redo`. Answers the buffer's text.
+    /// replacing the selection), `undo`, `redo`, `find TEXT` (the find bar
+    /// with that query). Answers the buffer's text.
     #[cfg(debug_assertions)]
     pub(crate) fn debug_edit(
         &mut self,
@@ -1334,6 +1351,7 @@ impl EditorTab {
                     .update(cx, |state, cx| state.replace(argument.clone(), window, cx)),
                 // Show Commit for This Line, at the cursor.
                 "line-commit" => self.show_line_commit(cx),
+                "find" => self.debug_find(&argument, window, cx),
                 "undo" | "redo" => {
                     let focus = self.focus_handle(cx);
                     if command == "undo" {
@@ -1717,6 +1735,10 @@ impl Render for EditorTab {
         if line_height > 0 {
             editor = editor.line_height(px(line_height as f32));
         }
+        // Room between the text and the scrollbar for the minimap.
+        if let Some(gutter) = self.minimap_gutter(cx) {
+            editor = editor.scrollbar_gutter(gutter);
+        }
         editor = editor.context_menu(Self::context_menu(
             self.primary_link().is_some(),
             !self.read_only,
@@ -1724,11 +1746,12 @@ impl Render for EditorTab {
         ));
         let editor = crate::editor_vim::wrap(self.vim.as_ref(), editor, cx);
         let editor = self.wrap_git(editor, cx);
-        let editor = match self.minimap(cx) {
+        // The minimap over the editor's right edge, beside the scrollbar.
+        let editor = match self.minimap_overlay(cx) {
             Some(minimap) => gpui_kit::div()
+                .relative()
                 .size_full()
-                .flex()
-                .child(gpui_kit::div().flex_1().min_w_0().h_full().child(editor))
+                .child(editor)
                 .child(minimap)
                 .into_any_element(),
             None => editor,
@@ -1740,6 +1763,19 @@ impl Render for EditorTab {
                 .flex_col()
                 .child(gpui_kit::div().flex_1().min_h_0().child(editor))
                 .child(peek)
+                .into_any_element(),
+            None => editor,
+        };
+        // The find bar at the top, as the terminal's sits over its grid:
+        // above the editor element, so the marks, rulers, sticky lines
+        // and their clicks (`wrap_git`, over the editor) stay under it.
+        let editor = match self.find_element(cx) {
+            Some(find) => gpui_kit::div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(find)
+                .child(gpui_kit::div().flex_1().min_h_0().child(editor))
                 .into_any_element(),
             None => editor,
         };
@@ -1772,6 +1808,42 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::unfold))
             .on_action(cx.listener(Self::fold_all))
             .on_action(cx.listener(Self::unfold_all))
+            // Find: Impulse's bar. GPUI Kit's Search and Replace come up
+            // from the text since it isn't `searchable`.
+            .on_action(
+                cx.listener(|tab, _: &gpui_kit::component::input::Search, window, cx| {
+                    tab.open_find(false, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|tab, _: &gpui_kit::component::input::Replace, window, cx| {
+                    tab.toggle_replace(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::FindReplace, window, cx| {
+                    tab.toggle_replace(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::FindNext, window, cx| {
+                    tab.find_next(true, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|tab, _: &crate::editor_keys::FindPrevious, window, cx| {
+                    tab.find_next(false, window, cx)
+                }),
+            )
+            // Escape the text had no use for (no menu, one cursor) closes
+            // the find bar, as in Monaco.
+            .on_action(
+                cx.listener(|tab, _: &gpui_kit::component::input::Escape, window, cx| {
+                    if !tab.find_escape(window, cx) {
+                        cx.propagate();
+                    }
+                }),
+            )
             .on_key_down(
                 cx.listener(|tab, event: &gpui_kit::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "escape" && tab.signature.is_some() {

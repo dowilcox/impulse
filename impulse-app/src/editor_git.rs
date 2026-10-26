@@ -472,8 +472,8 @@ impl EditorTab {
             move |bounds, hitbox, window, cx| {
                 origin.set(Some(bounds.origin));
                 // Painted after the editor, so its layout is this frame's.
-                // Only the text area: GPUI Kit's find bar sits above it,
-                // inside the editor element.
+                // Only the text area: the input's own bounds, inside the
+                // editor element (the find bar sits above that element).
                 let Some(area) = text_area(state.read(cx)) else {
                     return;
                 };
@@ -621,8 +621,8 @@ impl EditorTab {
                     _ => Vec::new(),
                 };
                 // A click on a mark opens its peek, one on a sticky line goes
-                // there (before the editor sees the click); the find bar's
-                // clicks stay its own.
+                // there (before the editor sees the click). The find bar is
+                // outside this overlay, so its clicks stay its own.
                 let tab = tab.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                     if phase != DispatchPhase::Capture
@@ -1308,8 +1308,8 @@ pub(crate) struct TextArea {
     /// The text column's left edge, right of the line numbers, wherever
     /// the text is scrolled sideways: gutter marks sit left of it.
     pub text_left: Pixels,
-    /// The text area's top and bottom: under GPUI Kit's find bar, which
-    /// sits inside the editor element.
+    /// The text area's top and bottom: the input's own, inside the editor
+    /// element.
     pub top: Pixels,
     pub bottom: Pixels,
 }

@@ -59,6 +59,20 @@ because gpui-component builds that struct as a full literal.
 - **Auto-closing brackets** (`input/base/state.rs`,
   `set_auto_close_brackets`): Monaco's `autoClosingBrackets`
   (languageDefined, beforeWhitespace, always); quotes keep the language's.
+- **Whole-word and regex search** (`input/editor/search.rs`,
+  `input/mod.rs`): `SearchOptions { case_sensitive, whole_word, regex }`
+  for a custom find bar's toggles, kept in `SearchSession.options`;
+  `InputBaseState::set_search_query_with` returns the match count, or an
+  invalid regex's message (also in `SearchSession.error`), which leaves no
+  matches instead of panicking. Whole words are bounded as Monaco bounds
+  them; regexes use the `regex` crate with `^`/`$` at line ends and skip
+  empty matches. `set_search_query` and the built-in panel keep their
+  behavior (literal, case only).
+- **Stepping from the cursor** (`input/editor/search.rs`,
+  `search_match_from`): makes the match nearest an offset, forward or back
+  and wrapping, the current one and reveals it, as Monaco's find widget
+  moves from the selection; `next_search_match` still steps from the
+  current match.
 
 ### gpui-component
 
@@ -83,6 +97,11 @@ because gpui-component builds that struct as a full literal.
   `editor.popover.background` (Monaco's `editorHoverWidget.background` and
   `editorSuggestWidget.background`), for hovers, completions and the
   completion docs; the theme's `popover` color when it's unset.
+- **First parse colors the file** (`highlighter/input_adapter.rs`): while
+  the highlighter has no tree yet, the synchronous parse gets 25 ms instead
+  of 2 ms and the background parse starts without its 150 ms debounce, so
+  a file opens colored rather than gaining its colors a moment later.
+  Later edits keep the 2 ms budget and the debounce.
 - **Scrollbar gutter** (`input/editor.rs`, `input/input.rs`):
   `Editor::scrollbar_gutter(width)` keeps room between the text and the
   vertical scrollbar, for a minimap there as in Monaco (0 by default).

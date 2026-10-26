@@ -28,6 +28,10 @@ pub(crate) fn input_highlighter_factory() -> InputHighlighterFactory {
 }
 
 const SYNC_PARSE_TIMEOUT: Duration = Duration::from_millis(2);
+/// Impulse: the budget of a file's first parse, while there is no tree yet.
+/// At 2 ms most files open uncolored and take their colors a moment later
+/// from the background parse; 25 ms colors them in the first frame.
+const FIRST_PARSE_TIMEOUT: Duration = Duration::from_millis(25);
 const SYNC_PARSE_MAX_BYTES: usize = 256 * 1024;
 const PARSE_DEBOUNCE: Duration = Duration::from_millis(150);
 
@@ -46,9 +50,13 @@ impl TreeSitterInputHighlighter {
 
     /// Settle after the edits reached the tree: drop a pending background
     /// parse when the synchronous one `completed`, or schedule one for `text`.
+    /// Impulse: a `first` parse (no tree before it) starts at once rather
+    /// than after `PARSE_DEBOUNCE`, so a file that opens uncolored takes its
+    /// colors as soon as they're ready.
     fn finish_update(
         &mut self,
         completed: bool,
+        first: bool,
         text: &Rope,
         folding: bool,
         window: &mut gpui::Window,
@@ -76,7 +84,10 @@ impl TreeSitterInputHighlighter {
                 }
             }
             let _cancel_guard = CancelOnDrop(cancel.clone());
-            cx.background_executor().timer(PARSE_DEBOUNCE).await;
+            // Impulse: no debounce before the first tree.
+            if !first {
+                cx.background_executor().timer(PARSE_DEBOUNCE).await;
+            }
 
             let parse_cancel = cancel.clone();
             let result = cx
@@ -151,16 +162,19 @@ impl InputHighlighter for TreeSitterInputHighlighter {
         cx: &mut gpui::Context<EditorState>,
     ) {
         let edit = edit.map(to_tree_sitter_edit);
+        // Impulse: the first parse gets a longer budget (`FIRST_PARSE_TIMEOUT`).
+        let first = self.inner.borrow().tree().is_none();
         let completed = {
             let mut highlighter = self.inner.borrow_mut();
             if text.len() > SYNC_PARSE_MAX_BYTES {
                 highlighter.edit_tree(edit, text);
                 false
             } else {
-                highlighter.update(edit, text, Some(SYNC_PARSE_TIMEOUT))
+                let timeout = if first { FIRST_PARSE_TIMEOUT } else { SYNC_PARSE_TIMEOUT };
+                highlighter.update(edit, text, Some(timeout))
             }
         };
-        self.finish_update(completed, text, folding, window, cx);
+        self.finish_update(completed, first, text, folding, window, cx);
     }
 
     fn update_batch(
@@ -177,6 +191,8 @@ impl InputHighlighter for TreeSitterInputHighlighter {
             .iter()
             .map(|(edit, _)| to_tree_sitter_edit(*edit))
             .collect();
+        // Impulse: the first parse gets a longer budget (`FIRST_PARSE_TIMEOUT`).
+        let first = self.inner.borrow().tree().is_none();
         let completed = {
             let mut highlighter = self.inner.borrow_mut();
             if text.len() > SYNC_PARSE_MAX_BYTES {
@@ -185,10 +201,11 @@ impl InputHighlighter for TreeSitterInputHighlighter {
                 }
                 false
             } else {
-                highlighter.update_edits(&edits, text, Some(SYNC_PARSE_TIMEOUT))
+                let timeout = if first { FIRST_PARSE_TIMEOUT } else { SYNC_PARSE_TIMEOUT };
+                highlighter.update_edits(&edits, text, Some(timeout))
             }
         };
-        self.finish_update(completed, text, folding, window, cx);
+        self.finish_update(completed, first, text, folding, window, cx);
     }
 
     fn styles(

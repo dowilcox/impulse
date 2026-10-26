@@ -1,53 +1,34 @@
 //! Find in a terminal (the Swift `TerminalFindBar` and
-//! `MainWindowController+FindBar`): a 32pt bar over the grid with the
-//! query, case / whole-word / regex toggles, the match count, previous and
-//! next. Return and Shift+Return step through matches, Escape closes. The
-//! query becomes the core's regex through `impulse_kit::terminal_find`.
+//! `MainWindowController+FindBar`): the shared find bar (`find_bar`) over
+//! the grid, searching the scrollback. The query becomes the core's regex
+//! through `impulse_kit::terminal_find`.
 
-use gpui_kit::{div, prelude::*, px, AnyElement, Context, Entity, FontWeight, MouseButton, Window};
-use impulse_kit::chrome::metrics;
+use gpui_kit::{AnyElement, Context, Window};
 use impulse_kit::terminal_find::TerminalFindQuery;
-use impulse_terminal::SearchStats;
 
-use crate::command_editor::{CommandEditor, CommandEditorEvent, EditorKey};
 use crate::terminal_view::TerminalView;
-use crate::workbench_chrome::{hsla, icon};
 
-pub(crate) struct FindBar {
-    editor: Entity<CommandEditor>,
-    query: TerminalFindQuery,
-    stats: SearchStats,
-}
+// The bar terminals and editors share, declared here rather than in
+// main.rs (which can name it directly as `mod find_bar;`).
+#[path = "find_bar.rs"]
+pub(crate) mod find_bar;
+pub(crate) use find_bar::{FindBar, FindHost};
 
-impl FindBar {
-    pub fn set_colors(&self, colors: crate::command_editor::EditorColors, cx: &mut gpui_kit::App) {
-        self.editor.update(cx, |editor, cx| {
-            editor.colors = colors;
-            cx.notify();
-        });
+impl FindHost for TerminalView {
+    fn find_bar_mut(&mut self) -> Option<&mut FindBar> {
+        self.find.as_mut()
     }
 
-    /// "3 of 12", "No results", ...
-    fn status(&self) -> String {
-        if self.query.text.is_empty() {
-            return String::new();
-        }
-        if self.stats.invalid {
-            return "Invalid pattern".into();
-        }
-        if self.stats.total == 0 {
-            return "No results".into();
-        }
-        let count = if self.stats.capped {
-            format!("{}+", self.stats.total)
-        } else {
-            self.stats.total.to_string()
-        };
-        if self.stats.current > 0 {
-            format!("{} of {count}", self.stats.current)
-        } else {
-            format!("{count} found")
-        }
+    fn find_changed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.run_find(cx);
+    }
+
+    fn find_step(&mut self, forward: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_find(forward, cx);
+    }
+
+    fn find_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_find(window, cx);
     }
 }
 
@@ -57,31 +38,6 @@ impl TerminalView {
         if self.find.is_some() {
             return self.close_find(window, cx);
         }
-        let theme = self.theme.clone();
-        let editor = cx.new(|cx| {
-            let mut editor = CommandEditor::new(true, &theme, cx);
-            editor.placeholder = "Find in terminal".into();
-            editor.font = gpui_kit::font(crate::workbench::UI_FONT);
-            editor.font_size = px(12.5);
-            editor
-        });
-        cx.subscribe_in(
-            &editor,
-            window,
-            |view, editor, event, window, cx| match event {
-                CommandEditorEvent::Changed => {
-                    let text = editor.read(cx).text().to_string();
-                    if let Some(find) = view.find.as_mut() {
-                        find.query.text = text;
-                    }
-                    view.run_find(cx);
-                }
-                CommandEditorEvent::Submit { shift } => view.step_find(!shift, cx),
-                CommandEditorEvent::Key(EditorKey::Escape) => view.close_find(window, cx),
-                _ => {}
-            },
-        )
-        .detach();
         let selection = self
             .backend
             .selected_text()
@@ -94,15 +50,10 @@ impl TerminalView {
         if let Some(selection) = selection {
             query.text = selection;
         }
-        let text = query.text.clone();
-        editor.update(cx, |e, cx| e.set_text(text, cx));
-        let handle = editor.read(cx).focus_handle().clone();
-        window.focus(&handle, cx);
-        self.find = Some(FindBar {
-            editor,
-            query,
-            stats: SearchStats::default(),
-        });
+        let theme = self.theme.clone();
+        let find = FindBar::new(&theme, "Find in terminal", query, false, window, cx);
+        find.focus(window, cx);
+        self.find = Some(find);
         self.run_find(cx);
     }
 
@@ -113,10 +64,7 @@ impl TerminalView {
             self.toggle_find(window, cx);
         }
         if let Some(find) = self.find.as_mut() {
-            find.query.text = text.to_string();
-            let editor = find.editor.clone();
-            let text = text.to_string();
-            editor.update(cx, |e, cx| e.set_text(text, cx));
+            find.set_query_text(text, cx);
         }
         self.run_find(cx);
     }
@@ -174,140 +122,6 @@ impl TerminalView {
     }
 
     pub(crate) fn find_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let find = self.find.as_ref()?;
-        let p = &self.palette;
-        let status = find.status();
-        let failed = find.stats.invalid || (find.stats.total == 0 && !find.query.text.is_empty());
-        let none = find.stats.total == 0;
-        let toggle = |id: &'static str, label: &'static str, on: bool, underline: bool| {
-            div()
-                .id(id)
-                .w(px(24.))
-                .h(px(20.))
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .rounded(px(metrics::RADIUS_SMALL))
-                .border_1()
-                .border_color(if on {
-                    hsla(p.accent.opacity(0.5))
-                } else {
-                    gpui_kit::transparent_black()
-                })
-                .when(on, |d| d.bg(hsla(p.accent.opacity(0.16))))
-                .font_family("JetBrains Mono")
-                .text_size(px(11.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(hsla(if on { p.accent } else { p.text_secondary }))
-                .when(underline, |d| d.underline())
-                .cursor_pointer()
-                .child(label)
-        };
-        let button = |id: &'static str, name: &'static str, enabled: bool| {
-            div()
-                .id(id)
-                .size(px(22.))
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .rounded(px(metrics::RADIUS_SMALL))
-                .when(enabled, |d| {
-                    d.cursor_pointer().hover(|d| d.bg(hsla(p.hover)))
-                })
-                .child(icon(
-                    name,
-                    13.,
-                    if enabled {
-                        p.text_secondary
-                    } else {
-                        p.text_tertiary
-                    },
-                ))
-        };
-        Some(
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(6.))
-                .px(px(10.))
-                .h(px(32.))
-                .bg(hsla(p.panel))
-                .border_b_1()
-                .border_color(hsla(p.hairline))
-                .font_family(crate::workbench::UI_FONT)
-                .child(icon("search", 12., p.text_tertiary))
-                .child(div().flex_1().min_w(px(120.)).child(find.editor.clone()))
-                .child(
-                    toggle("find-case", "Aa", find.query.case_sensitive, false).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|view, _, _, cx| {
-                            cx.stop_propagation();
-                            if let Some(f) = view.find.as_mut() {
-                                f.query.case_sensitive = !f.query.case_sensitive;
-                            }
-                            view.run_find(cx);
-                        }),
-                    ),
-                )
-                .child(
-                    toggle("find-word", "ab", find.query.whole_word, true).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|view, _, _, cx| {
-                            cx.stop_propagation();
-                            if let Some(f) = view.find.as_mut() {
-                                f.query.whole_word = !f.query.whole_word;
-                            }
-                            view.run_find(cx);
-                        }),
-                    ),
-                )
-                .child(
-                    toggle("find-regex", ".*", find.query.regex, false).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|view, _, _, cx| {
-                            cx.stop_propagation();
-                            if let Some(f) = view.find.as_mut() {
-                                f.query.regex = !f.query.regex;
-                            }
-                            view.run_find(cx);
-                        }),
-                    ),
-                )
-                .child(
-                    div()
-                        .min_w(px(84.))
-                        .flex()
-                        .flex_none()
-                        .justify_end()
-                        .text_size(px(11.5))
-                        .text_color(hsla(if failed { p.danger } else { p.text_secondary }))
-                        .child(status),
-                )
-                .child(button("find-previous", "chevron-up", !none).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|view, _, _, cx| {
-                        cx.stop_propagation();
-                        view.step_find(false, cx);
-                    }),
-                ))
-                .child(button("find-next", "chevron-down", !none).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|view, _, _, cx| {
-                        cx.stop_propagation();
-                        view.step_find(true, cx);
-                    }),
-                ))
-                .child(button("find-close", "x", true).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|view, _, window, cx| {
-                        cx.stop_propagation();
-                        view.close_find(window, cx);
-                    }),
-                ))
-                .into_any_element(),
-        )
+        Some(self.find.as_ref()?.render(&self.palette, cx))
     }
 }

@@ -63,6 +63,13 @@ pub(crate) struct DiffView {
     _refresh: Option<gpui_kit::Task<()>>,
 }
 
+impl DiffView {
+    /// Inline: one read-only document shows in place of the buffer.
+    pub(crate) fn is_inline(&self) -> bool {
+        self.inline.is_some()
+    }
+}
+
 struct InlineView {
     state: Entity<EditorState>,
     tints: Tints,

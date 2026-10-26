@@ -230,7 +230,9 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           history from command_history.rs, which shares
                           history.sqlite3 and backs the palette's h:
                           mode, Import Shell History and Clear Command
-                          History), find (terminal_find_bar.rs), and
+                          History), find (terminal_find_bar.rs over the find bar
+                          terminals and editors share, find_bar.rs: FindBar and
+                          its FindHost backend), and
                           block commands, the ⋯ and right-click menus
                           (terminal_blocks::BlockMenu), programs' progress
                           and status on tabs and workspace rows
@@ -381,8 +383,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           capitalized types (base_rules.rs), links underlined
                           and opened on Cmd/Ctrl+click (editor_links.rs),
                           sticky scroll (impulse_kit::sticky_scroll),
-                          the minimap (editor_minimap.rs on
-                          impulse_kit::minimap),
+                          the minimap over the editor's right edge, beside the
+                          scrollbar (editor_minimap.rs on impulse_kit::minimap,
+                          room kept by Editor::scrollbar_gutter), find and
+                          replace (editor_find.rs: the terminal's FindBar at the
+                          top with Monaco's replace row, ⌥⌘F, F3 / ⇧F3, over
+                          GPUI Kit's search with SearchOptions; its own panel
+                          off with searchable(false)),
                           word-based suggestions without a language
                           server (impulse_kit::word_completions, other
                           open files' words too per the setting);

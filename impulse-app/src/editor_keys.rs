@@ -11,11 +11,13 @@
 //! Kit binds ⌃A and ⌃E) name GPUI Kit's own moves and deletes. Folding
 //! from the keyboard (Monaco's Fold, Unfold, Fold All and Unfold All) goes
 //! through Impulse's GPUI Kit patch (`EditorState::fold_at_cursor` and the
-//! rest).
+//! rest). Find's keys (F3, ⇧F3, ⌥⌘F; ⌘F is the Find command) are bound for
+//! the whole tab (`ImpulseEditor`), so they work from the find bar's
+//! fields too (`editor_find`).
 
 use gpui_kit::component::input::{
     Backspace, Delete, DeleteToEndOfLine, GoToDefinition, MoveDown, MoveLeft, MoveRight, MoveUp,
-    Redo, Replace, ShowCompletions,
+    Redo, ShowCompletions,
 };
 use gpui_kit::{actions, App, KeyBinding};
 
@@ -57,6 +59,9 @@ actions!(
         Unfold,
         FoldAll,
         UnfoldAll,
+        FindNext,
+        FindPrevious,
+        FindReplace,
     ]
 );
 
@@ -66,6 +71,13 @@ pub const CONTEXT: &str = "ImpulseEditor";
 pub fn bind_keys(cx: &mut App) {
     let c = Some("ImpulseEditor > Input");
     let buffer = Some("ImpulseEditor > Input && mode == editor");
+    // Monaco's Find Next and Previous (its ⌘G and ⇧⌘G are Go to Line and
+    // Review Changes here, as in the Swift app, where those commands win).
+    let tab = Some(CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("f3", FindNext, tab),
+        KeyBinding::new("shift-f3", FindPrevious, tab),
+    ]);
     if cfg!(target_os = "macos") {
         cx.bind_keys([
             KeyBinding::new("home", CursorHome, buffer),
@@ -93,7 +105,7 @@ pub fn bind_keys(cx: &mut App) {
             KeyBinding::new("cmd-f2", ChangeAllOccurrences, c),
             KeyBinding::new("cmd-i", ShowCompletions, c),
             KeyBinding::new("ctrl-space", ShowCompletions, c),
-            KeyBinding::new("alt-cmd-f", Replace, c),
+            KeyBinding::new("alt-cmd-f", FindReplace, tab),
             KeyBinding::new("cmd-shift-l", ChangeAllOccurrences, c),
             KeyBinding::new("shift-alt-a", ToggleBlockComment, c),
             KeyBinding::new("cmd-shift-\\", GoToBracket, c),

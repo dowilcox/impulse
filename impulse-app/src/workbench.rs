@@ -1570,13 +1570,10 @@ impl Workbench {
                     terminal.update(cx, |t, cx| t.toggle_find(window, cx));
                 }
             }
-            // In an editor, GPUI Kit's search panel.
+            // In an editor, the same find bar (`editor_find`).
             "find" if self.active_editor().is_some() => {
                 if let Some(editor) = self.active_editor().cloned() {
-                    editor.update(cx, |tab, cx| {
-                        tab.state
-                            .update(cx, |state, cx| state.open_search(false, cx))
-                    });
+                    editor.update(cx, |tab, cx| tab.toggle_find(window, cx));
                 }
             }
             // Review, History, images and tool tabs have no find, as in Swift.

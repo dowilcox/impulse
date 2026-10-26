@@ -127,6 +127,8 @@ pub use native::set_text_content_type;
 pub use native::{NativeMenu, NativeMenuItem};
 pub use rope_ext::{InputEdit, Point, RopeExt, RopeLines};
 pub use ropey::Rope;
-pub use search::{SearchMatcher, SearchSession};
+// Impulse: `SearchOptions` for a custom find bar's case, whole-word and
+// regex toggles (`InputBaseState::set_search_query_with`).
+pub use search::{SearchMatcher, SearchOptions, SearchSession};
 pub use state::*;
 pub use textarea::{Textarea, TextareaState};

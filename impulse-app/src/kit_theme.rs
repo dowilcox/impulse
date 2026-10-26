@@ -1,5 +1,5 @@
-//! Impulse's theme for GPUI Kit's own components (the editor's search panel,
-//! completion and hover popovers, menus, scrollbars), so nothing in the window
+//! Impulse's theme for GPUI Kit's own components (completion and hover
+//! popovers, menus, scrollbars), so nothing in the window
 //! shows GPUI Kit's default theme. Chrome colors come from `ChromePalette`,
 //! syntax colors from the theme the way `themeToMonaco` maps them for Monaco.
 
@@ -150,6 +150,11 @@ pub fn apply(
             .highlight_current_line
             .then(|| hsla(Rgba::from_hex(&theme.bg_highlight))),
         widget: hsla(Rgba::from_hex(&theme.bg_dark)),
+    });
+    // The editor's find bar is drawn in the chrome's colors.
+    cx.set_global(crate::terminal_find_bar::find_bar::ChromeTheme {
+        theme: theme.clone(),
+        palette: p.clone(),
     });
     cx.set_global(crate::editor_git::GitColors {
         added: hsla(p.git_added),

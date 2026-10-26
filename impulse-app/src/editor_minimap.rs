@@ -1,8 +1,9 @@
-//! The minimap beside the editor (Monaco's `minimap`, the `minimap_enabled`
-//! setting): the document's lines as runs of one-pixel characters, the
-//! visible part under a slider while the pointer is over it, and a click
-//! or drag scrolling there. Layout comes from `impulse_kit::minimap`;
-//! characters take the text color rather than their syntax colors.
+//! The minimap at the editor's right edge, beside the scrollbar (Monaco's
+//! `minimap`, the `minimap_enabled` setting): the document's lines as runs
+//! of one-pixel characters, the visible part under a slider while the
+//! pointer is over it, and a click or drag scrolling there. Layout comes
+//! from `impulse_kit::minimap`; characters take the text color rather than
+//! their syntax colors.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -30,21 +31,12 @@ const WIDTH: f32 = MAX_COLUMNS as f32 * COLUMN_WIDTH + 8.0;
 
 /// GPUI Kit's vertical scrollbar, at the editor's right edge (`WIDTH` in
 /// gpui-base's scrollbar.rs).
-// Until editor_tab.rs places the overlay (then drop these allows and
-// `minimap`).
-#[allow(dead_code)]
 const SCROLLBAR_WIDTH: f32 = 16.0;
 
 impl EditorTab {
-    /// The minimap beside the editor, when the setting is on.
-    pub(crate) fn minimap(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        Some(self.minimap_body(cx)?.flex_none().into_any_element())
-    }
-
     /// What the editor keeps free at its right edge for the minimap
     /// overlay (`Editor::scrollbar_gutter`), when the setting is on: the
     /// minimap and the scrollbar beside it.
-    #[allow(dead_code)]
     pub(crate) fn minimap_gutter(&self, cx: &gpui_kit::App) -> Option<Pixels> {
         crate::settings_store::SettingsStore::get(cx)
             .minimap_enabled
@@ -55,7 +47,6 @@ impl EditorTab {
     /// between the text and the vertical scrollbar, in the room
     /// `minimap_gutter` keeps. The editor's parent must be `relative()`.
     /// The wheel still scrolls the editor through it.
-    #[allow(dead_code)]
     pub(crate) fn minimap_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         Some(
             self.minimap_body(cx)?

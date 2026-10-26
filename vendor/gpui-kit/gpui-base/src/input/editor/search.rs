@@ -1,6 +1,7 @@
 use crate::input::InputModeKind;
 use aho_corasick::AhoCorasick;
 use gpui::{Context, Window};
+use regex::{Regex, RegexBuilder};
 use ropey::Rope;
 use std::{ops::Range, rc::Rc};
 
@@ -8,11 +9,31 @@ use super::{
     InputBaseState, Replace, RopeExt as _, Search, movement::MoveDirection, state::ScrollPadding,
 };
 
+/// Impulse: how a search query matches, for a custom search UI's toggles
+/// (Monaco's find widget: Aa, ab and .*).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct SearchOptions {
+    /// Match case exactly. Otherwise ASCII letters match either case (and,
+    /// with `regex`, every letter does).
+    pub case_sensitive: bool,
+    /// Only matches that start and end at a word boundary: the character
+    /// beside each end, or the match's own character there, is not a word
+    /// character (alphanumeric or `_`).
+    pub whole_word: bool,
+    /// The query is a regular expression (the `regex` crate's syntax, `^`
+    /// and `$` at line ends). Empty matches are skipped.
+    pub regex: bool,
+}
+
 /// Stateful, presentation-independent search engine used by text inputs.
 #[derive(Debug, Clone)]
 pub struct SearchMatcher {
     text: Rope,
     pub query: Option<AhoCorasick>,
+    /// Impulse: the query as a regular expression, in place of `query`.
+    regex: Option<Regex>,
+    /// Impulse: keep only whole-word matches.
+    whole_word: bool,
     matched_ranges: Rc<Vec<Range<usize>>>,
     current_match_ix: usize,
     replacing: bool,
@@ -33,6 +54,12 @@ pub struct SearchSession {
     pub replacement: String,
     pub anchor_offset: Option<usize>,
     pub matcher: SearchMatcher,
+    /// Impulse: how the query matches. `case_insensitive` mirrors
+    /// `!options.case_sensitive`.
+    pub options: SearchOptions,
+    /// Impulse: why the query matches nothing because it can't (an invalid
+    /// regular expression), as a message to show.
+    pub error: Option<String>,
     /// A search is in progress and its matches are highlighted: the panel is
     /// open, or a query was set without it and not closed since.
     active: bool,
@@ -49,6 +76,8 @@ impl Default for SearchSession {
             replacement: String::new(),
             anchor_offset: None,
             matcher: SearchMatcher::new(),
+            options: SearchOptions::default(),
+            error: None,
         }
     }
 }
@@ -79,15 +108,35 @@ impl SearchSession {
         self.active
     }
 
+    /// Set the query with the case mode only, keeping whole-word and regex
+    /// as they are.
     pub(crate) fn update_query(&mut self, query: impl Into<String>, case_insensitive: bool) {
-        let query = query.into();
-        if self.query == query && self.case_insensitive == case_insensitive {
-            return;
-        }
+        let options = SearchOptions {
+            case_sensitive: !case_insensitive,
+            ..self.options
+        };
+        let _ = self.update_query_with(query, options);
+    }
 
-        self.query = query;
-        self.case_insensitive = case_insensitive;
-        self.matcher.update_query(&self.query, case_insensitive);
+    /// Impulse: set the query and how it matches. An invalid regular
+    /// expression leaves no matches and its message in `error`.
+    pub(crate) fn update_query_with(
+        &mut self,
+        query: impl Into<String>,
+        options: SearchOptions,
+    ) -> Result<(), String> {
+        let query = query.into();
+        if self.query != query || self.options != options {
+            self.query = query;
+            self.options = options;
+            self.case_insensitive = !options.case_sensitive;
+            self.error = self
+                .matcher
+                .update_query_with(&self.query, options)
+                .err()
+                .map(|error| error.to_string());
+        }
+        self.error.clone().map_or(Ok(()), Err)
     }
 }
 
@@ -178,9 +227,29 @@ impl<M: InputModeKind> InputBaseState<M> {
         case_insensitive: bool,
         cx: &mut Context<Self>,
     ) {
+        let options = SearchOptions {
+            case_sensitive: !case_insensitive,
+            ..self.search_session.options
+        };
+        let _ = self.set_search_query_with(query, options, cx);
+    }
+
+    /// Impulse: [`InputBaseState::set_search_query`] with whole-word and
+    /// regular-expression matching. Returns how many matches there are, or
+    /// the message of an invalid regular expression (also kept in
+    /// [`SearchSession::error`]), which leaves no matches.
+    ///
+    /// A changed query or options start at the current viewport. Setting
+    /// the same ones again retains the current occurrence.
+    pub fn set_search_query_with(
+        &mut self,
+        query: impl Into<String>,
+        options: SearchOptions,
+        cx: &mut Context<Self>,
+    ) -> Result<usize, String> {
         let query = query.into();
-        let query_changed = query != self.search_session.query
-            || case_insensitive != self.search_session.case_insensitive;
+        let query_changed =
+            query != self.search_session.query || options != self.search_session.options;
         self.search_session.anchor_offset = if query_changed {
             self.last_layout
                 .as_ref()
@@ -189,12 +258,13 @@ impl<M: InputModeKind> InputBaseState<M> {
             None
         };
         self.search_session.activate();
-        self.search_session.update_query(query, case_insensitive);
+        let result = self.search_session.update_query_with(query, options);
         self.search_session.matcher.update(&self.text);
         if query_changed && let Some(anchor) = self.search_session.anchor_offset {
             self.search_session.matcher.update_cursor_by_offset(anchor);
         }
         cx.notify();
+        result.map(|()| self.search_session.matcher.len())
     }
 
     /// End the search: hide the built-in panel and the match highlights. The
@@ -219,6 +289,39 @@ impl<M: InputModeKind> InputBaseState<M> {
         // Match order does not describe viewport direction after a manual
         // scroll. Always allow search navigation to reveal the active match.
         self.scroll_to_with_padding(range.start, None, ScrollPadding::SurroundingLines, cx);
+        Some(range)
+    }
+
+    /// Impulse: make the match nearest `offset` in a direction the current
+    /// one and reveal it, as Monaco's find widget moves from the cursor: going
+    /// forward, the first match starting at or after `offset`; going back,
+    /// the last one starting before it; wrapping around either way. `None`
+    /// without matches. [`InputBaseState::next_search_match`] steps from the
+    /// current match instead, wherever the cursor is.
+    pub fn search_match_from(
+        &mut self,
+        offset: usize,
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.sync_search_matcher();
+        let matcher = &mut self.search_session.matcher;
+        let ranges = matcher.matched_ranges();
+        if ranges.is_empty() {
+            return None;
+        }
+        let after = ranges.partition_point(|range| range.start < offset);
+        let ix = match (forward, after) {
+            (true, ix) if ix < ranges.len() => ix,
+            (true, _) => 0,
+            (false, 0) => ranges.len() - 1,
+            (false, ix) => ix - 1,
+        };
+        matcher.set_current_match_index(ix);
+        let range = ranges[ix].clone();
+        let reveal = if forward { range.end } else { range.start };
+        self.scroll_to_with_padding(reveal, None, ScrollPadding::SurroundingLines, cx);
+        cx.notify();
         Some(range)
     }
 
@@ -332,6 +435,8 @@ impl SearchMatcher {
         Self {
             text: "".into(),
             query: None,
+            regex: None,
+            whole_word: false,
             matched_ranges: Rc::new(Vec::new()),
             current_match_ix: 0,
             replacing: false,
@@ -349,13 +454,46 @@ impl SearchMatcher {
     }
 
     pub fn update_query(&mut self, query: &str, case_insensitive: bool) {
-        self.query = (!query.is_empty()).then(|| {
-            AhoCorasick::builder()
-                .ascii_case_insensitive(case_insensitive)
-                .build([query])
-                .expect("failed to build input search query")
-        });
+        let options = SearchOptions {
+            case_sensitive: !case_insensitive,
+            ..SearchOptions::default()
+        };
+        let _ = self.update_query_with(query, options);
+    }
+
+    /// Impulse: set the query and how it matches, and recompute the
+    /// matches. An invalid regular expression is returned, not a panic, and
+    /// leaves no matches.
+    pub fn update_query_with(
+        &mut self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Result<(), regex::Error> {
+        self.query = None;
+        self.regex = None;
+        self.whole_word = options.whole_word;
+        let mut result = Ok(());
+        if query.is_empty() {
+            // Nothing matches an empty query.
+        } else if options.regex {
+            match RegexBuilder::new(query)
+                .case_insensitive(!options.case_sensitive)
+                .multi_line(true)
+                .build()
+            {
+                Ok(regex) => self.regex = Some(regex),
+                Err(error) => result = Err(error),
+            }
+        } else {
+            self.query = Some(
+                AhoCorasick::builder()
+                    .ascii_case_insensitive(!options.case_sensitive)
+                    .build([query])
+                    .expect("failed to build input search query"),
+            );
+        }
         self.update_matches();
+        result
     }
 
     pub fn matched_ranges(&self) -> Rc<Vec<Range<usize>>> {
@@ -434,6 +572,21 @@ impl SearchMatcher {
                     .stream_find_iter(text.as_bytes())
                     .map(|result| result.expect("input search match").range()),
             );
+            if self.whole_word {
+                ranges.retain(|range| is_whole_word(&text, range));
+            }
+        } else if let Some(regex) = &self.regex {
+            // Impulse: regular-expression matches.
+            let text = self.text.to_string();
+            ranges.extend(
+                regex
+                    .find_iter(&text)
+                    .filter(|found| !found.is_empty())
+                    .map(|found| found.range()),
+            );
+            if self.whole_word {
+                ranges.retain(|range| is_whole_word(&text, range));
+            }
         }
         self.matched_ranges = Rc::new(ranges);
         if !self.replacing || self.is_empty() {
@@ -443,6 +596,21 @@ impl SearchMatcher {
         }
         self.replacing = false;
     }
+}
+
+/// Impulse: whether `range` of `text` is bounded by word boundaries, the way
+/// Monaco's whole-word search decides it: at each end, the character outside
+/// or the match's own character there is not a word character.
+fn is_whole_word(text: &str, range: &Range<usize>) -> bool {
+    fn is_word(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+    let matched = &text[range.clone()];
+    let starts = text[..range.start].chars().next_back().is_none_or(|c| !is_word(c))
+        || matched.chars().next().is_some_and(|c| !is_word(c));
+    let ends = text[range.end..].chars().next().is_none_or(|c| !is_word(c))
+        || matched.chars().next_back().is_some_and(|c| !is_word(c));
+    starts && ends
 }
 
 impl Iterator for SearchMatcher {
@@ -485,6 +653,68 @@ mod tests {
         matcher.begin_replacement();
         matcher.update(&Rope::from("foo FOO bar"));
         assert_eq!(matcher.current_match_index(), 1);
+    }
+
+    #[test]
+    fn whole_word_keeps_only_bounded_matches() {
+        let mut matcher = SearchMatcher::new();
+        matcher.update(&Rope::from("foo foo_bar barfoo foo.x (foo) é foo"));
+        let options = SearchOptions {
+            whole_word: true,
+            ..SearchOptions::default()
+        };
+        matcher.update_query_with("foo", options).unwrap();
+        assert_eq!(&*matcher.matched_ranges(), &[0..3, 19..22, 26..29, 34..37]);
+        // A match whose own edge is not a word character needs no boundary.
+        matcher.update_query_with(".x", options).unwrap();
+        assert_eq!(&*matcher.matched_ranges(), &[22..24]);
+    }
+
+    #[test]
+    fn regex_matches_and_reports_invalid_patterns() {
+        let mut matcher = SearchMatcher::new();
+        matcher.update(&Rope::from("let a1 = 1;\nlet B22 = 2;"));
+        let options = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+        matcher.update_query_with(r"[a-z]\d+", options).unwrap();
+        assert_eq!(&*matcher.matched_ranges(), &[4..6, 16..19]);
+        let sensitive = SearchOptions {
+            case_sensitive: true,
+            ..options
+        };
+        matcher.update_query_with(r"[a-z]\d+", sensitive).unwrap();
+        assert_eq!(&*matcher.matched_ranges(), &[4..6]);
+        // Line anchors, and no empty matches.
+        matcher.update_query_with("^let", options).unwrap();
+        assert_eq!(matcher.len(), 2);
+        matcher.update_query_with("x*", options).unwrap();
+        assert!(matcher.is_empty());
+        // An invalid pattern is an error and leaves no matches.
+        assert!(matcher.update_query_with("(let", options).is_err());
+        assert!(matcher.is_empty());
+        assert_eq!(matcher.label(), "0/0");
+    }
+
+    #[test]
+    fn session_keeps_the_error_until_the_query_changes() {
+        let mut session = SearchSession::default();
+        session.matcher.update(&Rope::from("abc"));
+        let options = SearchOptions {
+            regex: true,
+            ..SearchOptions::default()
+        };
+        assert!(session.update_query_with("[", options).is_err());
+        assert!(session.error.is_some());
+        assert!(session.update_query_with("[", options).is_err());
+        assert_eq!(session.update_query_with("[ab]", options), Ok(()));
+        assert!(session.error.is_none());
+        assert_eq!(session.matcher.len(), 2);
+        // The panel's case toggle keeps whole-word and regex.
+        session.update_query("[AB]", false);
+        assert!(session.options.regex);
+        assert_eq!(session.matcher.len(), 0);
     }
 
     #[test]

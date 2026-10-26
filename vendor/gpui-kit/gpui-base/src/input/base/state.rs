@@ -7110,6 +7110,39 @@ mod tests {
         });
     }
 
+    /// Impulse: a find bar steps from the cursor (`search_match_from`), and
+    /// the regex and whole-word options reach the editor's matches.
+    #[gpui::test]
+    fn test_search_match_from_steps_from_an_offset_and_wraps(cx: &mut TestAppContext) {
+        let input_view = InputView::build_editor(cx, |state| state.searchable(false));
+        let mut cx = VisualTestContext::from_window(input_view.window_handle.into(), cx);
+        let input = input_view.input;
+        cx.update(|window, cx| {
+            input.update(cx, |state, cx| {
+                state.set_value("ab abc ab", window, cx);
+                let whole = super::super::SearchOptions {
+                    whole_word: true,
+                    ..Default::default()
+                };
+                assert_eq!(state.set_search_query_with("ab", whole, cx), Ok(2));
+                assert_eq!(state.search_match_from(1, true, cx), Some(7..9));
+                assert_eq!(state.search_session().matcher.current(), Some(1));
+                assert_eq!(state.search_match_from(8, true, cx), Some(0..2));
+                assert_eq!(state.search_match_from(0, false, cx), Some(7..9));
+                assert_eq!(state.search_match_from(7, false, cx), Some(0..2));
+                let regex = super::super::SearchOptions {
+                    regex: true,
+                    ..Default::default()
+                };
+                assert!(state.set_search_query_with("(ab", regex, cx).is_err());
+                assert!(state.search_session().error.is_some());
+                assert_eq!(state.search_match_from(0, true, cx), None);
+                assert_eq!(state.set_search_query_with("ab+c", regex, cx), Ok(1));
+                assert_eq!(state.search_match_from(0, true, cx), Some(3..6));
+            });
+        });
+    }
+
     /// A closed search skips rescanning on edits, so every path that reads
     /// the matches again must see the edited text, not the text at close.
     #[gpui::test]
