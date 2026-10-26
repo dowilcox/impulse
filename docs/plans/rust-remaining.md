@@ -15,10 +15,21 @@ every smoke scenario passes (`scripts/smoke/run.py` with
 
 The largest unknown, so it goes first.
 
-- [ ] **Build and run it on a Mac.** It has never been linked or run on
-  macOS. `scripts/check-macos.sh` type-checks the code behind
-  `cfg(target_os = "macos")` for `aarch64-apple-darwin` from Linux, but
-  linking, GPUI's Metal renderer and how the app looks there are untested.
+- [x] **Build and run it on a Mac.** Done: it builds, links and runs on
+  macOS 26 (Apple silicon), and `cargo test --workspace` passes there.
+  The first runs turned up Mac-only bugs, fixed since: a launch from
+  Finder opened a workspace at `/`, the editor's scroll bounce drew over
+  the tab strip, and AppKit dragged the window from the whole titlebar
+  (tabs included) until the app took the drag over
+  (`app_owns_titlebar_drag`, `window_frame::drag_area`).
+- [ ] **Let all of the titlebar's empty space move the window.** The drag
+  areas are siblings of the controls (`window_frame::drag_area` in
+  `titlebar()`), so the bands above and below the 24–28 pt controls and
+  the 2 pt gaps between tabs don't move the window, where Swift's
+  `TitlebarDragArea` sits behind everything. Full coverage would take one
+  drag area behind the whole bar and `.block_mouse_except_scroll()` on
+  every control (not `occlude`, so the tab strip still scrolls), and
+  every control added later would need it too. Good enough for now.
 - [ ] **Check the macOS-only paths by hand**: the menu bar (`menus.rs`), the
   Dock badge (`badge.rs`), Increase Contrast and Reduce Motion
   (`display_options.rs`), the window frame saved in AppKit's coordinates
