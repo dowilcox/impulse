@@ -49,6 +49,11 @@ because gpui-component builds that struct as a full literal.
 - **A hover answered after the pointer left** (`input/editor/lsp/hover.rs`):
   is dropped. The editor hears mouse moves only while the pointer is over it,
   so nothing took such a hover's highlight away. Not an option: a bug.
+- **A hover's range kept to one line** (`input/editor/lsp/hover.rs`): a
+  range over several lines (a YAML server's hover on a key covers the key's
+  whole block) gives way to the word under the pointer, as Monaco keeps a
+  hover by the pointer. The whole block was highlighted, and the hover stayed
+  open while the pointer was anywhere over it.
 - **Bounds of a range's visible part** (`input/base/state.rs`,
   `visible_range_bounds`): for the hover popover, whose range can run past
   the last visible line.

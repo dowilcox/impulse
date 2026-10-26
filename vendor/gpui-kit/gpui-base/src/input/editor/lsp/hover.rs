@@ -73,7 +73,13 @@ impl InputBaseState<EditorMode> {
                 }
                 match result {
                     Some(hover) => {
-                        if let Some(range) = hover.range {
+                        // Impulse: only a range on one line. A YAML server's
+                        // hover on a key covers the key's whole block (the
+                        // whole file for a top-level key), which highlighted
+                        // all of it and kept the hover open while the pointer
+                        // was anywhere over it; Monaco's hover stays by the
+                        // pointer, so keep the word under it instead.
+                        if let Some(range) = hover.range.filter(|r| r.start.line == r.end.line) {
                             let start = editor.text.position_to_offset(&range.start);
                             let end = editor.text.position_to_offset(&range.end);
                             symbol_range = start..end;
@@ -218,6 +224,18 @@ mod tests {
             assert_eq!(bounds.bottom(), state.text_bounds().unwrap().bottom());
             assert!(state.visible_range_bounds(&(len..len)).is_none());
         });
+    }
+
+    #[gpui::test]
+    fn a_range_over_many_lines_keeps_to_the_word_under_the_pointer(cx: &mut TestAppContext) {
+        let (state, mut cx, _) = editor(cx);
+        let inside = cx.update(|_, cx| state.read(cx).range_to_bounds(&(4..4)).unwrap().center());
+        cx.simulate_mouse_move(inside, None, Modifiers::none());
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        let range = cx.update(|_, cx| state.read(cx).hover_popover().unwrap().symbol_range.clone());
+        // "  key0: value": the word "key0", not the whole text.
+        assert_eq!(range, 2..6);
     }
 
     #[gpui::test]
