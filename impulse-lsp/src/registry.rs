@@ -14,17 +14,16 @@ use lsp_types::{
 
 use crate::client::LspClient;
 
-/// `command` on `PATH`, or as given when it's a path.
+/// `command` on the login shell's `PATH` or in the managed servers' folder
+/// (the Swift `resolveLspCommandPath`), or as given when it's a path. Not
+/// the process's own `PATH`: an app opened from Finder or the Dock has
+/// launchd's, which has neither.
 pub fn resolve_command(command: &str) -> Option<PathBuf> {
     let candidate = Path::new(command);
     if candidate.components().count() > 1 {
         return candidate.is_file().then(|| candidate.to_path_buf());
     }
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join(command))
-            .find(|full| full.is_file())
-    })
+    crate::managed::resolve(command)
 }
 
 /// LSP's language id for Impulse's (they differ only for shell scripts).

@@ -140,6 +140,10 @@ impl LspClient {
         let mut child = Command::new(command)
             .args(args)
             .current_dir(root)
+            // The login shell's PATH with the managed servers first (the
+            // Swift `toolEnvironment`): most servers are Node scripts that
+            // find `node` through it, and launchd's PATH has no Homebrew.
+            .env("PATH", crate::managed::tool_path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // A server's log goes nowhere unless IMPULSE_LSP_STDERR is set, for
