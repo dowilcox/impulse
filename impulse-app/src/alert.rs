@@ -4,16 +4,24 @@
 //! first being the default (Return) one, in a 228-wide block: stacked, or
 //! two side by side (the default on the right) when both titles fit half of
 //! it. A wide accessory widens the alert. Escape picks the button titled
-//! "Cancel".
+//! "Cancel", and ⌘D the one titled "Don't Save", as in `NSAlert`.
 //!
 //! The colors are the system's, not the theme's, as `NSAlert` has them.
 
 use std::rc::Rc;
 
-use gpui_kit::{div, prelude::*, px, AnyElement, App, Hsla, MouseButton, SharedString, Window};
+use gpui_kit::{
+    actions, div, prelude::*, px, AnyElement, App, Entity, Hsla, KeyBinding, MouseButton,
+    SharedString, Window,
+};
 
 use crate::workbench_chrome::hsla;
 use impulse_kit::chrome::Rgba;
+
+actions!(alert, [DontSave]);
+
+/// The key context of an alert that has a "Don't Save" button.
+const CONTEXT: &str = "Alert";
 
 pub(crate) type AlertAction = Rc<dyn Fn(&mut Window, &mut App)>;
 pub(crate) type Accessory = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
@@ -114,8 +122,36 @@ impl Alert {
             })
             .and_then(|index| alert.buttons.get(index))
             .map(|(_, action)| action.clone());
+        let dont_save = alert
+            .buttons
+            .iter()
+            .find(|(title, _)| title.as_ref() == "Don't Save")
+            .map(|(_, action)| action.clone());
+        // ⌘D reaches the alert while its body has the focus (inside the
+        // dialog's, so Return and Escape still reach the dialog).
+        let focus = cx.focus_handle();
+        let first = std::cell::Cell::new(true);
+        if dont_save.is_some() && cfg!(target_os = "macos") {
+            static BOUND: std::sync::Once = std::sync::Once::new();
+            BOUND.call_once(|| cx.bind_keys([KeyBinding::new("cmd-d", DontSave, Some(CONTEXT))]));
+        }
         crate::overlays::open_dialog(window, cx, move |dialog, window, cx| {
             let (default, cancel) = (default.clone(), cancel.clone());
+            let body = body(&alert, colors, width, window, cx);
+            let body = match dont_save.clone() {
+                Some(action) => {
+                    if first.replace(false) {
+                        window.focus(&focus, cx);
+                    }
+                    div()
+                        .track_focus(&focus)
+                        .key_context(CONTEXT)
+                        .on_action(move |_: &DontSave, window, cx| action(window, cx))
+                        .child(body)
+                        .into_any_element()
+                }
+                None => body,
+            };
             dialog
                 .w(px(width))
                 .p_0()
@@ -137,7 +173,7 @@ impl Alert {
                     }
                     false
                 })
-                .child(body(&alert, colors, width, window, cx))
+                .child(body)
         });
     }
 }
@@ -178,6 +214,31 @@ impl Colors {
 const BUTTONS: f32 = 228.;
 const SIDE_BY_SIDE_GAP: f32 = 12.;
 
+/// How wide `text` is in an alert's 13-point UI font.
+pub(crate) fn text_width(
+    text: &SharedString,
+    weight: gpui_kit::FontWeight,
+    window: &mut Window,
+) -> f32 {
+    let run = gpui_kit::TextRun {
+        len: text.len(),
+        font: gpui_kit::Font {
+            weight,
+            ..gpui_kit::font(crate::workbench::UI_FONT)
+        },
+        color: gpui_kit::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    f32::from(
+        window
+            .text_system()
+            .shape_line(text.clone(), px(13.), &[run], None)
+            .width,
+    )
+}
+
 fn body(
     alert: &Alert,
     colors: Colors,
@@ -185,25 +246,8 @@ fn body(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let measure = |text: &SharedString, weight: gpui_kit::FontWeight| {
-        let run = gpui_kit::TextRun {
-            len: text.len(),
-            font: gpui_kit::Font {
-                weight,
-                ..gpui_kit::font(crate::workbench::UI_FONT)
-            },
-            color: colors.text,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        f32::from(
-            window
-                .text_system()
-                .shape_line(text.clone(), px(13.), &[run], None)
-                .width,
-        )
-    };
+    let mut measure =
+        |text: &SharedString, weight: gpui_kit::FontWeight| text_width(text, weight, window);
     let text = |content: SharedString| {
         div()
             .text_size(px(13.))
@@ -309,7 +353,14 @@ fn body(
         .into_any_element()
 }
 
-/// `NSButton`'s checkbox in an alert: a 16-point box, then its title.
+/// How wide `checkbox` is with `title`: for `Alert::accessory`, so a long
+/// title widens the alert as `NSAlert` grows around its accessory.
+pub(crate) fn checkbox_width(title: &SharedString, window: &mut Window) -> f32 {
+    16. + 9. + text_width(title, gpui_kit::FontWeight::NORMAL, window).ceil()
+}
+
+/// `NSButton`'s checkbox in an alert: a 16-point box, then its title
+/// (wrapping when it's wider than the alert).
 pub(crate) fn checkbox(
     id: &'static str,
     title: impl Into<SharedString>,
@@ -323,10 +374,12 @@ pub(crate) fn checkbox(
         .flex()
         .items_center()
         .gap(px(9.))
+        .max_w_full()
         .cursor_pointer()
         .on_click(move |_, window, cx| toggle(window, cx))
         .child(
             div()
+                .flex_none()
                 .size(px(16.))
                 .flex()
                 .items_center()
@@ -343,6 +396,7 @@ pub(crate) fn checkbox(
         )
         .child(
             div()
+                .min_w_0()
                 .text_size(px(13.))
                 .line_height(px(16.))
                 .text_color(hsla(ink.opacity(0.88)))
@@ -350,39 +404,68 @@ pub(crate) fn checkbox(
         )
 }
 
-/// `NSTextField` in an alert: the field color, a hairline, text at 13.
+/// `NSTextField` in an alert: the field color, a hairline that turns into
+/// the accent's focus ring, text at 13.
 pub(crate) fn field(
-    state: &gpui_kit::Entity<gpui_kit::component::input::InputState>,
+    state: &Entity<gpui_kit::component::input::InputState>,
     width: f32,
     height: f32,
     light: bool,
 ) -> impl IntoElement {
-    use gpui_kit::component::input::Input;
-    use gpui_kit::component::Sizable as _;
-    let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
-    div()
-        .w(px(width))
-        .h(px(height))
-        .flex()
-        .items_center()
-        .px(px(6.))
-        .rounded(px(7.))
-        .border_1()
-        .border_color(hsla(ink.opacity(0.1)))
-        // NSTextField's fill: opaque, not a tint of what's behind.
-        .bg(if light {
-            gpui_kit::white()
-        } else {
-            hsla(Rgba::from_hex("#171717"))
-        })
-        .text_size(px(13.))
-        .child(
-            Input::new(state)
-                .small()
-                .appearance(false)
-                .px_0()
-                .text_size(px(13.)),
-        )
+    Field {
+        state: state.clone(),
+        width,
+        height,
+        light,
+    }
+}
+
+/// `field`, drawn when the window is at hand to say whether it's focused.
+#[derive(IntoElement)]
+struct Field {
+    state: Entity<gpui_kit::component::input::InputState>,
+    width: f32,
+    height: f32,
+    light: bool,
+}
+
+impl RenderOnce for Field {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        use gpui_kit::component::input::Input;
+        use gpui_kit::component::Sizable as _;
+        use gpui_kit::Focusable as _;
+        let light = self.light;
+        let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
+        let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
+        let ring = Colors::new(light).default.opacity(0.75);
+        div()
+            .w(px(self.width))
+            .h(px(self.height))
+            .flex()
+            .items_center()
+            .px(px(6.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(if focused {
+                ring
+            } else {
+                hsla(ink.opacity(0.1))
+            })
+            // NSTextField's fill: opaque, not a tint of what's behind.
+            .bg(if light {
+                gpui_kit::white()
+            } else {
+                hsla(Rgba::from_hex("#171717"))
+            })
+            .text_size(px(13.))
+            .child(
+                Input::new(&self.state)
+                    .small()
+                    .appearance(false)
+                    .px_0()
+                    .text_size(px(13.)),
+            )
+    }
 }
 
 /// The project trust prompt's list of commands (an `NSTextView` in a bezel,

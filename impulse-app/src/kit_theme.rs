@@ -71,7 +71,9 @@ pub fn apply(
 
     c.popover = hsla(p.overlay.mix(p.text, 0.02));
     c.popover_foreground = text;
-    c.overlay = hsla(Rgba::BLACK.opacity(0.3));
+    // A Mac sheet doesn't dim the window under it (the backdrop still
+    // takes the clicks); Linux dialogs keep GPUI Kit's dimming.
+    c.overlay = hsla(Rgba::BLACK.opacity(if cfg!(target_os = "macos") { 0.0 } else { 0.3 }));
     c.window_border = hsla(p.hairline_strong);
 
     c.list = hsla(p.overlay);

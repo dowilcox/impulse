@@ -659,6 +659,11 @@ impl AgentIntegration {
         let _ = self.workbench.update(cx, |_, cx| cx.notify());
     }
 
+    /// Whether the sheet shows Copy, Install or Remove (`primary`).
+    fn has_primary(&self) -> bool {
+        self.model.agent == Agent::Other || self.model.after.is_some()
+    }
+
     fn primary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.model.agent == Agent::Other {
             cx.write_to_clipboard(ClipboardItem::new_string(self.model.diff().join("\n")));
@@ -878,7 +883,9 @@ impl Render for AgentIntegration {
                 },
             ));
         }
-        let primary = if m.agent == Agent::Other {
+        let primary = if !self.has_primary() {
+            None
+        } else if m.agent == Agent::Other {
             Some(chrome_button(
                 "agent-copy",
                 "Copy",
@@ -887,7 +894,7 @@ impl Render for AgentIntegration {
                 false,
                 &p,
             ))
-        } else if m.after.is_some() {
+        } else {
             let label = format!(
                 "{} {}",
                 if m.installed { "Remove" } else { "Install" },
@@ -909,8 +916,6 @@ impl Render for AgentIntegration {
                 false,
                 &p,
             ))
-        } else {
-            None
         };
         div()
             .flex()
@@ -1093,10 +1098,23 @@ impl Workbench {
         // The sheet's own color, as the Swift sheet's `overlay` background.
         let background = hsla(self.palette.overlay);
         crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
+            let on_enter = sheet.clone();
             dialog
                 .w(px(660.))
+                // The Swift sheet's 20 all round.
+                .p(px(20.))
                 .bg(background)
                 .close_button(false)
+                // Return is the primary button's (`.defaultAction`), not
+                // Close's; the sheet closes when that's done.
+                .on_ok(move |_, window, cx| {
+                    on_enter.update(cx, |sheet, cx| {
+                        if sheet.has_primary() && !sheet.busy {
+                            sheet.primary(window, cx);
+                        }
+                    });
+                    false
+                })
                 .child(sheet.clone())
         });
     }

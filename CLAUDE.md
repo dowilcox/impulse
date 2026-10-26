@@ -301,8 +301,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           wide, stacked pill buttons, an accessory, fields
                           and checkboxes; trust prompts, confirmations,
                           unsaved changes, git errors, name and tag
-                          prompts), overlays.rs (every dialog opens there,
-                          so debug builds report where it is; the palette,
+                          prompts), overlays.rs (every dialog opens there:
+                          hung from the titlebar as a sheet, not dimming
+                          the window on macOS, and debug builds report
+                          where it is; the palette,
                           the agents inbox and toasts carry the same probe,
                           and overlays::frame_start forgets one closed
                           since the last frame), toasts.rs (the Swift

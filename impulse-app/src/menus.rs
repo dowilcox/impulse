@@ -24,14 +24,19 @@ actions!(
         Quit,
         MenuCopy,
         MenuPaste,
+        MenuPasteAndMatchStyle,
         MenuSelectAll,
         Open,
         CloseWindow,
         Minimize,
         Zoom,
+        BringAllToFront,
         Help,
     ]
 );
+
+/// A key context no element has: bindings in it only label menu items.
+const MENU_ONLY: &str = "ImpulseMenuOnly";
 
 /// Tab 1 to 9 (Window menu).
 #[derive(Clone, PartialEq, Debug, serde::Deserialize, gpui_kit::Action)]
@@ -53,18 +58,24 @@ fn action(fixed: Fixed) -> Box<dyn gpui_kit::Action> {
         Fixed::Cut => Box::new(Cut),
         Fixed::Copy => Box::new(MenuCopy),
         Fixed::Paste => Box::new(MenuPaste),
+        Fixed::PasteAndMatchStyle => Box::new(MenuPasteAndMatchStyle),
         Fixed::SelectAll => Box::new(MenuSelectAll),
         Fixed::Open => Box::new(Open),
         Fixed::CloseWindow => Box::new(CloseWindow),
         Fixed::Minimize => Box::new(Minimize),
         Fixed::Zoom => Box::new(Zoom),
+        Fixed::BringAllToFront => Box::new(BringAllToFront),
+        // A submenu macOS fills (`native_items`), never run.
+        Fixed::Services => Box::new(gpui_kit::NoAction),
         Fixed::Tab(number) => Box::new(SelectTab { number }),
         Fixed::Help => Box::new(Help),
     }
 }
 
-/// The fixed items' keys (the editing ones the editor and terminal bind
-/// themselves), and the app-wide actions.
+/// The fixed items' keys, and the app-wide actions. The menu takes an
+/// item's key equivalent from the keymap, but the editor and terminal bind
+/// their own Copy, Paste and Select All: those are bound in a context no
+/// element has, only to label the menu.
 pub fn init(cx: &mut App) {
     let platform = Platform::current();
     let mut keys = Vec::new();
@@ -78,7 +89,17 @@ pub fn init(cx: &mut App) {
         Fixed::Help,
     ];
     fixed.extend((1..=9).map(Fixed::Tab));
-    for item in fixed {
+    let labels = [
+        Fixed::Copy,
+        Fixed::Paste,
+        Fixed::PasteAndMatchStyle,
+        Fixed::SelectAll,
+    ];
+    let items = fixed
+        .into_iter()
+        .map(|item| (item, None))
+        .chain(labels.into_iter().map(|item| (item, Some(MENU_ONLY))));
+    for (item, context) in items {
         let Some(shortcut) =
             menus::fixed_shortcut(item, platform).and_then(|t| Shortcut::parse(&t))
         else {
@@ -89,7 +110,9 @@ pub fn init(cx: &mut App) {
             keys.push(KeyBinding::load(
                 &text,
                 action(item),
-                None,
+                context
+                    .and_then(|c| gpui_kit::KeyBindingContextPredicate::parse(c).ok())
+                    .map(Into::into),
                 false,
                 None,
                 cx.keyboard_mapper().as_ref(),
@@ -102,6 +125,11 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &Help, cx| cx.open_url(menus::HELP_URL));
+    #[cfg(target_os = "macos")]
+    {
+        cx.on_action(|_: &About, _| mac::about_panel());
+        cx.on_action(|_: &BringAllToFront, _| mac::arrange_in_front());
+    }
     set_app_menus(cx);
     // Shortcuts changed: show the new ones (after the keymap is rebound).
     let mut overrides = SettingsStore::get(cx).keybinding_overrides.clone();
@@ -115,11 +143,65 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+/// NSApplication's own About panel and Bring All to Front, as the Swift
+/// menu's `orderFrontStandardAboutPanel:` and `arrangeInFront:`.
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+mod mac {
+    use objc::runtime::{Class, Object};
+    use objc::{msg_send, sel, sel_impl};
+
+    fn app() -> Option<*mut Object> {
+        let class = Class::get("NSApplication")?;
+        // SAFETY: AppKit's shared application lives for the whole process.
+        let app: *mut Object = unsafe { msg_send![class, sharedApplication] };
+        (!app.is_null()).then_some(app)
+    }
+
+    /// The name and version given, so they show without a bundle's
+    /// Info.plist too (a `cargo run` build).
+    pub fn about_panel() {
+        let (Some(app), Some(string), Some(dictionary)) =
+            (app(), Class::get("NSString"), Class::get("NSDictionary"))
+        else {
+            return;
+        };
+        let text = |s: &str| -> *mut Object {
+            let s = std::ffi::CString::new(s).unwrap_or_default();
+            // SAFETY: an autoreleased NSString copied from the C string.
+            unsafe { msg_send![string, stringWithUTF8String: s.as_ptr()] }
+        };
+        let keys = [text("ApplicationName"), text("ApplicationVersion")];
+        let values = [text("Impulse"), text(env!("CARGO_PKG_VERSION"))];
+        // SAFETY: both arrays hold `count` live NSStrings, which the
+        // dictionary retains; the panel copies what it shows.
+        unsafe {
+            let options: *mut Object = msg_send![dictionary,
+                dictionaryWithObjects: values.as_ptr()
+                forKeys: keys.as_ptr()
+                count: keys.len()];
+            let _: () = msg_send![app, orderFrontStandardAboutPanelWithOptions: options];
+        }
+    }
+
+    pub fn arrange_in_front() {
+        if let Some(app) = app() {
+            // SAFETY: a standard NSApplication action; the sender may be nil.
+            unsafe {
+                let _: () = msg_send![app, arrangeInFront: std::ptr::null_mut::<Object>()];
+            }
+        }
+    }
+}
+
 fn native_items(items: &[Item]) -> Vec<MenuItem> {
     items
         .iter()
         .map(|item| match item {
             Item::Command(title, id) => MenuItem::action(*title, RunCommand::new(*id)),
+            Item::Fixed(title, Fixed::Services) => {
+                MenuItem::os_submenu(*title, gpui_kit::SystemMenuType::Services)
+            }
             Item::Fixed(title, fixed) => MenuItem::Action {
                 name: (*title).into(),
                 action: action(*fixed),
@@ -163,6 +245,8 @@ fn popup_items(
     for item in items {
         menu = match item {
             Item::Command(title, id) => menu.menu(*title, Box::new(RunCommand::new(*id))),
+            // macOS's alone.
+            Item::Fixed(_, Fixed::Services) => continue,
             Item::Fixed(title, fixed) => menu.menu(*title, action(*fixed)),
             Item::Submenu(title, items) => {
                 let items = items.clone();
@@ -210,7 +294,12 @@ impl Workbench {
             .on_action(cx.listener(|w, _: &CloseWindow, window, cx| w.close_window(window, cx)))
             .on_action(cx.listener(|_, _: &Minimize, window, _| window.minimize_window()))
             .on_action(cx.listener(|_, _: &Zoom, window, _| window.zoom_window()))
-            .on_action(cx.listener(|this, _: &About, window, cx| this.show_about(window, cx)))
+            // macOS shows its own About panel (`menus::init`).
+            .when(!cfg!(target_os = "macos"), |root| {
+                root.on_action(
+                    cx.listener(|this, _: &About, window, cx| this.show_about(window, cx)),
+                )
+            })
             .on_action(cx.listener(|this, tab: &SelectTab, window, cx| {
                 let count = this.workspace().tabs.len();
                 if count == 0 {
@@ -231,6 +320,11 @@ impl Workbench {
                 window.dispatch_action(Box::new(crate::terminal_view::Copy), cx);
             }))
             .on_action(cx.listener(|_, _: &MenuPaste, window, cx| {
+                window.dispatch_action(Box::new(gpui_kit::component::input::Paste), cx);
+                window.dispatch_action(Box::new(crate::terminal_view::Paste), cx);
+            }))
+            // Every paste here is plain text already.
+            .on_action(cx.listener(|_, _: &MenuPasteAndMatchStyle, window, cx| {
                 window.dispatch_action(Box::new(gpui_kit::component::input::Paste), cx);
                 window.dispatch_action(Box::new(crate::terminal_view::Paste), cx);
             }))
@@ -266,7 +360,7 @@ impl Workbench {
         .detach();
     }
 
-    /// About Impulse: the name and version.
+    /// About Impulse on Linux: the name and version.
     fn show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let version = env!("CARGO_PKG_VERSION");
         crate::overlays::open_dialog(window, cx, move |dialog, _, _| {

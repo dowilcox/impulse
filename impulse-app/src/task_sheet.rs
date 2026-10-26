@@ -226,15 +226,11 @@ impl TaskSheet {
             cx.new(|cx| InputState::new(window, cx).placeholder("e.g. Fix the flaky login test"));
         let base = cx.new(|cx| InputState::new(window, cx).placeholder("base branch"));
         let brief = cx.new(|cx| TextareaState::new(window, cx));
+        // Return reaches the dialog's `on_ok` (a single-line field passes
+        // Enter on), which creates the task: handling it here too would
+        // create it twice.
         let subscriptions = vec![
-            cx.subscribe_in(
-                &title,
-                window,
-                |sheet, _, event: &InputEvent, window, cx| match event {
-                    InputEvent::PressEnter { .. } => sheet.create(window, cx),
-                    _ => cx.notify(),
-                },
-            ),
+            cx.subscribe_in(&title, window, |_, _, _: &InputEvent, _, cx| cx.notify()),
             cx.subscribe_in(&base, window, |_, _, _: &InputEvent, _, cx| cx.notify()),
         ];
         let mut sheet = TaskSheet {

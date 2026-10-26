@@ -654,7 +654,7 @@ impl SettingsView {
 
     // MARK: Drawing
 
-    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn sidebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
         let searching = self.is_searching(cx);
         let mut column = div()
@@ -676,6 +676,15 @@ impl SettingsView {
                     .mb(px(8.))
                     .rounded(px(metrics::RADIUS))
                     .bg(hsla(p.raised))
+                    // The focus ring, as `chrome_text_field` draws it.
+                    .border_1()
+                    .border_color(hsla(
+                        if self.search.read(cx).focus_handle(cx).is_focused(window) {
+                            p.focus_ring
+                        } else {
+                            p.raised
+                        },
+                    ))
                     .child(icon("search", 12., p.text_tertiary))
                     .child(
                         div()
@@ -1079,7 +1088,13 @@ impl SettingsView {
                             .px(px(6.))
                             .rounded(px(5.))
                             .border_1()
-                            .border_color(hsla(self.palette.hairline_strong))
+                            .border_color(hsla(
+                                if state.read(cx).focus_handle(cx).is_focused(window) {
+                                    self.palette.focus_ring
+                                } else {
+                                    self.palette.hairline_strong
+                                },
+                            ))
                             .bg(hsla(if self.palette.is_light {
                                 Rgba::WHITE
                             } else {
@@ -1560,7 +1575,7 @@ impl Render for SettingsView {
             .flex()
             .size_full()
             .bg(hsla(p.content))
-            .child(self.sidebar(cx))
+            .child(self.sidebar(window, cx))
             .child(div().w(px(1.)).h_full().flex_none().bg(hsla(p.hairline)))
             .child(self.content(window, cx))
     }
@@ -1675,8 +1690,9 @@ impl Styled for TextField {
 }
 
 impl RenderOnce for TextField {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         use gpui_kit::component::ActiveTheme as _;
+        let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
         let theme = cx.theme();
         let background = if theme.is_dark() {
             gpui_kit::rgb(0x171717)
@@ -1690,7 +1706,9 @@ impl RenderOnce for TextField {
             .px(px(6.))
             .rounded(px(5.))
             .border_1()
-            .border_color(theme.input)
+            // The hairline turns into the focus ring (`ChromePalette`'s,
+            // GPUI Kit's `ring`).
+            .border_color(if focused { theme.ring } else { theme.input })
             .bg(background)
             .child(
                 Input::new(&self.state)

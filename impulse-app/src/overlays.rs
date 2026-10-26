@@ -6,14 +6,18 @@
 use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{AnyElement, App, IntoElement as _, ParentElement as _, Styled as _, Window};
+use impulse_kit::chrome::metrics;
 
 /// GPUI Kit's `open_dialog`, with the probe in the dialog's body and the
-/// UI font's line height (the sheets' SwiftUI text, not GPUI's 1.6).
+/// UI font's line height (the sheets' SwiftUI text, not GPUI's 1.6). It
+/// hangs from the titlebar's bottom edge, as a sheet does, rather than a
+/// tenth of the way down.
 pub(crate) fn open_dialog<F>(window: &mut Window, cx: &mut App, build: F)
 where
     F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
 {
     window.open_dialog(cx, move |dialog, window, cx| {
+        let dialog = dialog.margin_top(gpui_kit::px(metrics::TITLEBAR_HEIGHT));
         build(dialog, window, cx)
             .line_height(gpui_kit::relative(crate::workbench::UI_LINE_HEIGHT))
             .child(probe())

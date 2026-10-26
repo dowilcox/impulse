@@ -18,11 +18,17 @@ pub enum Fixed {
     Cut,
     Copy,
     Paste,
+    /// Paste as plain text (macOS only); every paste here is plain text.
+    PasteAndMatchStyle,
     SelectAll,
     Open,
     CloseWindow,
     Minimize,
     Zoom,
+    /// Window ▸ Bring All to Front (macOS only).
+    BringAllToFront,
+    /// The app menu's Services submenu, filled by macOS.
+    Services,
     /// Tab 1 to 9 of the active workspace (9 is the last).
     Tab(u8),
     Help,
@@ -65,6 +71,7 @@ pub fn fixed_shortcut(fixed: Fixed, platform: Platform) -> Option<String> {
         Fixed::Cut => if mac { "Cmd+X" } else { "Ctrl+X" }.into(),
         Fixed::Copy => if mac { "Cmd+C" } else { "Ctrl+Shift+C" }.into(),
         Fixed::Paste => if mac { "Cmd+V" } else { "Ctrl+Shift+V" }.into(),
+        Fixed::PasteAndMatchStyle if mac => "Alt+Shift+Cmd+V".into(),
         Fixed::SelectAll => if mac { "Cmd+A" } else { "Ctrl+A" }.into(),
         _ => return None,
     })
@@ -92,6 +99,8 @@ pub fn main_menu(platform: Platform) -> Vec<Menu> {
                 Separator,
                 command("Settings…", "open_settings"),
                 command("Keyboard Shortcuts…", "open_keybindings"),
+                Separator,
+                fixed("Services", Fixed::Services),
                 Separator,
                 fixed("Hide Impulse", Fixed::Hide),
                 fixed("Hide Others", Fixed::HideOthers),
@@ -136,20 +145,26 @@ pub fn main_menu(platform: Platform) -> Vec<Menu> {
         title: "File",
         items: file,
     });
+    let mut edit = vec![
+        fixed("Undo", Fixed::Undo),
+        fixed("Redo", Fixed::Redo),
+        Separator,
+        fixed("Cut", Fixed::Cut),
+        fixed("Copy", Fixed::Copy),
+        fixed("Paste", Fixed::Paste),
+    ];
+    if mac {
+        edit.push(fixed("Paste and Match Style", Fixed::PasteAndMatchStyle));
+    }
+    edit.extend([
+        fixed("Select All", Fixed::SelectAll),
+        Separator,
+        command("Find…", "find"),
+        command("Go to Line…", "go_to_line"),
+    ]);
     menus.push(Menu {
         title: "Edit",
-        items: vec![
-            fixed("Undo", Fixed::Undo),
-            fixed("Redo", Fixed::Redo),
-            Separator,
-            fixed("Cut", Fixed::Cut),
-            fixed("Copy", Fixed::Copy),
-            fixed("Paste", Fixed::Paste),
-            fixed("Select All", Fixed::SelectAll),
-            Separator,
-            command("Find…", "find"),
-            command("Go to Line…", "go_to_line"),
-        ],
+        items: edit,
     });
     menus.push(Menu {
         title: "View",
@@ -248,6 +263,8 @@ pub fn main_menu(platform: Platform) -> Vec<Menu> {
             fixed("Minimize", Fixed::Minimize),
             fixed("Zoom", Fixed::Zoom),
             Separator,
+            fixed("Bring All to Front", Fixed::BringAllToFront),
+            Separator,
         ]);
     }
     window.extend([
@@ -307,6 +324,41 @@ mod tests {
         mac.sort();
         linux.sort();
         assert_eq!(mac, linux);
+    }
+
+    #[test]
+    fn the_mac_only_items_stay_off_linux() {
+        fn fixed_items(items: &[Item], out: &mut Vec<Fixed>) {
+            for item in items {
+                match item {
+                    Item::Fixed(_, fixed) => out.push(*fixed),
+                    Item::Submenu(_, items) => fixed_items(items, out),
+                    _ => {}
+                }
+            }
+        }
+        let fixed = |p| {
+            let mut out = Vec::new();
+            for menu in main_menu(p) {
+                fixed_items(&menu.items, &mut out);
+            }
+            out
+        };
+        let (mac, linux) = (fixed(Platform::Mac), fixed(Platform::Linux));
+        for item in [
+            Fixed::Services,
+            Fixed::BringAllToFront,
+            Fixed::PasteAndMatchStyle,
+        ] {
+            assert!(mac.contains(&item), "{item:?}");
+            assert!(!linux.contains(&item), "{item:?}");
+        }
+        // Services sits between Keyboard Shortcuts and Hide, as in AppKit.
+        let app = &main_menu(Platform::Mac)[0].items;
+        let at = |wanted: &Item| app.iter().position(|i| i == wanted).unwrap();
+        let services = at(&Item::Fixed("Services", Fixed::Services));
+        assert!(at(&Item::Command("Keyboard Shortcuts…", "open_keybindings")) < services);
+        assert!(services < at(&Item::Fixed("Hide Impulse", Fixed::Hide)));
     }
 
     #[test]

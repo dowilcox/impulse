@@ -3,18 +3,15 @@
 //! with Undo), Rename Workspace, and the one-field prompt it uses.
 
 use std::path::PathBuf;
-use std::rc::Rc;
 
 use crate::toasts::Toast;
-use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{prelude::*, Context, Window};
 use impulse_kit::recent_workspaces;
 
 use crate::workbench::Workbench;
 use crate::workspace::Kind;
-
-type Submit = Rc<dyn Fn(&mut Workbench, String, &mut Window, &mut Context<Workbench>)>;
 
 /// Where the recent folders are kept.
 pub(crate) fn recents_file() -> PathBuf {
@@ -101,30 +98,17 @@ impl Workbench {
         submit: impl Fn(&mut Workbench, String, &mut Window, &mut Context<Workbench>) + 'static,
     ) {
         let input = cx.new(|cx| InputState::new(window, cx).default_value(initial.to_string()));
-        let submit: Submit = Rc::new(submit);
         let workbench = cx.entity().downgrade();
-        let done: Rc<WindowFn> = {
-            let (input, submit) = (input.clone(), submit.clone());
-            Rc::new(move |window, cx| {
+        // Return reaches the alert as its default button (a one-line field
+        // passes Enter on), so the field itself doesn't submit.
+        let done = {
+            let input = input.clone();
+            move |window: &mut Window, cx: &mut gpui_kit::App| {
                 let text = input.read(cx).value().to_string();
                 window.close_dialog(cx);
-                let submit = submit.clone();
                 let _ = workbench.update(cx, |this, cx| submit(this, text, window, cx));
-            })
+            }
         };
-        // Return arrives while the workbench is already being updated.
-        cx.subscribe_in(
-            &input,
-            window,
-            move |this, input, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    let text = input.read(cx).value().to_string();
-                    window.close_dialog(cx);
-                    submit(this, text, window, cx);
-                }
-            },
-        )
-        .detach();
         let first = std::cell::Cell::new(true);
         let light = self.palette.is_light;
         let mut alert = crate::alert::Alert::new(title.to_string());
@@ -141,11 +125,8 @@ impl Workbench {
                 }
                 crate::alert::field(&input, 260., 24., light).into_any_element()
             })
-            .button(confirm, move |window, cx| done(window, cx))
+            .button(confirm, done)
             .button("Cancel", |window, cx| window.close_dialog(cx))
             .show(window, cx);
     }
 }
-
-/// What runs after the prompt.
-type WindowFn = dyn Fn(&mut Window, &mut gpui_kit::App);

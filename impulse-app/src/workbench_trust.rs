@@ -78,11 +78,12 @@ impl Workbench {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| folder.clone());
+        // The disk itself has no parent to offer.
         let parent = Path::new(&folder)
             .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let offer_parent = offers_parent(&parent);
+            .map(|p| p.to_string_lossy().into_owned());
+        let offer_parent = parent.as_deref().is_some_and(offers_parent);
+        let parent = parent.unwrap_or_default();
         let trust_parent = Rc::new(std::cell::Cell::new(false));
         let workbench = cx.entity().downgrade();
         let shown_folder = abbreviate_home(&folder);
@@ -142,11 +143,15 @@ impl Workbench {
         let mut alert =
             crate::alert::Alert::new(title).message(format!("{ABOUT}\n\n{shown_folder}"));
         if offer_parent {
-            alert = alert.accessory(None, move |_, _| {
+            let label: gpui_kit::SharedString =
+                format!("Trust everything in \u{201c}{shown_parent}\u{201d}").into();
+            // NSAlert grows to fit its accessory; a very long path wraps.
+            let width = crate::alert::checkbox_width(&label, window).min(440.);
+            alert = alert.accessory(Some(width), move |_, _| {
                 let checked = trust_parent.clone();
                 crate::alert::checkbox(
                     "trust-parent",
-                    format!("Trust everything in \u{201c}{shown_parent}\u{201d}"),
+                    label.clone(),
                     checked.get(),
                     light,
                     move |window, _| {

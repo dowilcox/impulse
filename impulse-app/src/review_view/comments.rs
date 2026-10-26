@@ -513,7 +513,7 @@ impl ReviewView {
             }
         );
         let view = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
+        crate::overlays::open_dialog(window, cx, move |dialog, _, _| {
             let (ok, confirm) = (view.clone(), view.clone());
             dialog
                 .title("Delete every review comment in this repository?")
