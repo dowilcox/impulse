@@ -81,6 +81,49 @@ because gpui-component builds that struct as a full literal.
 - **Placeholder color** (`input/base/state.rs`, `input/base/element.rs`):
   `InputState::placeholder_color`, for a field whose placeholder isn't
   `muted_foreground` (Impulse's search fields, as NSSearchField draws them).
+- **Selectable text for a document** (`selectable_text.rs`, its export in
+  `lib.rs`), for the Markdown preview: `SelectableText::runs` lays the text
+  out in styled runs; `on_click(ranges, f)` makes links, with a pointing
+  hand, that a press and release on the same link without dragging follows
+  (a drag from one selects); `group(&SelectableTextGroup)` makes separate
+  elements (a paragraph wrapped word by word) one participant, selected,
+  double-clicked and copied as one text; `document(&SelectableTextDocument)`
+  and `SelectableTextDocument::select_all` select a document's runs whole
+  until the next press, as ⌘A. Each is off unless used. Two fixes that
+  aren't options: a selection change notifies the view the text is in, so
+  one under a cached view (`Entity::cached`) repaints its selection rather
+  than replaying the frame before; and a run outside the selection no
+  longer asks for the window's selected text twice a frame (a walk over
+  every participant), which can't change unless the run is selected.
+- **View zones** (`input/editor/display_map/view_zones.rs`,
+  `input/base/view_zones.rs`; `display_map.rs`, `text_wrapper.rs`,
+  `element.rs`, `layout.rs`, `state.rs`, `indent.rs`): Monaco's
+  `changeViewZones`. `ViewZone::new(before_line)` (or `after_line`) with
+  `.lines(n)` and/or `.px(h)` and an optional `.element(f)`;
+  `EditorState::add_view_zone`, `remove_view_zone`, `replace_view_zones`
+  and `view_zone_bounds`. A zone is a blank band between two lines (or
+  above the first) that pushes the lines under it down; it isn't a display
+  row, so it has no line number and the caret, selections and vertical
+  movement step over it. The display map places zones after the fold
+  projection (`DisplayMap::display_row_top`, `display_row_at_y`,
+  `content_height`), and every row-to-pixel step goes through it: the
+  visible range, the scroll height, carets and scroll-into-view, hit
+  testing, selections and decorations, line numbers, the current line,
+  fold chevrons and indent guides (a line's `LineLayout::zone_after` counts
+  the zones under it). A zone under a hidden line hides with it; zones move
+  with edits. An element is built each frame its zone is on screen, laid
+  out over the zone (the gutter included; `ViewZoneContext::text_left` says
+  where the text starts) and painted over it; a press in a zone doesn't
+  move the caret, and the pointer is an arrow there.
+- **Hidden lines from the host** (`input/editor/display_map/fold_map.rs`,
+  `display_map.rs`, `input/base/view_zones.rs`, `state.rs`): Monaco's
+  `setHiddenAreas`. `EditorState::set_hidden_ranges` hides whole buffer
+  lines apart from the folds, so they last through the highlighter's
+  reparses; they move with edits (an edit inside one shows it) and the
+  caret steps over them (`clamp_offset_to_visible_*` now step over any
+  hidden run, folds as before). A view zone above a range stands for it.
+  The scroll height now counts the shown rows rather than every wrap row,
+  so folded and hidden lines no longer leave room past the end.
 
 ### gpui-component
 
@@ -131,6 +174,8 @@ because gpui-component builds that struct as a full literal.
   a code fence and its info string are `@string`, the table header and
   delimiter rows and the other rows' pipes `@keyword`, as Monaco's Markdown
   tokenizer colors them.
+- **View zone exports** (`input/mod.rs`): `ViewZone`, `ViewZoneContext`,
+  `ViewZoneId` and `ViewZoneRenderer` from gpui-base's input.
 - **Scrollbar gutter** (`input/editor.rs`, `input/input.rs`):
   `Editor::scrollbar_gutter(width)` keeps room between the text and the
   vertical scrollbar, for a minimap there as in Monaco (0 by default).

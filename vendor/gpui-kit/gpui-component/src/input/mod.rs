@@ -42,6 +42,8 @@ pub use gpui_base::input::{
     WrappingIndent, highlight_characters, highlight_contains, highlight_prefix,
 };
 pub use gpui_base::input::{EditorMode, InputMode, InputModeKind, TextareaMode};
+// Impulse: view zones (Monaco's `changeViewZones`).
+pub use gpui_base::input::{ViewZone, ViewZoneContext, ViewZoneId, ViewZoneRenderer};
 #[doc(hidden)]
 mod editor;
 mod group;

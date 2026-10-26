@@ -1,16 +1,18 @@
 //! The editor's git layer (the Swift editor's `web/editor.js` git section):
 //! change marks in the gutter against the file's index version, following
 //! typing; a click on one opens a peek with the original lines and Revert,
-//! Stage, Diff and Review; Show Commit for This Line; and merge conflicts
-//! tinted, with Accept Current, Incoming or Both from a bar over the
-//! editor. The texts are worked out by
+//! Stage, Diff and Review, in a view zone under the change; Show Commit for
+//! This Line; and merge conflicts tinted, with Accept Current, Incoming or
+//! Both in a view zone above each. The texts are worked out by
 //! `impulse_kit::git::editor_marks`; the marks are painted over the editor
 //! from its own layout (GPUI Kit's editor has no gutter decorations).
 
 use std::time::Duration;
 
 use gpui_kit::component::button::Button;
-use gpui_kit::component::input::{TextDecoration, TextDecorationCollection};
+use gpui_kit::component::input::{
+    TextDecoration, TextDecorationCollection, ViewZone, ViewZoneContext, ViewZoneId,
+};
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _, Sizable as _};
 use gpui_kit::{
     canvas, div, fill, point, prelude::*, px, size, AnyElement, App, Bounds, Context,
@@ -57,10 +59,12 @@ pub(crate) struct GitLayer {
     hunks: Vec<LineHunk>,
     /// The peeked hunk, by its start line.
     pub(crate) peek: Option<usize>,
-    /// Where the editor's text area was last painted (the peek sits under
-    /// its change, as Monaco's view zone does).
-    origin: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Point<Pixels>>>>,
+    /// The peek's view zone, and the line and height it was made for.
+    peek_zone: Option<((usize, usize), ViewZoneId)>,
     conflicts: Vec<ConflictBlock>,
+    /// The conflicts' view zones (Accept Current, Incoming or Both), and
+    /// the conflicts they were made for (their starts).
+    conflict_zones: (Vec<usize>, Vec<ViewZoneId>),
     /// Whole lines tinted (1-based, inclusive): the conflicts' sides.
     line_fills: Vec<(std::ops::RangeInclusive<usize>, Hsla)>,
     /// Bracket pair colors (kept here as they follow the same edits).
@@ -70,6 +74,9 @@ pub(crate) struct GitLayer {
     bracket_pairs: crate::editor_brackets::Brackets,
     /// The links' underlines (`editor_links`).
     links: Option<TextDecorationCollection>,
+    /// The conflict markers' labels colored as Monaco's tokenizer colors
+    /// them (`paint_conflict_labels`).
+    conflict_labels: Option<TextDecorationCollection>,
     _base: Option<Task<()>>,
     _diff: Option<Task<()>>,
     _marks: Option<Task<()>>,
@@ -94,32 +101,25 @@ struct Marks {
 /// Documents past this size get no links or bracket colors.
 const MAX_DECORATED: usize = 2 * 1024 * 1024;
 
-/// The peek's header row, a line of its original lines, and its tallest
-/// under the editor.
+/// The peek's header row and a line of its original lines.
 const PEEK_HEADER: f32 = 30.;
 const PEEK_LINE: f32 = 16.;
-const PEEK_MAX: f32 = 260.;
-/// The peek's margin above and below, inside its band (`.git-peek`).
+/// The peek's margin above and below, inside its zone (`.git-peek`).
 const PEEK_MARGIN: f32 = 4.;
+/// The conflict actions' zone (the Swift page's 24 px).
+const CONFLICT_ZONE: f32 = 24.;
 
-/// Where the peek's band sits over the text (`EditorTab::peek_position`).
-struct PeekPlace {
-    left: Pixels,
-    top: Pixels,
-    /// The row it sits under (0-based).
-    row: usize,
-    /// The band's height, the peek's margins included.
-    height: Pixels,
-}
-
-/// The peek's band over the text: the Swift view zone's height (1.6 lines
-/// plus one per original line, up to 12, and the peek's margins), rounded
-/// up to whole lines of `line_height`, so the lines it hides are hidden
-/// whole rather than cut in half.
-fn peek_height(hunk: &LineHunk, line_height: Pixels) -> Pixels {
-    let line_height = f32::from(line_height).max(1.);
-    let zone = (1.6 + hunk.old_lines.len().min(12) as f32) * line_height + PEEK_MARGIN * 2.;
-    px((zone / line_height).ceil().max(1.) * line_height)
+/// The peek's view zone for `hunk`, as the Swift page adds it: under the
+/// change's last line (the line before a deletion), 1.6 lines plus one
+/// per original line, up to 12, and the peek's margins. As the line and
+/// the line count it's under.
+fn peek_zone_place(hunk: &LineHunk) -> (usize, usize) {
+    let after = if hunk.new_count == 0 {
+        hunk.new_start.saturating_sub(1)
+    } else {
+        hunk.new_start + hunk.new_count - 1
+    };
+    (after, hunk.old_lines.len().min(12))
 }
 
 impl Marks {
@@ -303,6 +303,7 @@ impl EditorTab {
         let resolved = !self.git.conflicts.is_empty() && marks.conflicts.is_empty();
         self.git.conflicts = marks.conflicts;
         self.paint_conflicts(cx);
+        self.paint_conflict_labels(cx);
         if resolved {
             cx.emit(EditorGitAction {
                 action: "conflicts-resolved".into(),
@@ -373,6 +374,43 @@ impl EditorTab {
         }
         fills.retain(|(lines, _)| !lines.is_empty());
         self.git.line_fills = fills;
+    }
+
+    /// The words on the conflict markers' lines that Monaco's tokenizer
+    /// reads as type names (a capital first letter: the `HEAD` after
+    /// `<<<<<<<`), in the theme's type color; the lines are left out of
+    /// the parse, so they get no other color.
+    fn paint_conflict_labels(&mut self, cx: &mut Context<Self>) {
+        if self.git.conflicts.is_empty() && self.git.conflict_labels.is_none() {
+            return;
+        }
+        let style = cx.theme().highlight_theme.style.syntax.style("type");
+        let text = self.state.read(cx).text().clone();
+        let mut decorations = Vec::new();
+        for block in &self.git.conflicts {
+            let lines = [Some(block.start), block.base, Some(block.end)];
+            for line in lines.into_iter().flatten() {
+                let Some(row) = line.checked_sub(1).filter(|r| *r < text.lines_len()) else {
+                    continue;
+                };
+                let start = text.line_start_offset(row);
+                let content = text.slice(start..start + text.line_len(row)).to_string();
+                for range in type_words(&content) {
+                    if let Some(style) = style {
+                        decorations.push(TextDecoration::new(
+                            start + range.start..start + range.end,
+                            style,
+                        ));
+                    }
+                }
+            }
+        }
+        let marks = self.git.conflict_labels.get_or_insert_with(|| {
+            self.state.update(cx, |state, cx| {
+                state.create_decorations_collection(Vec::new(), cx)
+            })
+        });
+        marks.set(decorations, cx);
     }
 
     /// Peek the change on buffer line `line` (the snapshot's `git-peek=`,
@@ -484,16 +522,6 @@ impl EditorTab {
             self.git.hunks.clone()
         };
         let line_fills = self.git.line_fills.clone();
-        let origin = self.git.origin.clone();
-        // The gutter beside the peek, blanked: the peek can't push the
-        // lines under it down as Monaco's view zone does, so it hides them
-        // whole, numbers and marks too.
-        let peek_mask = self.peek_position(cx).map(|place| {
-            let color = cx
-                .try_global::<crate::kit_theme::EditorBackdrop>()
-                .map_or(cx.theme().background, |b| b.background);
-            (place.row, place.height, color)
-        });
         let brackets = (!self.git.bracket_pairs.pairs.is_empty()).then(|| {
             (
                 self.git.bracket_pairs.clone(),
@@ -530,7 +558,6 @@ impl EditorTab {
             // drawn over the editor.
             |bounds, window, _| window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal),
             move |bounds, hitbox, window, cx| {
-                origin.set(Some(bounds.origin));
                 // Painted after the editor, so its layout is this frame's.
                 // Only the text area: the input's own bounds, inside the
                 // editor element (the find bar sits above that element).
@@ -652,7 +679,15 @@ impl EditorTab {
                 });
                 // The same marks in the overview ruler's left lane, where the
                 // whole file fits the text area's height (Monaco's ruler).
-                let total = text.lines_len().max(1) as f32;
+                // Where a line falls in the content, view zones (the peek)
+                // and hidden lines counted as they show.
+                let map = state.display_map();
+                let lh = state.line_height().unwrap_or(px(1.));
+                let total = f32::from(map.content_height(lh)).max(1.);
+                let place = |line: usize| {
+                    let row = map.buffer_line_to_display_row(line);
+                    f32::from(map.display_row_top(row, lh)) / total
+                };
                 let height = view.size.height;
                 for hunk in &hunks {
                     let color = match hunk.kind() {
@@ -664,8 +699,9 @@ impl EditorTab {
                     let (Some(first), Some(last)) = (lines.clone().next(), lines.last()) else {
                         continue;
                     };
-                    let top = view.top() + height * ((first - 1) as f32 / total);
-                    let bottom = (view.top() + height * (last as f32 / total)).max(top + px(3.));
+                    let top = view.top() + height * place(first - 1);
+                    let bottom = (view.top() + height * (place(last - 1) + f32::from(lh) / total))
+                        .max(top + px(3.));
                     window.paint_quad(fill(
                         Bounds::from_corners(
                             point(bounds.right() - px(10.), top),
@@ -673,25 +709,6 @@ impl EditorTab {
                         ),
                         color,
                     ));
-                }
-                if let Some((row, height, color)) = peek_mask {
-                    if let Some(line) =
-                        line_offset(row + 1).and_then(|o| state.range_to_bounds(&(o..o)))
-                    {
-                        let top = line.bottom();
-                        window.with_content_mask(
-                            Some(gpui_kit::ContentMask { bounds: view }),
-                            |window| {
-                                window.paint_quad(fill(
-                                    Bounds::from_corners(
-                                        point(bounds.left(), top),
-                                        point(area.text_left, top + height),
-                                    ),
-                                    color,
-                                ));
-                            },
-                        );
-                    }
                 }
                 let pinned = match (&sticky, sticky_layout) {
                     (Some(style), Some(layout)) => {
@@ -797,215 +814,191 @@ impl EditorTab {
         .top_0()
         .left_0()
         .size_full();
-        // The peek under its change's last line when that's on screen, else
-        // under the editor.
-        let band = cx
-            .try_global::<crate::kit_theme::EditorBackdrop>()
-            .map_or(cx.theme().background, |b| b.background);
-        let (inline, below) = match self.peek_position(cx) {
-            Some(place) => (
-                self.git_peek(Some(place.height - px(PEEK_MARGIN * 2.)), cx)
-                    .map(|peek| {
-                        // The band hides the lines under it, margins too.
-                        FollowScroll::new(
-                            &self.state,
-                            false,
-                            div()
-                                .absolute()
-                                .top(place.top)
-                                .left(place.left)
-                                .right_0()
-                                .h(place.height)
-                                .py(px(PEEK_MARGIN))
-                                .bg(band)
-                                .child(peek),
-                        )
-                        .into_any_element()
-                    }),
-                None,
-            ),
-            None => (None, self.git_peek(None, cx)),
-        };
-        let conflicts = self.conflict_bars(cx);
         div()
+            .relative()
             .size_full()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(underlay)
-                    .child(editor)
-                    .child(overlay)
-                    .children(conflicts)
-                    .children(inline),
-            )
-            .children(below)
+            .child(underlay)
+            .child(editor)
+            .child(overlay)
             .into_any_element()
     }
 
-    /// Each conflict's actions on its `<<<<<<<` line, after the marker:
-    /// Accept Current, Incoming or Both, "HEAD ⟷ feature", and with more
-    /// than one, "1 of 2" with ↑ and ↓. Monaco puts the same bar in a view
-    /// zone above the conflict; GPUI Kit has no view zones, so it floats
-    /// on the marker line, as the peek floats under its change, clipped
-    /// to the text column (it scrolls sideways with the text).
-    fn conflict_bars(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.git.conflicts.is_empty() {
-            return None;
-        }
-        let origin = self.git.origin.get()?;
-        let state = self.state.read(cx);
-        let rows = state.visible_row_range()?;
-        let area = text_area(state)?;
-        let text = state.text();
-        let places: Vec<(ConflictBlock, Pixels, Pixels, Pixels)> = self
+    /// Keep the editor's view zones in step with the peek and the
+    /// conflicts: the peek in a zone under its change, each conflict's
+    /// actions in a zone above it, as the Swift page adds them. Run before
+    /// each render; the zones change only when their places do (their
+    /// elements are built each frame from the tab).
+    pub(crate) fn sync_git_zones(&mut self, cx: &mut Context<Self>) {
+        let peek = self
             .git
-            .conflicts
-            .iter()
-            .filter_map(|block| {
-                let row = block.start.checked_sub(1)?;
-                if row >= text.lines_len() || !rows.contains(&row) {
-                    return None;
-                }
-                let end = text.line_end_offset(row);
-                let at = state.range_to_bounds(&(end..end))?;
-                Some((
-                    block.clone(),
-                    at.left() - area.text_left + px(16.),
-                    at.top() - area.top,
-                    at.size.height,
-                ))
-            })
-            .collect();
-        let count = self.git.conflicts.len();
-        let index_of = |start: usize| {
-            self.git
-                .conflicts
-                .iter()
-                .position(|b| b.start == start)
-                .unwrap_or(0)
+            .peek
+            .filter(|_| self.diff.is_none())
+            .and_then(|start| self.git.hunks.iter().find(|h| h.new_start == start))
+            .map(peek_zone_place);
+        // Also when an edit moved the zone off its line (a reload from
+        // disk replaces the whole text).
+        let zone_line = |id: ViewZoneId| {
+            self.state
+                .read(cx)
+                .display_map()
+                .view_zone(id)
+                .map(|z| z.before_line)
         };
-        let theme = cx.theme();
-        let color = theme.foreground.opacity(0.9);
-        let muted = theme.foreground.opacity(0.72);
-        let bars = places
-            .into_iter()
-            .map(|(block, left, top, height)| {
-                let start = block.start;
-                let index = index_of(start);
-                // Swift's .git-peek-button: transparent with a faint border.
-                let button = |id: &'static str, label: &'static str| {
-                    Button::new((id, start)).label(label).xsmall().outline()
-                };
-                let resolve = |choice: Resolution| {
-                    cx.listener(
-                        move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
-                            tab.resolve_conflict(start, choice, window, cx)
-                        },
-                    )
-                };
-                let mut bar = div()
-                    .absolute()
-                    .top(top)
-                    .left(left)
-                    .h(height)
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_size(px(11.5))
-                    .font_family(crate::workbench::UI_FONT)
-                    .text_color(color)
-                    .child(
-                        button("conflict-current", "Accept Current")
-                            .on_click(resolve(Resolution::Current)),
-                    )
-                    .child(
-                        button("conflict-incoming", "Accept Incoming")
-                            .on_click(resolve(Resolution::Incoming)),
-                    )
-                    .child(
-                        button("conflict-both", "Accept Both").on_click(resolve(Resolution::Both)),
-                    )
-                    .child(div().text_color(muted).child(format!(
-                        "{} ⟷ {}",
-                        block.current_label, block.incoming_label
-                    )));
-                if count > 1 {
-                    bar = bar
-                        .child(
-                            div()
-                                .ml(px(10.))
-                                .text_color(muted)
-                                .child(format!("{} of {count}", index + 1)),
-                        )
-                        .child(button("conflict-previous", "↑").on_click(cx.listener(
-                            move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
-                                tab.go_to_conflict_from(start, -1, window, cx)
-                            },
-                        )))
-                        .child(button("conflict-next", "↓").on_click(cx.listener(
-                            move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
-                                tab.go_to_conflict_from(start, 1, window, cx)
-                            },
-                        )));
-                }
-                bar.into_any_element()
-            })
-            .collect::<Vec<_>>();
+        let peek_moved = self
+            .git
+            .peek_zone
+            .is_some_and(|((after, _), id)| zone_line(id) != Some(after));
+        let conflicts_moved = self
+            .git
+            .conflict_zones
+            .1
+            .iter()
+            .zip(&self.git.conflict_zones.0)
+            .any(|(id, start)| zone_line(*id) != Some(start.saturating_sub(1)));
+        if peek_moved || self.git.peek_zone.as_ref().map(|(place, _)| *place) != peek {
+            let old: Vec<ViewZoneId> = self
+                .git
+                .peek_zone
+                .take()
+                .map(|(_, id)| id)
+                .into_iter()
+                .collect();
+            let zone = peek.map(|(after, lines)| {
+                let tab = cx.entity().downgrade();
+                ViewZone::new(after)
+                    .lines(1.6 + lines as f32)
+                    .px(px(PEEK_MARGIN * 2.))
+                    .element(move |zone, window, cx| {
+                        tab.update(cx, |tab, cx| tab.peek_zone_element(zone, window, cx))
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| div().into_any_element())
+                    })
+            });
+            let ids = self.state.update(cx, |state, cx| {
+                state.replace_view_zones(&old, zone.into_iter().collect(), cx)
+            });
+            self.git.peek_zone = peek.zip(ids.first().copied());
+        }
+        let starts: Vec<usize> = self.git.conflicts.iter().map(|b| b.start).collect();
+        if conflicts_moved || self.git.conflict_zones.0 != starts {
+            let tab = cx.entity().downgrade();
+            let zones = starts
+                .iter()
+                .map(|&start| {
+                    let tab = tab.clone();
+                    // Above the `<<<<<<<` line (1-based `start`).
+                    ViewZone::new(start.saturating_sub(1))
+                        .px(px(CONFLICT_ZONE))
+                        .element(move |zone, _, cx| {
+                            tab.update(cx, |tab, cx| tab.conflict_bar(start, zone, cx))
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| div().into_any_element())
+                        })
+                })
+                .collect();
+            let old = std::mem::take(&mut self.git.conflict_zones.1);
+            let ids = self
+                .state
+                .update(cx, |state, cx| state.replace_view_zones(&old, zones, cx));
+            self.git.conflict_zones = (starts, ids);
+        }
+    }
+
+    /// The peek in its zone, from the text column's left edge (it doesn't
+    /// scroll sideways, as Monaco's view zones don't), the zone's margins
+    /// showing the editor's background.
+    fn peek_zone_element(
+        &self,
+        zone: ViewZoneContext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let peek = self.git_peek(cx)?;
         Some(
             div()
-                .absolute()
-                .left(area.text_left - origin.x)
-                .top(area.top - origin.y)
-                .right_0()
-                .h(area.bottom - area.top)
-                .overflow_hidden()
-                .child(FollowScroll::new(
-                    &self.state,
-                    true,
-                    div().absolute().top_0().left_0().size_full().children(bars),
-                ))
+                .size_full()
+                .pl(zone.text_left)
+                .py(px(PEEK_MARGIN))
+                .child(peek)
                 .into_any_element(),
         )
     }
 
-    /// Where the peek goes: under the peeked change's last line, from the
-    /// text column's left edge (it doesn't scroll sideways, as Monaco's
-    /// view zones don't), relative to the editor (from the last frame;
-    /// `FollowScroll` brings it up to date); with the row it sits under
-    /// (0-based) and its height, in whole lines (`peek_height`).
-    fn peek_position(&self, cx: &App) -> Option<PeekPlace> {
-        let start = self.git.peek?;
-        let hunk = self.git.hunks.iter().find(|h| h.new_start == start)?;
-        let origin = self.git.origin.get()?;
-        let state = self.state.read(cx);
-        let text = state.text();
-        let row = hunk.marked_lines().end.checked_sub(2)?;
-        if row >= text.lines_len() {
-            return None;
+    /// A conflict's actions, in the view zone above its `<<<<<<<` line, as
+    /// the Swift page puts them: Accept Current, Incoming or Both,
+    /// "HEAD ⟷ feature", and with more than one, "1 of 2" with ↑ and ↓.
+    fn conflict_bar(
+        &self,
+        start: usize,
+        zone: ViewZoneContext,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let index = self.git.conflicts.iter().position(|b| b.start == start)?;
+        let block = self.git.conflicts[index].clone();
+        let count = self.git.conflicts.len();
+        let theme = cx.theme();
+        let color = theme.foreground.opacity(0.9);
+        let muted = theme.foreground.opacity(0.72);
+        // Swift's .git-peek-button: transparent with a faint border.
+        let button = |id: &'static str, label: &'static str| {
+            Button::new((id, start)).label(label).small().outline()
+        };
+        let resolve = |choice: Resolution| {
+            cx.listener(
+                move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
+                    tab.resolve_conflict(start, choice, window, cx)
+                },
+            )
+        };
+        let mut bar = div()
+            .size_full()
+            .pl(zone.text_left + px(10.))
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .text_size(px(12.5))
+            .font_family(crate::workbench::UI_FONT)
+            .text_color(color)
+            .child(
+                button("conflict-current", "Accept Current").on_click(resolve(Resolution::Current)),
+            )
+            .child(
+                button("conflict-incoming", "Accept Incoming")
+                    .on_click(resolve(Resolution::Incoming)),
+            )
+            .child(button("conflict-both", "Accept Both").on_click(resolve(Resolution::Both)))
+            .child(div().pl(px(2.)).text_color(muted).child(format!(
+                "{} \u{27f7} {}",
+                block.current_label, block.incoming_label
+            )));
+        if count > 1 {
+            bar = bar
+                .child(
+                    div()
+                        .ml(px(10.))
+                        .mr(px(4.))
+                        .text_color(muted)
+                        .child(format!("{} of {count}", index + 1)),
+                )
+                .child(button("conflict-previous", "↑").on_click(cx.listener(
+                    move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
+                        tab.go_to_conflict_from(start, -1, window, cx)
+                    },
+                )))
+                .child(button("conflict-next", "↓").on_click(cx.listener(
+                    move |tab: &mut Self, _: &gpui_kit::ClickEvent, window, cx| {
+                        tab.go_to_conflict_from(start, 1, window, cx)
+                    },
+                )));
         }
-        let rows = state.visible_row_range()?;
-        if !rows.contains(&row) {
-            return None;
-        }
-        let offset = text.line_start_offset(row);
-        let line = state.range_to_bounds(&(offset..offset))?;
-        let area = text_area(state)?;
-        Some(PeekPlace {
-            left: area.text_left - origin.x,
-            top: line.bottom() - origin.y,
-            row,
-            height: peek_height(hunk, state.line_height()?),
-        })
+        Some(bar.into_any_element())
     }
 
-    /// The peeked change: what it was, and Revert, Stage, Diff and Review;
-    /// `height` tall when it sits over the text (in its band), else as
-    /// tall as it needs up to `PEEK_MAX`.
-    fn git_peek(&self, height: Option<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The peeked change: what it was, and Revert, Stage, Diff and Review,
+    /// filling its view zone.
+    fn git_peek(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let start = self.git.peek?;
         let hunk = self
             .git
@@ -1031,10 +1024,9 @@ impl EditorTab {
             div()
                 .flex()
                 .flex_col()
-                .map(|d| match height {
-                    Some(height) => d.h(height),
-                    None => d.max_h(px(PEEK_MAX)),
-                })
+                .size_full()
+                // The zone is inside the editor, whose font is the code's.
+                .font_family(crate::workbench::UI_FONT)
                 .border_t_1()
                 .border_b_1()
                 .border_color(edge)
@@ -1453,107 +1445,6 @@ pub(crate) fn text_area(state: &gpui_kit::component::input::EditorState) -> Opti
     })
 }
 
-/// How far the editor has scrolled since its last paint, by this frame's
-/// prepaint (`prepaint_caret_geometry`, which GPUI Kit's completion menu
-/// reads for the same reason); zero before then.
-fn scrolled_since_paint(
-    state: &gpui_kit::component::input::EditorState,
-) -> gpui_kit::Point<Pixels> {
-    let (Some(geometry), Some(painted)) = (state.prepaint_caret_geometry(), state.text_bounds())
-    else {
-        return gpui_kit::Point::default();
-    };
-    let before = painted.origin - state.input_bounds().origin;
-    geometry.scroll_offset() - before
-}
-
-/// Elements laid over the editor in render, from its last frame's layout
-/// (the peek, the conflict bars, the Diff View's hidden-lines rows),
-/// moved in prepaint by however far the text scrolled since, so they keep
-/// up with it rather than trailing it by a frame.
-pub(crate) struct FollowScroll {
-    state: gpui_kit::Entity<gpui_kit::component::input::EditorState>,
-    /// Follow the horizontal scroll too (what sits on a line's text).
-    sideways: bool,
-    child: AnyElement,
-}
-
-impl FollowScroll {
-    pub fn new(
-        state: &gpui_kit::Entity<gpui_kit::component::input::EditorState>,
-        sideways: bool,
-        child: impl IntoElement,
-    ) -> Self {
-        FollowScroll {
-            state: state.clone(),
-            sideways,
-            child: child.into_any_element(),
-        }
-    }
-}
-
-impl IntoElement for FollowScroll {
-    type Element = Self;
-
-    fn into_element(self) -> Self {
-        self
-    }
-}
-
-impl gpui_kit::Element for FollowScroll {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-
-    fn id(&self) -> Option<gpui_kit::ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _: Option<&gpui_kit::GlobalElementId>,
-        _: Option<&gpui_kit::InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (gpui_kit::LayoutId, ()) {
-        (self.child.request_layout(window, cx), ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _: Option<&gpui_kit::GlobalElementId>,
-        _: Option<&gpui_kit::InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut (),
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let mut delta = scrolled_since_paint(self.state.read(cx));
-        if !self.sideways {
-            delta.x = px(0.);
-        }
-        window.with_element_offset(delta, |window| {
-            self.child.prepaint(window, cx);
-        });
-    }
-
-    fn paint(
-        &mut self,
-        _: Option<&gpui_kit::GlobalElementId>,
-        _: Option<&gpui_kit::InspectorElementId>,
-        _: Bounds<Pixels>,
-        _: &mut (),
-        _: &mut (),
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.child.paint(window, cx);
-    }
-}
-
 /// How sticky lines look (the editor's font and colors).
 struct StickyStyle {
     font: gpui_kit::Font,
@@ -1679,4 +1570,42 @@ fn paint_sticky(
         ));
     }
     painted
+}
+
+/// The words of a conflict marker's line that Monaco's TypeScript
+/// tokenizer colors as type names: identifiers starting with a capital
+/// (`[A-Z][\w$]*`), as byte ranges.
+fn type_words(line: &str) -> Vec<std::ops::Range<usize>> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut words = Vec::new();
+    let mut chars = line.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        if !is_word(c) {
+            continue;
+        }
+        let mut end = start + c.len_utf8();
+        while let Some(&(at, next)) = chars.peek() {
+            if !is_word(next) {
+                break;
+            }
+            end = at + next.len_utf8();
+            chars.next();
+        }
+        if c.is_ascii_uppercase() {
+            words.push(start..end);
+        }
+    }
+    words
+}
+
+#[cfg(test)]
+mod conflict_label_tests {
+    use super::type_words;
+
+    #[test]
+    fn capitalized_labels_are_type_names() {
+        assert_eq!(type_words("<<<<<<< HEAD"), [8..12]);
+        assert!(type_words(">>>>>>> units-precision").is_empty());
+        assert_eq!(type_words(">>>>>>> Feature-x Y"), [8..15, 18..19]);
+    }
 }

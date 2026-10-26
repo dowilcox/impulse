@@ -153,7 +153,8 @@ impl<M: InputModeKind> TextElement<M> {
                 current_indents = last_indents.clone();
             }
 
-            offset_y += line_layout.wrapped_lines.len() * line_height;
+            // Impulse: and the view zones under the line.
+            offset_y += line_layout.wrapped_lines.len() * line_height + line_layout.zone_after;
             last_indents = current_indents;
         }
 

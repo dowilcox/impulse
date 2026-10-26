@@ -333,10 +333,6 @@ impl EditorTab {
             if tab.pending_center.is_some() {
                 cx.notify();
             }
-            // The peek follows its change as the editor scrolls.
-            if tab.git.peek.is_some() {
-                cx.notify();
-            }
         });
         let vim = crate::editor_vim::Attached::new(settings.editor_vim_mode, &state, cx);
         let mut tab = Self {
@@ -1703,6 +1699,8 @@ pub(crate) fn gutter_inset(
 impl Render for EditorTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_inline_text(window, cx);
+        self.sync_git_zones(cx);
+        self.sync_diff_zones(window, cx);
         self.apply_pending_center(window, cx);
         self.track_text_focus(window, cx);
         let signature = self.signature_popup(cx);

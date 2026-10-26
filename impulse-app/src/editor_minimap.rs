@@ -196,7 +196,12 @@ fn mouse(
             let top = minimap::scroll_target(row, layout.total, layout.visible);
             state.update(cx, |state, cx| {
                 let x = state.scroll_offset().x;
-                state.set_scroll_offset(point(x, -layout.line_height * top as f32), cx);
+                // The line's top as laid out: wrapped and folded lines and
+                // view zones above it count.
+                let map = state.display_map();
+                let y =
+                    map.display_row_top(map.buffer_line_to_display_row(top), layout.line_height);
+                state.set_scroll_offset(point(x, -y), cx);
             });
         }
     };

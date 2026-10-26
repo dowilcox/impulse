@@ -76,6 +76,9 @@ mod textarea;
 mod touch;
 #[path = "base/undo_manager.rs"]
 mod undo_manager;
+// Impulse: view zones and hidden lines for a host.
+#[path = "base/view_zones.rs"]
+mod view_zones;
 
 pub(crate) fn init(cx: &mut App) {
     state::init(cx);
@@ -93,6 +96,8 @@ pub use diagnostics::{
     DiagnosticSummary, DiagnosticTag, RelatedInformation,
 };
 pub use display_map::{BufferPoint, DisplayMap, DisplayPoint, FoldRange, WrappingIndent};
+// Impulse: view zones (Monaco's `changeViewZones`).
+pub use display_map::{ViewZone, ViewZoneContext, ViewZoneId, ViewZoneRenderer};
 pub use editor::{Editor, EditorState};
 // Impulse: Monaco's editor options (see `editor_options`).
 pub(crate) use editor_options::EditorOptions;

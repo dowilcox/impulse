@@ -2599,6 +2599,12 @@ impl<M: InputModeKind> InputBaseState<M> {
             }
         }
 
+        // Impulse: a press in a view zone leaves the caret where it is; the
+        // zone's element, if it has one, takes it.
+        if self.view_zone_at(event.position).is_some() {
+            return;
+        }
+
         self.selecting = true;
         let (offset, line_end_affinity, columns_past_line_end) =
             self.resolve_mouse_position(event.position);
@@ -2920,7 +2926,8 @@ impl<M: InputModeKind> InputBaseState<M> {
         let display_row = self
             .display_map
             .offset_to_display_row(offset, self.line_end_affinity_at(offset));
-        let row_offset_y = line_height * display_row;
+        // Impulse: below the view zones above it.
+        let row_offset_y = self.display_map.display_row_top(display_row, line_height);
 
         // For Right alignment use 0 margin: the cursor indicator is clamped inside bounds
         // in layout_cursors, so shifting the text here would cause a first-click visual jump.
@@ -3555,7 +3562,8 @@ impl<M: InputModeKind> InputBaseState<M> {
             .zip(last_line_pos)
             .zip(last_layout.visible_line_byte_offsets.last())
             .map(|((line_layout, pos), line_start)| {
-                let last_row_top = (line_layout.size(line_height).height - line_height).max(px(0.));
+                // Impulse: the last row, above the view zones under it.
+                let last_row_top = (line_layout.rows_height(line_height) - line_height).max(px(0.));
                 let pos = point(pos.x, last_row_top);
                 (
                     self.resolve_index(line_start + line_layout.len()),
@@ -3731,30 +3739,30 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     /// If offset falls on a hidden (folded) line, clamp backward to the end of
     /// the fold header line (last visible position before the fold).
+    ///
+    /// Impulse: any run of hidden lines, folded or hidden by the host: to the
+    /// end of the line before it, or past it when it starts the text.
     fn clamp_offset_to_visible_backward(&self, offset: usize) -> usize {
         let line = self.text.offset_to_point(offset).row;
-        if self.display_map.is_buffer_line_hidden(line) {
-            for fold in self.display_map.folded_ranges() {
-                if line > fold.start_line && line <= fold.end_line {
-                    return self.text.line_end_offset(fold.start_line);
-                }
-            }
+        match self.display_map.hidden_lines_at(line) {
+            Some(run) if run.start > 0 => self.text.line_end_offset(run.start - 1),
+            Some(run) if run.end < self.text.lines_len() => self.text.line_start_offset(run.end),
+            _ => offset,
         }
-        offset
     }
 
     /// If offset falls on a hidden (folded) line, clamp forward to the start of
     /// the fold end line (first visible position after the fold).
+    ///
+    /// Impulse: any run of hidden lines: to the start of the line after it,
+    /// or back before it when it ends the text.
     fn clamp_offset_to_visible_forward(&self, offset: usize) -> usize {
         let line = self.text.offset_to_point(offset).row;
-        if self.display_map.is_buffer_line_hidden(line) {
-            for fold in self.display_map.folded_ranges() {
-                if line > fold.start_line && line <= fold.end_line {
-                    return self.text.line_start_offset(fold.end_line);
-                }
-            }
+        match self.display_map.hidden_lines_at(line) {
+            Some(run) if run.end < self.text.lines_len() => self.text.line_start_offset(run.end),
+            Some(run) if run.start > 0 => self.text.line_end_offset(run.start - 1),
+            _ => offset,
         }
-        offset
     }
 
     /// Clip a cursor/selection offset without splitting a CRLF newline. This does

@@ -749,6 +749,9 @@ pub(crate) struct LineLayout {
     /// Whether any run of this line carries a background color, so [`Self::paint_background`]
     /// can skip the glyph walk for the common case of a line without highlights.
     has_background: bool,
+    /// Impulse: the height of the view zones under this line (between its
+    /// last row and the next visible line), counted in [`Self::size`].
+    pub(crate) zone_after: Pixels,
 }
 
 /// Impulse: which of a line's whitespace characters (by byte offset in the
@@ -797,6 +800,7 @@ impl LineLayout {
             whitespace_chars: Vec::new(),
             whitespace_indicators: None,
             has_background: false,
+            zone_after: px(0.),
         }
     }
 
@@ -1070,7 +1074,14 @@ impl LineLayout {
             .map(|(ix, line)| line.width + self.line_indent(ix))
             .max()
             .unwrap_or(self.longest_width);
-        size(width, self.wrapped_lines.len() * line_height)
+        // Impulse: the view zones under the line push the next one down.
+        size(width, self.wrapped_lines.len() * line_height + self.zone_after)
+    }
+
+    /// Impulse: the height of the line's own rows, without the view zones
+    /// under it.
+    pub(crate) fn rows_height(&self, line_height: Pixels) -> Pixels {
+        self.wrapped_lines.len() * line_height
     }
 
     /// Paint only the glyph background quads of this line.
@@ -1690,6 +1701,7 @@ mod tests {
             cursor_bounds: None,
             text_align: TextAlign::Left,
             content_width: px(0.),
+            view_zones: Vec::new(),
         }
     }
 
@@ -1991,6 +2003,7 @@ mod tests {
             cursor_bounds: None,
             text_align: TextAlign::Left,
             content_width: px(0.),
+            view_zones: Vec::new(),
         };
 
         assert_eq!(

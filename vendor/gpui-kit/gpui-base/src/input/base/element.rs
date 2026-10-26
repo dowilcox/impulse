@@ -629,7 +629,10 @@ impl<M: InputModeKind> TextElement<M> {
         let visible_buffer_lines = &last_layout.visible_buffer_lines;
         let caret_for = |row: usize, offset: usize, affinity: bool| -> Point<Pixels> {
             // y of the top of buffer line `row` in content space.
-            let top = line_height * state.display_map.buffer_line_to_display_row(row);
+            // Impulse: below the view zones above it.
+            let top = state
+                .display_map
+                .display_row_top(state.display_map.buffer_line_to_display_row(row), line_height);
             let line_origin = point(px(0.), top);
 
             if let Some(vi) = visible_buffer_lines.iter().position(|&bl| bl == row) {
@@ -643,9 +646,13 @@ impl<M: InputModeKind> TextElement<M> {
             if state.masked {
                 return line_origin;
             }
+            // Impulse: below the view zones above it.
             point(
                 px(0.),
-                line_height * state.display_map.offset_to_display_row(offset, affinity),
+                state.display_map.display_row_top(
+                    state.display_map.offset_to_display_row(offset, affinity),
+                    line_height,
+                ),
             )
         };
 
@@ -907,6 +914,8 @@ impl<M: InputModeKind> TextElement<M> {
                 offset = end;
                 y += last_layout.line_height;
             }
+            // Impulse: the view zones under the line.
+            y += line.zone_after;
         }
         (!corners.is_empty()).then_some(corners)
     }
@@ -1146,7 +1155,6 @@ impl<M: InputModeKind> TextElement<M> {
             return (0..1, vec![0], px(0.));
         }
 
-        let total_lines = state.display_map.wrap_row_count();
         let display_count = state.display_map.display_row_count();
         let buffer_line_count = state.display_map.buffer_line_count();
         if display_count == 0 || buffer_line_count == 0 {
@@ -1161,7 +1169,9 @@ impl<M: InputModeKind> TextElement<M> {
         // Clamp as `layout_cursors` does, so we lay out the rows we paint.
         // Ghost lines are left out: a tighter clamp only lays out extra rows
         // above, and the last row stays in range.
-        let scroll_height = line_height * total_lines
+        // Impulse: the shown rows and the view zones, not every wrap row
+        // (folded and hidden rows took room past the end).
+        let scroll_height = state.display_map.content_height(line_height)
             + empty_bottom_height(
                 state.is_code_editor(),
                 state.scroll_beyond_last_line,
@@ -1170,26 +1180,31 @@ impl<M: InputModeKind> TextElement<M> {
             );
         scroll_top = clamp_vertical_scroll_offset(scroll_top, scroll_height, input_height);
 
-        // Display rows are uniformly `line_height` tall, so the visible window maps
-        // directly to a display-row range.
+        // Impulse: display rows are `line_height` tall, with the view zones
+        // between them, so the window is searched for its rows.
         let viewport_top = (-scroll_top).max(px(0.));
         let viewport_bottom = viewport_top + input_height;
-        let line_height_f = f32::from(line_height);
-        let first_display =
-            ((f32::from(viewport_top) / line_height_f).floor() as usize).min(display_count - 1);
-        let last_display =
-            ((f32::from(viewport_bottom) / line_height_f).ceil() as usize).min(display_count - 1);
+        let first_display = state
+            .display_map
+            .display_row_at_y(viewport_top, line_height)
+            .min(display_count - 1);
+        let last_display = (state
+            .display_map
+            .display_row_at_y(viewport_bottom, line_height)
+            + 1)
+        .min(display_count - 1);
 
         let start_line = state.display_map.display_row_to_buffer_line(first_display);
         let end_line = state.display_map.display_row_to_buffer_line(last_display);
 
         // y of the top of the first visible buffer line (in content space).
+        // Impulse: below the view zones above it.
         let visible_top = match state
             .display_map
             .buffer_line_to_display_row_range(start_line)
         {
-            Some(range) => line_height * range.start,
-            None => line_height * first_display,
+            Some(range) => state.display_map.display_row_top(range.start, line_height),
+            None => state.display_map.display_row_top(first_display, line_height),
         };
 
         let visible_range = start_line..(end_line + 1 + extra_rows).min(buffer_line_count);
@@ -1408,6 +1423,61 @@ impl<M: InputModeKind> TextElement<M> {
         (first_line, ghost_lines)
     }
 
+    /// Impulse: place the view zones on screen, from the gutter's left edge
+    /// to the input's right, unscrolled sideways; note their bounds in
+    /// `last_layout` and build the elements of those that have one.
+    /// `bounds` is scrolled, `input_bounds` isn't.
+    fn layout_view_zones(
+        &self,
+        last_layout: &mut LastLayout,
+        bounds: Bounds<Pixels>,
+        input_bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (Vec<Hitbox>, Vec<AnyElement>) {
+        let state = self.state.read(cx);
+        if !state.is_multi_line() || state.text.len() == 0 {
+            return (Vec::new(), Vec::new());
+        }
+        let line_height = last_layout.line_height;
+        let paddings = state.editor_paddings;
+        let left = input_bounds.left() - paddings.left;
+        let width = input_bounds.right() - left;
+        let text_left = paddings.left + last_layout.line_number_width;
+        // The content-space window, a row's height larger at each end.
+        let top = input_bounds.top() - bounds.top();
+        let bottom = top + input_bounds.size.height;
+        let display_map = &state.display_map;
+        let rows = display_map.display_row_at_y(top, line_height)
+            ..display_map.display_row_at_y(bottom, line_height) + 1;
+        let mut renderers = Vec::new();
+        for (id, zone, zone_top, height) in display_map.view_zone_layouts(line_height, rows) {
+            if height <= px(0.) || zone_top + height < top || zone_top > bottom {
+                continue;
+            }
+            let zone_bounds = Bounds::new(
+                point(left, bounds.top() + zone_top),
+                size(width, height),
+            );
+            last_layout.view_zones.push((id, zone_bounds));
+            if let Some(render) = zone.render.clone() {
+                renderers.push((id, render, zone_bounds));
+            }
+        }
+        let hitboxes = last_layout
+            .view_zones
+            .iter()
+            .map(|(_, zone_bounds)| window.insert_hitbox(*zone_bounds, HitboxBehavior::Normal))
+            .collect();
+        let mut elements = Vec::with_capacity(renderers.len());
+        for (id, render, zone_bounds) in renderers {
+            let mut element = render(super::ViewZoneContext { id, text_left }, window, cx);
+            element.prepaint_as_root(zone_bounds.origin, zone_bounds.size.into(), window, cx);
+            elements.push(element);
+        }
+        (hitboxes, elements)
+    }
+
     /// Return (line_number_width, line_number_len)
     /// Layout fold icon hitboxes during prepaint phase.
     ///
@@ -1466,7 +1536,8 @@ impl<M: InputModeKind> TextElement<M> {
                     });
                 }
 
-                offset_y += line.wrapped_lines.len() * last_layout.line_height;
+                // Impulse: and the view zones under the line.
+                offset_y += line.wrapped_lines.len() * last_layout.line_height + line.zone_after;
             }
 
             infos
@@ -2464,6 +2535,10 @@ pub(super) struct PrepaintState {
     /// First line of inline completion (painted after cursor on same line)
     ghost_first_line: Option<ShapedLine>,
     ghost_lines_height: Pixels,
+    /// Impulse: the view zones' elements, painted over their zones, and
+    /// the zones' hitboxes (an arrow over a zone, not the text's I-beam).
+    view_zone_elements: Vec<AnyElement>,
+    view_zone_hitboxes: Vec<Hitbox>,
 }
 
 impl PrepaintState {
@@ -2824,6 +2899,7 @@ impl<M: InputModeKind> Element for TextElement<M> {
             cursor_bounds: None,
             text_align: state.text_align,
             content_width: bounds.size.width,
+            view_zones: Vec::new(),
         };
 
         let run = TextRun {
@@ -2888,7 +2964,7 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let whitespace_indicators =
             Self::layout_whitespace_indicators(&state, text_size, &text_style, window, cx);
 
-        let lines = Self::layout_lines(
+        let mut lines = Self::layout_lines(
             &state,
             &display_text,
             &last_layout,
@@ -2898,6 +2974,14 @@ impl<M: InputModeKind> Element for TextElement<M> {
             whitespace_indicators,
             window,
         );
+        // Impulse: each line's view zones, under it.
+        if multi_line && !is_empty {
+            for (line, &buffer_line) in lines.iter_mut().zip(&last_layout.visible_buffer_lines) {
+                line.zone_after = state
+                    .display_map
+                    .view_zone_height_after_line(buffer_line, line_height);
+            }
+        }
 
         let mut longest_line_width = wrap_width.unwrap_or(px(0.));
         // 1. Single line
@@ -2965,7 +3049,6 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let ghost_line_count = ghost_lines.len();
         let ghost_lines_height = ghost_line_count as f32 * line_height;
 
-        let total_wrapped_lines = state.display_map.wrap_row_count();
         let empty_bottom_height = empty_bottom_height(
             state.is_code_editor(),
             state.scroll_beyond_last_line,
@@ -2982,7 +3065,8 @@ impl<M: InputModeKind> Element for TextElement<M> {
             } else {
                 longest_line_width
             },
-            (total_wrapped_lines as f32 * line_height
+            // Impulse: the shown rows and the view zones (`content_height`).
+            (state.display_map.content_height(line_height)
                 + empty_bottom_height.max(ghost_lines_height))
             .max(bounds.size.height),
         );
@@ -3206,6 +3290,10 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let fold_icon_layout =
             self.layout_fold_icons(original_x, &bounds, &last_layout, window, cx);
         let hitbox = window.insert_hitbox(input_bounds, HitboxBehavior::Normal);
+        // Impulse: the view zones' elements, over the editor's hitbox so
+        // they take the pointer.
+        let (view_zone_hitboxes, view_zone_elements) =
+            self.layout_view_zones(&mut last_layout, bounds, input_bounds, window, cx);
 
         let token_elements = self.prepaint_tokens(&last_layout, bounds, token_elements, window, cx);
         PrepaintState {
@@ -3230,6 +3318,8 @@ impl<M: InputModeKind> Element for TextElement<M> {
             ghost_first_line,
             ghost_lines,
             ghost_lines_height,
+            view_zone_elements,
+            view_zone_hitboxes,
         }
     }
 
@@ -3295,9 +3385,10 @@ impl<M: InputModeKind> Element for TextElement<M> {
             offset_y += invisible_top_padding;
 
             // Each item is the normal lines.
-            for (lines, &buffer_line) in line_numbers
+            for ((lines, &buffer_line), line) in line_numbers
                 .iter()
                 .zip(prepaint.last_layout.visible_buffer_lines.iter())
+                .zip(prepaint.last_layout.lines.iter())
             {
                 let is_active = prepaint.current_row == Some(buffer_line);
                 let p = point(input_bounds.origin.x, origin.y + offset_y);
@@ -3311,7 +3402,8 @@ impl<M: InputModeKind> Element for TextElement<M> {
                         ));
                     }
                 }
-                offset_y += height;
+                // Impulse: and the view zones under the line.
+                offset_y += height + line.zone_after;
             }
         }
 
@@ -3545,9 +3637,10 @@ impl<M: InputModeKind> Element for TextElement<M> {
             window.paint_quad(fill(gutter_bounds, gutter_bg));
 
             // Each item is the normal lines.
-            for (lines, &buffer_line) in line_numbers
+            for ((lines, &buffer_line), line) in line_numbers
                 .iter()
                 .zip(prepaint.last_layout.visible_buffer_lines.iter())
+                .zip(prepaint.last_layout.lines.iter())
             {
                 let p = point(input_bounds.origin.x, origin.y + offset_y);
                 let is_active = prepaint.current_row == Some(buffer_line);
@@ -3570,6 +3663,8 @@ impl<M: InputModeKind> Element for TextElement<M> {
                     _ = line.paint(p, line_height, TextAlign::Left, None, window, cx);
                     offset_y += line_height;
                 }
+                // Impulse: no numbers beside the view zones under the line.
+                offset_y += line.zone_after;
 
                 // Add ghost line height after cursor row for line numbers alignment
                 if !prepaint.ghost_lines.is_empty() && prepaint.current_row == Some(buffer_line) {
@@ -3594,6 +3689,14 @@ impl<M: InputModeKind> Element for TextElement<M> {
             window,
             cx,
         );
+
+        // Impulse: the view zones' elements, over the gutter's background.
+        for hitbox in &prepaint.view_zone_hitboxes {
+            window.set_cursor_style(gpui::CursorStyle::Arrow, hitbox);
+        }
+        for element in &mut prepaint.view_zone_elements {
+            element.paint(window, cx);
+        }
 
         self.state.update(cx, |state, cx| {
             let geometry_changed = state.last_bounds != Some(bounds)

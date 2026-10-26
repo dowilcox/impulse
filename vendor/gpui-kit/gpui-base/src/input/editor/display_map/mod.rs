@@ -13,10 +13,13 @@ pub(crate) use inline_line::{InlineFragment, InputLine};
 mod fold_map;
 mod folding;
 mod text_wrapper;
+// Impulse: view zones (Monaco's `changeViewZones`).
+mod view_zones;
 mod wrap_map;
 
 // Re-export public API
 pub use self::display_map::{DisplayMap, WrappingIndent};
+pub use self::view_zones::{ViewZone, ViewZoneContext, ViewZoneId, ViewZoneRenderer};
 pub(crate) use self::text_wrapper::LineLayout;
 
 // Re-export FoldRange and extract_fold_ranges

@@ -54,6 +54,11 @@ pub(super) struct FoldMap {
     /// Cached wrap_row_count from last rebuild
     /// Used to detect if WrapMap changed and rebuild is needed
     cached_wrap_row_count: usize,
+
+    /// Impulse: buffer lines the host hides (Monaco's `setHiddenAreas`),
+    /// sorted, disjoint and non-adjacent. Kept apart from the folds, which
+    /// the highlighter replaces on each parse.
+    host_hidden: Vec<Range<usize>>,
 }
 
 impl FoldMap {
@@ -66,6 +71,50 @@ impl FoldMap {
             folded: Vec::new(),
             needs_rebuild: true,
             cached_wrap_row_count: 0,
+            host_hidden: Vec::new(),
+        }
+    }
+
+    /// Impulse: whether anything hides rows, folds or the host's ranges.
+    /// Without either the projection is the identity.
+    pub(super) fn has_hidden(&self) -> bool {
+        !self.folded.is_empty() || !self.host_hidden.is_empty()
+    }
+
+    /// Impulse: the run of hidden wrap rows holding `wrap_row`.
+    pub(super) fn hidden_run_at(&self, wrap_row: usize) -> Option<Range<usize>> {
+        if !self.has_hidden() {
+            return None;
+        }
+        let index = self
+            .hidden
+            .partition_point(|run| run.wrap_rows.end <= wrap_row);
+        self.hidden
+            .get(index)
+            .filter(|run| run.wrap_rows.start <= wrap_row)
+            .map(|run| run.wrap_rows.clone())
+    }
+
+    /// Impulse: the buffer lines the host hides.
+    pub(super) fn host_hidden(&self) -> &[Range<usize>] {
+        &self.host_hidden
+    }
+
+    /// Impulse: hide these buffer lines (end exclusive), in place of the
+    /// ranges hidden before. Overlapping and adjacent ranges merge.
+    pub(super) fn set_host_hidden(&mut self, mut ranges: Vec<Range<usize>>) {
+        ranges.retain(|range| !range.is_empty());
+        ranges.sort_by_key(|range| range.start);
+        let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            match merged.last_mut() {
+                Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+                _ => merged.push(range),
+            }
+        }
+        if merged != self.host_hidden {
+            self.host_hidden = merged;
+            self.needs_rebuild = true;
         }
     }
 
@@ -78,7 +127,8 @@ impl FoldMap {
 
     /// Get total number of visible display rows
     pub(super) fn display_row_count(&self) -> usize {
-        if self.folded.is_empty() {
+        // Impulse: the host's hidden lines too.
+        if !self.has_hidden() {
             return self.cached_wrap_row_count;
         }
         self.projected_wrap_row_count - self.total_hidden
@@ -94,7 +144,8 @@ impl FoldMap {
     /// Convert wrap_row to display_row
     /// Returns None if the wrap_row is hidden by folding
     pub(super) fn wrap_row_to_display_row(&self, wrap_row: usize) -> Option<usize> {
-        if self.folded.is_empty() {
+        // Impulse: the host's hidden lines too.
+        if !self.has_hidden() {
             return if wrap_row < self.cached_wrap_row_count {
                 Some(wrap_row)
             } else {
@@ -119,7 +170,8 @@ impl FoldMap {
 
     /// Convert display_row to wrap_row
     pub(super) fn display_row_to_wrap_row(&self, display_row: usize) -> Option<usize> {
-        if self.folded.is_empty() {
+        // Impulse: the host's hidden lines too.
+        if !self.has_hidden() {
             return if display_row < self.cached_wrap_row_count {
                 Some(display_row)
             } else {
@@ -137,7 +189,8 @@ impl FoldMap {
 
     /// Find the nearest visible display_row for a given wrap_row
     pub(super) fn nearest_visible_display_row(&self, wrap_row: usize) -> usize {
-        if self.folded.is_empty() {
+        // Impulse: the host's hidden lines too.
+        if !self.has_hidden() {
             return wrap_row.min(self.cached_wrap_row_count.saturating_sub(1));
         }
 
@@ -291,6 +344,22 @@ impl FoldMap {
             }
         }
 
+        // Impulse: the host's hidden lines move with the text; an edit
+        // inside a range shows its lines again.
+        if !self.host_hidden.is_empty() {
+            self.host_hidden.retain(|range| {
+                range.end <= edit_start_line || range.start > edit_end_line
+            });
+            if line_delta != 0 {
+                for range in &mut self.host_hidden {
+                    if range.start > edit_end_line {
+                        range.start = (range.start as isize + line_delta).max(0) as usize;
+                        range.end = (range.end as isize + line_delta).max(0) as usize;
+                    }
+                }
+            }
+        }
+
         self.needs_rebuild = true;
     }
 
@@ -307,7 +376,8 @@ impl FoldMap {
 
         self.cached_wrap_row_count = wrap_row_count;
 
-        if self.folded.is_empty() {
+        // Impulse: the host's hidden lines too.
+        if !self.has_hidden() {
             // Fast path: no folds, all wrap rows are visible
             self.set_hidden_rows(wrap_row_count, Vec::new());
             self.needs_rebuild = false;
@@ -334,6 +404,23 @@ impl FoldMap {
                 wrap_row_count
             };
 
+            if start_wrap_row < end_wrap_row {
+                hidden_ranges.push(start_wrap_row..end_wrap_row);
+            }
+        }
+
+        // Impulse: the host's hidden lines, whole.
+        let line_count = wrap_map.buffer_line_count();
+        for range in &self.host_hidden {
+            if range.start >= line_count {
+                break;
+            }
+            let start_wrap_row = wrap_map.buffer_line_to_first_wrap_row(range.start);
+            let end_wrap_row = if range.end < line_count {
+                wrap_map.buffer_line_to_first_wrap_row(range.end)
+            } else {
+                wrap_row_count
+            };
             if start_wrap_row < end_wrap_row {
                 hidden_ranges.push(start_wrap_row..end_wrap_row);
             }

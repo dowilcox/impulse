@@ -34,6 +34,8 @@ pub(super) struct LastLayout {
     pub(super) cursor_bounds: Option<Bounds<Pixels>>,
     pub(super) text_align: TextAlign,
     pub(super) content_width: Pixels,
+    /// Impulse: the view zones on screen, in window coordinates.
+    pub(super) view_zones: Vec<(super::ViewZoneId, Bounds<Pixels>)>,
 }
 
 impl LastLayout {
