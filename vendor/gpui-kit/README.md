@@ -46,6 +46,12 @@ because gpui-component builds that struct as a full literal.
   I-beam, as Monaco does; ⌥-drag still selects a column.
 - **Hover delay** (`input/editor/lsp/mod.rs`, `input/editor/lsp/hover.rs`,
   `set_hover_delay`): 150 ms by default.
+- **A hover answered after the pointer left** (`input/editor/lsp/hover.rs`):
+  is dropped. The editor hears mouse moves only while the pointer is over it,
+  so nothing took such a hover's highlight away. Not an option: a bug.
+- **Bounds of a range's visible part** (`input/base/state.rs`,
+  `visible_range_bounds`): for the hover popover, whose range can run past
+  the last visible line.
 - **Folding from the keyboard** (`editor_options.rs`,
   `input/editor/display_map/display_map.rs`): fold and unfold at the cursor,
   fold and unfold all, over the ranges the display map exposes.
@@ -194,6 +200,12 @@ because gpui-component builds that struct as a full literal.
   above a word is measured from the editor's top, not the window's, so a
   hover on the first lines opens below the word instead of over the tabs and
   titlebar. The diagnostic popover shares it.
+- **Hovers past the visible lines** (`input/popovers/hover_popover.rs`): a
+  hover is anchored on its range's visible part (`visible_range_bounds`).
+  `range_to_bounds` has nothing for a range that ends below the last visible
+  line (a YAML key's hover covers the key's whole block), so such a hover
+  painted its highlight over the whole block with no popover, and without
+  the popover nothing took the highlight away. Not an option: a bug.
 - **No language label on popover code blocks** (`input/popovers/mod.rs`,
   `render_markdown`): the label drew over the code, since the popovers cancel
   the padding it needs; Monaco's hovers show none. The fence's language still

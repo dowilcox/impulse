@@ -4094,6 +4094,24 @@ impl<M: InputModeKind> InputBaseState<M> {
         ))
     }
 
+    /// Impulse: the bounds of the part of `range` on the visible lines, from
+    /// its first visible line to its last, or `None` when none of it is
+    /// visible, clipped to the text's bounds (the lines laid out run a little
+    /// past them). [`Self::range_to_bounds`] has none for a range that ends
+    /// below the last line laid out, as a YAML key's hover covers the key's
+    /// whole block.
+    pub fn visible_range_bounds(&self, range: &Range<usize>) -> Option<Bounds<Pixels>> {
+        let visible = &self.last_layout.as_ref()?.visible_range_offset;
+        if range.end < visible.start || range.start > visible.end {
+            return None;
+        }
+        let start = range.start.max(visible.start);
+        let end = range.end.min(visible.end).max(start);
+        let first = self.range_to_bounds(&(start..start))?;
+        let last = self.range_to_bounds(&(end..end))?;
+        Some(first.union(&last).intersect(&self.last_bounds?))
+    }
+
     /// Replace text in range in silent.
     ///
     /// This will not trigger any UI interaction, such as auto-completion.

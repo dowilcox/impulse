@@ -104,9 +104,14 @@ impl Popover {
     }
 
     /// Get the bounds of the range in the editor, if it is visible.
+    ///
+    /// Impulse: the range's visible part, so a range that runs past the
+    /// last visible line still gets its popover, and with it the listeners
+    /// that dismiss the popover and the range's highlight. Without them the
+    /// highlight stayed after the pointer left the editor.
     fn trigger_bounds(&self, cx: &App) -> Option<Bounds<Pixels>> {
         let editor = self.editor.read(cx);
-        editor.range_to_bounds(&self.range)
+        editor.visible_range_bounds(&self.range)
     }
 }
 

@@ -60,7 +60,17 @@ impl InputBaseState<EditorMode> {
             })?;
             let result = task.await?;
 
-            _ = editor.update(cx, |editor, cx| {
+            _ = editor.update_in(cx, |editor, window, cx| {
+                // Impulse: drop an answer that comes after the pointer has
+                // left the text. The editor hears mouse moves only over
+                // itself, so nothing would take its highlight away.
+                let pointer = window.mouse_position();
+                if !editor
+                    .text_bounds()
+                    .is_some_and(|bounds| bounds.contains(&pointer))
+                {
+                    return;
+                }
                 match result {
                     Some(hover) => {
                         if let Some(range) = hover.range {
@@ -117,5 +127,119 @@ impl InputBaseState<EditorMode> {
         if changed {
             cx.notify();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{rc::Rc, time::Duration};
+
+    use gpui::{
+        AppContext as _, Context, Entity, IntoElement, Modifiers, ParentElement as _, Render,
+        Styled as _, Task, TestAppContext, VisualTestContext, Window, div, point, px,
+    };
+    use ropey::Rope;
+
+    use super::HoverProvider;
+    use crate::input::{EditorState, RopeExt as _};
+
+    /// Impulse: a YAML server's hover on a key covers the key's whole block.
+    struct WholeText;
+
+    impl HoverProvider for WholeText {
+        fn hover(
+            &self,
+            text: &Rope,
+            _offset: usize,
+            _window: &mut Window,
+            _cx: &mut gpui::App,
+        ) -> Task<anyhow::Result<Option<lsp_types::Hover>>> {
+            let end = text.offset_to_position(text.len());
+            Task::ready(Ok(Some(lsp_types::Hover {
+                contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
+                    "docs".into(),
+                )),
+                range: Some(lsp_types::Range::new(lsp_types::Position::new(0, 0), end)),
+            })))
+        }
+    }
+
+    /// The editor under a 100 px band (as a tab strip sits above it).
+    struct Root(Entity<EditorState>);
+
+    impl Render for Root {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(div().h(px(100.)).flex_none())
+                .child(div().h(px(200.)).flex_none().child(self.0.clone()))
+        }
+    }
+
+    fn editor(cx: &mut TestAppContext) -> (Entity<EditorState>, VisualTestContext, usize) {
+        let text = (0..200)
+            .map(|i| format!("  key{i}: value"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let len = text.len();
+        let mut state = None;
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |window, cx| {
+                cx.set_global(crate::theme::Theme::default());
+                crate::input::init(cx);
+                let editor = cx.new(|cx| {
+                    let mut editor = EditorState::new(window, cx).default_value(text);
+                    editor.extras.lsp.hover_provider = Some(Rc::new(WholeText));
+                    editor.set_hover_delay(Duration::from_millis(50));
+                    editor
+                });
+                state = Some(editor.clone());
+                cx.new(|_| Root(editor))
+            })
+            .unwrap()
+        });
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        (state.unwrap(), cx, len)
+    }
+
+    #[gpui::test]
+    fn a_range_past_the_last_visible_line_has_visible_bounds(cx: &mut TestAppContext) {
+        let (state, mut cx, len) = editor(cx);
+        cx.update(|_, cx| {
+            let state = state.read(cx);
+            assert!(state.range_to_bounds(&(0..len)).is_none());
+            let first = state.range_to_bounds(&(0..0)).unwrap();
+            let bounds = state.visible_range_bounds(&(0..len)).unwrap();
+            assert_eq!(bounds.top(), first.top());
+            assert!(bounds.bottom() > first.bottom());
+            assert_eq!(bounds.bottom(), state.text_bounds().unwrap().bottom());
+            assert!(state.visible_range_bounds(&(len..len)).is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn a_hover_answered_after_the_pointer_left_is_dropped(cx: &mut TestAppContext) {
+        let (state, mut cx, _) = editor(cx);
+        let inside = cx.update(|_, cx| state.read(cx).range_to_bounds(&(4..4)).unwrap().center());
+        let outside = point(px(20.), px(40.));
+
+        // The pointer rests on a key: the answer comes and stays.
+        cx.simulate_mouse_move(inside, None, Modifiers::none());
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| state.read(cx).hover_popover().is_some()));
+
+        // The pointer stops on a key and leaves for the band above before
+        // the answer comes.
+        cx.update(|_, cx| state.update(cx, |state, cx| state.clear_hover_state(cx)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_mouse_move(inside, None, Modifiers::none());
+        cx.simulate_mouse_move(outside, None, Modifiers::none());
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| state.read(cx).hover_popover().is_none()));
     }
 }

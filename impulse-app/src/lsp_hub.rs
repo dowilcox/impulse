@@ -905,8 +905,25 @@ impl HoverProvider for DocumentLink {
             work_done_progress_params: Default::default(),
         };
         let client = self.client.clone();
-        cx.background_executor()
-            .spawn(async move { client.request::<HoverRequest>(params).await.map_err(failed) })
+        let text = text.clone();
+        cx.background_executor().spawn(async move {
+            let mut hover = client
+                .request::<HoverRequest>(params)
+                .await
+                .map_err(failed)?;
+            // GPUI Kit reads the range's columns as characters.
+            if !client.uses_utf32() {
+                if let Some(hover) = &mut hover {
+                    hover.range = hover.range.map(|r| {
+                        lsp_types::Range::new(
+                            utf16_to_chars(&text, r.start),
+                            utf16_to_chars(&text, r.end),
+                        )
+                    });
+                }
+            }
+            Ok(hover)
+        })
     }
 }
 
