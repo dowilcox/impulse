@@ -12,6 +12,8 @@ mod number_input;
 mod otp_input;
 mod overlay;
 pub(crate) mod popovers;
+// Impulse: the completion menu's settings, set on the theme, and its icons.
+pub use popovers::{CompletionIconAssets, CompletionMenuSettings};
 mod search;
 mod syntax_context;
 

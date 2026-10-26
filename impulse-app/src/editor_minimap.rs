@@ -10,8 +10,8 @@ use std::rc::Rc;
 use gpui_kit::component::{ActiveTheme as _, RopeExt as _};
 use gpui_kit::{
     canvas, div, fill, point, px, size, AnyElement, Bounds, Context, DispatchPhase, Entity,
-    HitboxBehavior, IntoElement as _, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement as _, Pixels, Styled as _,
+    HitboxBehavior, InteractiveElement as _, IntoElement as _, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Styled as _,
 };
 use impulse_kit::minimap::{self, COLUMN_WIDTH, MAX_COLUMNS, ROW_HEIGHT};
 
@@ -28,9 +28,47 @@ pub(crate) struct MinimapState {
 /// Monaco's minimap is as wide as its columns, plus a little air.
 const WIDTH: f32 = MAX_COLUMNS as f32 * COLUMN_WIDTH + 8.0;
 
+/// GPUI Kit's vertical scrollbar, at the editor's right edge (`WIDTH` in
+/// gpui-base's scrollbar.rs).
+// Until editor_tab.rs places the overlay (then drop these allows and
+// `minimap`).
+#[allow(dead_code)]
+const SCROLLBAR_WIDTH: f32 = 16.0;
+
 impl EditorTab {
-    /// The minimap, when the setting is on.
+    /// The minimap beside the editor, when the setting is on.
     pub(crate) fn minimap(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        Some(self.minimap_body(cx)?.flex_none().into_any_element())
+    }
+
+    /// What the editor keeps free at its right edge for the minimap
+    /// overlay (`Editor::scrollbar_gutter`), when the setting is on: the
+    /// minimap and the scrollbar beside it.
+    #[allow(dead_code)]
+    pub(crate) fn minimap_gutter(&self, cx: &gpui_kit::App) -> Option<Pixels> {
+        crate::settings_store::SettingsStore::get(cx)
+            .minimap_enabled
+            .then(|| px(WIDTH + SCROLLBAR_WIDTH))
+    }
+
+    /// The minimap laid over the editor's right edge, as Monaco places it:
+    /// between the text and the vertical scrollbar, in the room
+    /// `minimap_gutter` keeps. The editor's parent must be `relative()`.
+    /// The wheel still scrolls the editor through it.
+    #[allow(dead_code)]
+    pub(crate) fn minimap_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        Some(
+            self.minimap_body(cx)?
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(SCROLLBAR_WIDTH))
+                .block_mouse_except_scroll()
+                .into_any_element(),
+        )
+    }
+
+    fn minimap_body(&self, cx: &mut Context<Self>) -> Option<gpui_kit::Div> {
         if !crate::settings_store::SettingsStore::get(cx).minimap_enabled {
             return None;
         }
@@ -46,38 +84,32 @@ impl EditorTab {
             .try_global::<crate::kit_theme::EditorBackdrop>()
             .map_or(theme.background, |b| b.background);
         Some(
-            div()
-                .h_full()
-                .w(px(WIDTH))
-                .flex_none()
-                .bg(background)
-                .child(
-                    canvas(
-                        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
-                        move |bounds, hitbox, window, cx| {
-                            let layout = Layout::of(&state, bounds, cx);
-                            let Some(layout) = layout else {
-                                return;
+            div().h_full().w(px(WIDTH)).bg(background).child(
+                canvas(
+                    |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+                    move |bounds, hitbox, window, cx| {
+                        let layout = Layout::of(&state, bounds, cx);
+                        let Some(layout) = layout else {
+                            return;
+                        };
+                        paint_lines(&state, &layout, bounds, tab_size, ink, window, cx);
+                        let hovered = hitbox.is_hovered(window);
+                        if pointer.hovered.replace(hovered) != hovered {
+                            window.refresh();
+                        }
+                        if hovered || pointer.dragging.get() {
+                            let color = if pointer.dragging.get() {
+                                slider_active
+                            } else {
+                                slider
                             };
-                            paint_lines(&state, &layout, bounds, tab_size, ink, window, cx);
-                            let hovered = hitbox.is_hovered(window);
-                            if pointer.hovered.replace(hovered) != hovered {
-                                window.refresh();
-                            }
-                            if hovered || pointer.dragging.get() {
-                                let color = if pointer.dragging.get() {
-                                    slider_active
-                                } else {
-                                    slider
-                                };
-                                window.paint_quad(fill(layout.slider(bounds), color));
-                            }
-                            mouse(&state, &pointer, &hitbox, layout, bounds, window);
-                        },
-                    )
-                    .size_full(),
+                            window.paint_quad(fill(layout.slider(bounds), color));
+                        }
+                        mouse(&state, &pointer, &hitbox, layout, bounds, window);
+                    },
                 )
-                .into_any_element(),
+                .size_full(),
+            ),
         )
     }
 }

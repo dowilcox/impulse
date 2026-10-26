@@ -8,7 +8,8 @@ use gpui::{
 };
 use gpui_base::TestSupportExt as _;
 use gpui_base::input::CompletionHighlighter;
-use lsp_types::CompletionItem;
+use gpui_kit_assets::IconName as KindIcon;
+use lsp_types::{CompletionItem, CompletionItemKind};
 
 const MAX_MENU_HEIGHT: Pixels = px(240.);
 const POPOVER_GAP: Pixels = px(4.);
@@ -48,11 +49,68 @@ fn retained_highlight_ranges(
     merged
 }
 
+/// Impulse: settings for the editor's completion menu, in
+/// [`crate::Theme::completion_menu`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompletionMenuSettings {
+    /// Show each item's kind as an icon before its label, as Monaco's
+    /// `suggest.showIcons` does. Default off, GPUI Kit's original look. The
+    /// icons are Lucide's (`icons/<name>.svg`), outside the default component
+    /// set, so the application's asset source must provide them: fall back
+    /// to [`CompletionIconAssets`] for them.
+    pub show_icons: bool,
+}
+
+// Impulse: the icons `completion_kind_icon` draws, as an asset source an
+// application composes with its own (`CompletionIconAssets`).
+gpui_kit_assets::icon_assets!(pub CompletionIconAssets, [
+    Box, Tag, Variable, Plug, Hash, Component, ListOrdered, Zap, Braces, Wrench, Ruler, Key,
+    SquareDashedBottomCode, Palette, File, Link, Folder, Pi, Boxes, Diff, Type, WholeWord,
+]);
+
+/// Impulse: the Lucide icon for a completion kind, and its color the way
+/// Monaco's `symbolIcon.*Foreground` colors go: functions purple, variables
+/// and fields blue, classes, enums and events orange, the rest plain.
+pub(crate) fn completion_kind_icon(kind: CompletionItemKind, cx: &App) -> (KindIcon, gpui::Hsla) {
+    let theme = cx.theme();
+    let (icon, color) = match kind {
+        CompletionItemKind::METHOD
+        | CompletionItemKind::FUNCTION
+        | CompletionItemKind::CONSTRUCTOR => (KindIcon::Box, theme.magenta),
+        CompletionItemKind::FIELD => (KindIcon::Tag, theme.blue),
+        CompletionItemKind::VARIABLE => (KindIcon::Variable, theme.blue),
+        CompletionItemKind::INTERFACE => (KindIcon::Plug, theme.blue),
+        CompletionItemKind::ENUM_MEMBER => (KindIcon::Hash, theme.blue),
+        CompletionItemKind::CLASS => (KindIcon::Component, theme.yellow),
+        CompletionItemKind::ENUM => (KindIcon::ListOrdered, theme.yellow),
+        CompletionItemKind::EVENT => (KindIcon::Zap, theme.yellow),
+        CompletionItemKind::MODULE => (KindIcon::Braces, theme.popover_foreground),
+        CompletionItemKind::PROPERTY => (KindIcon::Wrench, theme.popover_foreground),
+        CompletionItemKind::UNIT => (KindIcon::Ruler, theme.popover_foreground),
+        CompletionItemKind::VALUE => (KindIcon::Hash, theme.popover_foreground),
+        CompletionItemKind::KEYWORD => (KindIcon::Key, theme.popover_foreground),
+        CompletionItemKind::SNIPPET => (KindIcon::SquareDashedBottomCode, theme.popover_foreground),
+        CompletionItemKind::COLOR => (KindIcon::Palette, theme.popover_foreground),
+        CompletionItemKind::FILE => (KindIcon::File, theme.popover_foreground),
+        CompletionItemKind::REFERENCE => (KindIcon::Link, theme.popover_foreground),
+        CompletionItemKind::FOLDER => (KindIcon::Folder, theme.popover_foreground),
+        CompletionItemKind::CONSTANT => (KindIcon::Pi, theme.popover_foreground),
+        CompletionItemKind::STRUCT => (KindIcon::Boxes, theme.popover_foreground),
+        CompletionItemKind::OPERATOR => (KindIcon::Diff, theme.popover_foreground),
+        CompletionItemKind::TYPE_PARAMETER => (KindIcon::Type, theme.popover_foreground),
+        // TEXT, and kinds newer than this list.
+        _ => (KindIcon::WholeWord, theme.popover_foreground),
+    };
+    (icon, color)
+}
+
 use crate::{
-    ActiveTheme, IndexPath, Selectable, ThemeStyled as _, actions, h_flex,
+    ActiveTheme, Icon, IndexPath, Selectable, ThemeStyled as _, actions, h_flex,
     input::{
         self, EditorState,
-        popovers::{CaretAnchoredPopup, editor_popover, render_markdown},
+        popovers::{
+            CaretAnchoredPopup, editor_popover, editor_popover_background, render_markdown,
+        },
     },
     label::Label,
     list::{List, ListDelegate, ListEvent, ListState},
@@ -141,6 +199,12 @@ impl RenderOnce for CompletionMenuItem {
             )
         })
         .collect::<Vec<_>>();
+        // Impulse: the kind's icon before the label, when the theme asks.
+        let kind_icon = cx
+            .theme()
+            .completion_menu
+            .show_icons
+            .then(|| completion_kind_icon(item.kind.unwrap_or(CompletionItemKind::TEXT), cx));
 
         MenuItemElement::new(self.ix)
             .aria_label(item.label.clone())
@@ -157,7 +221,16 @@ impl RenderOnce for CompletionMenuItem {
                     .w_full()
                     .gap_3()
                     .justify_between()
-                    .child(StyledText::new(item.label.clone()).with_highlights(highlights))
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .when_some(kind_icon, |this, (icon, color)| {
+                                this.child(
+                                    Icon::new(icon).size(px(14.)).flex_none().text_color(color),
+                                )
+                            })
+                            .child(StyledText::new(item.label.clone()).with_highlights(highlights)),
+                    )
                     .when_some(item.detail.as_ref(), |this, detail| {
                         this.child(
                             Label::new(detail.clone())
@@ -454,6 +527,8 @@ impl Render for CompletionMenu {
                     .child(
                         editor_popover("completion-menu", cx)
                             .popover_style(cx)
+                            // Impulse: Monaco's `editorSuggestWidget.background`.
+                            .bg(editor_popover_background(cx))
                             .text_sm()
                             // Each virtual row includes the menu's inter-item gap.
                             .pb_0p5()
@@ -475,6 +550,8 @@ impl Render for CompletionMenu {
                             div().child(
                                 editor_popover("completion-menu", cx)
                                     .popover_style(cx)
+                                    // Impulse: as the menu beside it.
+                                    .bg(editor_popover_background(cx))
                                     .text_sm()
                                     .w(configured_max)
                                     .px_2()

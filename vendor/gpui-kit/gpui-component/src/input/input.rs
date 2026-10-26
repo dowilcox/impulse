@@ -3,9 +3,9 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AccessibleAction, AnyElement, App, DefiniteLength, Edges, ElementId, Entity, Hsla,
-    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Rems, RenderOnce, Role,
-    SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled, TextAlign, TouchPhase,
-    Window, div, px, relative,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, Rems,
+    RenderOnce, Role, SharedString, StatefulInteractiveElement as _, StyleRefinement, Styled,
+    TextAlign, TouchPhase, Window, div, px, relative,
 };
 
 use crate::button::{Button, ButtonRounded, ButtonVariants as _};
@@ -132,6 +132,9 @@ pub struct Input {
     role: RoleOverride,
     accessibility_id: Option<SharedString>,
     aria_label: Option<SharedString>,
+    /// Impulse: room kept free between a multi-line input's text and its
+    /// vertical scrollbar, for a minimap the application draws there.
+    scrollbar_gutter: Pixels,
 
     /// An optional context menu builder to allow a custom context menu on the input.
     ///
@@ -244,6 +247,7 @@ impl Input {
             role: RoleOverride::default(),
             accessibility_id: None,
             aria_label: None,
+            scrollbar_gutter: Pixels::ZERO,
             context_menu_builder: None,
             paste_handler: None,
             token_renderer: None,
@@ -261,6 +265,15 @@ impl Input {
 
     pub(crate) fn is_disabled(&self) -> bool {
         self.disabled
+    }
+
+    /// Impulse: keep `width` free between a multi-line input's text and its
+    /// vertical scrollbar, which stays at the right edge (Monaco puts its
+    /// minimap there). The text wraps and stops before it; the application
+    /// draws over it. Default zero.
+    pub(crate) fn scrollbar_gutter(mut self, width: Pixels) -> Self {
+        self.scrollbar_gutter = width;
+        self
     }
 
     pub fn accessibility_id(mut self, id: impl Into<SharedString>) -> Self {
@@ -597,7 +610,8 @@ impl RenderOnce for Input {
             if state.presentation(cx).is_multi_line() {
                 Edges {
                     top: self.size.input_py(),
-                    right: self.size.input_px(),
+                    // Impulse: plus the scrollbar gutter, see `scrollbar_gutter`.
+                    right: self.size.input_px() + self.scrollbar_gutter,
                     bottom: self.size.input_py(),
                     left: if state.presentation(cx).is_code_editor() {
                         self.size.input_px().min(px(6.))

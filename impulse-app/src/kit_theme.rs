@@ -133,6 +133,9 @@ pub fn apply(
     c.button_secondary_foreground = c.secondary_foreground;
 
     k.tokens = ThemeTokens::from(&k.colors);
+    // Monaco's suggest widget shows each item's kind (`suggest.showIcons`).
+    // The icons come from `CompletionIconAssets`, behind the app's assets.
+    k.completion_menu.show_icons = true;
     k.highlight_theme = highlight_theme(theme, false, settings.bracket_pair_colorization).into();
     // Review colors code as highlight.js does, function names included.
     cx.set_global(ReviewHighlight(std::sync::Arc::new(highlight_theme(
@@ -275,6 +278,10 @@ fn highlight_theme(
             "editor.line_number": theme.fg_comment,
             "editor.active_line_number": theme.fg,
             "editor.invisible": theme.fg_comment,
+            // The completion, code action and hover popovers: Monaco's
+            // `editorSuggestWidget.background` and
+            // `editorHoverWidget.background`.
+            "editor.popover.background": theme.bg_dark,
             "error": theme.red,
             "warning": theme.yellow,
             "info": theme.blue,

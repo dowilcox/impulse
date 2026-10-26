@@ -19,4 +19,31 @@ again (or drop the ones upstream now has), and update this file.
 
 ## Patches
 
-None yet.
+Each is marked `// Impulse:` in the code.
+
+### gpui-component
+
+- **Hover popover placement** (`input/popovers/hover_popover.rs`): the room
+  above a word is measured from the editor's top, not the window's, so a
+  hover on the first lines opens below the word instead of over the tabs and
+  titlebar. The diagnostic popover shares it.
+- **No language label on popover code blocks** (`input/popovers/mod.rs`,
+  `render_markdown`): the label drew over the code, since the popovers cancel
+  the padding it needs; Monaco's hovers show none. The fence's language still
+  picks the syntax colors.
+- **Completion kind icons** (`input/popovers/completion_menu.rs`):
+  `CompletionMenuSettings { show_icons }` on the theme (off by default), a
+  Lucide icon per LSP `CompletionItemKind` in Monaco's colors, and
+  `CompletionIconAssets`, an asset source with just those icons for the app
+  to compose with its own.
+- **Caret popups flip above** (`input/popovers/caret_anchored.rs`): the
+  completion and code-action menus open above the caret when they don't fit
+  below it, inside the editor and the window, and there's more room above.
+- **Editor popover background** (`highlighter/registry.rs`,
+  `highlighter/wasm_stub.rs`, `input/popovers/mod.rs`): a highlight-theme key,
+  `editor.popover.background` (Monaco's `editorHoverWidget.background` and
+  `editorSuggestWidget.background`), for hovers, completions and the
+  completion docs; the theme's `popover` color when it's unset.
+- **Scrollbar gutter** (`input/editor.rs`, `input/input.rs`):
+  `Editor::scrollbar_gutter(width)` keeps room between the text and the
+  vertical scrollbar, for a minimap there as in Monaco (0 by default).

@@ -453,6 +453,11 @@ pub struct HighlightThemeStyle {
     /// Falls back to [`Self::editor_background`] when unset.
     #[serde(rename = "editor.gutter.background")]
     pub editor_gutter_background: Option<Hsla>,
+    /// Impulse: background of the editor's completion, code action and hover
+    /// popovers (Monaco's `editorSuggestWidget.background`). Falls back to
+    /// the theme's `popover` color when unset.
+    #[serde(rename = "editor.popover.background")]
+    pub editor_popover_background: Option<Hsla>,
     #[serde(flatten)]
     pub status: StatusColors,
     #[serde(rename = "syntax")]

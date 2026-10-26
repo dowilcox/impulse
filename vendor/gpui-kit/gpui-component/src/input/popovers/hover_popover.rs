@@ -9,7 +9,10 @@ use gpui::{
 
 use crate::{
     StyledExt, ThemeStyled as _,
-    input::{EditorState, popovers::render_markdown},
+    input::{
+        EditorState,
+        popovers::{editor_popover_background, render_markdown},
+    },
 };
 
 pub struct HoverPopover {
@@ -167,6 +170,9 @@ impl Element for Popover {
                 .p_1()
                 .text_xs()
                 .popover_style(cx)
+                // Impulse: the editor's widget background (Monaco's
+                // `editorHoverWidget.background`) when the theme sets one.
+                .bg(editor_popover_background(cx))
                 .shadow_md()
                 .max_w(max_width)
                 .max_h(max_height)
@@ -178,7 +184,11 @@ impl Element for Popover {
 
         let popover_size = popover.layout_as_root(AvailableSpace::min_size(), window, cx);
         const SNAP_TO_EDGE: Pixels = px(8.);
-        let top_space = trigger_bounds.top() - SNAP_TO_EDGE;
+        // Impulse: measure the room above from the editor's top, not the
+        // window's, so a hover on the first lines flips below the word
+        // instead of covering the tabs and the title bar above the editor.
+        let editor_top = self.editor.read(cx).input_bounds().top().max(px(0.));
+        let top_space = trigger_bounds.top() - editor_top - SNAP_TO_EDGE;
         let right_space = window.bounds().size.width - trigger_bounds.left() - SNAP_TO_EDGE;
 
         let mut pos = point(

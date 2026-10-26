@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    App, DefiniteLength, Entity, IntoElement, RenderOnce, SharedString, StyleRefinement, Styled,
-    Window, prelude::FluentBuilder as _, relative,
+    App, DefiniteLength, Entity, IntoElement, Pixels, RenderOnce, SharedString, StyleRefinement,
+    Styled, Window, prelude::FluentBuilder as _, relative,
 };
 
 use super::{EditorState, Input};
@@ -27,6 +27,8 @@ pub struct Editor {
     tab_index: isize,
     role: RoleOverride,
     aria_label: Option<SharedString>,
+    /// Impulse: see [`Self::scrollbar_gutter`].
+    scrollbar_gutter: Pixels,
 
     /// An optional context menu builder to allow a custom context menu.
     ///
@@ -50,6 +52,7 @@ impl Editor {
             tab_index: 0,
             role: RoleOverride::default(),
             aria_label: None,
+            scrollbar_gutter: Pixels::ZERO,
             context_menu_builder: None,
             paste_handler: None,
         }
@@ -97,6 +100,15 @@ impl Editor {
 
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Impulse: keep `width` free between the text and the vertical
+    /// scrollbar, which stays at the right edge, for a minimap drawn over
+    /// it as Monaco places its own. The text wraps and stops before it.
+    /// Default zero.
+    pub fn scrollbar_gutter(mut self, width: Pixels) -> Self {
+        self.scrollbar_gutter = width;
         self
     }
 
@@ -163,6 +175,8 @@ impl RenderOnce for Editor {
             .readonly(self.readonly)
             .tab_index(self.tab_index)
             .role(self.role)
+            // Impulse: see `scrollbar_gutter`.
+            .scrollbar_gutter(self.scrollbar_gutter)
             .when_some(self.height, |this, height| this.h(height))
             .when_some(self.aria_label, |this, label| this.aria_label(label))
             .when_some(self.context_menu_builder, |this, build| {

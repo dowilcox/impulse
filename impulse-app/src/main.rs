@@ -126,8 +126,12 @@ impl AssetSource for Assets {
         };
         match std::fs::read(file) {
             Ok(bytes) => Ok(Some(Cow::Owned(bytes))),
-            // GPUI Kit's own icons (the editor's search panel, menus).
-            Err(_) => gpui_kit::assets::Assets.load(path),
+            // The completion menu's kind icons (vendored GPUI Kit's), then
+            // GPUI Kit's own (the editor's search panel, menus).
+            Err(_) => match gpui_kit::component::input::CompletionIconAssets.load(path)? {
+                Some(bytes) => Ok(Some(bytes)),
+                None => gpui_kit::assets::Assets.load(path),
+            },
         }
     }
 

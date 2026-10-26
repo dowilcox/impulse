@@ -28,6 +28,29 @@ pub(crate) fn caret_popup_anchor(geometry: PrepaintCaretGeometry) -> Point<Pixel
     )
 }
 
+/// Impulse: where a caret popup of `height` goes: below the caret at
+/// `anchor`, or above the caret's line when it would run past the bottom
+/// of the editor or the window there and the space above is larger.
+fn flipped_popup_origin(
+    anchor: Point<Pixels>,
+    height: Pixels,
+    geometry: PrepaintCaretGeometry,
+    window_height: Pixels,
+) -> Point<Pixels> {
+    let editor = geometry.input_bounds();
+    let bottom = window_height.min(editor.bottom());
+    let top = px(0.).max(editor.top());
+    let caret_top = geometry.cursor_bounds().origin.y + geometry.scroll_offset().y;
+    let gap = anchor.y - caret_top - geometry.line_height();
+    let below = bottom - anchor.y;
+    let above = caret_top - gap - top;
+    if height > below && above > below {
+        Point::new(anchor.x, (caret_top - gap - height).max(px(0.)))
+    } else {
+        anchor
+    }
+}
+
 /// A popup positioned at the caret from the input's current-frame prepaint.
 ///
 /// The content is built in prepaint (not render) from the resolved anchor,
@@ -95,7 +118,7 @@ impl Element for CaretAnchoredPopup {
         let anchor = caret_popup_anchor(geometry);
         let mut content = (self.build)(anchor, window, cx);
         let viewport = window.viewport_size();
-        content.layout_as_root(
+        let size = content.layout_as_root(
             Size {
                 width: AvailableSpace::Definite(viewport.width),
                 height: AvailableSpace::Definite(viewport.height),
@@ -103,7 +126,10 @@ impl Element for CaretAnchoredPopup {
             window,
             cx,
         );
-        content.prepaint_at(anchor, window, cx);
+        // Impulse: flip above the caret when the popup doesn't fit below it,
+        // inside the editor and the window, and there's more room above.
+        let origin = flipped_popup_origin(anchor, size.height, geometry, viewport.height);
+        content.prepaint_at(origin, window, cx);
         self.content = Some(content);
     }
 

@@ -429,6 +429,9 @@ pub struct HighlightThemeStyle {
     pub editor_invisible: Option<gpui::Hsla>,
     #[serde(rename = "editor.gutter.background")]
     pub editor_gutter_background: Option<gpui::Hsla>,
+    // Impulse: mirrors `editor.popover.background` in registry.rs.
+    #[serde(rename = "editor.popover.background")]
+    pub editor_popover_background: Option<gpui::Hsla>,
     #[serde(flatten)]
     pub status: StatusColors,
     #[serde(rename = "syntax")]

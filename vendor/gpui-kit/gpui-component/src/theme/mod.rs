@@ -1,6 +1,6 @@
 use crate::{
-    highlighter::HighlightTheme, list::ListSettings, notification::NotificationSettings,
-    scroll::ScrollbarMode, sheet::SheetSettings,
+    highlighter::HighlightTheme, input::CompletionMenuSettings, list::ListSettings,
+    notification::NotificationSettings, scroll::ScrollbarMode, sheet::SheetSettings,
 };
 use gpui::{
     App, Global, Hsla, IsZero as _, Pixels, SharedString, Window, WindowAppearance,
@@ -206,6 +206,9 @@ pub struct Theme {
     pub list: ListSettings,
     /// The sheet settings.
     pub sheet: SheetSettings,
+    /// Impulse: the code editor's completion menu settings (kind icons).
+    #[serde(skip)]
+    pub completion_menu: CompletionMenuSettings,
     /// Semantic motion policy for styled components.
     #[serde(skip)]
     pub motion: MotionTokens,
@@ -784,6 +787,7 @@ impl From<&ThemeColor> for Theme {
             dark_theme: Rc::new(ThemeConfig::default()),
             highlight_theme: HighlightTheme::default_light(),
             sheet: SheetSettings::default(),
+            completion_menu: CompletionMenuSettings::default(),
             motion: MotionTokens::default(),
         }
     }
