@@ -816,6 +816,7 @@ impl Workbench {
                         &sentence,
                         None,
                         crate::notification_sound::chosen(cx),
+                        cx,
                     );
                 }
             }

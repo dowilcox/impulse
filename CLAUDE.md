@@ -339,10 +339,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           session file as agent_turns (SavedTurn);
                           agent_integration.rs: the Agent Integration
                           dialog; agent_notify.rs: desktop notifications by
-                          notify-send or osascript, a click on one showing
-                          its terminal where notify-send takes --action,
-                          withdrawn when its attention clears where it
-                          takes --print-id (agent_notify::clear), with
+                          notify-send, or on macOS GPUI's Notification
+                          Center (show_system_notification; osascript only
+                          outside an app bundle), a click on one showing
+                          its terminal (on Linux where notify-send takes
+                          --action), withdrawn when its attention clears
+                          (on Linux where it takes --print-id;
+                          agent_notify::clear), with
                           the sound `notification_sound` names
                           (notification_sound.rs: the compiled-in WAVs by
                           NSSound from memory on macOS, by paplay, pw-play

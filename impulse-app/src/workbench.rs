@@ -248,6 +248,23 @@ impl Workbench {
                 window,
                 |workbench, window, cx| workbench.apply_settings(window, cx),
             );
+        // Whether you're looking at a terminal changes with the window's
+        // focus, and terminals are cached views that don't draw again for
+        // it: ask them. Otherwise one still counted as watched after you
+        // switched apps, and an agent finishing there posted its
+        // notification without marking the tab or the Dock's badge.
+        cx.observe_window_activation(window, |workbench, window, cx| {
+            let terminals = workbench
+                .workspaces
+                .iter()
+                .flat_map(|w| w.all_surfaces())
+                .filter_map(|s| s.terminal().cloned())
+                .collect::<Vec<_>>();
+            for terminal in terminals {
+                terminal.update(cx, |terminal, cx| terminal.agent_note_watched(window, cx));
+            }
+        })
+        .detach();
         let search =
             cx.new(|cx| crate::search_panel::SearchPanel::new(palette.clone(), window, cx));
         cx.subscribe_in(&search, window, |workbench, panel, event, window, cx| {

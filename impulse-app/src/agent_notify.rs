@@ -1,16 +1,18 @@
 //! Desktop notifications (the Swift `DesktopNotifier`), behind one
 //! function: freedesktop notifications through `notify-send` on Linux,
-//! Notification Center through `osascript` on macOS. Either is optional:
-//! without it nothing shows, and the tab's attention dot still says so.
-//! Where `notify-send` takes actions (libnotify 0.7.10 and later), the
-//! notification's default action reports a click, so it can show its
-//! terminal; `osascript` has no way to say. Where it prints the
-//! notification's id, a terminal's notifications are withdrawn when its
-//! attention clears (`clear`), and only its latest ten stay up, as
-//! Swift's `DesktopNotifier` does. With `sound`, Impulse's own sound
-//! (`notification_sound`) plays with it; on Linux the notification then
-//! asks the desktop not to play one too (`suppress-sound`), and on macOS
-//! `display notification` is given no `sound name`.
+//! Notification Center on macOS (GPUI's `UNUserNotificationCenter`, as
+//! Impulse itself, so a click brings Impulse forward; a binary run outside
+//! an app bundle, which the center refuses, falls back to `osascript`,
+//! whose notifications are Script Editor's). Either is optional: without
+//! it nothing shows, and the tab's attention dot still says so. A click
+//! shows the notification's terminal: on macOS, and where `notify-send`
+//! takes actions (libnotify 0.7.10 and later). A terminal's notifications
+//! are withdrawn when its attention clears (`clear`), and only its latest
+//! ten stay up, as Swift's `DesktopNotifier` does: on macOS, and where
+//! `notify-send` prints the notification's id. With `sound`, Impulse's own
+//! sound (`notification_sound`) plays with it, and the notification has
+//! none of its own; on Linux it asks the desktop not to play one
+//! (`suppress-sound`).
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader};
@@ -20,8 +22,9 @@ use std::sync::{Mutex, OnceLock};
 /// A terminal's notifications kept up; older ones are withdrawn.
 const DELIVERED_LIMIT: usize = 10;
 
-/// The notifications up, by the terminal they're for, oldest first.
-static DELIVERED: Mutex<Option<HashMap<u64, Vec<u32>>>> = Mutex::new(None);
+/// The notifications up (freedesktop ids, Notification Center tags), by
+/// the terminal they're for, oldest first.
+static DELIVERED: Mutex<Option<HashMap<u64, Vec<String>>>> = Mutex::new(None);
 
 /// Whether Impulse is the app in front (any of its windows active), as
 /// `NSApp.isActive`: notifications and the Dock's bounce are for while
@@ -30,7 +33,7 @@ static DELIVERED: Mutex<Option<HashMap<u64, Vec<u32>>>> = Mutex::new(None);
 pub(crate) fn app_in_front(cx: &gpui_kit::App) -> bool {
     #[cfg(target_os = "macos")]
     {
-        use objc::runtime::{Class, Object, BOOL, NO};
+        use objc::runtime::{BOOL, Class, NO, Object};
         use objc::{msg_send, sel, sel_impl};
         let _ = cx;
         let Some(class) = Class::get("NSApplication") else {
@@ -52,36 +55,40 @@ pub(crate) fn app_in_front(cx: &gpui_kit::App) -> bool {
 
 /// Withdraw the terminal's notifications that are still up (it's been
 /// seen).
-pub(crate) fn clear(terminal: u64) {
+pub(crate) fn clear(terminal: u64, cx: &gpui_kit::App) {
     let ids = DELIVERED
         .lock()
         .ok()
         .and_then(|mut d| d.as_mut()?.remove(&terminal))
         .unwrap_or_default();
-    close(ids);
+    #[cfg(target_os = "macos")]
+    center::withdraw(ids, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        close(ids);
+    }
 }
 
-/// Note a notification that's up, withdrawing the terminal's oldest past
-/// the limit.
-fn delivered(terminal: u64, id: u32) {
-    let withdrawn = {
-        let Ok(mut delivered) = DELIVERED.lock() else {
-            return;
-        };
-        let ids = delivered
-            .get_or_insert_with(HashMap::new)
-            .entry(terminal)
-            .or_default();
-        ids.push(id);
-        let extra = ids.len().saturating_sub(DELIVERED_LIMIT);
-        ids.drain(..extra).collect::<Vec<_>>()
+/// Note a notification that's up; returns the terminal's oldest past the
+/// limit, to withdraw.
+fn delivered(terminal: u64, id: String) -> Vec<String> {
+    let Ok(mut delivered) = DELIVERED.lock() else {
+        return Vec::new();
     };
-    close(withdrawn);
+    let ids = delivered
+        .get_or_insert_with(HashMap::new)
+        .entry(terminal)
+        .or_default();
+    ids.push(id);
+    let extra = ids.len().saturating_sub(DELIVERED_LIMIT);
+    ids.drain(..extra).collect()
 }
 
 /// Close notifications by id (freedesktop's `CloseNotification`), off the
 /// main thread.
-fn close(ids: Vec<u32>) {
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn close(ids: Vec<String>) {
     if ids.is_empty() || !cfg!(target_os = "linux") {
         return;
     }
@@ -121,15 +128,15 @@ const CLICK: &str = "default";
 /// Show a notification, for a terminal (`terminal`, its entity id) or
 /// not:
 /// `title`, then `subtitle` (the workspace and tab) and `body`, with
-/// Impulse's `sound` (the `notification_sound` setting's). Runs
-/// off the main thread; failures are ignored. The receiver hears once if
-/// the notification is clicked (it closes otherwise).
+/// Impulse's `sound` (the `notification_sound` setting's). Failures are
+/// ignored. The receiver hears once if the notification is clicked.
 pub fn post(
     title: &str,
     subtitle: &str,
     body: &str,
     terminal: Option<u64>,
     sound: Option<crate::notification_sound::Sound>,
+    cx: &gpui_kit::App,
 ) -> Option<async_channel::Receiver<()>> {
     // A snapshot posts no sound, and on the Mac no notification: nothing
     // of it shows on screen (`debug_snapshot`).
@@ -142,6 +149,11 @@ pub fn post(
     if let Some(sound) = sound {
         crate::notification_sound::play(sound);
     }
+    #[cfg(target_os = "macos")]
+    if center::available() {
+        return Some(center::post(title, &lines(subtitle, body), terminal, cx));
+    }
+    let _ = cx;
     let (title, subtitle, body) = (title.to_string(), subtitle.to_string(), body.to_string());
     let (clicked, receiver) = async_channel::bounded(1);
     std::thread::Builder::new()
@@ -173,7 +185,7 @@ pub fn post(
                     match notification_id(&line).filter(|_| index == 0 && options.print_id) {
                         Some(id) => {
                             if let Some(terminal) = terminal {
-                                delivered(terminal, id);
+                                close(delivered(terminal, id.to_string()));
                             }
                         }
                         None => {
@@ -269,6 +281,93 @@ fn command(
     Some(command)
 }
 
+/// Notification Center through GPUI, as Impulse: a click on one
+/// (identified by its tag) is handed to the `post` that showed it.
+#[cfg(target_os = "macos")]
+mod center {
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use gpui_kit::{App, SystemNotification};
+
+    thread_local! {
+        /// Where to say a notification was clicked, by tag.
+        static CLICKS: RefCell<HashMap<String, async_channel::Sender<()>>> =
+            RefCell::new(HashMap::new());
+        static LISTENING: Cell<bool> = const { Cell::new(false) };
+    }
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    /// Run from an app bundle: the notification center aborts a process
+    /// without one (a bare `cargo run`), so GPUI shows nothing there.
+    #[allow(unexpected_cfgs)]
+    pub(super) fn available() -> bool {
+        static BUNDLED: OnceLock<bool> = OnceLock::new();
+        *BUNDLED.get_or_init(|| {
+            use objc::runtime::{Class, Object};
+            use objc::{msg_send, sel, sel_impl};
+            let Some(class) = Class::get("NSBundle") else {
+                return false;
+            };
+            // SAFETY: the main bundle and its identifier (an NSString or
+            // nil), read once.
+            unsafe {
+                let bundle: *mut Object = msg_send![class, mainBundle];
+                if bundle.is_null() {
+                    return false;
+                }
+                let identifier: *mut Object = msg_send![bundle, bundleIdentifier];
+                !identifier.is_null()
+            }
+        })
+    }
+
+    pub(super) fn post(
+        title: &str,
+        body: &str,
+        terminal: Option<u64>,
+        cx: &App,
+    ) -> async_channel::Receiver<()> {
+        if !LISTENING.with(|listening| listening.replace(true)) {
+            cx.on_system_notification_response(|response, _| {
+                let clicked =
+                    CLICKS.with(|clicks| clicks.borrow_mut().remove(response.tag.as_ref()));
+                if let Some(clicked) = clicked {
+                    let _ = clicked.try_send(());
+                }
+            });
+        }
+        let tag = format!(
+            "impulse-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        let (clicked, receiver) = async_channel::bounded(1);
+        CLICKS.with(|clicks| clicks.borrow_mut().insert(tag.clone(), clicked));
+        cx.show_system_notification(SystemNotification {
+            tag: tag.clone().into(),
+            title: title.to_string().into(),
+            body: body.to_string().into(),
+            actions: Vec::new(),
+        });
+        if let Some(terminal) = terminal {
+            withdraw(super::delivered(terminal, tag), cx);
+        }
+        receiver
+    }
+
+    /// Take notifications out of Notification Center.
+    pub(super) fn withdraw(tags: Vec<String>, cx: &App) {
+        for tag in tags {
+            CLICKS.with(|clicks| clicks.borrow_mut().remove(&tag));
+            cx.dismiss_system_notification(&tag);
+        }
+    }
+}
+
 /// Silent (no `sound name`): Impulse plays its own sound.
 #[cfg(target_os = "macos")]
 fn command(title: &str, subtitle: &str, body: &str, _: Options, _: bool) -> Option<Command> {
@@ -289,7 +388,6 @@ fn command(_: &str, _: &str, _: &str, _: Options, _: bool) -> Option<Command> {
 }
 
 /// The subtitle over the body, either one left out when empty.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn lines(subtitle: &str, body: &str) -> String {
     [subtitle, body]
         .into_iter()
@@ -366,9 +464,11 @@ mod tests {
                 ""
             ]
         );
-        assert!(!linux_arguments("Bell", "", "", Options::default(), false)
-            .iter()
-            .any(|a| a.contains("suppress-sound")));
+        assert!(
+            !linux_arguments("Bell", "", "", Options::default(), false)
+                .iter()
+                .any(|a| a.contains("suppress-sound"))
+        );
     }
 
     #[test]

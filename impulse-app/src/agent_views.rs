@@ -226,7 +226,7 @@ impl Workbench {
                     .flatten();
                 // Clicking it (where the desktop says) shows the terminal.
                 let Some(clicked) =
-                    crate::agent_notify::post(title, &subtitle, body, Some(id.as_u64()), sound)
+                    crate::agent_notify::post(title, &subtitle, body, Some(id.as_u64()), sound, cx)
                 else {
                     return;
                 };

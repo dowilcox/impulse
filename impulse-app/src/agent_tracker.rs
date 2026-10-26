@@ -326,7 +326,10 @@ impl TerminalView {
     /// (the Dock bounces, the taskbar entry is marked urgent), at most once
     /// per bell interval, as Swift's `requestAttention` does.
     pub(crate) fn request_attention(&mut self, cx: &mut Context<Self>) {
-        if !self.agent.watched {
+        // Watched only while its window is the active one: the flag is
+        // what the last frame saw.
+        if !self.agent.watched || cx.active_window() != Some(self.window_handle) {
+            self.agent.watched = false;
             self.set_needs_attention(true, cx);
         }
         let now = Instant::now();
@@ -349,7 +352,7 @@ impl TerminalView {
         if self.agent.needs_attention != value {
             self.agent.needs_attention = value;
             if !value {
-                crate::agent_notify::clear(cx.entity_id().as_u64());
+                crate::agent_notify::clear(cx.entity_id().as_u64(), cx);
             }
             cx.emit(AgentSignal::Changed);
             cx.notify();
