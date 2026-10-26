@@ -958,11 +958,7 @@ impl HistoryView {
         let empty = self.filter.read(cx).value().is_empty();
         header
             .child(div().flex_1().min_w(px(4.)))
-            .child(
-                crate::workbench_chrome::chrome_text_field(&self.filter, "search", p, window, cx)
-                    .w(px(300.))
-                    .flex_shrink(1.),
-            )
+            .child(self.filter_field(window, cx))
             .child(
                 // Swift's `ChromeMenuButton`: 4 either side, at least 22 square.
                 gpui_kit::component::button::Button::new("history-presets")
@@ -1020,6 +1016,21 @@ impl HistoryView {
                             })
                     }),
             )
+    }
+
+    /// The filter: `chrome_text_field` with Swift's `ChromeTextField` clear
+    /// button, a 10-point "×" at the end, where the input's own sits 9
+    /// points further in.
+    fn filter_field(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::workbench_chrome::chrome_text_field(
+            &self.filter,
+            "search",
+            &self.palette,
+            window,
+            cx,
+        )
+        .w(px(300.))
+        .flex_shrink(1.)
     }
 
     /// Current branch / All branches, plus the branch History was opened on

@@ -1396,29 +1396,23 @@ impl ReviewView {
                     ),
             )
             .child(
-                div()
-                    .id("whitespace")
-                    .p(px(4.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .tooltip(help(if self.options.ignore_whitespace {
+                crate::workbench_chrome::icon_button(
+                    "whitespace",
+                    "space",
+                    if self.options.ignore_whitespace {
                         "Show whitespace changes"
                     } else {
                         "Hide whitespace changes"
-                    }))
-                    .on_click(cx.listener(|view, _, _, cx| {
-                        view.options.ignore_whitespace = !view.options.ignore_whitespace;
-                        view.refresh(cx);
-                    }))
-                    .child(icon(
-                        "space",
-                        13.,
-                        if self.options.ignore_whitespace {
-                            p.accent
-                        } else {
-                            p.text_secondary
-                        },
-                    )),
+                    },
+                    24.,
+                    metrics::ICON,
+                    self.options.ignore_whitespace,
+                    p,
+                )
+                .on_click(cx.listener(|view, _, _, cx| {
+                    view.options.ignore_whitespace = !view.options.ignore_whitespace;
+                    view.refresh(cx);
+                })),
             )
             .child(
                 gpui_kit::component::button::Button::new("context")
@@ -1444,33 +1438,35 @@ impl ReviewView {
             )
             .child(self.comments_menu(cx))
             .child(
-                div()
-                    .id("show-changes")
-                    .p(px(4.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .tooltip(help(
-                        match impulse_kit::keybindings::display_for(
-                            "show_changes",
-                            &crate::settings_store::SettingsStore::get(cx).keybinding_overrides,
-                            impulse_kit::keybindings::Platform::current(),
-                        ) {
-                            Some(key) => format!("Show Changes panel to commit ({key})"),
-                            None => "Show Changes panel to commit".into(),
-                        },
-                    ))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::ShowChanges)))
-                    .child(icon("git-branch", 13., p.text_secondary)),
+                crate::workbench_chrome::icon_button(
+                    "show-changes",
+                    "git-branch",
+                    match impulse_kit::keybindings::display_for(
+                        "show_changes",
+                        &crate::settings_store::SettingsStore::get(cx).keybinding_overrides,
+                        impulse_kit::keybindings::Platform::current(),
+                    ) {
+                        Some(key) => format!("Show Changes panel to commit ({key})"),
+                        None => "Show Changes panel to commit".into(),
+                    },
+                    24.,
+                    metrics::ICON,
+                    false,
+                    p,
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::ShowChanges))),
             )
             .child(
-                div()
-                    .id("refresh")
-                    .p(px(4.))
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .tooltip(help("Refresh"))
-                    .on_click(cx.listener(|view, _, _, cx| view.refresh(cx)))
-                    .child(icon("refresh-cw", 13., p.text_secondary)),
+                crate::workbench_chrome::icon_button(
+                    "refresh",
+                    "refresh-cw",
+                    "Refresh",
+                    24.,
+                    metrics::ICON,
+                    false,
+                    p,
+                )
+                .on_click(cx.listener(|view, _, _, cx| view.refresh(cx))),
             )
     }
 

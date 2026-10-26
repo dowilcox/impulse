@@ -1131,6 +1131,9 @@ fn click(window: &mut Window, x: f32, y: f32, cx: &mut App) {
         point, px, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput,
     };
     let position = point(px(x), px(y));
+    // Where the pointer stays (`keep_pointer`).
+    let id = window.window_handle().window_id();
+    POINTERS.with(|p| p.borrow_mut().insert(id, position));
     window.dispatch_event(
         PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Left,
@@ -1486,6 +1489,7 @@ pub fn open_window<V: gpui_kit::Render>(
         options.focus = false;
     }
     let opened = gpui_kit::open_window(options, cx, build)?;
+    keep_pointer(opened.0, &opened.1, cx);
     #[cfg(target_os = "macos")]
     {
         conceal();
@@ -1517,6 +1521,48 @@ pub fn open_window<V: gpui_kit::Render>(
         }
     }
     Ok(opened)
+}
+
+thread_local! {
+    /// Where each snapshot window's pointer is as far as GPUI knows: where
+    /// an action last clicked, else nowhere over the window.
+    static POINTERS: RefCell<HashMap<gpui_kit::WindowId, gpui_kit::Point<gpui_kit::Pixels>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// GPUI takes the real pointer's position from the system when a window
+/// opens and whenever its bounds change (`Window::bounds_changed`, which
+/// runs when the window is ordered on screen), and hover styles follow it:
+/// a snapshot would show a hover wherever the user's pointer happens to be
+/// over the window's place on screen. Each time, the position is put back
+/// where the snapshot has it with a mouse move given to GPUI only (never
+/// to the system), after the change's own handling, so the view isn't
+/// being updated when the move reaches it.
+fn keep_pointer<V: 'static>(handle: gpui_kit::AnyWindowHandle, view: &Entity<V>, cx: &mut App) {
+    let _ = handle.update(cx, |_, window, cx| {
+        view.update(cx, |_, cx| {
+            cx.observe_window_bounds(window, |_, window, cx| window.defer(cx, place_pointer))
+                .detach();
+        });
+        place_pointer(window, cx);
+    });
+}
+
+/// GPUI's pointer to where the snapshot has it (`POINTERS`).
+fn place_pointer(window: &mut Window, cx: &mut App) {
+    use gpui_kit::{point, px, Modifiers, MouseMoveEvent, PlatformInput};
+    let id = window.window_handle().window_id();
+    let position = POINTERS
+        .with(|p| p.borrow().get(&id).copied())
+        .unwrap_or_else(|| point(px(-10_000.), px(-10_000.)));
+    window.dispatch_event(
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+        cx,
+    );
 }
 
 /// Every window transparent and letting clicks through (a click on one

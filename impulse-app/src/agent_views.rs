@@ -6,7 +6,6 @@
 
 use std::time::Instant;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, Context, Entity, EntityId, FontWeight, Window,
@@ -683,40 +682,46 @@ impl Workbench {
             .iter()
             .filter(|a| a.state == AgentState::Working)
             .count();
-        let trigger = Button::new("agent-inbox")
-            .ghost()
-            .compact()
-            .tooltip("Agents (next one that needs you: Next Agent Needing You)")
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .px(px(4.))
-                    .child(if waiting > 0 {
-                        icon("bell-dot", 13., p.attention)
-                    } else {
-                        icon("bot", 13., p.text_secondary)
-                    })
-                    .when(working > 0, |d| {
-                        d.child(working_ring(10., 1.4, &p)).child(
-                            div()
-                                .font_family("JetBrains Mono")
-                                .text_size(px(10.5))
-                                .text_color(hsla(p.text_secondary))
-                                .child(working.to_string()),
-                        )
-                    })
-                    .when(waiting > 0, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(11.5))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(hsla(p.attention))
-                                .child(format!("{waiting} waiting")),
-                        )
-                    }),
-            );
+        let trigger = InboxTrigger(
+            div()
+                .id("agent-inbox")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(5.))
+                .px(px(8.))
+                .h(px(24.))
+                .active(|s| s.opacity(0.7))
+                .tooltip(|window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(
+                        "Agents (next one that needs you: Next Agent Needing You)",
+                    )
+                    .build(window, cx)
+                })
+                .child(if waiting > 0 {
+                    icon("bell-dot", 13., p.attention)
+                } else {
+                    icon("bot", 13., p.text_secondary)
+                })
+                .when(working > 0, |d| {
+                    d.child(working_ring(10., 1.4, &p)).child(
+                        div()
+                            .font_family("JetBrains Mono")
+                            .text_size(px(10.5))
+                            .text_color(hsla(p.text_secondary))
+                            .child(working.to_string()),
+                    )
+                })
+                .when(waiting > 0, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(hsla(p.attention))
+                            .child(format!("{waiting} waiting")),
+                    )
+                }),
+        );
         let workbench = cx.entity().downgrade();
         let hint = impulse_kit::keybindings::display_for(
             "next_agent",
@@ -736,6 +741,29 @@ impl Workbench {
                 .content(move |_, _, cx| inbox(&agents, &p, &hint, workbench.clone(), cx))
                 .into_any_element(),
         )
+    }
+}
+
+/// The inbox button's face. Swift's `AgentInboxButton` has no background,
+/// hovered, pressed or while its popover is open; it only dims while
+/// pressed (`ChromePressStyle`). So the popover's open state, which
+/// GPUI Kit shows as a ghost button's selected fill, changes nothing here.
+#[derive(IntoElement)]
+struct InboxTrigger(gpui_kit::Stateful<gpui_kit::Div>);
+
+impl gpui_kit::base::Selectable for InboxTrigger {
+    fn selected(self, _: bool) -> Self {
+        self
+    }
+
+    fn is_selected(&self) -> bool {
+        false
+    }
+}
+
+impl RenderOnce for InboxTrigger {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        self.0
     }
 }
 

@@ -523,7 +523,10 @@ pub fn open_main_window(args: Args, cx: &mut App) -> Option<gpui_kit::AnyWindowH
             titlebar: Some(TitlebarOptions {
                 title: Some("Impulse".into()),
                 appears_transparent: true,
-                traffic_light_position: Some(gpui_kit::point(px(14.), px(13.))),
+                // The close button's 14-point frame, from the window's top
+                // left: where AppKit puts it in the Swift app's window (a
+                // transparent titlebar sized by a compact toolbar).
+                traffic_light_position: Some(gpui_kit::point(px(12.), px(13.))),
             }),
             // Impulse's own titlebar is the frame (window_frame.rs); a
             // window manager that won't allow it decorates the window.

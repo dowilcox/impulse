@@ -87,9 +87,10 @@ OVERLAY = re.compile(r"overlay window-(\d+) x=(\S+) y=(\S+) w=(\S+) h=(\S+)")
 # shots show: cropped at 2x from a Swift shot (getting-started-window-tour)
 # and taken off its background into alpha. Where they go, in points from the
 # window's top left: main.rs puts the close button's 14-point frame at
-# (14, 13), and the image starts 1 point left of and 1.5 above a button.
+# (12, 13), as AppKit does in the Swift app's window, and the image's
+# circles start 1 point right of and 2 below its top left.
 TRAFFIC_LIGHTS = HERE / "traffic-lights@2x.png"
-TRAFFIC_LIGHTS_AT = (13, 11.5)
+TRAFFIC_LIGHTS_AT = (11, 11)
 
 
 def read_preferences() -> dict:

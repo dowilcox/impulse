@@ -374,6 +374,8 @@ pub(crate) fn chrome_text_field(
     use gpui_kit::component::Sizable as _;
     use gpui_kit::Focusable as _;
     let focused = state.read(cx).focus_handle(cx).is_focused(window);
+    let empty = state.read(cx).value().is_empty();
+    let clear = state.clone();
     div()
         .flex()
         .items_center()
@@ -390,14 +392,25 @@ pub(crate) fn chrome_text_field(
         }))
         .child(icon(icon_name, 12., p.text_tertiary))
         .child(
-            div().flex_1().min_w_0().child(
-                Input::new(state)
-                    .small()
-                    .cleanable(true)
-                    .appearance(false)
-                    .px_0(),
-            ),
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(Input::new(state).small().appearance(false).px_0()),
         )
+        // Swift's clear button: a 10 pt x at the field's end, not GPUI
+        // Kit's, which sits further in.
+        .when(!empty, |field| {
+            field.child(
+                div()
+                    .id("chrome-field-clear")
+                    .flex_none()
+                    .tooltip(tooltip("Clear"))
+                    .on_click(move |_, window, cx| {
+                        clear.update(cx, |state, cx| state.clean(window, cx))
+                    })
+                    .child(icon("x", 10., p.text_tertiary)),
+            )
+        })
 }
 
 /// `~/…` for paths in the home folder.
