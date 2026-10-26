@@ -17,9 +17,15 @@
 //! Actions and `until=` conditions are the Swift app's, as far as the Rust
 //! app has the features; one it can't do is reported as a failure in the
 //! dump. Window images: on Linux (X11, Xvfb included) ImageMagick's
-//! `import -window` reads each window from the X server; on macOS
-//! `screencapture -l` takes it by window number, the windows kept
-//! transparent and letting clicks through until then.
+//! `import -window` reads each window from the X server. On macOS nothing
+//! ever shows on screen: every window opens transparent and letting clicks
+//! through (`open_window`, `keep_hidden`) and stays so, and since GPUI
+//! draws no frame for a window macOS counts as covered, the run draws them
+//! itself (`keep_drawing`) and renders each window's last frame to an image
+//! with GPUI's `Window::render_to_image` (the `snapshot` feature, which
+//! turns on GPUI's test-support: `cargo build -p impulse-app --features
+//! snapshot`; without it macOS snapshots write no images and say why in
+//! `snapshot.log`).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -262,9 +268,11 @@ pub fn run(cx: &mut App) {
             gpui_kit::px(config.size.0),
             gpui_kit::px(config.size.1),
         ));
-        hide(window);
         cx.notify();
     });
+    keep_hidden(cx);
+    #[cfg(target_os = "macos")]
+    keep_drawing(cx);
     cx.spawn(async move |cx| {
         sleep(cx, config.delay / 2.).await;
         for action in &config.actions {
@@ -1459,16 +1467,101 @@ fn native(window: &Window) -> Option<raw_window_handle::RawWindowHandle> {
         .map(|h| h.as_raw())
 }
 
-/// Nothing shows on screen and no click lands in the window (macOS: fully
-/// transparent until the capture). An X server for snapshots is Xvfb, where
-/// nobody sees the window.
-fn hide(window: &Window) {
+/// Opens a snapshot's window (`crate::open_window`). On macOS it never
+/// shows: it opens unshown and unfocused, is made transparent and to let
+/// clicks through (`keep_hidden`'s `conceal`) before anything orders it on
+/// screen, and only then, if it was to be shown, goes behind the windows of
+/// its level without becoming key, so it has a screen and its backing scale
+/// as a shown window does. Elsewhere (Xvfb, where nobody sees a window) it
+/// opens as asked.
+pub fn open_window<V: gpui_kit::Render>(
+    #[allow(unused_mut)] mut options: gpui_kit::WindowOptions,
+    cx: &mut App,
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> gpui_kit::Result<(gpui_kit::AnyWindowHandle, Entity<V>)> {
     #[cfg(target_os = "macos")]
-    if let Some(raw_window_handle::RawWindowHandle::AppKit(handle)) = native(window) {
-        mac::set_visible(handle.ns_view.as_ptr(), false);
+    let shown = std::mem::replace(&mut options.show, false);
+    #[cfg(target_os = "macos")]
+    {
+        options.focus = false;
+    }
+    let opened = gpui_kit::open_window(options, cx, build)?;
+    #[cfg(target_os = "macos")]
+    {
+        conceal();
+        if shown {
+            let _ = opened.0.update(cx, |_, window, _| {
+                if let Some(raw_window_handle::RawWindowHandle::AppKit(handle)) = native(window) {
+                    mac::order_back(handle.ns_view.as_ptr());
+                }
+            });
+        }
+    }
+    Ok(opened)
+}
+
+/// Every window transparent and letting clicks through (a click on one
+/// would make Impulse the active app, and the keys typed next, meant for
+/// another app, would land in it); should Impulse become the active app
+/// anyway, it steps back and the run reports it. The Swift
+/// `keepWindowsTransparent`.
+#[cfg(target_os = "macos")]
+fn conceal() {
+    if mac::conceal() {
+        fail("Impulse became the active app".into());
+    }
+}
+
+/// Nothing shows on screen and no click lands in a window (macOS: every
+/// window, the ones opened later too, `conceal`ed again every 50 ms, for any
+/// that didn't open through `open_window`; and since none is ever visible,
+/// App Nap is kept from slowing the run's timers). An X server for
+/// snapshots is Xvfb, where nobody sees the window.
+fn keep_hidden(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    {
+        mac::begin_activity();
+        conceal();
+        cx.spawn(async move |cx| loop {
+            sleep(cx, 0.05).await;
+            cx.update(|_| conceal());
+        })
+        .detach();
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = window;
+    let _ = cx;
+}
+
+/// Lays out and paints every window, as GPUI's display link would: GPUI
+/// stops a window's display link while macOS counts the window as covered,
+/// which a transparent one always is, so without this no frame is ever
+/// drawn and the windows' state (layout, painted overlays, next-frame
+/// callbacks) stands still. Frames are drawn (`Window::draw`) but never
+/// presented; at most a third of the main thread goes to them.
+#[cfg(target_os = "macos")]
+fn keep_drawing(cx: &mut App) {
+    cx.spawn(async move |cx| loop {
+        let started = Instant::now();
+        cx.update(|cx| {
+            for handle in cx.windows() {
+                draw_frame(handle, cx);
+            }
+        });
+        let spent = started.elapsed().as_secs_f64();
+        sleep(cx, (spent * 2.).max(1. / 30.)).await;
+    })
+    .detach();
+}
+
+/// One frame of the window, as GPUI's own frame request runs it: the
+/// callbacks waiting for it (animations; only GPUI's test-support can run
+/// them from outside), their effects flushed, then layout and paint into
+/// the window's `rendered_frame`, what `render_to_image` renders.
+#[cfg(target_os = "macos")]
+fn draw_frame(handle: gpui_kit::AnyWindowHandle, cx: &mut App) {
+    #[cfg(feature = "snapshot")]
+    let _ = handle.update(cx, |_, window, cx| window.simulate_next_frame(cx));
+    let _ = handle.update(cx, |_, window, cx| window.draw(cx).clear(cx));
 }
 
 /// Records where it's painted: put in a dialog's body (`overlays`) or the
@@ -1519,6 +1612,14 @@ fn capture(cx: &mut App) {
     for (index, handle) in cx.windows().into_iter().enumerate() {
         let name = format!("window-{index}.png");
         let path = config.output.join(&name);
+        // A fresh frame for `write_image`, every view repainted; the second
+        // takes in what the first's focus changes asked for.
+        #[cfg(target_os = "macos")]
+        {
+            let _ = handle.update(cx, |_, window, _| window.refresh());
+            draw_frame(handle, cx);
+            draw_frame(handle, cx);
+        }
         let outcome = handle.update(cx, |_, window, cx| {
             window.refresh();
             let bounds = window.bounds();
@@ -1567,6 +1668,29 @@ fn capture(cx: &mut App) {
     let _ = std::fs::write(config.output.join("snapshot.log"), report);
 }
 
+/// The window's last drawn frame (`draw_frame`), rendered by its Metal
+/// renderer into a texture and never presented: at the backing scale (2x
+/// on a Retina screen), the GPUI content view only (a system titlebar, as
+/// the Component Gallery's, isn't in it, as on X11).
+#[cfg(all(target_os = "macos", feature = "snapshot"))]
+fn render_image(window: &Window, path: &Path) -> Result<(), String> {
+    let image = window
+        .render_to_image()
+        .map_err(|e| format!("render_to_image: {e:#}"))?;
+    image
+        .save(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(all(target_os = "macos", not(feature = "snapshot")))]
+fn render_image(_: &Window, _: &Path) -> Result<(), String> {
+    Err(
+        "no image: macOS window images need impulse-app's snapshot feature \
+         (cargo build -p impulse-app -p impulse-cli --features impulse-app/snapshot)"
+            .into(),
+    )
+}
+
 fn write_image(window: &Window, path: &Path) -> Result<(), String> {
     let run = |program: &str, args: &[String]| -> Result<(), String> {
         let output = std::process::Command::new(program)
@@ -1601,54 +1725,104 @@ fn write_image(window: &Window, path: &Path) -> Result<(), String> {
             ],
         ),
         #[cfg(target_os = "macos")]
-        Some(raw_window_handle::RawWindowHandle::AppKit(handle)) => {
-            let view = handle.ns_view.as_ptr();
-            let number = mac::window_number(view).ok_or("no window number")?;
-            mac::set_visible(view, true);
-            let result = run(
-                "/usr/sbin/screencapture",
-                &["-x".into(), "-o".into(), format!("-l{number}"), path_arg],
-            );
-            mac::set_visible(view, false);
-            result
-        }
+        Some(raw_window_handle::RawWindowHandle::AppKit(_)) => render_image(window, path),
         Some(_) => Err("window images need X11 or macOS (Wayland can't be read)".into()),
         None => Err("no native window".into()),
     }
 }
 
+/// The AppKit calls, through objc's `Message` rather than its `msg_send!`,
+/// whose expansion asks for a `cargo-clippy` feature it doesn't declare.
 #[cfg(target_os = "macos")]
-// objc's `msg_send!` asks for a `cargo-clippy` feature it doesn't declare.
-#[allow(unexpected_cfgs)]
 mod mac {
-    use objc::runtime::{Object, NO, YES};
-    use objc::{msg_send, sel, sel_impl};
+    use objc::runtime::{Class, Object, Sel, BOOL, NO, YES};
+    use objc::{Message as _, MessageArguments};
 
-    fn window_of(view: *mut std::ffi::c_void) -> *mut Object {
-        let view = view as *mut Object;
-        unsafe { msg_send![view, window] }
+    /// `[receiver selector…]`. Safety: the selector and its argument and
+    /// return types are AppKit's own.
+    unsafe fn send<A: MessageArguments, R: 'static>(
+        receiver: *mut Object,
+        selector: &str,
+        args: A,
+    ) -> R {
+        (*receiver)
+            .send_message(Sel::register(selector), args)
+            .expect(selector)
     }
 
-    /// The `CGWindowID` screencapture takes.
-    pub fn window_number(view: *mut std::ffi::c_void) -> Option<isize> {
-        let window = window_of(view);
-        if window.is_null() {
-            return None;
-        }
-        let number: isize = unsafe { msg_send![window, windowNumber] };
-        Some(number)
+    fn shared(class: &str, selector: &str) -> Option<*mut Object> {
+        let class = Class::get(class)?;
+        let object: *mut Object =
+            unsafe { class.send_message(Sel::register(selector), ()) }.ok()?;
+        (!object.is_null()).then_some(object)
     }
 
-    /// Opaque (for the capture) or transparent and letting clicks through.
-    pub fn set_visible(view: *mut std::ffi::c_void, visible: bool) {
-        let window = window_of(view);
-        if window.is_null() {
-            return;
-        }
-        let alpha: f64 = if visible { 1.0 } else { 0.0 };
+    /// Puts the view's window on screen behind the other windows of its
+    /// level, neither key nor main.
+    pub fn order_back(view: *mut std::ffi::c_void) {
         unsafe {
-            let _: () = msg_send![window, setAlphaValue: alpha];
-            let _: () = msg_send![window, setIgnoresMouseEvents: if visible { NO } else { YES }];
+            let window: *mut Object = send(view as *mut Object, "window", ());
+            if !window.is_null() {
+                let _: () = send(window, "orderBack:", (std::ptr::null_mut::<Object>(),));
+            }
         }
+    }
+
+    /// Tells macOS the run is work the user asked for, until the process
+    /// ends, so App Nap doesn't throttle an app none of whose windows is
+    /// visible (`NSActivityUserInitiatedAllowingIdleSystemSleep`).
+    pub fn begin_activity() {
+        const USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 = 0x00FF_FFFF & !(1 << 20);
+        let (Some(info), Some(string)) = (
+            shared("NSProcessInfo", "processInfo"),
+            Class::get("NSString"),
+        ) else {
+            return;
+        };
+        unsafe {
+            let reason: *mut Object = string
+                .send_message(
+                    Sel::register("stringWithUTF8String:"),
+                    (c"Impulse headless snapshot".as_ptr(),),
+                )
+                .expect("stringWithUTF8String:");
+            let activity: *mut Object = send(
+                info,
+                "beginActivityWithOptions:reason:",
+                (USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP, reason),
+            );
+            // Held for the rest of the run.
+            let _: *mut Object = send(activity, "retain", ());
+        }
+    }
+
+    /// Every window of the app, shown or not: fully transparent and letting
+    /// clicks through. When the app has become the active one, it steps
+    /// back, and this says so.
+    pub fn conceal() -> bool {
+        let Some(app) = shared("NSApplication", "sharedApplication") else {
+            return false;
+        };
+        unsafe {
+            let windows: *mut Object = send(app, "windows", ());
+            let count: usize = send(windows, "count", ());
+            for i in 0..count {
+                let window: *mut Object = send(windows, "objectAtIndex:", (i,));
+                let alpha: f64 = send(window, "alphaValue", ());
+                if alpha != 0.0 {
+                    let _: () = send(window, "setAlphaValue:", (0.0f64,));
+                }
+                let ignores: BOOL = send(window, "ignoresMouseEvents", ());
+                if ignores == NO {
+                    let _: () = send(window, "setIgnoresMouseEvents:", (YES,));
+                }
+            }
+            let active: BOOL = send(app, "isActive", ());
+            if active != NO {
+                let _: () = send(app, "deactivate", ());
+                return true;
+            }
+        }
+        false
     }
 }

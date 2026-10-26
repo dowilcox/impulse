@@ -204,7 +204,7 @@ fn show(cx: &mut App) {
         size: size(screen.size.width, height),
     };
     let existing = cx.global::<QuickTerminal>().terminal.clone();
-    let opened = gpui_kit::open_window(
+    let opened = crate::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: None,

@@ -439,8 +439,17 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           format, plus edit= and lsp= in place of
                           Monaco's js= (EditorTab::debug_edit and
                           debug_lsp); window images by ImageMagick's
-                          import on X11, screencapture on macOS) that
-                          scripts/smoke and scripts/docs drive, the
+                          import on X11, and on macOS rendered off screen
+                          by GPUI's Window::render_to_image, which needs
+                          impulse-app's `snapshot` feature (GPUI's
+                          test-support, refused in release builds); there
+                          windows open unshown and stay transparent and
+                          click-through (crate::open_window, keep_hidden)
+                          in an accessory app (no Dock icon, menu bar or
+                          notifications), and the run draws their frames
+                          itself, keep_drawing, as GPUI draws none for a
+                          covered window) that scripts/smoke and scripts/docs
+                          drive, the
                           Component Gallery of debug builds
                           (component_gallery.rs: every built-in theme's
                           chrome in a window of its own),
@@ -509,6 +518,7 @@ cargo test -p impulse-git            # rust branch: git layer vs the Swift git f
 cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
 cargo test -p impulse-protocol -p impulse-cli   # rust branch: control protocol, MCP, CLI
 cargo run -p impulse-app -- --cwd <folder> --open <file>   # rust branch: the GPUI app
+cargo build -p impulse-app -p impulse-cli --features impulse-app/snapshot   # rust branch, Mac: the build capture.py/run.py snapshot (window images)
 scripts/check-macos.sh               # rust branch: cargo check for macOS from Linux
 scripts/package-linux.sh             # rust branch: dist/ tarball + .deb of the Rust app
 cargo fmt && cargo clippy
@@ -553,7 +563,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `FileIcons.swift`) from upstream material-icon-theme.
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg). On Linux (rust branch) it builds the Rust app instead: `--dev` the debug `impulse-app` and `impulse` CLI that capture.py and the smoke checks run, no flags `scripts/package-linux.sh`.
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
-- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`, and cropping to dialogs, the palette, the agents inbox and toasts from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the Rust app draws them inside its window.
+- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, on the Mac with `--features impulse-app/snapshot` added, and on Linux with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`, and cropping to dialogs, the palette, the agents inbox and toasts from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the Rust app draws them inside its window.
 - **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
 - **scripts/package-linux.sh [--no-build]**: (rust branch) builds `impulse-app` and the `impulse` CLI in release mode and packages them for Linux into `dist/`: a tarball (`bin/`, and `share/impulse/` with the lucide and material icons and the bundled fonts the app reads at run time, plus a desktop entry and icon) and, with `dpkg-deb`, a `.deb` of the same tree under `/usr`. The app finds those files through `impulse-app/src/resources.rs` (`$IMPULSE_RESOURCES`, `../share/impulse` or a bundle's `../Resources` beside the executable, else the source tree).
 - **scripts/check-macos.sh [cargo check args…]** — (rust branch) type-checks `impulse-app` for `aarch64-apple-darwin` from Linux, so code behind `cfg(target_os = "macos")` compiles before anyone builds on a Mac: stand-in `cc`/`ar` make the files C build scripts expect (nothing is linked) and an empty shader file stands in for GPUI's Mac-only shader step. Needs `rustup target add aarch64-apple-darwin`.

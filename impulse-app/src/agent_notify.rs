@@ -126,6 +126,12 @@ pub fn post(
     body: &str,
     terminal: Option<u64>,
 ) -> Option<async_channel::Receiver<()>> {
+    // A snapshot on the Mac posts none: nothing of it shows on screen
+    // (`debug_snapshot`).
+    #[cfg(all(debug_assertions, target_os = "macos"))]
+    if crate::debug_snapshot::is_active() {
+        return None;
+    }
     let (title, subtitle, body) = (title.to_string(), subtitle.to_string(), body.to_string());
     let (clicked, receiver) = async_channel::bounded(1);
     std::thread::Builder::new()

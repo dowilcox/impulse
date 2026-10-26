@@ -15,9 +15,13 @@ Build the app first: ./impulse-macos/build.sh --dev
 
 The Rust app (impulse-app) runs the same snapshots: set IMPULSE_SNAPSHOT_APP
 to its binary (target/debug/impulse-app, the default on Linux, where the
-Swift app doesn't exist; `cargo build -p impulse-app -p impulse-cli` first).
-On Linux it needs an X server in DISPLAY (Xvfb), and the shots are composed
-by imagetool.py (Pillow) instead of imagetool.swift.
+Swift app doesn't exist). Build it first with `cargo build -p impulse-app
+-p impulse-cli`, on the Mac with `--features impulse-app/snapshot` added
+(its window images come from GPUI's test-support; without it the app writes
+none and says so in snapshot.log). On the Mac its windows never show either:
+they stay transparent and are rendered off screen. On Linux it needs an X
+server in DISPLAY (Xvfb), and the shots are composed by imagetool.py
+(Pillow) instead of imagetool.swift.
 """
 
 from __future__ import annotations
@@ -43,6 +47,9 @@ MAC = sys.platform == "darwin"
 APP = Path(os.environ.get("IMPULSE_SNAPSHOT_APP")
            or (REPO / "dist" / "Impulse Dev.app" if MAC else REPO / "target" / "debug" / "impulse-app"))
 RUST = APP.suffix != ".app"
+# How to build the Rust app for snapshots (on the Mac its window images need
+# the snapshot feature).
+RUST_BUILD = "cargo build -p impulse-app -p impulse-cli" + (" --features impulse-app/snapshot" if MAC else "")
 # The `impulse` the app's terminals get, and the MCP entries fall back to.
 CLI = APP.parent / "impulse" if RUST else APP / "Contents" / "Resources" / "bin" / "impulse"
 OUT = REPO / "docs" / "images"
@@ -277,6 +284,8 @@ def snapshot(shot: dict, folder: Path) -> list[dict]:
         if log.exists():
             break
         time.sleep(0.2)
+    if RUST and log.exists() and "snapshot feature" in log.read_text():
+        sys.exit(f"{shot['name']}: no window images: build with {RUST_BUILD}")
     return read_windows(folder)
 
 
@@ -371,8 +380,7 @@ def main() -> None:
             print(shot["name"])
         return
     if not APP.exists():
-        sys.exit(f"{APP} is missing: run " + ("cargo build -p impulse-app -p impulse-cli" if RUST
-                                                else "./impulse-macos/build.sh --dev") + " first")
+        sys.exit(f"{APP} is missing: run " + (RUST_BUILD if RUST else "./impulse-macos/build.sh --dev") + " first")
     selected = [s for s in SHOTS if not args or any(s["name"].startswith(a) for a in args)]
     if not selected:
         sys.exit("no shots match")

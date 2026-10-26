@@ -107,6 +107,11 @@ mod workspace_edits;
 
 use std::borrow::Cow;
 
+// GPUI's test-support (`Window::render_to_image` for the macOS snapshots'
+// window images) stays out of release builds.
+#[cfg(all(feature = "snapshot", not(debug_assertions)))]
+compile_error!("the snapshot feature is for debug builds only (debug_snapshot.rs)");
+
 use gpui_kit::{
     px, size, App, AppContext, AssetSource, Bounds, SharedString, TitlebarOptions, WindowBounds,
     WindowOptions,
@@ -323,6 +328,15 @@ fn main() {
         }
     }
     let app = gpui_kit::application().with_assets(Assets);
+    // A snapshot on the Mac is an accessory app: no Dock icon (none to
+    // bounce), menu bar or place in the app switcher, so nothing of it shows
+    // and it can't be switched to by accident (`debug_snapshot`).
+    #[cfg(all(debug_assertions, target_os = "macos"))]
+    let app = if debug_snapshot::is_active() {
+        app.with_windowing(gpui_kit::WindowingRequest::Headless)
+    } else {
+        app
+    };
     // Files the system asks to open (Finder, the Dock): in the front window.
     app.on_open_urls(|urls| {
         let open: Vec<String> = urls
@@ -462,6 +476,21 @@ fn main() {
     });
 }
 
+/// `gpui_kit::open_window`, but in a debug build's snapshot on macOS the
+/// window never shows on screen (`debug_snapshot::open_window`). Every
+/// window Impulse opens goes through here.
+pub fn open_window<V: gpui_kit::Render>(
+    options: WindowOptions,
+    cx: &mut App,
+    build: impl FnOnce(&mut gpui_kit::Window, &mut App) -> gpui_kit::Entity<V>,
+) -> gpui_kit::Result<(gpui_kit::AnyWindowHandle, gpui_kit::Entity<V>)> {
+    #[cfg(debug_assertions)]
+    if debug_snapshot::is_active() {
+        return debug_snapshot::open_window(options, cx, build);
+    }
+    gpui_kit::open_window(options, cx, build)
+}
+
 /// A main window, sized from the settings, or where a restored one was.
 pub fn open_main_window(args: Args, cx: &mut App) -> Option<gpui_kit::AnyWindowHandle> {
     let settings = settings_store::SettingsStore::get(cx);
@@ -482,7 +511,7 @@ pub fn open_main_window(args: Args, cx: &mut App) -> Option<gpui_kit::AnyWindowH
             size(px(config.size.0), px(config.size.1)),
         );
     }
-    let opened = gpui_kit::open_window(
+    let opened = open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {

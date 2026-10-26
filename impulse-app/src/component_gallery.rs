@@ -35,7 +35,7 @@ pub fn show(light: Option<bool>, increase_contrast: bool, cx: &mut App) {
         Some(false) => Filter::Dark,
     };
     let bounds = Bounds::centered(None, size(px(1180.), px(820.)), cx);
-    let opened = gpui_kit::open_window(
+    let opened = crate::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(gpui_kit::TitlebarOptions {

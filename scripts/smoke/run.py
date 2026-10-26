@@ -20,8 +20,11 @@ target/smoke/<name>/.
 
 For the Rust app, set IMPULSE_SNAPSHOT_APP to its binary (the default on
 Linux: target/debug/impulse-app, after `cargo build -p impulse-app -p
-impulse-cli`); on Linux it runs on the X server in DISPLAY (Xvfb), and the
-scenarios' shells are found on PATH when they aren't where a Mac has them.
+impulse-cli`, on the Mac with `--features impulse-app/snapshot` added for
+the window images); on the Mac its windows stay transparent and are
+rendered off screen, on Linux it runs on the X server in DISPLAY (Xvfb), and
+the scenarios' shells are found on PATH when they aren't where a Mac has
+them.
 """
 
 from __future__ import annotations
@@ -175,7 +178,7 @@ def main() -> None:
             print(f"{scenario['name']:<16} {scenario['about']}")
         return
     if not capture.APP.exists():
-        sys.exit(f"{capture.APP} is missing: run " + ("cargo build -p impulse-app -p impulse-cli" if capture.RUST
+        sys.exit(f"{capture.APP} is missing: run " + (capture.RUST_BUILD if capture.RUST
                                                         else "./impulse-macos/build.sh --dev") + " first")
     selected = [s for s in SCENARIOS if not args or any(s["name"].startswith(a) for a in args)]
     if not selected:

@@ -28,6 +28,9 @@ set -euo pipefail
 # On Linux (rust branch):
 #   ./impulse-macos/build.sh --dev                     # debug build: target/debug/impulse-app
 #   ./impulse-macos/build.sh                           # release packages (scripts/package-linux.sh)
+# (The Rust app's snapshot build on the Mac, for capture.py and run.py with
+# IMPULSE_SNAPSHOT_APP, isn't made here:
+#   cargo build -p impulse-app -p impulse-cli --features impulse-app/snapshot)
 #
 # Environment variables for signing:
 #   IMPULSE_SIGN_IDENTITY  — codesign identity, e.g. "Developer ID Application: Name (TEAM_ID)"
