@@ -203,8 +203,7 @@ because gpui-component builds that struct as a full literal.
 
 - **Padding in hovers and diagnostics** (`input/popovers/hover_popover.rs`,
   `input/popovers/diagnostic_popover.rs`): 6 by 8 points around the text, as
-  Monaco pads its hover, instead of 4 (2 by 4 for a diagnostic), where the
-  text touched the border.
+  Monaco pads its hover, instead of 4 (2 by 4 for a diagnostic).
 - **Hover popover placement** (`input/popovers/hover_popover.rs`): the room
   above a word is measured from the editor's top, not the window's, so a
   hover on the first lines opens below the word instead of over the tabs and
@@ -219,6 +218,10 @@ because gpui-component builds that struct as a full literal.
   `render_markdown`): the label drew over the code, since the popovers cancel
   the padding it needs; Monaco's hovers show none. The fence's language still
   picks the syntax colors.
+- **No border on popover code blocks** (`input/popovers/mod.rs`,
+  `render_markdown`): a hover that is one code block drew a box inside the
+  popover's edge, cut off where the popover scrolls; Monaco's hovers draw
+  none.
 - **Completion kind icons** (`input/popovers/completion_menu.rs`):
   `CompletionMenuSettings { show_icons }` on the theme (off by default), a
   Lucide icon per LSP `CompletionItemKind` in Monaco's colors, and

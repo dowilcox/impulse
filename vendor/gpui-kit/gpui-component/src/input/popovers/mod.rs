@@ -41,6 +41,11 @@ pub(super) fn render_markdown(
                     StyleRefinement::default()
                         .bg(cx.theme().transparent)
                         .p_0()
+                        // Impulse: no border either. A hover that is one
+                        // code block (a YAML server's) drew a box inside the
+                        // popover's edge, cut off where the popover scrolls.
+                        .border_0()
+                        .rounded_none()
                         // Impulse: the editor's font size, as the prose
                         // around it (hover_popover.rs).
                         .text_size(cx.theme().mono_font_size),
