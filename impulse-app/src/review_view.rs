@@ -19,8 +19,8 @@ use std::path::PathBuf;
 
 use gpui_kit::{
     canvas, div, list, prelude::*, px, AnyElement, AnyView, App, Context, FocusHandle, FontWeight,
-    Hsla, KeyDownEvent, ListAlignment, ListState, Pixels, ScrollHandle, SharedString, StyledText,
-    TextRun, Window,
+    Hsla, KeyDownEvent, ListAlignment, ListState, Pixels, ScrollHandle, SharedString, TextRun,
+    Window,
 };
 use impulse_git::hunks::{DiffLine, DiffLineKind};
 use impulse_git::scoped_diff::{DiffOptions, FileDiff};
@@ -2031,6 +2031,8 @@ impl ReviewView {
                 div().flex_1().min_w_0().pr(px(12.)).child(code_text(
                     line,
                     &self.font_family,
+                    px(self.font_size),
+                    px(line_height),
                     colors.text,
                     word,
                     index
@@ -2090,15 +2092,17 @@ enum Side {
 
 /// A line's code in the editor font: syntax colors (byte ranges of its
 /// content), its word-level changes highlighted (spans are UTF-16 offsets)
-/// unless they cover most of it, tabs as four spaces, free to wrap at any
-/// character.
+/// unless they cover most of it, tabs as four spaces, wrapped at any
+/// character (`CodeText`).
 fn code_text(
     line: &DiffLine,
     family: &SharedString,
+    font_size: Pixels,
+    line_height: Pixels,
     text: KitRgba,
     word: KitRgba,
     syntax: &[(std::ops::Range<usize>, Hsla)],
-) -> StyledText {
+) -> CodeText {
     let font = gpui_kit::font(family.clone());
     // A line changed through most of its length shows no word changes
     // (they'd only repeat the line's tint), as in the Swift app.
@@ -2126,14 +2130,6 @@ fn code_text(
         let background = changed.then(|| hsla(word));
         units += ch.len_utf16() as u32;
         let before = shown.len();
-        // A zero-width space between characters lets a long line break
-        // anywhere, as Swift's character-wrapped rows do (GPUI wraps at
-        // words). It's default-ignorable, so it shapes to nothing in any
-        // font (CoreText, and HarfBuzz on Linux, hide it; a font without
-        // the glyph falls back to one where it's zero wide).
-        if !shown.is_empty() {
-            shown.push('\u{200B}');
-        }
         if ch == '\t' {
             shown.push_str("    ");
         } else {
@@ -2152,7 +2148,160 @@ fn code_text(
             }),
         }
     }
-    StyledText::new(shown).with_runs(runs)
+    CodeText {
+        text: shown.into(),
+        runs,
+        font_size,
+        line_height,
+    }
+}
+
+/// A diff line's code wrapped at any character, as Swift's
+/// `DiffLineCellView` wraps (GPUI's own wrapping breaks only between
+/// words, and a zero-width space between characters doesn't help: CoreText
+/// gives it no glyph, and GPUI looks for breaks among the glyphs). The line
+/// is shaped once and cut where a glyph would cross the width, each row
+/// starting flush at the code column.
+struct CodeText {
+    text: SharedString,
+    runs: Vec<TextRun>,
+    font_size: Pixels,
+    line_height: Pixels,
+}
+
+/// Where each row after the first starts (byte offsets into the line), for
+/// `width`: before the first glyph that would end past it.
+fn char_breaks(line: &gpui_kit::ShapedLine, width: Pixels) -> Vec<usize> {
+    let glyphs: Vec<(usize, Pixels)> = line
+        .runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().map(|g| (g.index, g.position.x)))
+        .collect();
+    let mut breaks = Vec::new();
+    let mut row_start = (0usize, px(0.));
+    for (n, &(index, x)) in glyphs.iter().enumerate() {
+        let right = glyphs.get(n + 1).map_or(line.width, |&(_, x)| x);
+        if right - row_start.1 > width && index > row_start.0 {
+            breaks.push(index);
+            row_start = (index, x);
+        }
+    }
+    breaks
+}
+
+impl IntoElement for CodeText {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui_kit::Element for CodeText {
+    type RequestLayoutState = gpui_kit::ShapedLine;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui_kit::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        window: &mut Window,
+        _: &mut App,
+    ) -> (gpui_kit::LayoutId, gpui_kit::ShapedLine) {
+        let line =
+            window
+                .text_system()
+                .shape_line(self.text.clone(), self.font_size, &self.runs, None);
+        let line_height = self.line_height;
+        let measured = line.clone();
+        let layout = window.request_measured_layout(
+            gpui_kit::Style::default(),
+            move |known, available, _, _| {
+                let width = known.width.or(match available.width {
+                    gpui_kit::AvailableSpace::Definite(width) => Some(width),
+                    _ => None,
+                });
+                let rows = width.map_or(1, |width| char_breaks(&measured, width).len() + 1);
+                gpui_kit::Size {
+                    width: width.map_or(measured.width, |w| w.min(measured.width)),
+                    height: line_height * rows as f32,
+                }
+            },
+        );
+        (layout, line)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<Pixels>,
+        _: &mut gpui_kit::ShapedLine,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        bounds: gpui_kit::Bounds<Pixels>,
+        line: &mut gpui_kit::ShapedLine,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        // By the width the line was given: its own when it fits, so
+        // only a line wider than its column breaks.
+        let width = if line.width <= bounds.size.width {
+            line.width
+        } else {
+            bounds.size.width
+        };
+        let mut rows = Vec::new();
+        let mut rest = line.clone();
+        let mut taken = 0;
+        for at in char_breaks(line, width) {
+            let (row, after) = rest.split_at(at - taken);
+            rows.push(row);
+            rest = after;
+            taken = at;
+        }
+        rows.push(rest);
+        let origin =
+            |n: usize| bounds.origin + gpui_kit::point(px(0.), self.line_height * n as f32);
+        for (n, row) in rows.iter().enumerate() {
+            row.paint_background(
+                origin(n),
+                self.line_height,
+                gpui_kit::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .ok();
+        }
+        for (n, row) in rows.iter().enumerate() {
+            row.paint(
+                origin(n),
+                self.line_height,
+                gpui_kit::TextAlign::Left,
+                None,
+                window,
+                cx,
+            )
+            .ok();
+        }
+    }
 }
 
 fn status_letter(status: ChangeStatus, p: &ChromePalette) -> impl IntoElement {

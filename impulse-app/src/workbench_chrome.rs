@@ -41,6 +41,76 @@ pub(crate) fn with_shortcut(help: &str, command: &str, cx: &gpui_kit::App) -> St
     }
 }
 
+/// The flex shrink of a label that gives way before its siblings shrink at
+/// all (SwiftUI's lower `layoutPriority`). Flexbox shares the shortfall by
+/// shrink times width, so against a sibling's 1 this leaves the sibling less
+/// than a float's precision; once the label reaches its minimum, the
+/// sibling takes the rest.
+pub(crate) const GIVES_WAY: f32 = 1e8;
+
+/// How wide `text` is, shaped as the chrome draws it (no ligatures).
+pub(crate) fn shaped_width(
+    text: &str,
+    family: &'static str,
+    weight: FontWeight,
+    size: f32,
+    window: &Window,
+) -> f32 {
+    let run = gpui_kit::TextRun {
+        len: text.len(),
+        font: gpui_kit::Font {
+            weight,
+            features: gpui_kit::FontFeatures::disable_ligatures(),
+            ..gpui_kit::font(family)
+        },
+        color: gpui_kit::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    f32::from(
+        window
+            .text_system()
+            .shape_line(text.to_string().into(), px(size), &[run], None)
+            .width,
+    )
+}
+
+/// `text` cut in the middle to fit `budget`, as CoreText's middle
+/// truncation does: the end keeps half the characters, or one more than the
+/// start ("fe…che"). GPUI's own `text_ellipsis_middle` cuts to the box flex
+/// gives it, so a truncated label draws narrower than the room it keeps;
+/// cut here first, the label is exactly as wide as it draws.
+pub(crate) fn truncate_middle(
+    text: &str,
+    budget: f32,
+    measure: impl Fn(&str) -> f32,
+) -> gpui_kit::SharedString {
+    if measure(text) <= budget {
+        return text.to_string().into();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let cut = |kept: usize| {
+        let front = kept / 2;
+        let back = kept - front;
+        let mut s: String = chars[..front].iter().collect();
+        s.push('\u{2026}');
+        s.extend(&chars[chars.len() - back..]);
+        s
+    };
+    // The most characters that fit, by bisection (wider with every one kept).
+    let (mut lo, mut hi) = (0usize, chars.len().saturating_sub(1));
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        if measure(&cut(mid)) <= budget {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    cut(lo).into()
+}
+
 /// A plain text tooltip.
 pub(crate) fn tooltip(
     text: impl Into<gpui_kit::SharedString>,
@@ -63,7 +133,9 @@ pub(crate) fn progress_ring(
         |_, _, _| {},
         move |bounds: gpui_kit::Bounds<gpui_kit::Pixels>, _, window, _| {
             let width = px(line_width);
-            let radius = bounds.size.width / 2. - width / 2.;
+            // On the frame's edge, half the line outside it, as SwiftUI
+            // strokes a circle (Swift's ProgressRing).
+            let radius = bounds.size.width / 2.;
             let center = bounds.center();
             let arc = |from: f32, to: f32| {
                 let mut path = gpui_kit::PathBuilder::stroke(width);
@@ -933,6 +1005,44 @@ impl Workbench {
         // where the content column starts; without it, it hugs its content.
         let leading_width = sidebar_visible.then(|| self.sidebar_width(cx).max(220.));
         let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
+        let menu_button = crate::menus::menu_button(cx);
+        let sync = self.branch_sync_text(cx);
+        // Over the sidebar the branch gets what's left of its width and is
+        // cut to fit here, so the ahead/behind count follows the drawn text
+        // ("fe…che ↑2") instead of the room GPUI's ellipsis keeps. Without
+        // the sidebar (or with Linux's menu button, of no known width) the
+        // part hugs its content and the ellipsis below stays the backstop.
+        let branch_label: gpui_kit::SharedString = match leading_width {
+            Some(width) if menu_button.is_none() && !workspace.branch.is_empty() => {
+                let name = shaped_width(
+                    &workspace.name(),
+                    crate::workbench::UI_FONT,
+                    FontWeight::SEMIBOLD,
+                    12.,
+                    window,
+                )
+                .ceil()
+                .min(160.);
+                let sync = sync.as_deref().map_or(0., |s| {
+                    4. + shaped_width(s, "JetBrains Mono", FontWeight::NORMAL, 10.5, window).ceil()
+                });
+                // The inset and its 6, the toggle and its 6, the name and
+                // its 5, the branch icon and its 4, and the fill's 8.
+                let budget = width - (leading + 6.) - 30. - name - 5. - 15. - sync - 8.;
+                truncate_middle(&workspace.branch, budget.max(0.), |text| {
+                    // Whole points, as the text's box rounds up.
+                    shaped_width(
+                        text,
+                        crate::workbench::UI_FONT,
+                        FontWeight::NORMAL,
+                        11.5,
+                        window,
+                    )
+                    .ceil()
+                })
+            }
+            _ => workspace.branch.clone().into(),
+        };
         let branch_part = (!workspace.branch.is_empty()).then(|| {
             div()
                 .id("titlebar-branch")
@@ -955,9 +1065,9 @@ impl Workbench {
                         .text_ellipsis_middle()
                         .text_size(px(11.5))
                         .text_color(hsla(p.text_secondary))
-                        .child(workspace.branch.clone()),
+                        .child(branch_label),
                 )
-                .children(self.branch_sync_text(cx).map(|sync| {
+                .children(sync.map(|sync| {
                     div()
                         .flex_none()
                         .font_family("JetBrains Mono")
@@ -976,7 +1086,7 @@ impl Workbench {
                 .when_some(leading_width, |d, width| d.w(px(width)))
                 // The inset and the 6 after it.
                 .child(space("titlebar-inset", leading + 6.))
-                .when_some(crate::menus::menu_button(cx), |d, button| {
+                .when_some(menu_button, |d, button| {
                     d.child(button).child(space("titlebar-menu-gap", 6.))
                 })
                 .child(
@@ -1095,10 +1205,11 @@ impl Workbench {
             .child(icon("search", 12., p.text_tertiary))
             .child("Search or run a command")
             .child(
-                // The Swift `KeyHint`.
+                // The Swift `KeyHint` (3 here: GPUI adds the border to the
+                // width, SwiftUI doesn't).
                 div()
                     .h(px(16.))
-                    .px(px(4.))
+                    .px(px(3.))
                     .flex()
                     .items_center()
                     .rounded(px(3.))
@@ -1284,7 +1395,8 @@ impl Workbench {
                 },
             )
             // The name and branch give way to the badges, the branch first
-            // (Swift's `layoutPriority(-1)`).
+            // (Swift's `layoutPriority(-1)`): it shrinks so many times faster
+            // that the name keeps its whole width until the branch is gone.
             .child(
                 div()
                     .min_w_0()
@@ -1307,7 +1419,7 @@ impl Workbench {
                     d.child(
                         div()
                             .min_w_0()
-                            .flex_shrink(10.)
+                            .flex_shrink(GIVES_WAY)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_middle()
@@ -1322,7 +1434,7 @@ impl Workbench {
                 d.child(
                     div()
                         .min_w_0()
-                        .flex_shrink(10.)
+                        .flex_shrink(GIVES_WAY)
                         .truncate()
                         .text_size(px(10.5))
                         .text_color(hsla(p.text_tertiary))
@@ -1564,10 +1676,12 @@ impl Workbench {
                 .flex_none()
                 .items_center()
                 .gap(px(6.))
-                // Swift's FlatFileRowView: 22 pt rows, 16 pt a level.
+                // Swift's FlatFileRowView: 22 pt rows, 16 pt a level, 8 in
+                // from each side, the background (rounded 5) the list's
+                // full width.
                 .h(px(22.))
                 .w_full()
-                .pl(px(4. + 16. * row.depth as f32))
+                .pl(px(8. + 16. * row.depth as f32))
                 .pr(px(8.))
                 .rounded(px(5.))
                 .text_size(px(13.))
@@ -1680,7 +1794,6 @@ impl Workbench {
         // content without a full-width wrapper.
         div()
             .w_full()
-            .px(px(4.))
             .child(row_element.context_menu(menu))
             .into_any_element()
     }
@@ -1757,8 +1870,8 @@ impl Workbench {
                     }),
                 )
                 .track_scroll(&self.tree_scroll)
-                .flex_1()
-                .py(px(4.)),
+                // Right under the header, as Swift's LazyVStack starts.
+                .flex_1(),
             );
         }
         if self.panel == SidebarPanel::Search {
@@ -2896,5 +3009,29 @@ impl RenderOnce for ChromeCheckbox {
                     .when(self.mono, |d| d.font_family("JetBrains Mono"))
                     .child(label)
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_middle;
+
+    #[test]
+    fn middle_truncation_keeps_more_of_the_end() {
+        // One point a character.
+        let width = |s: &str| s.chars().count() as f32;
+        assert_eq!(
+            truncate_middle("feature/forecast-cache", 30., width),
+            "feature/forecast-cache"
+        );
+        assert_eq!(
+            truncate_middle("feature/forecast-cache", 6., width),
+            "fe…che"
+        );
+        assert_eq!(
+            truncate_middle("feature/forecast-cache", 7., width),
+            "fea…che"
+        );
+        assert_eq!(truncate_middle("abc", 0., width), "…");
     }
 }

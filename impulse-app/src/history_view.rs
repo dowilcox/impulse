@@ -754,14 +754,14 @@ impl HistoryView {
         div()
             .id(id)
             .flex()
-            .flex_none()
+            // Whole while the row has room; only a crowded row cuts the
+            // name short (Swift's chip truncates like any text in the row).
+            .flex_shrink(1.)
+            .min_w_0()
             .items_center()
             .gap(px(3.))
             .px(px(5.))
             .h(px(17.))
-            // A long branch name is cut short rather than pushing the
-            // subject out of the row.
-            .max_w(px(160.))
             .rounded(px(4.))
             .bg(hsla(
                 if remote { p.text_tertiary } else { color }.opacity(0.14),
@@ -868,8 +868,12 @@ impl HistoryView {
         let view = cx.entity();
         let menu_entry = entry.clone();
         line.child(
+            // From its own width, so a crowded row takes from the subject
+            // and the chips alike (SwiftUI's equal footing) instead of
+            // emptying the subject first.
             div()
-                .flex_1()
+                .flex_grow(1.)
+                .flex_shrink(1.)
                 .min_w_0()
                 .overflow_hidden()
                 .whitespace_nowrap()

@@ -334,10 +334,8 @@ impl TaskFinishView {
         let failed = matches!(status, Status::Failed(_));
         let stopped = (failed && !self.is_running) || (step == Step::Check && self.is_running);
         let mut buttons = div().flex().gap(px(8.)).pt(px(2.));
-        let mut any = false;
         if stopped {
             if let Some(remedy) = self.remedy {
-                any = true;
                 let (label, icon_name) = match remedy {
                     Remedy::ShowChanges => ("Show Changes", Some("git-commit-horizontal")),
                     Remedy::SkipCheck => ("Skip Check", None),
@@ -364,7 +362,6 @@ impl TaskFinishView {
             }
         }
         if step == Step::Check && self.check_script.is_none() {
-            any = true;
             let workspace = self.workspace_id;
             buttons = buttons.child(
                 chrome_button(
@@ -410,7 +407,9 @@ impl TaskFinishView {
                             .whitespace_normal()
                             .child(text),
                     )
-                    .when(any, |d| d.child(buttons)),
+                    // Even with no buttons: Swift's empty button row keeps
+                    // its 2 of padding and the stack's 3 before it.
+                    .child(buttons),
             )
             .into_any_element()
     }
