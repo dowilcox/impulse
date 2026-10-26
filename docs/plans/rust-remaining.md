@@ -57,14 +57,17 @@ Work that doesn't depend on anyone else.
   three lines of context beside each change and puts a run of three or
   more others behind one "18 hidden lines" row, which a click opens
   (Monaco's `hideUnchangedRegions` as the Swift app sets it; the
-  snapshot's `diff-inline` and `diff-reveal` actions drive it). Side by
-  side still shows every line: that waits on GPUI Kit (below).
+  snapshot's `diff-inline` and `diff-reveal` actions drive it). Since
+  then both layouts hide unchanged runs through the vendored gpui-base's
+  hidden ranges and view zones, and side by side lines its sides up with
+  hatched padding zones, as Monaco's diff editor does.
 - [x] **Put conflict actions inline.** Done: each conflict's Accept
   Current, Accept Incoming and Accept Both, its labels and, with more
   than one, "1 of 2" with ↑ and ↓ float on its `<<<<<<<` line after the
   marker (`EditorTab::conflict_bars` in `editor_git.rs`) and act on that
-  conflict. Monaco puts the same bar in a 24 px view zone above the
-  conflict; without view zones in GPUI Kit, it can't push the lines down.
+  conflict. Since then the bar sits in a 24 px view zone above the
+  conflict, as Monaco's, and the git peek in one that pushes the lines
+  below it down.
 - [x] **Draw the cursor in the agent toolbelt's terminal.** Done: the
   cursor was there but blinking, and the shot caught it off. The
   terminal now blinks only in the active window, as Swift's
@@ -125,8 +128,6 @@ here exist and are saved, but the Rust app doesn't act on them yet.
 |---|---|---|
 | Inlay hints | the editor can't insert text into a line's layout | `editor_inlay_hints` |
 | Snippets in completions | snippet handling is off until it's checked; completions insert plain text | |
-| Padding lines in the Diff View | no view zones, so one side holds still through the other's insertion | |
-| Hidden unchanged lines side by side in the Diff View | folds can now be set from code (the vendored gpui-base's `editor_options.rs`), but the highlighter replaces them on each reparse, so the live buffer can't hide lines from outside | |
 | Announcing agent state to screen readers | GPUI has no live regions | |
 | Smooth scrolling | not supported | `smooth_scrolling` |
 

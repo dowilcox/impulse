@@ -203,7 +203,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           palette-recent-commands.json in the data
                           directory), Markdown preview (markdown_view.rs:
                           impulse_kit::markdown_blocks drawn with the Swift
-                          preview page's styles, Run on shell blocks as
+                          preview page's styles, its text selectable as one
+                          document through GPUI Kit's SelectableText, Run on shell blocks as
                           Workbench::run_from_preview) and SVG preview
                           (sanitized by impulse_kit::svg_preview) in or
                           beside the editor, Settings and Keyboard Shortcuts tabs
@@ -411,14 +412,17 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           commands find in a peek docked under the
                           editor (editor_peek.rs), Change All Occurrences,
                           the Diff View (editor_diff.rs: the index
-                          version read-only beside the buffer, scrolling
-                          with it, or inline in one read-only document,
+                          version read-only beside the buffer, aligned by
+                          hatched padding view zones (gpui-base's ViewZone)
+                          with one scroll offset, or inline in one read-only document,
                           under a bar with the summary, ↑ ↓, the layout
                           switch and Done; impulse_kit::git::diff_view;
                           lines and changed words tinted in Monaco's
                           colors, impulse_git::buffer_diff::changed_words;
-                          inline, long unchanged runs behind a "hidden
-                          lines" row, diff_view::hide_unchanged),
+                          long unchanged runs on both sides hidden
+                          (gpui-base's set_hidden_ranges) behind a "hidden
+                          lines" view zone; the git peek and conflict actions
+                          sit in view zones too),
                           signature help over the caret with
                           impulse_lsp::signature; Vim mode in
                           editor_vim.rs over impulse_kit::vim, its keys
