@@ -18,6 +18,9 @@ use crate::agent_tracker::AgentSignal;
 use crate::terminal_view::TerminalView;
 use crate::workbench_chrome::{hsla, icon};
 
+/// The toolbelt's height, its stand-in's too.
+const TOOLBELT_HEIGHT: f32 = 32.;
+
 /// "Working · 12s", "Finished 3m ago": the toolbelt's status.
 pub fn status_text(state: AgentState, elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
@@ -77,12 +80,30 @@ impl TerminalView {
             // The composer closed: the keyboard goes back to the program.
             cx.defer_in(window, |view, window, cx| view.focus(window, cx));
         }
-        let state = self.agent.state().filter(|s| *s != AgentState::Exited);
-        let Some(state) = state.filter(|_| self.has_live_bar()) else {
+        let Some(state) = self.agent.state().filter(|s| *s != AgentState::Exited) else {
             self.agent.toolbelt_tick = None;
             return None;
         };
+        if !self.has_live_bar() {
+            // The other panes of a split keep the toolbelt's height, so no
+            // grid resizes as the focus moves between them.
+            self.agent.toolbelt_tick = None;
+            return Some(self.toolbelt_placeholder());
+        }
         Some(self.toolbelt(state, cx))
+    }
+
+    /// Where the toolbelt sits in an agent's terminal that doesn't have
+    /// it (as `bar_placeholder` stands in for the input bar).
+    fn toolbelt_placeholder(&self) -> AnyElement {
+        let c = KitRgba::from_hex;
+        div()
+            .flex_none()
+            .h(px(TOOLBELT_HEIGHT))
+            .bg(hsla(c(&self.theme.bg_dark)))
+            .border_t_1()
+            .border_color(hsla(c(&self.theme.border)))
+            .into_any_element()
     }
 
     fn toolbelt(&mut self, state: AgentState, cx: &mut Context<Self>) -> AnyElement {
@@ -233,7 +254,7 @@ impl TerminalView {
             .items_center()
             .gap(px(8.))
             .px(px(12.))
-            .h(px(32.))
+            .h(px(TOOLBELT_HEIGHT))
             .bg(hsla(c(&self.theme.bg_dark)))
             .border_t_1()
             .border_color(hsla(c(&self.theme.border)))

@@ -18,7 +18,7 @@ use gpui_kit::{
     div, prelude::*, px, size, AnyWindowHandle, App, Bounds, Context, Entity, Global, Subscription,
     Window, WindowBounds, WindowKind, WindowOptions,
 };
-use impulse_kit::chrome::ChromePalette;
+use impulse_kit::chrome::{ChromePalette, Rgba as KitRgba};
 use impulse_kit::keybindings::Shortcut;
 
 use crate::settings_store::SettingsStore;
@@ -312,8 +312,15 @@ impl QuickTerminalView {
 }
 
 impl Render for QuickTerminalView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().pt(px(4.)).child(self.terminal.clone())
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The strip above the grid in the terminal's own background, not
+        // the window's black.
+        let bg = KitRgba::from_hex(&self.terminal.read(cx).theme.terminal_bg);
+        div()
+            .size_full()
+            .pt(px(4.))
+            .bg(crate::workbench_chrome::hsla(bg))
+            .child(self.terminal.clone())
     }
 }
 

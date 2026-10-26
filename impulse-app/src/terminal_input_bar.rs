@@ -89,6 +89,47 @@ fn c(hex: &str) -> KitRgba {
     KitRgba::from_hex(hex)
 }
 
+/// The system's monospaced family (SF Mono) as CoreText names it
+/// (`NSFont.monospacedSystemFont`'s `familyName`); GPUI finds it by that
+/// name as it finds `.SystemUIFont`'s `.AppleSystemUIFont`.
+#[cfg(target_os = "macos")]
+const SYSTEM_MONO: &str = ".AppleSystemUIFontMonospaced";
+
+/// The bar's monospaced family, its command text's and its chips': SF Mono
+/// on macOS, as Swift's bar has it, when GPUI resolves it; else (and on
+/// Linux, which has no SF Mono) the terminal's font.
+pub(crate) fn mono_family(cx: &gpui_kit::App) -> SharedString {
+    #[cfg(target_os = "macos")]
+    {
+        thread_local! {
+            static FOUND: std::cell::OnceCell<bool> = const { std::cell::OnceCell::new() };
+        }
+        let found = FOUND.with(|found| {
+            *found.get_or_init(|| {
+                // A family GPUI can't load resolves to a fallback font.
+                let text = cx.text_system();
+                let id = text.resolve_font(&gpui_kit::font(SYSTEM_MONO));
+                text.get_font_for_id(id)
+                    .is_some_and(|font| font.family.as_ref() == SYSTEM_MONO)
+            })
+        });
+        if found {
+            return SharedString::new_static(SYSTEM_MONO);
+        }
+    }
+    crate::fonts::family(&SettingsStore::get(cx).terminal_font_family)
+}
+
+/// The bar's command text: its font, a point smaller than the terminal's
+/// (Swift's `inputFontSize`), and its line height as AppKit's
+/// `defaultLineHeight` gives it (ascent, descent and leading, rounded up).
+fn input_font(window: &Window, cx: &gpui_kit::App) -> (gpui_kit::Font, Pixels, Pixels) {
+    let font = gpui_kit::font(mono_family(cx));
+    let size = px((SettingsStore::get(cx).terminal_font_size - 1).max(6) as f32);
+    let line_height = crate::terminal_view::font_line_height(&font, size, window);
+    (font, size, line_height)
+}
+
 impl TerminalView {
     /// The bar is on and no program owns the grid.
     pub(crate) fn bar_shown(&self, cx: &gpui_kit::App) -> bool {
@@ -106,8 +147,15 @@ impl TerminalView {
 
     /// The bar's height with one line of text, so stand-ins match it.
     pub(crate) fn bar_height(&self, window: &mut Window, cx: &mut gpui_kit::App) -> Pixels {
-        let editor = self.editor.read(cx);
-        let line = editor.height(window);
+        // A stand-in's editor isn't drawn: it takes the bar's font here,
+        // so its line is the bar's.
+        let (font, font_size, line_height) = input_font(window, cx);
+        self.editor.update(cx, |editor, _| {
+            editor.font = font;
+            editor.font_size = font_size;
+            editor.fixed_line_height = Some(line_height);
+        });
+        let line = self.editor.read(cx).height(window);
         px(BAR_CHROME_HEIGHT) + line
     }
 
@@ -660,9 +708,7 @@ impl TerminalView {
         if running && !password {
             self.tick_spinner(cx);
         }
-        let settings = SettingsStore::get(cx).clone();
-        let font = gpui_kit::font(crate::fonts::family(&settings.terminal_font_family));
-        let font_size = px((settings.terminal_font_size - 1).max(6) as f32);
+        let (font, font_size, line_height) = input_font(window, cx);
         let placeholder: SharedString = if password {
             "Password (input hidden)…".into()
         } else if running {
@@ -692,9 +738,13 @@ impl TerminalView {
                 editor.reset(cx);
                 changed = true;
             }
-            if editor.font != font || editor.font_size != font_size {
+            if editor.font != font
+                || editor.font_size != font_size
+                || editor.fixed_line_height != Some(line_height)
+            {
                 editor.font = font;
                 editor.font_size = font_size;
+                editor.fixed_line_height = Some(line_height);
                 changed = true;
             }
             if running && editor.suggestion.is_some() {
@@ -906,7 +956,7 @@ impl TerminalView {
             used += gap + width;
             shown += 1;
         }
-        let mono = crate::fonts::family(&SettingsStore::get(cx).terminal_font_family);
+        let mono = mono_family(cx);
         let chip_bg = hsla(c(&theme.fg).opacity(0.07));
         let row = div()
             .flex()

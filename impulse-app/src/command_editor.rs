@@ -171,6 +171,9 @@ pub struct CommandEditor {
     pub colors: EditorColors,
     pub font: Font,
     pub font_size: Pixels,
+    /// The line height its owner worked out from the font (the input
+    /// bar's, as AppKit's `defaultLineHeight`), else 1.32 times the size.
+    pub fixed_line_height: Option<Pixels>,
     undo: Vec<(String, Range<usize>)>,
     redo: Vec<(String, Range<usize>)>,
     /// The last edit was typing, which undoes as one step with the typing
@@ -222,6 +225,7 @@ impl CommandEditor {
             colors: EditorColors::new(theme),
             font: gpui_kit::font("JetBrains Mono"),
             font_size: px(13.),
+            fixed_line_height: None,
             undo: Vec::new(),
             redo: Vec::new(),
             typing: false,
@@ -281,7 +285,8 @@ impl CommandEditor {
     }
 
     fn line_height(&self) -> Pixels {
-        (self.font_size * 1.32).ceil()
+        self.fixed_line_height
+            .unwrap_or_else(|| (self.font_size * 1.32).ceil())
     }
 
     /// The editor's height for its text: one line at least, at most

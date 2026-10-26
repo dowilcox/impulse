@@ -121,7 +121,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           with integration, shell_launch.rs: its startup
                           files, and the fallback control socket, in a
                           fresh 0700 folder of the run's own),
-                          its own painted grid (box-drawing and block
+                          its own painted grid (each glyph painted at its
+                          cell, as Swift's CoreText drawing, from one
+                          shaped row: ShapedRow; underlines per cell
+                          span; box-drawing and block
                           characters drawn as shapes, terminal_glyphs.rs;
                           the shell's blank padding between blocks collapsed
                           to a gap by RowLayout),
@@ -222,7 +225,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           material icons from icon-mapping.json, served as
                           material/<file>.svg), the terminal input bar
                           (terminal_input_bar.rs over command_editor.rs:
-                          chips, shell colors, ghost suggestions, Tab menu,
+                          SF Mono on macOS, as Swift's bar; chips, shell
+                          colors, ghost suggestions, Tab menu,
                           history from command_history.rs, which shares
                           history.sqlite3 and backs the palette's h:
                           mode, Import Shell History and Clear Command

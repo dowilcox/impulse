@@ -25,8 +25,8 @@ use gpui_kit::{
     ClipboardItem, Context, ElementInputHandler, Entity, EntityId, EntityInputHandler, FocusHandle,
     Font, FontStyle, FontWeight, Hsla, KeyBinding, KeyDownEvent, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba, ScrollDelta,
-    ScrollWheelEvent, SharedString, StrikethroughStyle, TextAlign, TextRun, UTF16Selection,
-    UnderlineStyle, Window,
+    ScrollWheelEvent, ShapedLine, SharedString, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
+    Window,
 };
 use impulse_kit::chrome::{ChromePalette, Rgba as KitRgba};
 use impulse_kit::key_encoder::{self, KeyPress};
@@ -175,6 +175,41 @@ fn option_sides() -> Option<(bool, bool)> {
 /// One mouse report (Swift's `mouseReport`): SGR (`CSI < Cb ; Cx ; Cy M`,
 /// `m` for a release) or the normal form (`CSI M Cb Cx Cy`, each value plus
 /// 32, a release as button 3, positions past 223 clamped).
+/// What a left press starts.
+#[derive(Debug)]
+enum Press {
+    /// A plain click: a selection of this kind once the drag leaves the
+    /// cell.
+    Pending(SelectionKind),
+    /// A double or triple click: its word or line, selected now.
+    Now(SelectionKind),
+}
+
+/// Swift's `mouseDown`: double and triple clicks select at once; a plain
+/// click (Option for a block) waits for a drag.
+fn press_selection(click_count: usize, alt: bool) -> Press {
+    match click_count {
+        2 => Press::Now(SelectionKind::Semantic),
+        n if n >= 3 => Press::Now(SelectionKind::Lines),
+        _ if alt => Press::Pending(SelectionKind::Block),
+        _ => Press::Pending(SelectionKind::Simple),
+    }
+}
+
+/// A pending selection starts once the drag reaches another cell.
+fn drag_begins(anchor: (usize, usize), cell: (usize, usize)) -> bool {
+    anchor != cell
+}
+
+/// Wheel scroll in lines: a mouse wheel's notches go 3 lines each, as in
+/// Swift's `scrollWheel`; a trackpad's pixels go by the cell height.
+fn wheel_lines(delta: ScrollDelta, cell_height: Pixels) -> f32 {
+    match delta {
+        ScrollDelta::Lines(delta) => delta.y * 3.0,
+        ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(cell_height),
+    }
+}
+
 fn mouse_report(button: u8, col: usize, row: usize, release: bool, sgr: bool) -> Vec<u8> {
     if sgr {
         let end = if release { 'm' } else { 'M' };
@@ -349,6 +384,10 @@ impl Grid {
         &self.cells[row * self.cols + col]
     }
 
+    fn row_cells(&self, row: usize) -> &[Cell] {
+        &self.cells[row * self.cols..(row + 1) * self.cols]
+    }
+
     /// No visible glyph on `row` (only spaces and NULs).
     fn is_blank_row(&self, row: usize) -> bool {
         (0..self.cols).all(|col| {
@@ -418,6 +457,10 @@ struct Metrics {
     width: Pixels,
     height: Pixels,
     font_size: Pixels,
+    /// The baseline is `ascent` below a row's top (Swift's `drawTextRun`),
+    /// the font's leading below the descent.
+    ascent: Pixels,
+    descent: Pixels,
 }
 
 /// Hiding the shell's prompt below the last output once a command ends
@@ -462,6 +505,9 @@ pub struct TerminalView {
     pub exited: Option<i32>,
     /// A drag is selecting text (rather than reporting to the program).
     selecting: bool,
+    /// Where a plain click pressed: a selection starts there only once a
+    /// drag reaches another cell (Swift's `pendingSelectionAnchor`).
+    pending_selection: Option<((usize, usize), SelectionKind)>,
     /// The button whose press went to the program (its drags and release
     /// go there too).
     press_reported: Option<u8>,
@@ -789,6 +835,7 @@ impl TerminalView {
             last_duration_ms: None,
             exited: None,
             selecting: false,
+            pending_selection: None,
             press_reported: None,
             motion_cell: None,
             scroll_remainder: 0.0,
@@ -1447,17 +1494,21 @@ impl TerminalView {
         if event.button != MouseButton::Left {
             return;
         }
-        let kind = match event.click_count {
-            2 => SelectionKind::Semantic,
-            n if n >= 3 => SelectionKind::Lines,
-            _ if event.modifiers.alt => SelectionKind::Block,
-            _ => SelectionKind::Simple,
-        };
-        self.backend.start_selection(col, row, kind);
-        if event.click_count >= 2 {
-            self.backend.update_selection(col, row);
+        self.backend.clear_selection();
+        self.pending_selection = None;
+        match press_selection(event.click_count, event.modifiers.alt) {
+            Press::Pending(kind) => {
+                // A plain click selects nothing (and copies nothing) until
+                // it drags.
+                self.selecting = false;
+                self.pending_selection = Some(((col, row), kind));
+            }
+            Press::Now(kind) => {
+                self.backend.start_selection(col, row, kind);
+                self.backend.update_selection(col, row);
+                self.selecting = true;
+            }
         }
-        self.selecting = true;
         cx.notify();
     }
 
@@ -1478,8 +1529,19 @@ impl TerminalView {
             }
             return;
         }
-        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
+        if event.pressed_button != Some(MouseButton::Left) {
             return;
+        }
+        if !self.selecting {
+            let Some((anchor, kind)) = self.pending_selection else {
+                return;
+            };
+            if !drag_begins(anchor, (col, row)) {
+                return;
+            }
+            self.pending_selection = None;
+            self.backend.start_selection(anchor.0, anchor.1, kind);
+            self.selecting = true;
         }
         // Past the top or bottom: scroll history while selecting.
         let y = event.position.y - bounds.origin.y;
@@ -1498,10 +1560,13 @@ impl TerminalView {
             self.report_mouse(button, &event.modifiers, cell, false, true);
             return;
         }
+        self.pending_selection = None;
         if !self.selecting {
             return;
         }
         self.selecting = false;
+        // Only a drag or a double or triple click gets here: a plain click
+        // leaves the clipboard alone.
         if SettingsStore::get(cx).terminal_copy_on_select {
             if let Some(text) = self.backend.selected_text().filter(|t| !t.is_empty()) {
                 #[cfg(target_os = "linux")]
@@ -1665,10 +1730,7 @@ impl TerminalView {
         bounds: Bounds<Pixels>,
         cx: &mut Context<Self>,
     ) {
-        let lines = match event.delta {
-            ScrollDelta::Lines(delta) => delta.y,
-            ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(self.metrics.height),
-        } + self.scroll_remainder;
+        let lines = wheel_lines(event.delta, self.metrics.height) + self.scroll_remainder;
         let whole = lines.trunc();
         self.scroll_remainder = lines - whole;
         if whole == 0.0 {
@@ -1927,7 +1989,7 @@ fn terminal_font(family: &str) -> Font {
 }
 
 /// `TerminalFontMetrics`: the cell is the width of "W" and the font's
-/// ascent plus descent, rounded up.
+/// ascent, descent and leading, rounded up.
 fn measure(font: &Font, font_size: f32, window: &Window) -> Metrics {
     let size = px(font_size);
     let text = window.text_system();
@@ -1936,11 +1998,151 @@ fn measure(font: &Font, font_size: f32, window: &Window) -> Metrics {
         .advance(id, size, 'W')
         .map(|s| s.width)
         .unwrap_or(px(font_size * 0.6));
-    let height = text.ascent(id, size) + text.descent(id, size).abs();
+    let (ascent, descent) = (text.ascent(id, size), text.descent(id, size).abs());
     Metrics {
         width: px(f32::from(width).ceil()),
-        height: px(f32::from(height).ceil()),
+        height: font_line_height(font, size, window),
         font_size: size,
+        ascent,
+        descent,
+    }
+}
+
+/// A font's line height as AppKit lays it out (`CTFontGetAscent` +
+/// descent + leading, rounded up): the terminal's rows and the input bar's
+/// lines.
+pub(crate) fn font_line_height(font: &Font, size: Pixels, window: &Window) -> Pixels {
+    let text = window.text_system();
+    let id = text.resolve_font(font);
+    let height = text.ascent(id, size)
+        + text.descent(id, size).abs()
+        + px(line_gap(&font.family, f32::from(size)).unwrap_or(0.0));
+    px(f32::from(height).ceil())
+}
+
+/// The leading (line gap) of `family` at `size`, which GPUI's text system
+/// keeps to itself: CoreText's for the family on macOS, as Swift's
+/// `TerminalFontMetrics` reads it; None for a family CoreText doesn't
+/// have (fonts GPUI loaded from memory) and off macOS. Remembered per
+/// family and size.
+pub(crate) fn line_gap(family: &str, size: f32) -> Option<f32> {
+    thread_local! {
+        static GAPS: RefCell<std::collections::HashMap<(String, u32), Option<f32>>> =
+            RefCell::default();
+    }
+    let key = (family.to_string(), size.to_bits());
+    if let Some(gap) = GAPS.with(|g| g.borrow().get(&key).copied()) {
+        return gap;
+    }
+    #[cfg(target_os = "macos")]
+    let gap = core_text::leading(family, size);
+    #[cfg(not(target_os = "macos"))]
+    let gap = None;
+    GAPS.with(|g| g.borrow_mut().insert(key, gap));
+    gap
+}
+
+/// The family's fonts as CoreText matches them by family name (what
+/// font-kit's `select_family_by_name` asks for, so the font GPUI draws
+/// with), and the first one's leading.
+#[cfg(target_os = "macos")]
+mod core_text {
+    use std::ffi::c_void;
+
+    type Ref = *const c_void;
+    #[repr(C)]
+    struct Opaque([u8; 0]);
+    const UTF8: u32 = 0x0800_0100;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFTypeDictionaryKeyCallBacks: Opaque;
+        static kCFTypeDictionaryValueCallBacks: Opaque;
+        fn CFStringCreateWithBytes(
+            alloc: Ref,
+            bytes: *const u8,
+            len: isize,
+            encoding: u32,
+            external: u8,
+        ) -> Ref;
+        fn CFDictionaryCreate(
+            alloc: Ref,
+            keys: *const Ref,
+            values: *const Ref,
+            count: isize,
+            key_callbacks: *const Opaque,
+            value_callbacks: *const Opaque,
+        ) -> Ref;
+        fn CFArrayGetCount(array: Ref) -> isize;
+        fn CFArrayGetValueAtIndex(array: Ref, index: isize) -> Ref;
+        fn CFRelease(object: Ref);
+    }
+
+    #[link(name = "CoreText", kind = "framework")]
+    extern "C" {
+        static kCTFontFamilyNameAttribute: Ref;
+        fn CTFontDescriptorCreateWithAttributes(attributes: Ref) -> Ref;
+        fn CTFontDescriptorCreateMatchingFontDescriptors(descriptor: Ref, mandatory: Ref) -> Ref;
+        fn CTFontCreateWithFontDescriptor(descriptor: Ref, size: f64, matrix: *const c_void)
+            -> Ref;
+        fn CTFontGetLeading(font: Ref) -> f64;
+    }
+
+    pub(super) fn leading(family: &str, size: f32) -> Option<f32> {
+        // SAFETY: every object made here is released once, after its last
+        // use; the array's values are borrowed (the Get rule).
+        unsafe {
+            let name = CFStringCreateWithBytes(
+                std::ptr::null(),
+                family.as_ptr(),
+                family.len() as isize,
+                UTF8,
+                0,
+            );
+            if name.is_null() {
+                return None;
+            }
+            let keys = [kCTFontFamilyNameAttribute];
+            let values = [name];
+            let attributes = CFDictionaryCreate(
+                std::ptr::null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+            CFRelease(name);
+            if attributes.is_null() {
+                return None;
+            }
+            let descriptor = CTFontDescriptorCreateWithAttributes(attributes);
+            CFRelease(attributes);
+            if descriptor.is_null() {
+                return None;
+            }
+            let matches =
+                CTFontDescriptorCreateMatchingFontDescriptors(descriptor, std::ptr::null());
+            CFRelease(descriptor);
+            if matches.is_null() {
+                return None;
+            }
+            let leading = (CFArrayGetCount(matches) > 0).then(|| {
+                let font = CTFontCreateWithFontDescriptor(
+                    CFArrayGetValueAtIndex(matches, 0),
+                    size as f64,
+                    std::ptr::null(),
+                );
+                if font.is_null() {
+                    return 0.0;
+                }
+                let leading = CTFontGetLeading(font) as f32;
+                CFRelease(font);
+                leading
+            });
+            CFRelease(matches);
+            leading
+        }
     }
 }
 
@@ -2211,7 +2413,7 @@ impl Frame {
                 rgba(color),
             ));
         }
-        let shape = |text: String, size_scale: f32, color: Hsla, window: &mut Window| {
+        let shape = |text: String, font_size: Pixels, color: Hsla, window: &mut Window| {
             let text: SharedString = text.into();
             let run = TextRun {
                 len: text.len(),
@@ -2223,8 +2425,11 @@ impl Frame {
             };
             window
                 .text_system()
-                .shape_line(text, m.font_size * size_scale, &[run], None)
+                .shape_line(text, font_size, &[run], None)
         };
+        // The command and its status share the bar's baseline, a row's
+        // text's distance down.
+        let baseline = top + px(3.) + m.ascent;
         let mut status_width = px(0.);
         if let Some(status) = block_chip_text(block.exit_code, block.duration_ms) {
             let color: Hsla = if block.failed {
@@ -2232,32 +2437,23 @@ impl Frame {
             } else {
                 rgba(muted).into()
             };
-            let line = shape(status, 0.85, color, window);
+            let line = shape(status, chip_font_size(m.font_size), color, window);
             status_width = line.width;
             let x = bounds.origin.x + bounds.size.width - px(PADDING) - line.width;
-            let _ = line.paint(
-                point(x, top + px(3.)),
-                m.height,
-                TextAlign::Left,
-                None,
-                window,
-                cx,
-            );
+            paint_on_baseline(&line, point(x, baseline), window, cx);
         }
         let room = bounds.size.width - px(PADDING * 2.) - status_width - px(16.);
         let full = format!("\u{276F} {command}");
         let mut chars: Vec<char> = full.chars().collect();
-        let mut line = shape(full.clone(), 1.0, rgba(muted).into(), window);
+        let mut line = shape(full.clone(), m.font_size, rgba(muted).into(), window);
         while line.width > room && chars.len() > 3 {
             chars.pop();
             let cut: String = chars.iter().collect::<String>() + "\u{2026}";
-            line = shape(cut, 1.0, rgba(muted).into(), window);
+            line = shape(cut, m.font_size, rgba(muted).into(), window);
         }
-        let _ = line.paint(
-            point(bounds.origin.x + px(PADDING), top + px(3.)),
-            m.height,
-            TextAlign::Left,
-            None,
+        paint_on_baseline(
+            &line,
+            point(bounds.origin.x + px(PADDING), baseline),
             window,
             cx,
         );
@@ -2442,96 +2638,25 @@ impl Frame {
             }
         }
 
-        // Text: runs of cells sharing a style, each at its first cell's x so
-        // every glyph keeps to the grid.
+        // Text: each row shaped once, each glyph painted at its own cell
+        // on the row's baseline (Swift's `drawTextRun`), whatever the
+        // font's advances; then underlines and strikethroughs, cell by
+        // cell. Lines and blocks are drawn, so neighbouring cells meet.
+        let mut shaped = ShapedRow::default();
         for row in (0..rows).filter(|r| !layout.is_collapsed(*r)) {
-            let mut col = 0;
-            while col < grid.cols {
-                let start = col;
-                let first = *grid.cell(row, col);
-                let style = text_style(&first, self.bright_bold.as_ref());
-                // Lines and blocks are drawn, so neighbouring cells meet.
-                if crate::terminal_glyphs::is_geometric(first.ch) {
+            for col in 0..grid.cols {
+                let cell = grid.cell(row, col);
+                if crate::terminal_glyphs::is_geometric(cell.ch) {
                     crate::terminal_glyphs::paint(
-                        first.ch,
+                        cell.ch,
                         Bounds::new(cell_origin(row, col), size(m.width, m.height)),
-                        style.color,
+                        cell_color(cell, self.bright_bold.as_ref()),
                         window,
                     );
-                    col += 1;
-                    continue;
                 }
-                let mut text = String::new();
-                while col < grid.cols {
-                    let cell = grid.cell(row, col);
-                    if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
-                        col += 1;
-                        continue;
-                    }
-                    if text_style(cell, self.bright_bold.as_ref()) != style
-                        || cell.flags.contains(CellFlags::WIDE_CHAR) && !text.is_empty()
-                        || crate::terminal_glyphs::is_geometric(cell.ch)
-                    {
-                        break;
-                    }
-                    let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
-                    text.push(ch);
-                    // Combining marks shape with their base (forced widths
-                    // keep a mark on its base's cell).
-                    if let Some(marks) = grid.combining(row, col) {
-                        text.push_str(marks);
-                    }
-                    col += 1;
-                    // A wide character stands alone.
-                    if cell.flags.contains(CellFlags::WIDE_CHAR) {
-                        break;
-                    }
-                }
-                if text.trim().is_empty() && !style.underline && !style.strike {
-                    continue;
-                }
-                let run = TextRun {
-                    len: text.len(),
-                    font: Font {
-                        weight: if style.bold {
-                            FontWeight::BOLD
-                        } else {
-                            FontWeight::NORMAL
-                        },
-                        style: if style.italic {
-                            FontStyle::Italic
-                        } else {
-                            FontStyle::Normal
-                        },
-                        ..self.font.clone()
-                    },
-                    color: style.color,
-                    background_color: None,
-                    underline: style.underline.then_some(UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(style.underline_color.unwrap_or(style.color)),
-                        wavy: style.wavy,
-                    }),
-                    strikethrough: style.strike.then_some(StrikethroughStyle {
-                        thickness: px(1.),
-                        color: Some(style.color),
-                    }),
-                };
-                let line = window.text_system().shape_line(
-                    text.into(),
-                    m.font_size,
-                    &[run],
-                    Some(m.width),
-                );
-                let _ = line.paint(
-                    cell_origin(row, start),
-                    m.height,
-                    TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                );
             }
+            self.paint_text(&mut shaped, grid, row, 0..grid.cols, None, origin, window);
+            self.paint_decorations(grid, row, origin, bounds, window);
         }
 
         // The link under the pointer, underlined in the cursor color.
@@ -2570,24 +2695,33 @@ impl Frame {
                     )),
                     _ => {
                         window.paint_quad(fill(Bounds::new(at, size(width, m.height)), cursor));
-                        // The character under it, in the background color.
+                        // The character under it in its own weight and
+                        // slant, in its cell's background color (the
+                        // foreground when it's inverse).
                         let cell = grid.cell(row, col);
-                        if cell.ch != ' ' && cell.ch != '\0' {
-                            let marks = grid.combining(row, col).unwrap_or_default();
-                            let text: SharedString = format!("{}{marks}", cell.ch).into();
-                            let run = TextRun {
-                                len: text.len(),
-                                font: self.font.clone(),
-                                color: cell_hsla(bg),
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-                            };
-                            let line =
-                                window
-                                    .text_system()
-                                    .shape_line(text, m.font_size, &[run], None);
-                            let _ = line.paint(at, m.height, TextAlign::Left, None, window, cx);
+                        let color = cell_hsla(if cell.flags.contains(CellFlags::INVERSE) {
+                            cell.fg
+                        } else {
+                            cell.bg
+                        });
+                        if crate::terminal_glyphs::is_geometric(cell.ch) {
+                            crate::terminal_glyphs::paint(
+                                cell.ch,
+                                Bounds::new(at, size(m.width, m.height)),
+                                color,
+                                window,
+                            );
+                        } else {
+                            let mut shaped = ShapedRow::default();
+                            self.paint_text(
+                                &mut shaped,
+                                grid,
+                                row,
+                                col..col + 1,
+                                Some(color),
+                                origin,
+                                window,
+                            );
                         }
                     }
                 }
@@ -2651,10 +2785,12 @@ impl Frame {
                     underline: None,
                     strikethrough: None,
                 };
-                let chip_size = m.font_size * 0.85;
-                let line = window
-                    .text_system()
-                    .shape_line(text, chip_size, &[run], None);
+                let line = window.text_system().shape_line(
+                    text,
+                    chip_font_size(m.font_size),
+                    &[run],
+                    None,
+                );
                 let span = (f32::from(line.width) / f32::from(m.width)).ceil() as usize + 2;
                 let end = (block.end_row.max(0) as usize).min(rows.saturating_sub(1));
                 let row = layout.first_shown(block.start_row as usize, end);
@@ -2667,8 +2803,8 @@ impl Frame {
                     continue;
                 }
                 let x = bounds.origin.x + bounds.size.width - px(PADDING) - line.width;
-                let y = origin.y + layout.top(row);
-                let _ = line.paint(point(x, y), m.height, TextAlign::Left, None, window, cx);
+                let baseline = origin.y + layout.top(row) + m.ascent;
+                paint_on_baseline(&line, point(x, baseline), window, cx);
             }
         }
 
@@ -2738,27 +2874,205 @@ impl Frame {
     }
 }
 
-#[derive(PartialEq)]
-struct Style {
-    color: Hsla,
-    /// SGR 58's color, when the program set one.
-    underline_color: Option<Hsla>,
-    bold: bool,
-    italic: bool,
-    underline: bool,
-    wavy: bool,
-    strike: bool,
+impl Frame {
+    /// Paint the text of `row`'s cells in `cols`: shaped as one line in
+    /// runs by font (GPUI picks fallback fonts and emoji glyph by glyph),
+    /// each glyph then put at its own cell's origin on the row's baseline
+    /// (a wide character at its first cell), and a combining mark at its
+    /// shaped offset from its base. In each cell's color, or in `color`
+    /// (the character under a block cursor).
+    #[allow(clippy::too_many_arguments)]
+    fn paint_text(
+        &self,
+        shaped: &mut ShapedRow,
+        grid: &Grid,
+        row: usize,
+        cols: Range<usize>,
+        color: Option<Hsla>,
+        origin: Point<Pixels>,
+        window: &mut Window,
+    ) {
+        if !shaped.gather(grid, row, cols, &self.font) {
+            return;
+        }
+        let m = self.metrics;
+        let line = window
+            .text_system()
+            .layout_line(&shaped.text, m.font_size, &shaped.runs, None);
+        // Each cell's own character's x in the shaped line, which its
+        // marks are placed from (bidirectional text can put a mark's glyph
+        // before its base's).
+        shaped.base_x.clear();
+        shaped.base_x.resize(grid.cols, None);
+        for run in &line.runs {
+            for glyph in &run.glyphs {
+                if let Some((col, true)) = shaped.column(glyph.index) {
+                    shaped.base_x[col].get_or_insert(glyph.position.x);
+                }
+            }
+        }
+        let baseline = origin.y + self.layout.top(row) + m.ascent;
+        for run in &line.runs {
+            for glyph in &run.glyphs {
+                let Some((col, _)) = shaped.column(glyph.index) else {
+                    continue;
+                };
+                let offset = shaped.base_x[col].map_or(px(0.), |x| glyph.position.x - x);
+                let at = point(
+                    origin.x + m.width * col as f32 + offset,
+                    baseline + glyph.position.y,
+                );
+                let _ = if glyph.is_emoji {
+                    window.paint_emoji(at, run.font_id, glyph.id, m.font_size)
+                } else {
+                    let color = color.unwrap_or_else(|| {
+                        cell_color(grid.cell(row, col), self.bright_bold.as_ref())
+                    });
+                    window.paint_glyph(at, run.font_id, glyph.id, m.font_size, color)
+                };
+            }
+        }
+    }
+
+    /// `row`'s underlines and strikethroughs, a run of cells at a time,
+    /// where Swift draws them: an underline a point above the bottom of
+    /// the descent, in the style SGR 4 gave it and SGR 58's color when
+    /// set; a strikethrough through the middle of the row.
+    fn paint_decorations(
+        &self,
+        grid: &Grid,
+        row: usize,
+        origin: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+    ) {
+        let cells = grid.row_cells(row);
+        let bright = self.bright_bold.as_ref();
+        let m = self.metrics;
+        let top = origin.y + self.layout.top(row);
+        let x = |col: usize| origin.x + m.width * col as f32;
+        let underlines = line_spans(cells, |cell| {
+            let kind = underline_kind(cell.flags)?;
+            let color = cell_color(cell, bright);
+            let color = cell.underline.map_or(color, |c| Hsla {
+                a: color.a,
+                ..cell_hsla(c)
+            });
+            Some((kind, color))
+        });
+        let y = (top + m.ascent + m.descent - px(1.)).min(top + m.height - px(1.5));
+        for (start, end, (kind, color)) in underlines {
+            paint_underline(kind, x(start)..x(end), y, bounds.origin.x, color, window);
+        }
+        let strikes = line_spans(cells, |cell| {
+            cell.flags
+                .contains(CellFlags::STRIKETHROUGH)
+                .then(|| cell_color(cell, bright))
+        });
+        for (start, end, color) in strikes {
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(x(start), top + m.height / 2. - px(0.5)),
+                    size(x(end) - x(start), px(1.)),
+                ),
+                color,
+            ));
+        }
+    }
 }
 
-/// A cell's text style.
-fn text_style(cell: &Cell, bright_bold: Option<&[RgbColor; 16]>) -> Style {
+/// One row's text to shape: the cells with something to draw as text
+/// (blank, hidden and drawn cells left out), each with its combining
+/// marks, in runs by font. Its buffers are kept from row to row.
+#[derive(Default)]
+struct ShapedRow {
+    text: String,
+    runs: Vec<TextRun>,
+    /// Where each cell's text starts, and its column, in text order.
+    starts: Vec<(usize, usize)>,
+    /// Each column's own character's x in the shaped line.
+    base_x: Vec<Option<Pixels>>,
+}
+
+impl ShapedRow {
+    /// Gather the text of `row`'s cells in `cols`; false when none of
+    /// them draws any.
+    fn gather(&mut self, grid: &Grid, row: usize, cols: Range<usize>, font: &Font) -> bool {
+        self.text.clear();
+        self.runs.clear();
+        self.starts.clear();
+        for col in cols.start..cols.end.min(grid.cols) {
+            let cell = grid.cell(row, col);
+            let marks = grid.combining(row, col);
+            if cell
+                .flags
+                .intersects(CellFlags::WIDE_CHAR_SPACER | CellFlags::HIDDEN)
+                || (cell.ch == ' ' || cell.ch == '\0') && marks.is_none()
+                || crate::terminal_glyphs::is_geometric(cell.ch)
+            {
+                continue;
+            }
+            let start = self.text.len();
+            self.text.push(if cell.ch == '\0' { ' ' } else { cell.ch });
+            if let Some(marks) = marks {
+                self.text.push_str(marks);
+            }
+            self.starts.push((start, col));
+            let len = self.text.len() - start;
+            let weight = if cell.flags.contains(CellFlags::BOLD) {
+                FontWeight::BOLD
+            } else {
+                FontWeight::NORMAL
+            };
+            let style = if cell.flags.contains(CellFlags::ITALIC) {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            };
+            match self.runs.last_mut() {
+                Some(run) if run.font.weight == weight && run.font.style == style => run.len += len,
+                // One color for every run: glyphs are painted in their
+                // cells' colors, so a color change doesn't shape the row
+                // again.
+                _ => self.runs.push(TextRun {
+                    len,
+                    font: Font {
+                        weight,
+                        style,
+                        ..font.clone()
+                    },
+                    color: gpui_kit::black(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }),
+            }
+        }
+        !self.text.is_empty()
+    }
+
+    /// The column whose text holds byte `index`, and whether it's where
+    /// the cell's own character starts (not one of its marks).
+    fn column(&self, index: usize) -> Option<(usize, bool)> {
+        let i = self
+            .starts
+            .partition_point(|(start, _)| *start <= index)
+            .checked_sub(1)?;
+        let (start, col) = self.starts[i];
+        Some((col, start == index))
+    }
+}
+
+/// A cell's text color: the background when it's inverse, bold in one of
+/// the 8 normal ANSI colors in its bright twin (`terminal_bold_is_bright`),
+/// dimmed, or clear when hidden.
+fn cell_color(cell: &Cell, bright_bold: Option<&[RgbColor; 16]>) -> Hsla {
     let f = cell.flags;
     let mut fg = if f.contains(CellFlags::INVERSE) {
         cell.bg
     } else {
         cell.fg
     };
-    // Bold in one of the 8 normal ANSI colors draws in its bright twin.
     if let Some(palette) = bright_bold.filter(|_| f.contains(CellFlags::BOLD)) {
         if let Some(i) = palette[..8].iter().position(|c| *c == fg) {
             fg = palette[i + 8];
@@ -2771,22 +3085,158 @@ fn text_style(cell: &Cell, bright_bold: Option<&[RgbColor; 16]>) -> Style {
     if f.contains(CellFlags::HIDDEN) {
         color.a = 0.0;
     }
-    Style {
-        color,
-        underline_color: cell.underline.map(cell_hsla),
-        bold: f.contains(CellFlags::BOLD),
-        italic: f.contains(CellFlags::ITALIC),
-        underline: f.intersects(
-            CellFlags::UNDERLINE
-                | CellFlags::DOUBLE_UNDERLINE
-                | CellFlags::UNDERCURL
-                | CellFlags::DOTTED_UNDERLINE
-                | CellFlags::DASHED_UNDERLINE
-                | CellFlags::HYPERLINK,
-        ),
-        wavy: f.contains(CellFlags::UNDERCURL),
-        strike: f.contains(CellFlags::STRIKETHROUGH),
+    color
+}
+
+/// SGR 4's underline styles (4:1 to 4:5). An OSC 8 link isn't one: it's
+/// underlined only under the pointer, as in Swift.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum UnderlineKind {
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+}
+
+fn underline_kind(flags: CellFlags) -> Option<UnderlineKind> {
+    Some(if flags.contains(CellFlags::UNDERCURL) {
+        UnderlineKind::Curly
+    } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+        UnderlineKind::Dotted
+    } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
+        UnderlineKind::Dashed
+    } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+        UnderlineKind::Double
+    } else if flags.contains(CellFlags::UNDERLINE) {
+        UnderlineKind::Single
+    } else {
+        return None;
+    })
+}
+
+/// Runs of neighbouring cells drawing the same line: (first column,
+/// column after the last, the line). A wide character's spacer goes with
+/// it.
+fn line_spans<T: PartialEq>(
+    cells: &[Cell],
+    line: impl Fn(&Cell) -> Option<T>,
+) -> Vec<(usize, usize, T)> {
+    let mut spans: Vec<(usize, usize, T)> = Vec::new();
+    for (col, cell) in cells.iter().enumerate() {
+        if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+            if let Some(last) = spans.last_mut().filter(|s| s.1 == col) {
+                last.1 = col + 1;
+            }
+            continue;
+        }
+        let Some(value) = line(cell) else {
+            continue;
+        };
+        match spans.last_mut() {
+            Some(last) if last.1 == col && last.2 == value => last.1 = col + 1,
+            _ => spans.push((col, col + 1, value)),
+        }
     }
+    spans
+}
+
+/// One run of cells' underline, a point thick and centred on `y`, as
+/// Swift's `drawUnderline` strokes it: a second line 2 points above for
+/// double; dots, dashes and the wave laid out from the view's left edge
+/// (`x0`), so they carry on across runs.
+fn paint_underline(
+    kind: UnderlineKind,
+    span: Range<Pixels>,
+    y: Pixels,
+    x0: Pixels,
+    color: Hsla,
+    window: &mut Window,
+) {
+    let line = |l: Pixels, r: Pixels, y: Pixels, window: &mut Window| {
+        window.paint_quad(fill(
+            Bounds::new(point(l, y - px(0.5)), size(r - l, px(1.))),
+            color,
+        ))
+    };
+    match kind {
+        UnderlineKind::Single => line(span.start, span.end, y, window),
+        UnderlineKind::Double => {
+            line(span.start, span.end, y, window);
+            line(span.start, span.end, y - px(2.), window);
+        }
+        UnderlineKind::Dotted | UnderlineKind::Dashed => {
+            let (on, period) = if kind == UnderlineKind::Dotted {
+                (1., 3.)
+            } else {
+                (4., 6.)
+            };
+            let (l, r) = (f32::from(span.start - x0), f32::from(span.end - x0));
+            for (l, r) in dashes(l..r, on, period) {
+                line(x0 + px(l), x0 + px(r), y, window);
+            }
+        }
+        UnderlineKind::Curly => {
+            // Half waves 2 points long, 1.25 points high, clipped to the run.
+            const AMPLITUDE: f32 = 1.25;
+            const HALF: f32 = 2.;
+            let mut x = x0 + px((f32::from(span.start - x0) / (HALF * 2.)).floor() * HALF * 2.);
+            let mut wave = gpui_kit::PathBuilder::stroke(px(1.));
+            wave.move_to(point(x, y));
+            let mut up = true;
+            while x < span.end {
+                let peak = if up { -AMPLITUDE } else { AMPLITUDE } * 2.;
+                wave.curve_to(
+                    point(x + px(HALF), y),
+                    point(x + px(HALF / 2.), y + px(peak)),
+                );
+                x += px(HALF);
+                up = !up;
+            }
+            let clip = Bounds::new(
+                point(span.start, y - px(AMPLITUDE + 1.)),
+                size(span.end - span.start, px(AMPLITUDE * 2. + 2.)),
+            );
+            if let Ok(path) = wave.build() {
+                window.with_content_mask(Some(gpui_kit::ContentMask { bounds: clip }), |window| {
+                    window.paint_path(path, color)
+                });
+            }
+        }
+    }
+}
+
+/// A dash pattern's dashes, `on` long every `period` from 0, clipped to
+/// `span`.
+fn dashes(span: Range<f32>, on: f32, period: f32) -> impl Iterator<Item = (f32, f32)> {
+    let first = (span.start / period).floor() * period;
+    (0..)
+        .map(move |i| first + i as f32 * period)
+        .take_while(move |dash| *dash < span.end)
+        .filter_map(move |dash| {
+            let (l, r) = (dash.max(span.start), (dash + on).min(span.end));
+            (l < r).then_some((l, r))
+        })
+}
+
+/// A block status chip's font size: 85% of the terminal's, in whole
+/// points (Swift's `chipFont`).
+fn chip_font_size(font_size: Pixels) -> Pixels {
+    px((f32::from(font_size) * 0.85).round())
+}
+
+/// Paint `line` with its baseline at `at.y`: with a line height of just
+/// its ascent plus descent, GPUI puts the baseline `ascent` down.
+fn paint_on_baseline(line: &ShapedLine, at: Point<Pixels>, window: &mut Window, cx: &mut App) {
+    let height = line.ascent + line.descent;
+    let _ = line.paint(
+        point(at.x, at.y - line.ascent),
+        height,
+        TextAlign::Left,
+        None,
+        window,
+        cx,
+    );
 }
 
 impl EntityInputHandler for TerminalView {
@@ -3423,5 +3873,194 @@ mod mouse_report_tests {
         assert_eq!(mouse_report(0, 0, 0, false, false), b"\x1b[M\x20\x21\x21");
         assert_eq!(mouse_report(1, 0, 0, true, false), b"\x1b[M\x23\x21\x21");
         assert_eq!(mouse_report(0, 400, 0, false, false)[4], 255);
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_click_selects_only_once_it_drags() {
+        assert!(matches!(
+            press_selection(1, false),
+            Press::Pending(SelectionKind::Simple)
+        ));
+        assert!(matches!(
+            press_selection(1, true),
+            Press::Pending(SelectionKind::Block)
+        ));
+        assert!(matches!(
+            press_selection(2, false),
+            Press::Now(SelectionKind::Semantic)
+        ));
+        assert!(matches!(
+            press_selection(3, true),
+            Press::Now(SelectionKind::Lines)
+        ));
+        assert!(!drag_begins((4, 2), (4, 2)));
+        assert!(drag_begins((4, 2), (5, 2)));
+        assert!(drag_begins((4, 2), (4, 3)));
+    }
+
+    #[test]
+    fn wheel_notches_scroll_three_lines() {
+        let cell = px(18.);
+        assert_eq!(wheel_lines(ScrollDelta::Lines(point(0., 1.)), cell), 3.0);
+        assert_eq!(wheel_lines(ScrollDelta::Lines(point(0., -2.)), cell), -6.0);
+        assert_eq!(
+            wheel_lines(ScrollDelta::Pixels(point(px(0.), px(36.))), cell),
+            2.0
+        );
+    }
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+
+    fn cell(ch: char, flags: CellFlags) -> Cell {
+        Cell {
+            ch,
+            fg: RgbColor::new(200, 200, 200),
+            bg: RgbColor::new(0, 0, 0),
+            flags,
+            underline: None,
+        }
+    }
+
+    fn grid(cells: Vec<Cell>, zero_width: &[(usize, &str)]) -> Grid {
+        Grid {
+            cols: cells.len(),
+            rows: 1,
+            cursor: None,
+            cursor_at: (0, 0),
+            selection: Vec::new(),
+            matches: Vec::new(),
+            cells,
+            zero_width: zero_width
+                .iter()
+                .map(|(i, s)| (*i, s.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn rows_shape_by_font_and_map_glyphs_back_to_cells() {
+        let none = CellFlags::empty();
+        let g = grid(
+            vec![
+                cell('a', none),
+                cell('e', none),
+                cell('中', CellFlags::WIDE_CHAR),
+                cell(' ', CellFlags::WIDE_CHAR_SPACER),
+                cell(' ', none),
+                cell('\u{2500}', none),
+                cell('x', CellFlags::HIDDEN),
+                cell('b', CellFlags::BOLD),
+                cell('c', CellFlags::BOLD),
+            ],
+            &[(1, "\u{301}")],
+        );
+        let mut shaped = ShapedRow::default();
+        assert!(shaped.gather(&g, 0, 0..g.cols, &gpui_kit::font("Menlo")));
+        // Blanks, spacers, drawn lines and hidden cells aren't text; marks
+        // stay with their base.
+        assert_eq!(shaped.text, "ae\u{301}中bc");
+        assert_eq!(
+            shaped.runs.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec!["ae\u{301}中".len(), 2]
+        );
+        assert_eq!(shaped.runs[1].font.weight, FontWeight::BOLD);
+        assert_eq!(shaped.column(0), Some((0, true)));
+        assert_eq!(shaped.column(1), Some((1, true)));
+        // The mark is in column 1, but not its own character.
+        assert_eq!(shaped.column(2), Some((1, false)));
+        // The wide character starts at byte 4 and takes columns 2 and 3.
+        assert_eq!(shaped.column(4), Some((2, true)));
+        assert_eq!(shaped.column(7), Some((7, true)));
+        assert_eq!(shaped.column(8), Some((8, true)));
+        // One cell alone (under a block cursor).
+        assert!(shaped.gather(&g, 0, 7..8, &gpui_kit::font("Menlo")));
+        assert_eq!(shaped.text, "b");
+        assert!(!shaped.gather(&g, 0, 4..6, &gpui_kit::font("Menlo")));
+    }
+
+    #[test]
+    fn decorations_run_cell_by_cell() {
+        let under = CellFlags::UNDERLINE;
+        let mut colored = cell('d', under);
+        colored.underline = Some(RgbColor::new(255, 0, 0));
+        let cells = vec![
+            cell('a', under),
+            cell('b', under),
+            cell('中', under | CellFlags::WIDE_CHAR),
+            cell(' ', under | CellFlags::WIDE_CHAR_SPACER),
+            cell('c', CellFlags::UNDERCURL),
+            colored,
+            cell('e', CellFlags::HYPERLINK),
+            cell('f', CellFlags::DOUBLE_UNDERLINE),
+        ];
+        let spans = line_spans(&cells, |cell| {
+            let color = cell.underline.map_or(cell_color(cell, None), cell_hsla);
+            Some((underline_kind(cell.flags)?, color))
+        });
+        let kinds: Vec<_> = spans.iter().map(|(s, e, (k, _))| (*s, *e, *k)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                // Through the wide character's second cell.
+                (0, 4, UnderlineKind::Single),
+                (4, 5, UnderlineKind::Curly),
+                // Its own color starts a new run.
+                (5, 6, UnderlineKind::Single),
+                // A link isn't underlined until the pointer is on it.
+                (7, 8, UnderlineKind::Double),
+            ]
+        );
+        assert_eq!(
+            underline_kind(CellFlags::DOTTED_UNDERLINE),
+            Some(UnderlineKind::Dotted)
+        );
+        assert_eq!(
+            underline_kind(CellFlags::DASHED_UNDERLINE),
+            Some(UnderlineKind::Dashed)
+        );
+    }
+
+    #[test]
+    fn dashes_follow_the_view_not_the_run() {
+        // Dots 1 long every 3, from 0: a run from 4 to 11 gets 6..7 and
+        // 9..10; dashes 4 long every 6 are cut at both ends.
+        assert_eq!(
+            dashes(4.0..11.0, 1.0, 3.0).collect::<Vec<_>>(),
+            vec![(6.0, 7.0), (9.0, 10.0)]
+        );
+        assert_eq!(
+            dashes(2.0..15.0, 4.0, 6.0).collect::<Vec<_>>(),
+            vec![(2.0, 4.0), (6.0, 10.0), (12.0, 15.0)]
+        );
+    }
+
+    #[test]
+    fn chips_use_whole_point_sizes() {
+        assert_eq!(chip_font_size(px(14.)), px(12.));
+        assert_eq!(chip_font_size(px(13.)), px(11.));
+        assert_eq!(chip_font_size(px(15.)), px(13.));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod line_gap_tests {
+    use super::line_gap;
+
+    #[test]
+    fn leading_comes_from_core_text_by_family() {
+        // Menlo and SF Mono have none; a family CoreText lacks has no say.
+        assert_eq!(line_gap("Menlo", 13.), Some(0.0));
+        assert_eq!(line_gap(".AppleSystemUIFontMonospaced", 13.), Some(0.0));
+        assert_eq!(line_gap("No Such Family 4f2a", 13.), None);
+        // Times has one.
+        assert!(line_gap("Times New Roman", 13.).is_some_and(|gap| gap > 0.0));
     }
 }
