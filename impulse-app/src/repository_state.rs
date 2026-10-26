@@ -331,6 +331,34 @@ impl RepositoryState {
         .map(|output| output.stdout)
     }
 
+    /// The local branches and the remote ones (without `<remote>/HEAD`),
+    /// most recently committed first, read as `read_git` reads. Blocking.
+    pub fn branches(root: &str, trusted: bool) -> (Vec<String>, Vec<String>) {
+        let output = Self::read_git(
+            root,
+            trusted,
+            &[
+                "for-each-ref",
+                "--sort=-committerdate",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes",
+            ],
+        )
+        .unwrap_or_default();
+        let (mut local, mut remote) = (Vec::new(), Vec::new());
+        for line in output.lines() {
+            if let Some(name) = line.strip_prefix("refs/heads/") {
+                local.push(name.to_string());
+            } else if let Some(name) = line.strip_prefix("refs/remotes/") {
+                if !line.ends_with("/HEAD") {
+                    remote.push(name.to_string());
+                }
+            }
+        }
+        (local, remote)
+    }
+
     /// The status letter for `path`: its own, or a folder's (the
     /// highest-priority one inside it). Ignored files are "I".
     pub fn status_of(&self, path: &Path) -> Option<&str> {

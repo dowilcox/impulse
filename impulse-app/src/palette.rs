@@ -934,13 +934,14 @@ impl Palette {
 
     fn refresh_branches(&mut self, term: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(branches) = self.branches.as_ref() else {
-            let root = self.file_index_root.clone();
+            let (root, trusted) = (self.file_index_root.clone(), self.host.trusted);
             self.busy = true;
             self.rows = Vec::new();
             self.empty_message = "Loading branches…".into();
             let current = self.host.branch.clone();
             let listing = cx.background_executor().spawn(async move {
-                let (local, remote) = impulse_git::operations::branches(&root);
+                let (local, remote) =
+                    crate::repository_state::RepositoryState::branches(&root, trusted);
                 // Local branches (most recent first, current on top), then
                 // remotes that don't already have a local branch.
                 let mut all: Vec<(String, bool)> = local
@@ -1970,46 +1971,25 @@ impl Workbench {
         }
     }
 
-    /// Switch the tree's repository to `name` (or create it and switch),
-    /// saying in the status bar when git refuses.
+    /// Switch the repository to `name` (or create it and switch) as the
+    /// git actions do: queued with the repository's other git work, the
+    /// offer to stash changes the switch would overwrite, and git's errors
+    /// as alerts.
     fn palette_switch_branch(
         &mut self,
         name: String,
         create: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let root = self.tree_root(cx).to_string_lossy().into_owned();
-        let switching = {
-            let name = name.clone();
-            cx.background_executor().spawn(async move {
-                if create {
-                    impulse_git::operations::create_branch(&name, None, true, &root)
-                } else {
-                    impulse_git::operations::switch_branch(&name, &root)
-                }
-            })
+        let Some(repo) = self.repository_or_note(window, cx) else {
+            return;
         };
-        cx.spawn(async move |workbench, cx| {
-            let result = switching.await;
-            let _ = workbench.update(cx, |workbench, cx| {
-                // The repository's refresh brings the new branch name.
-                workbench.sync_branches(cx);
-                match result {
-                    Ok(()) if create => {
-                        workbench.set_notice(format!("Created and switched to {name}"), cx)
-                    }
-                    Ok(()) => cx.notify(),
-                    Err(error) if create => {
-                        workbench.set_notice(format!("Couldn't create {name}: {error}"), cx)
-                    }
-                    Err(error) => {
-                        workbench.set_notice(format!("Couldn't switch to {name}: {error}"), cx)
-                    }
-                }
-            });
-        })
-        .detach();
+        if create {
+            self.git_create_branch(&repo, name, window, cx);
+        } else {
+            self.git_switch_branch(&repo, name, window, cx);
+        }
     }
 
     /// The Settings tab isn't in the Rust app yet: open settings.json at

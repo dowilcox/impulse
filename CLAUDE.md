@@ -215,7 +215,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           first row selected) and Move to New Task for one
                           file (TaskSheet::move_paths);
                           git_actions.rs: GitActions/GitPrompts and the git
-                          commands; branch_switcher.rs; branch_manager.rs:
+                          commands (Switch Branch is the palette's b:,
+                          as in Swift); branch_manager.rs:
                           Manage Branches, with merge, rebase, delete
                           (Undo), rename and publish; file_icons.rs:
                           material icons from icon-mapping.json, served as

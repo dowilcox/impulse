@@ -23,7 +23,6 @@ mod badge;
 mod base_rules;
 mod bell;
 mod branch_manager;
-mod branch_switcher;
 mod changes_panel;
 mod close_flow;
 mod command_editor;

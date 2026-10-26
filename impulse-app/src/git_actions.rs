@@ -29,7 +29,6 @@ use crate::workbench::Workbench;
 
 /// The commands `run_command` hands to `run_git_command`.
 pub(crate) const GIT_COMMANDS: &[&str] = &[
-    "switch_branch",
     "git_fetch",
     "git_fetch_all",
     "git_pull",
@@ -244,7 +243,6 @@ impl Workbench {
             return;
         };
         match id {
-            "switch_branch" => self.show_branch_switcher(repo, window, cx),
             "git_fetch" => self.git_fetch(&repo, false, window, cx),
             "git_fetch_all" => self.git_fetch(&repo, true, window, cx),
             "git_pull" => self.git_pull(&repo, None, window, cx),
