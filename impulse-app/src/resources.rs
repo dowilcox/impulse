@@ -1,5 +1,5 @@
-//! Where the app's files are: the icons (lucide and material) and the
-//! bundled fonts. An installed app has them in one folder beside its
+//! Where the app's files are: the icons (lucide and material, and the few
+//! Impulse draws itself, compiled in) and the bundled fonts. An installed app has them in one folder beside its
 //! executable; a build run from the repository reads them from the tree.
 //!
 //! Looked for in order: `$IMPULSE_RESOURCES`, `<exe>/../share/impulse`
@@ -62,4 +62,22 @@ static RESOURCES: LazyLock<Resources> = LazyLock::new(|| {
 
 pub(crate) fn get() -> &'static Resources {
     &RESOURCES
+}
+
+/// Icons Impulse draws itself in Lucide's style, for what Lucide has no
+/// icon for (`assets/icons/impulse/`), by file name as Lucide's are
+/// (`icons/<name>.svg`). They're compiled in, so no install step has to
+/// copy them, and they live apart from `vendor/lucide/`, which
+/// `scripts/vendor-lucide.sh` writes.
+const OWN_ICONS: [(&str, &[u8]); 1] = [(
+    "flag-checkered.svg",
+    include_bytes!("../../assets/icons/impulse/flag-checkered.svg"),
+)];
+
+/// One of Impulse's own icons (`OWN_ICONS`) by file name.
+pub(crate) fn own_icon(file: &str) -> Option<&'static [u8]> {
+    OWN_ICONS
+        .iter()
+        .find(|(name, _)| *name == file)
+        .map(|(_, svg)| *svg)
 }

@@ -1,0 +1,19 @@
+<!-- Impulse's own icon in Lucide's style: Lucide's flag with a checkered
+     body (Finish Task; SF Symbols' flag.checkered in the Swift app). -->
+<svg
+  class="lucide lucide-flag-checkered"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528" />
+  <path d="M4 4A1 1 0 0 1 4.4 3.2A6 6 0 0 1 8 2C8.467 2 8.91 2.048 9.333 2.13L9.333 8.13C8.91 8.048 8.467 8 8 8A6 6 0 0 0 4 9.5Z" fill="currentColor" stroke="none" />
+  <path d="M14.667 3.948C14.886 3.981 15.108 4 15.333 4Q17.333 4 18.4 3.2A1 1 0 0 1 20 4V9Q17.333 10 15.333 10C15.108 10 14.886 9.981 14.667 9.948Z" fill="currentColor" stroke="none" />
+  <path d="M9.333 8.13C11.369 8.524 12.96 9.687 14.667 9.948L14.667 15.87C12.78 15.508 11.22 14.492 9.333 14.13Z" fill="currentColor" stroke="none" />
+</svg>

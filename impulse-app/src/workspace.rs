@@ -86,7 +86,9 @@ impl Surface {
             Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",
             Surface::Keybindings(_) => "keyboard",
-            Surface::TaskFinish(_) => "flag",
+            // Impulse's own (`resources::own_icon`): Lucide has no
+            // checkered flag, SF Symbols' `flag.checkered` in Swift.
+            Surface::TaskFinish(_) => "flag-checkered",
             Surface::Problems(_) => "triangle-alert",
             Surface::ProjectSetup(_) => "sliders-horizontal",
         }

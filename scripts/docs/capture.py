@@ -19,7 +19,9 @@ Swift app doesn't exist). Build it first with `cargo build -p impulse-app
 -p impulse-cli`, on the Mac with `--features impulse-app/snapshot` added
 (its window images come from GPUI's test-support; without it the app writes
 none and says so in snapshot.log). On the Mac its windows never show either:
-they stay transparent and are rendered off screen. On Linux it needs an X
+they stay transparent and are rendered off screen, without the window's
+buttons, so the main window's are composited in from traffic-lights@2x.png
+(the inactive ones, as in the Swift shots). On Linux it needs an X
 server in DISPLAY (Xvfb), and the shots are composed by imagetool.py
 (Pillow) instead of imagetool.swift.
 """
@@ -79,6 +81,15 @@ FRAME = re.compile(
 # The Rust app draws dialogs and the palette inside its window: where one is,
 # inside its frame, from the window's top left.
 OVERLAY = re.compile(r"overlay window-(\d+) x=(\S+) y=(\S+) w=(\S+) h=(\S+)")
+
+# The Rust app's window images on the Mac hold only what GPUI draws, not the
+# window's buttons, so its main window gets the inactive ones the Swift
+# shots show: cropped at 2x from a Swift shot (getting-started-window-tour)
+# and taken off its background into alpha. Where they go, in points from the
+# window's top left: main.rs puts the close button's 14-point frame at
+# (14, 13), and the image starts 1 point left of and 1.5 above a button.
+TRAFFIC_LIGHTS = HERE / "traffic-lights@2x.png"
+TRAFFIC_LIGHTS_AT = (13, 11.5)
 
 
 def read_preferences() -> dict:
@@ -354,8 +365,13 @@ def compose(shot: dict, windows: list[dict], folder: Path) -> None:
     # Pixels per point, as the window was captured (2 on a Retina Mac).
     with open(main["path"], "rb") as png:
         pixels = int.from_bytes(png.read(24)[16:20], "big")
+    scale = round(pixels / width) or 1
+    if RUST and MAC and not shot.get("base") and scale == 2:
+        # Under everything floating over the window, as the real ones are.
+        x, y = TRAFFIC_LIGHTS_AT
+        overlays.insert(0, {"path": str(TRAFFIC_LIGHTS), "x": x, "y": y, "radius": 0, "shadow": False})
     spec = {
-        "scale": round(pixels / width) or 1,
+        "scale": scale,
         "base": main["path"],
         "overlays": [{k: v for k, v in o.items() if k not in ("w", "h")} for o in overlays],
         "shadows": shadows,

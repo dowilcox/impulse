@@ -1490,11 +1490,30 @@ pub fn open_window<V: gpui_kit::Render>(
     {
         conceal();
         if shown {
-            let _ = opened.0.update(cx, |_, window, _| {
-                if let Some(raw_window_handle::RawWindowHandle::AppKit(handle)) = native(window) {
-                    mac::order_back(handle.ns_view.as_ptr());
+            // Ordered in once the App is no longer borrowed: going on screen
+            // gives the window its screen and backing scale, and AppKit tells
+            // GPUI so at once (`windowDidChangeScreen:` runs its resize
+            // callback), which can't update the window while this caller
+            // holds the App ("RefCell already borrowed", and the new scale
+            // lost).
+            let handle = opened.0;
+            cx.spawn(async move |cx| {
+                let view = cx.update(|cx| {
+                    handle
+                        .update(cx, |_, window, _| match native(window) {
+                            Some(raw_window_handle::RawWindowHandle::AppKit(h)) => {
+                                Some(h.ns_view.as_ptr() as usize)
+                            }
+                            _ => None,
+                        })
+                        .ok()
+                        .flatten()
+                });
+                if let Some(view) = view {
+                    mac::order_back(view as *mut std::ffi::c_void);
                 }
-            });
+            })
+            .detach();
         }
     }
     Ok(opened)

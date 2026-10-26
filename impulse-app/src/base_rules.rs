@@ -16,6 +16,15 @@
 //! own registrations of those grammars (`editor_grammar`) with those
 //! captures as keywords; Review keeps the stock ones, which color them as
 //! highlight.js does.
+//!
+//! Monaco's shell tokenizer gives a fixed list of commands (`git`, `npm`,
+//! `node`, `ls`…) the type color and a few more words (`exit`, `set`) the
+//! keyword color, wherever they stand; tree-sitter's bash query calls every
+//! command a function, which the editor leaves plain. The editor's shell
+//! (`monaco-bash`) adds Monaco's lists ahead of the stock patterns, and its
+//! Markdown (`monaco-markdown`) highlights `sh` and `shell` fences, the
+//! names Monaco knows its shell by, with it. Review and the Markdown preview
+//! keep the stock grammars, as highlight.js colors in the Swift app.
 
 use gpui_kit::component::highlighter::{GrammarConfig, LanguageRegistry};
 
@@ -104,14 +113,78 @@ const HTML_INJECTIONS: &str = r#"((script_element
 "#;
 
 /// The grammar the editor highlights `grammar` with: Monaco's take on
-/// TypeScript and JavaScript, otherwise the grammar itself.
+/// TypeScript, JavaScript, shell scripts and Markdown, otherwise the grammar
+/// itself.
 pub(crate) fn editor_grammar(grammar: &str) -> &str {
     match grammar {
         "typescript" => "monaco-typescript",
         "tsx" => "monaco-tsx",
         "javascript" => "monaco-javascript",
+        "bash" => "monaco-bash",
+        "markdown" => "monaco-markdown",
         other => other,
     }
+}
+
+/// Monaco's shell tokenizer's `builtins` (`basic-languages/shell/shell.ts`),
+/// which it colors `type.identifier`, ignoring case.
+const MONACO_SHELL_BUILTINS: &str = "ab|awk|bash|beep|cat|cc|cd|chown|chmod|chroot|clear|cp|curl|cut|diff|echo|find|gawk|gcc|get|git|grep|hg|kill|killall|ln|ls|make|mkdir|openssl|mv|nc|node|npm|ping|ps|restart|rm|rmdir|sed|service|sh|shopt|shred|source|sort|sleep|ssh|start|stop|su|sudo|svn|tee|telnet|top|touch|vi|vim|wall|wc|wget|who|write|yes|zsh";
+
+/// Its `keywords`: the shell's own (which the stock query already has as
+/// keywords where they're syntax) and a few commands (`exit`, `set`).
+const MONACO_SHELL_KEYWORDS: &str =
+    "if|then|do|else|elif|while|until|for|in|esac|fi|fin|fil|done|exit|set|unset|export|function";
+
+/// Monaco colors those words wherever they stand (a command, its
+/// arguments, a value). A command's name is matched on `command_name`, the
+/// node the stock `(command_name) @function` names: the highlighter keeps
+/// the first match of a range, and a node's matches come in pattern order
+/// (its `word` child's come after them).
+fn monaco_shell_highlights() -> String {
+    let mut query = String::new();
+    for node in ["command_name", "word"] {
+        for (capture, words) in [
+            ("keyword", MONACO_SHELL_KEYWORDS),
+            ("type", MONACO_SHELL_BUILTINS),
+        ] {
+            query.push_str(&format!(
+                "(({node}) @{capture} (#match? @{capture} \"^(?i:{words})$\"))\n"
+            ));
+        }
+    }
+    query
+}
+
+/// The fence names Monaco highlights with its shell tokenizer: the
+/// language's id and aliases (`shell`, `sh`), ignoring case.
+const MONACO_SHELL_FENCES: &str = "^(?i:sh|shell)$";
+
+/// The stock Markdown fence injection, and the editor's: `sh` and `shell`
+/// fences go to `monaco-bash`, the rest as before.
+const MARKDOWN_FENCE: &str = "(fenced_code_block
+  (info_string
+    (language) @injection.language)
+  (code_fence_content) @injection.content)";
+
+fn monaco_markdown_injections(stock: &str) -> Option<String> {
+    if !stock.contains(MARKDOWN_FENCE) {
+        return None;
+    }
+    let fences = format!(
+        "(fenced_code_block
+  (info_string
+    (language) @_language)
+  (code_fence_content) @injection.content
+  (#match? @_language \"{MONACO_SHELL_FENCES}\")
+  (#set! injection.language \"monaco-bash\"))
+
+(fenced_code_block
+  (info_string
+    (language) @injection.language)
+  (code_fence_content) @injection.content
+  (#not-match? @injection.language \"{MONACO_SHELL_FENCES}\"))"
+    );
+    Some(stock.replace(MARKDOWN_FENCE, &fences))
 }
 
 /// The stock TypeScript/JavaScript captures Monaco's tokenizer calls
@@ -142,6 +215,38 @@ const MONACO_TYPES: &str = r#"((identifier) @type (#match? @type "^[A-Z]"))
 /// Register `name` as `base`'s grammar (on `language`'s parser, when given)
 /// with Monaco's keywords, if the result compiles.
 fn register_monaco(name: &str, base: &str, language: Option<&str>) {
+    register_variant(name, base, language, |stock| {
+        let mut highlights = format!("{MONACO_TYPES}\n{stock}");
+        for (from, to) in MONACO_KEYWORDS {
+            highlights = highlights.replace(from, to);
+        }
+        highlights
+    });
+}
+
+/// Register `name` as `base`'s grammar (on `language`'s parser, when given)
+/// with its highlight query rewritten by `highlights`, if the result
+/// compiles.
+fn register_variant(
+    name: &str,
+    base: &str,
+    language: Option<&str>,
+    highlights: impl FnOnce(&str) -> String,
+) {
+    register_variant_with(name, base, language, highlights, |stock| {
+        Some(stock.to_string())
+    });
+}
+
+/// `register_variant` with the injection query rewritten too (`None`
+/// keeps the stock one).
+fn register_variant_with(
+    name: &str,
+    base: &str,
+    language: Option<&str>,
+    highlights: impl FnOnce(&str) -> String,
+    injections: impl FnOnce(&str) -> Option<String>,
+) {
     let registry = LanguageRegistry::singleton();
     let (Some(stock), Some(parser)) = (
         registry.language(base),
@@ -152,20 +257,17 @@ fn register_monaco(name: &str, base: &str, language: Option<&str>) {
     let Some(grammar) = parser.language.clone() else {
         return;
     };
-    let mut highlights = format!("{MONACO_TYPES}\n{}", stock.highlights);
-    for (from, to) in MONACO_KEYWORDS {
-        highlights = highlights.replace(from, to);
-    }
+    let highlights = highlights(&stock.highlights);
     let compiles =
         |query: &str| query.is_empty() || tree_sitter::Query::new(&grammar, query).is_ok();
     if !compiles(&highlights) {
         log::warn!("{name}: the highlight query doesn't compile; keeping {base}'s");
         return;
     }
-    let injections = if compiles(&stock.injections) {
-        stock.injections.clone()
-    } else {
-        Default::default()
+    let injections = match injections(&stock.injections) {
+        Some(rewritten) if compiles(&rewritten) => rewritten.into(),
+        _ if compiles(&stock.injections) => stock.injections.clone(),
+        _ => Default::default(),
     };
     let locals = if compiles(&parser.locals) {
         parser.locals.clone()
@@ -185,12 +287,22 @@ fn register_monaco(name: &str, base: &str, language: Option<&str>) {
     );
 }
 
-/// Register JSON, HTML and the editor's TypeScript and JavaScript, once at
-/// launch.
+/// Register JSON, HTML and the editor's TypeScript, JavaScript, shell and
+/// Markdown, once at launch.
 pub(crate) fn register() {
     register_monaco("monaco-typescript", "typescript", None);
     register_monaco("monaco-tsx", "typescript", Some("tsx"));
     register_monaco("monaco-javascript", "javascript", None);
+    register_variant("monaco-bash", "bash", None, |stock| {
+        format!("{}\n{stock}", monaco_shell_highlights())
+    });
+    register_variant_with(
+        "monaco-markdown",
+        "markdown",
+        None,
+        str::to_string,
+        monaco_markdown_injections,
+    );
     let registry = LanguageRegistry::singleton();
     registry.register(
         "json",
@@ -214,4 +326,58 @@ pub(crate) fn register() {
             "",
         ),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    use gpui_kit::component::input::Rope;
+
+    /// The first capture's name for each of `words` in `code` (the one the
+    /// editor colors it with), or "" when nothing captures it.
+    fn names(grammar: &str, code: &str, words: &[&str]) -> Vec<String> {
+        super::register();
+        let mut highlighter = SyntaxHighlighter::new(grammar);
+        highlighter.update(None, &Rope::from(code), None);
+        let captures = highlighter.captures(0..code.len());
+        words
+            .iter()
+            .map(|word| {
+                let start = code.find(word).unwrap();
+                let range = start..start + word.len();
+                captures
+                    .iter()
+                    .find(|(r, _)| *r == range)
+                    .map(|(_, name)| name.to_string())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_editors_shell_colors_monacos_builtins() {
+        let code = "sudo npm install && cargo build\nGIT=git\nexit 1\n";
+        assert_eq!(
+            names(
+                "monaco-bash",
+                code,
+                &["sudo", "npm", "cargo", "=git", "exit"]
+            ),
+            ["type", "type", "function", "", "keyword"]
+        );
+        // `cargo` keeps the stock capture, which the editor leaves plain.
+        // `=git` isn't a word; check the value on its own.
+        let start = code.find("=git").unwrap() + 1;
+        assert_eq!(names("monaco-bash", &code[start..], &["git"]), ["type"]);
+    }
+
+    #[test]
+    fn sh_fences_in_the_editors_markdown_use_monacos_shell() {
+        let code =
+            "# Setup\n\n```sh\nnpm install\ncargo build\n```\n\n```js\nconst npm = 1;\n```\n";
+        assert_eq!(
+            names("monaco-markdown", code, &["npm", "cargo", "const"]),
+            ["type", "function", "keyword"]
+        );
+    }
 }

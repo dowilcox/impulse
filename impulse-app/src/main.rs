@@ -118,8 +118,9 @@ use gpui_kit::{
     WindowOptions,
 };
 
-/// Icons from the vendored lucide set, by name (`icons/<name>.svg`), and
-/// the material file icons (`material/<file>.svg`).
+/// Icons from the vendored lucide set, by name (`icons/<name>.svg`), with
+/// Impulse's own in the same style (`resources::own_icon`), and the
+/// material file icons (`material/<file>.svg`).
 struct Assets;
 
 impl AssetSource for Assets {
@@ -128,6 +129,9 @@ impl AssetSource for Assets {
         let file = if let Some(name) = path.strip_prefix("material/") {
             resources.material.join(name)
         } else if let Some(name) = path.strip_prefix("icons/") {
+            if let Some(svg) = resources::own_icon(name) {
+                return Ok(Some(Cow::Borrowed(svg)));
+            }
             resources.lucide.join(name)
         } else {
             return gpui_kit::assets::Assets.load(path);
