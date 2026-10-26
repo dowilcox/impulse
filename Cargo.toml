@@ -27,6 +27,17 @@ lto = true
 codegen-units = 1
 strip = true
 
+# The app to try out on the Mac (`--profile dev-app`): optimized, as a
+# debug build scrolls too slowly to judge, but with debug assertions, so it
+# keeps the dev build's own settings, session and socket (`impulse-dev`).
+[profile.dev-app]
+inherits = "release"
+debug-assertions = true
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+
 
 # GPUI Kit's editor and component crates, vendored at the version
 # impulse-app pins so its fixes can be patched in place

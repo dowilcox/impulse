@@ -552,6 +552,7 @@ cargo test -p impulse-git            # rust branch: git layer vs the Swift git f
 cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
 cargo test -p impulse-protocol -p impulse-cli   # rust branch: control protocol, MCP, CLI
 cargo run -p impulse-app -- --cwd <folder> --open <file>   # rust branch: the GPUI app
+cargo build --profile dev-app -p impulse-app -p impulse-cli   # rust branch: optimized, still the dev data folder (target/dev-app/), the app to try out
 cargo build -p impulse-app -p impulse-cli --features impulse-app/snapshot   # rust branch, Mac: the build capture.py/run.py snapshot (window images)
 scripts/check-macos.sh               # rust branch: cargo check for macOS from Linux
 scripts/package-linux.sh             # rust branch: dist/ tarball + .deb of the Rust app

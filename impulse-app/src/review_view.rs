@@ -2053,9 +2053,8 @@ impl ReviewView {
                     colors.text,
                     word,
                     index
-                        .and_then(|l| self.files[f].syntax.as_ref()?.hunks.get(h)?.get(l).cloned())
-                        .unwrap_or_default()
-                        .as_slice(),
+                        .and_then(|l| self.files[f].syntax.as_ref()?.hunks.get(h)?.get(l))
+                        .map_or(&[][..], |colors| colors.as_slice()),
                 )),
             );
             if let (Some(l), false) = (index, busy) {
@@ -2160,12 +2159,15 @@ fn code_text(
     let mut shown = String::with_capacity(line.content.len());
     let mut runs: Vec<TextRun> = Vec::new();
     let mut units = 0u32;
+    // The colors are in order and don't overlap, so one walks along them.
+    let mut colors = syntax.iter().peekable();
+    let plain = hsla(text);
     for (byte, ch) in line.content.char_indices() {
-        let color = syntax
-            .iter()
-            .rev()
-            .find(|(r, _)| r.contains(&byte))
-            .map_or(hsla(text), |(_, c)| *c);
+        while colors.next_if(|(r, _)| r.end <= byte).is_some() {}
+        let color = colors
+            .peek()
+            .filter(|(r, _)| r.start <= byte)
+            .map_or(plain, |(_, c)| *c);
         let changed = spans.iter().any(|s| s.start <= units && units < s.end);
         let background = changed.then(|| hsla(word));
         units += ch.len_utf16() as u32;
