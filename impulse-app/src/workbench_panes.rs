@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::{
-    canvas, div, prelude::*, px, relative, AnyElement, Bounds, Context, MouseButton,
+    canvas, deferred, div, prelude::*, px, relative, AnyElement, Bounds, Context, MouseButton,
     MouseMoveEvent, MouseUpEvent, Pixels, Window,
 };
 use impulse_kit::layout_tree::{LayoutTree, PaneDirection, SplitAxis};
@@ -137,37 +137,44 @@ impl Workbench {
             .when(horizontal, |d| d.w(px(GAP)).h_full())
             .when(!horizontal, |d| d.h(px(GAP)).w_full())
             .child(
-                // A wider grip than the line itself.
-                div()
-                    .id(gpui_kit::ElementId::Name(
-                        format!("divider-{tab}-{path:?}-{index}").into(),
-                    ))
-                    .absolute()
-                    .when(horizontal, |d| {
-                        d.top_0()
-                            .bottom_0()
-                            .left(px(-3.))
-                            .w(px(GAP + 6.))
-                            .cursor_col_resize()
-                    })
-                    .when(!horizontal, |d| {
-                        d.left_0()
-                            .right_0()
-                            .top(px(-3.))
-                            .h(px(GAP + 6.))
-                            .cursor_row_resize()
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |workbench, e: &gpui_kit::MouseDownEvent, _, cx| {
-                            cx.stop_propagation();
-                            if e.click_count >= 2 {
-                                workbench.even_out(drag.tab, &drag.path, cx);
-                            } else {
-                                workbench.drag = Some(drag.clone());
-                            }
-                        }),
-                    ),
+                // A wider grip than the line itself, drawn last so its 3 over
+                // the next pane beat that pane's cursor and press, as the
+                // sidebar's edge does. Not occluding: the drag follows the
+                // root's mouse moves, which a grip under the pointer would
+                // hide.
+                deferred(
+                    div()
+                        .id(gpui_kit::ElementId::Name(
+                            format!("divider-{tab}-{path:?}-{index}").into(),
+                        ))
+                        .absolute()
+                        .when(horizontal, |d| {
+                            d.top_0()
+                                .bottom_0()
+                                .left(px(-3.))
+                                .w(px(GAP + 6.))
+                                .cursor_col_resize()
+                        })
+                        .when(!horizontal, |d| {
+                            d.left_0()
+                                .right_0()
+                                .top(px(-3.))
+                                .h(px(GAP + 6.))
+                                .cursor_row_resize()
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |workbench, e: &gpui_kit::MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                if e.click_count >= 2 {
+                                    workbench.even_out(drag.tab, &drag.path, cx);
+                                } else {
+                                    workbench.drag = Some(drag.clone());
+                                }
+                            }),
+                        ),
+                )
+                .with_priority(1),
             )
             .into_any_element()
     }

@@ -586,7 +586,6 @@ impl Workbench {
             .w(px(size))
             .h(px(size))
             .rounded(px(metrics::RADIUS_SMALL + 1.))
-            .cursor_pointer()
             .hover(|s| s.bg(hsla(p.hover)))
             .on_click(cx.listener(move |workbench, _, window, cx| {
                 cx.stop_propagation();
@@ -751,7 +750,6 @@ impl Workbench {
                     .px(px(6.))
                     .h(px(24.))
                     .rounded(px(metrics::RADIUS))
-                    .cursor_pointer()
                     .hover(|s| s.bg(hsla(p.hover)))
                     .on_click(cx.listener(|workbench, _, window, cx| {
                         workbench.run_command("switch_branch", window, cx)
@@ -1025,11 +1023,13 @@ impl Workbench {
             .id(id)
             .flex()
             .flex_none()
+            // A list item is laid out on its own: without this it would
+            // shrink to its content.
+            .w_full()
             .items_center()
             .gap(px(6.))
             .h(px(26.))
             .px(px(12.))
-            .cursor_pointer()
             .on_click(cx.listener(move |workbench, _, _, cx| {
                 toggle(workbench);
                 workbench.sync_git(cx);
@@ -1556,8 +1556,9 @@ impl Workbench {
                             .right(px(24.))
                             .invisible()
                             .group_hover(group.clone(), |s| s.visible())
-                            // The row's hover color, opaque, over what it covers.
-                            .bg(hsla(p.panel.mix(p.hover, p.hover.a)))
+                            // The row's hover color, opaque, over what it covers
+                            // (the sidebar's chrome color).
+                            .bg(hsla(p.chrome.mix(p.hover, p.hover.a)))
                             .children(actions),
                     )
                     .child(
@@ -1748,7 +1749,6 @@ impl Workbench {
                     .pl(px(8.))
                     .pr(px(4.))
                     .rounded(px(metrics::RADIUS_SMALL + 1.))
-                    .cursor_pointer()
                     .hover(|s| s.bg(hsla(p.hover)))
                     .on_click(cx.listener(move |wb, _, window, cx| {
                         wb.open_review_of(
@@ -1805,7 +1805,6 @@ impl Workbench {
             .flex()
             .items_center()
             .gap(px(4.))
-            .cursor_pointer()
             .on_click(cx.listener(move |workbench, _, window, cx| act(workbench, window, cx)))
             .child(icon(
                 if on { "circle-check" } else { "circle" },

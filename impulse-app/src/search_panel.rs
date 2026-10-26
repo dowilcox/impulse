@@ -140,6 +140,11 @@ impl SearchPanel {
         self.query.read(cx).value().to_string()
     }
 
+    /// Nothing typed yet: the sidebar shows the file tree under the field.
+    pub fn query_is_empty(&self, cx: &gpui_kit::App) -> bool {
+        self.query.read(cx).value().trim().is_empty()
+    }
+
     /// Search again after `delay` (typing coalesces).
     pub fn schedule(&mut self, delay: Duration, cx: &mut Context<Self>) {
         let query = self.query_text(cx);
@@ -237,10 +242,13 @@ impl Render for SearchPanel {
                 .font_family("JetBrains Mono")
                 .text_size(px(11.))
                 .font_weight(FontWeight::MEDIUM)
-                .cursor_pointer()
                 .text_color(hsla(if on { p.accent } else { secondary }))
                 .when(on, |d| d.bg(hsla(p.accent.opacity(0.15))))
         };
+        let empty = self.query_is_empty(cx);
+        // The count stays above the results while they scroll (Swift's
+        // SearchResultsList).
+        let mut count = None;
         let mut list = div()
             .id("search-results")
             .flex()
@@ -267,8 +275,9 @@ impl Render for SearchPanel {
                     .child("No results"),
             );
         } else if !self.results.is_empty() {
-            list = list.child(
+            count = Some(
                 div()
+                    .flex_none()
                     .px(px(10.))
                     .py(px(4.))
                     .text_size(px(11.))
@@ -287,7 +296,6 @@ impl Render for SearchPanel {
                         .gap(px(2.))
                         .px(px(10.))
                         .py(px(5.))
-                        .cursor_pointer()
                         .hover(|s| s.bg(hsla(p.hover)))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(SearchPanelEvent::Open(path.clone(), line))
@@ -335,11 +343,13 @@ impl Render for SearchPanel {
                 );
             }
         }
+        // With nothing typed the panel is its field and hairline, and the
+        // sidebar puts the file tree under it.
         div()
             .flex()
             .flex_col()
-            .flex_1()
-            .min_h_0()
+            .when(!empty, |d| d.flex_1().min_h_0())
+            .when(empty, |d| d.flex_none())
             .child(
                 div()
                     .flex()
@@ -351,7 +361,6 @@ impl Render for SearchPanel {
                         div()
                             .id("toggle-replace")
                             .w(px(10.))
-                            .cursor_pointer()
                             .on_click(cx.listener(|panel, _, _, cx| {
                                 panel.replace_visible = !panel.replace_visible;
                                 cx.notify();
@@ -385,7 +394,6 @@ impl Render for SearchPanel {
                     .child(
                         div()
                             .id("close-search")
-                            .cursor_pointer()
                             .on_click(cx.listener(|panel, _, window, cx| {
                                 panel.query.update(cx, |q, cx| q.set_value("", window, cx));
                                 panel.schedule(Duration::ZERO, cx);
@@ -416,13 +424,13 @@ impl Render for SearchPanel {
                                 .id("replace-all")
                                 .text_size(px(11.))
                                 .font_weight(FontWeight::MEDIUM)
-                                .cursor_pointer()
                                 .text_color(hsla(if has_content { p.accent } else { tertiary }))
                                 .on_click(cx.listener(|panel, _, _, cx| panel.replace_all(cx)))
                                 .child("Replace All"),
                         ),
                 )
             })
-            .child(list)
+            .child(div().flex_none().h(px(1.)).bg(hsla(p.hairline)))
+            .when(!empty, |d| d.children(count).child(list))
     }
 }

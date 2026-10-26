@@ -1,9 +1,12 @@
-//! The window's frame on Linux, where Impulse draws it itself (client-side
-//! decorations, asked for in `open_main_window`): the titlebar's empty
+//! The window's frame: on Linux, where Impulse draws it itself (client-side
+//! decorations, asked for in `open_main_window`), the titlebar's empty
 //! stretch moves the window, zooms it on a double click and opens the
 //! window menu on a right click, and minimize, maximize and close sit at
 //! its right end, as far as the window manager supports them. On macOS
-//! AppKit does all this around the traffic lights, and when a Linux window
+//! AppKit draws the traffic lights, but the app owns the titlebar's drag
+//! (`app_owns_titlebar_drag`), so tabs can be dragged and double-clicked
+//! without moving or zooming the window: the empty stretches move it and a
+//! double click does what the system setting says. When a Linux window
 //! manager decorates the window itself, these stay out of its way.
 
 use std::cell::Cell;
@@ -26,15 +29,30 @@ pub(crate) fn is_ours(window: &Window) -> bool {
     cfg!(target_os = "linux") && matches!(window.window_decorations(), Decorations::Client { .. })
 }
 
-/// The titlebar's empty stretch: on Linux with our own frame, a drag moves
-/// the window, a double click zooms it and a right click opens the window
+/// Whether the titlebar's empty stretches move the window: always on
+/// macOS, on Linux with our own frame.
+fn drags(window: &Window) -> bool {
+    cfg!(target_os = "macos") || is_ours(window)
+}
+
+/// The titlebar's empty stretch, filling what's left: a drag moves the
+/// window and a double click zooms it (on the Mac as the system setting
+/// says); on Linux with our own frame a right click opens the window
 /// manager's menu.
 pub(crate) fn drag_region(window: &Window) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let region = div().id("titlebar-drag").flex_1().h_full();
-    if !is_ours(window) {
+    drag_area("titlebar-drag", window).flex_1().h_full()
+}
+
+/// An empty part of the titlebar that moves the window, sized by the caller.
+pub(crate) fn drag_area(
+    id: impl Into<gpui_kit::ElementId>,
+    window: &Window,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let region = div().id(id);
+    if !drags(window) {
         return region;
     }
-    region
+    let region = region
         .on_mouse_down(MouseButton::Left, |_, _, _| PRESSED.set(true))
         .on_mouse_up(MouseButton::Left, |_, _, _| PRESSED.set(false))
         .on_mouse_move(|_, window, _| {
@@ -42,14 +60,21 @@ pub(crate) fn drag_region(window: &Window) -> gpui_kit::Stateful<gpui_kit::Div> 
                 window.start_window_move();
             }
         })
-        .on_mouse_down(MouseButton::Right, |event, window, _| {
-            window.show_window_menu(event.position)
-        })
         .on_click(|event, window, _| {
             if event.click_count() >= 2 {
-                window.zoom_window();
+                if cfg!(target_os = "macos") {
+                    window.titlebar_double_click();
+                } else {
+                    window.zoom_window();
+                }
             }
-        })
+        });
+    if cfg!(target_os = "macos") {
+        return region;
+    }
+    region.on_mouse_down(MouseButton::Right, |event, window, _| {
+        window.show_window_menu(event.position)
+    })
 }
 
 /// Minimize, maximize (or restore) and close, when the frame is ours.

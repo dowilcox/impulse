@@ -226,7 +226,6 @@ impl ProblemsView {
             .px(px(6.))
             .h(px(22.))
             .rounded(px(4.))
-            .cursor_pointer()
             .when(on, |d| d.bg(hsla(p.raised)))
             .on_click(cx.listener(move |view, _, _, cx| view.toggle(severity, cx)))
             .tooltip(move |window, cx| Tooltip::new(help.clone()).build(window, cx))
@@ -347,7 +346,6 @@ impl ProblemsView {
             .gap(px(6.))
             .h(px(26.))
             .px(px(14.))
-            .cursor_pointer()
             .on_click(cx.listener(move |view, _, _, cx| {
                 if !view.collapsed.remove(&key) {
                     view.collapsed.insert(key.clone());
@@ -417,7 +415,6 @@ impl ProblemsView {
             .pl(px(44.))
             .pr(px(14.))
             .py(px(4.))
-            .cursor_pointer()
             .hover(|s| s.bg(hsla(p.hover)))
             .on_click(cx.listener(move |_, _, _, cx| cx.emit(ProblemsEvent::Open(open.clone()))))
             .child(div().pt(px(2.)).child(icon(name, 12., color)))
@@ -602,7 +599,6 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .gap(px(5.))
-                .cursor_pointer()
                 .text_color(hsla(if errors { p.danger } else { p.text_secondary }))
                 .on_click(
                     cx.listener(|workbench, _, window, cx| workbench.show_problems(window, cx)),

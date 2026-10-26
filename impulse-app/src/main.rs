@@ -489,6 +489,9 @@ pub fn open_main_window(args: Args, cx: &mut App) -> Option<gpui_kit::AnyWindowH
             // window manager that won't allow it decorates the window.
             window_decorations: cfg!(target_os = "linux")
                 .then_some(gpui_kit::WindowDecorations::Client),
+            // On macOS too the titlebar's empty stretches move the window
+            // (window_frame.rs), so dragging or double-clicking a tab doesn't.
+            app_owns_titlebar_drag: cfg!(target_os = "macos"),
             // The desktop entry's name (impulse.desktop): docks and window
             // switchers show its icon (Wayland's app_id, X11's WM_CLASS).
             app_id: Some("impulse".into()),

@@ -785,7 +785,6 @@ fn inbox(
                 .h(px(40.))
                 .px(px(12.))
                 .hover(|s| s.bg(hsla(p.hover)))
-                .cursor_pointer()
                 .on_click(cx.listener(move |state, _, window, cx| {
                     state.dismiss(window, cx);
                     let terminal = terminal.clone();
@@ -923,7 +922,6 @@ fn inbox(
                 .px(px(12.))
                 .text_size(px(11.))
                 .text_color(hsla(p.text_tertiary))
-                .cursor_pointer()
                 .hover(|s| s.bg(hsla(p.hover)))
                 .on_click(cx.listener(move |state, _, window, cx| {
                     state.dismiss(window, cx);

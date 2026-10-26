@@ -27,6 +27,28 @@ pub(crate) fn icon(name: &str, size: f32, color: KitRgba) -> impl IntoElement {
         .text_color(hsla(color))
 }
 
+/// `help` and the command's shortcut, as Swift's tooltips have it ("Toggle
+/// Sidebar (⌘B)"): the binding in effect, so Linux's on Linux and the
+/// user's own when overridden.
+pub(crate) fn with_shortcut(help: &str, command: &str, cx: &gpui_kit::App) -> String {
+    match impulse_kit::keybindings::display_for(
+        command,
+        &SettingsStore::get(cx).keybinding_overrides,
+        impulse_kit::keybindings::Platform::current(),
+    ) {
+        Some(keys) => format!("{help} ({keys})"),
+        None => help.to_string(),
+    }
+}
+
+/// A plain text tooltip.
+pub(crate) fn tooltip(
+    text: impl Into<gpui_kit::SharedString>,
+) -> impl Fn(&mut Window, &mut gpui_kit::App) -> gpui_kit::AnyView + 'static {
+    let text = text.into();
+    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+}
+
 /// Swift's `ProgressRing`: a faint circle and an arc for `progress`, or a
 /// 28% arc turned by `turn` (0 to 1) while it's unknown.
 pub(crate) fn progress_ring(
@@ -111,7 +133,6 @@ pub(crate) fn segment(
         })
         .text_color(hsla(if selected { p.text } else { p.text_secondary }))
         .when(selected, |d| d.bg(hsla(p.raised)).shadow_xs())
-        .cursor_pointer()
         .whitespace_nowrap()
         .child(label.into())
 }
@@ -335,8 +356,8 @@ pub(crate) fn diff_stat(
         })
 }
 
-/// One status-bar entry (the Swift `StatusItem`): an icon and a label,
-/// highlighted on hover when it does something.
+/// One status-bar entry (the Swift `StatusItem`): an icon and a label.
+/// One that does something is a `status_button`.
 pub(crate) fn status_item(
     id: impl Into<gpui_kit::ElementId>,
     icon_name: Option<&str>,
@@ -357,13 +378,40 @@ pub(crate) fn status_item(
         .rounded(px(metrics::RADIUS_SMALL))
         .whitespace_nowrap()
         .text_color(hsla(color))
-        .hover(|s| s.bg(hsla(p.hover)))
-        .role(gpui_kit::Role::Button)
         .aria_label(help.clone())
         .tooltip(move |window, cx| {
             gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
         })
         .children(icon_name.map(|name| icon(name, 11.5, color)))
+}
+
+/// A status item with an action: a button, tinted on hover (Swift
+/// highlights only these). The caller adds its click.
+pub(crate) fn status_button(
+    id: impl Into<gpui_kit::ElementId>,
+    icon_name: Option<&str>,
+    help: &str,
+    tint: Option<KitRgba>,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    status_item(id, icon_name, help, tint, p)
+        .role(gpui_kit::Role::Button)
+        .hover(|s| s.bg(hsla(p.hover)))
+}
+
+/// A status item's label that gives way, with an ellipsis, when the bar
+/// runs out of room (a long branch or folder); its item shrinks with it.
+fn shrinking(
+    item: gpui_kit::Stateful<gpui_kit::Div>,
+    label: String,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    item.flex_shrink(1.).min_w_0().child(
+        div()
+            .min_w_0()
+            .overflow_hidden()
+            .text_ellipsis()
+            .child(label),
+    )
 }
 
 pub(crate) fn abbreviate_home(path: &str) -> String {
@@ -620,14 +668,84 @@ impl Workbench {
         SettingsStore::get(cx).sidebar_tabs && self.sidebar_shown
     }
 
+    /// A tab's 16-point trailing slot (Swift's `trailingAccessory` and
+    /// `WorkspaceTabRow.trailing`): the close button on a hover circle while
+    /// `group` is hovered, unless the tab is pinned; else the attention dot,
+    /// else the unsaved dot, else the pin.
+    #[allow(clippy::too_many_arguments)]
+    fn tab_close_slot(
+        &self,
+        id: impl Into<gpui_kit::ElementId>,
+        group: &'static str,
+        title: &str,
+        x_size: f32,
+        dot: f32,
+        (attention, dirty, pinned): (bool, bool, bool),
+        close: impl Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
+    ) -> impl IntoElement {
+        let p = &self.palette;
+        let indicator = if attention {
+            Some(crate::agent_views::status_dot(dot, p.attention))
+        } else if dirty {
+            Some(crate::agent_views::status_dot(dot, p.text_secondary))
+        } else if pinned {
+            Some(icon("pin", 10., p.text_tertiary).into_any_element())
+        } else {
+            None
+        };
+        div()
+            .id(id)
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(16.))
+            .when(!pinned, |d| {
+                d.role(gpui_kit::Role::Button)
+                    .aria_label(format!("Close {title}"))
+                    .on_click(close)
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(hsla(p.hover))
+                            .invisible()
+                            .group_hover(group, |s| s.visible())
+                            .child(icon("x", x_size, p.text_secondary)),
+                    )
+            })
+            .children(indicator.map(|indicator| {
+                div()
+                    .when(!pinned, |d| d.group_hover(group, |s| s.invisible()))
+                    .child(indicator)
+            }))
+    }
+
     pub(crate) fn titlebar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = &self.palette;
-        // macOS draws its traffic lights in this inset; on Linux the window
-        // controls are Impulse's own (client-side decorations).
-        let leading = if cfg!(target_os = "macos") {
-            metrics::TRAFFIC_LIGHT_INSET
-        } else {
+        // macOS draws its traffic lights in this inset, gone in full screen
+        // (Swift's `isFullScreen ? 6`); on Linux the window controls are
+        // Impulse's own (client-side decorations).
+        let leading = if !cfg!(target_os = "macos") {
             12.0
+        } else if window.is_fullscreen() {
+            6.0
+        } else {
+            metrics::TRAFFIC_LIGHT_INSET
+        };
+        // The titlebar's empty parts move the window (Swift's
+        // `TitlebarDragArea` behind the bar). They sit beside the controls,
+        // never behind them: a press reaches every hitbox under the pointer.
+        let space = |id: &'static str, width: f32| {
+            crate::window_frame::drag_area(id, window)
+                .flex_none()
+                .w(px(width))
+                .h_full()
         };
         let workspace = self.workspace();
         let shortcut = impulse_kit::keybindings::display_for(
@@ -701,7 +819,9 @@ impl Workbench {
                 .pr(px(if compact { 8. } else { 5. }))
                 .rounded(px(metrics::RADIUS))
                 .text_color(hsla(color))
-                .hover(|s| s.bg(hsla(p.hover)))
+                // The active tab stays raised under the pointer (Swift's
+                // `selected ? raised : hovered ? hover : clear`).
+                .when(!active, |d| d.hover(|s| s.bg(hsla(p.hover))))
                 .on_click(
                     cx.listener(move |w, event: &gpui_kit::ClickEvent, window, cx| {
                         if event.click_count() >= 2 {
@@ -739,11 +859,13 @@ impl Workbench {
                     .child(
                         div()
                             .max_w(px(180.))
-                            .truncate()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
                             .text_size(px(12.))
                             .when(active, |d| d.font_weight(gpui_kit::FontWeight::MEDIUM))
                             .when(tab.preview, |d| d.italic())
-                            .child(title),
+                            .child(title.clone()),
                     )
                     .when(panes > 1, |d| {
                         d.child(
@@ -769,42 +891,18 @@ impl Workbench {
                                 ),
                         )
                     })
-                    .child(
-                        div()
-                            .id(("close", tab.id))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(16.))
-                            .h(px(16.))
-                            .rounded(px(metrics::RADIUS_SMALL))
-                            .hover(|s| s.bg(hsla(p.pressed)))
-                            .on_click(cx.listener(move |w, _, window, cx| {
-                                cx.stop_propagation();
-                                w.close_tab_at(index, window, cx)
-                            }))
-                            // The close button on hover; otherwise a dot for
-                            // attention or unsaved changes, as in Swift.
-                            .child(
-                                div()
-                                    .invisible()
-                                    .group_hover("tab", |s| s.visible())
-                                    .absolute()
-                                    .child(icon("x", metrics::ICON_SMALL, p.text_secondary)),
-                            )
-                            .when(attention || dirty, |d| {
-                                d.child(div().group_hover("tab", |s| s.invisible()).child(
-                                    crate::agent_views::status_dot(
-                                        7.,
-                                        if attention {
-                                            p.attention
-                                        } else {
-                                            p.text_secondary
-                                        },
-                                    ),
-                                ))
-                            }),
-                    );
+                    .child(self.tab_close_slot(
+                        ("close", tab.id),
+                        "tab",
+                        &title,
+                        11.,
+                        7.,
+                        (attention, dirty, false),
+                        cx.listener(move |w, _, window, cx| {
+                            cx.stop_propagation();
+                            w.close_tab_at(index, window, cx)
+                        }),
+                    ));
             }
             if active {
                 t = t.bg(hsla(p.raised)).relative().child(
@@ -827,94 +925,201 @@ impl Workbench {
         // where the content column starts; without it, it hugs its content.
         let leading_width = sidebar_visible.then(|| self.sidebar_width(cx).max(220.));
         let repo = crate::repository_state::RepositoryStore::summary(&workspace.root, cx);
+        let branch_part = (!workspace.branch.is_empty()).then(|| {
+            div()
+                .id("titlebar-branch")
+                .flex()
+                // The branch truncates before the workspace's name.
+                .flex_shrink(10.)
+                .min_w_0()
+                .items_center()
+                .gap(px(4.))
+                .tooltip(tooltip(with_shortcut("Switch branch", "switch_branch", cx)))
+                .on_click(
+                    cx.listener(|w, _, window, cx| w.run_command("switch_branch", window, cx)),
+                )
+                .child(icon("git-branch", 11., p.text_tertiary))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_middle()
+                        .text_size(px(11.5))
+                        .text_color(hsla(p.text_secondary))
+                        .child(workspace.branch.clone()),
+                )
+                .children(self.branch_sync_text(cx).map(|sync| {
+                    div()
+                        .flex_none()
+                        .font_family("JetBrains Mono")
+                        .text_size(px(10.5))
+                        .text_color(hsla(p.text_tertiary))
+                        .child(sync)
+                }))
+        });
         let leading_part =
             div()
                 .flex()
                 .flex_none()
                 .items_center()
-                .gap(px(6.))
                 .h_full()
-                .pl(px(leading))
-                .pr(px(8.))
                 .overflow_hidden()
                 .when_some(leading_width, |d, width| d.w(px(width)))
-                .children(crate::menus::menu_button(cx))
+                // The inset and the 6 after it.
+                .child(space("titlebar-inset", leading + 6.))
+                .when_some(crate::menus::menu_button(cx), |d, button| {
+                    d.child(button).child(space("titlebar-menu-gap", 6.))
+                })
                 .child(
-                    div()
-                        .id("toggle-sidebar")
-                        .flex_none()
-                        .p(px(3.))
-                        .rounded(px(metrics::RADIUS_SMALL))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(hsla(p.hover)))
-                        .on_click(cx.listener(|w, _, window, cx| {
-                            w.run_command("toggle_sidebar", window, cx)
-                        }))
-                        .child(icon(
-                            "panel-left",
-                            metrics::ICON_LARGE,
-                            if sidebar_visible {
-                                p.text
-                            } else {
-                                p.text_secondary
-                            },
-                        )),
+                    icon_button(
+                        "toggle-sidebar",
+                        "panel-left",
+                        with_shortcut("Toggle Sidebar", "toggle_sidebar", cx),
+                        24.,
+                        metrics::ICON,
+                        sidebar_visible,
+                        p,
+                    )
+                    .on_click(
+                        cx.listener(|w, _, window, cx| w.run_command("toggle_sidebar", window, cx)),
+                    ),
                 )
+                .child(space("titlebar-toggle-gap", 6.))
                 .child(
                     div()
                         .id("titlebar-workspace")
                         .flex_shrink(1.)
                         .min_w(px(30.))
-                        .truncate()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_middle()
                         .text_size(px(12.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(hsla(p.text))
-                        .cursor_pointer()
+                        .tooltip(tooltip(with_shortcut(
+                            "Switch workspace",
+                            "switch_workspace",
+                            cx,
+                        )))
                         .on_click(cx.listener(|w, _, window, cx| {
                             w.run_command("switch_workspace", window, cx)
                         }))
                         .child(workspace.name()),
                 )
-                .when(!workspace.branch.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .id("titlebar-branch")
-                            .flex()
-                            // The branch truncates before the workspace's name.
-                            .flex_shrink(10.)
-                            .min_w_0()
-                            .items_center()
-                            .gap(px(4.))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|w, _, window, cx| {
-                                w.run_command("switch_branch", window, cx)
-                            }))
-                            .child(icon("git-branch", 11., p.text_tertiary))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis_middle()
-                                    .text_size(px(11.5))
-                                    .text_color(hsla(p.text_secondary))
-                                    .child(workspace.branch.clone()),
-                            )
-                            .children(self.branch_sync_text(cx).map(|sync| {
-                                div()
-                                    .flex_none()
-                                    .font_family("JetBrains Mono")
-                                    .text_size(px(10.5))
-                                    .text_color(hsla(p.text_tertiary))
-                                    .child(sync)
-                            })),
-                    )
-                });
+                .when_some(branch_part, |d, branch| {
+                    // Swift's breadcrumb puts 5 between the name and the branch.
+                    d.child(space("titlebar-name-gap", 5.)).child(branch)
+                })
+                // What's left of the sidebar's width, at least its 8 of padding.
+                .child(
+                    crate::window_frame::drag_area("titlebar-leading-fill", window)
+                        .flex_1()
+                        .min_w(px(8.))
+                        .h_full(),
+                );
+        let diff_pill = repo.filter(|r| r.changed > 0).map(|r| {
+            let help = with_shortcut(
+                &format!(
+                    "Review {} changed file{}",
+                    r.changed,
+                    if r.changed == 1 { "" } else { "s" }
+                ),
+                "review_changes",
+                cx,
+            );
+            div()
+                .id("diff-pill")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(6.))
+                .h(px(24.))
+                .px(px(8.))
+                .rounded(px(metrics::RADIUS))
+                .bg(hsla(p.raised))
+                .hover(|s| s.bg(hsla(p.pressed)))
+                .role(gpui_kit::Role::Button)
+                .aria_label(format!(
+                    "Review changes: {} files, {} added, {} removed lines",
+                    r.changed, r.added, r.removed
+                ))
+                .tooltip(tooltip(help))
+                .on_click(
+                    cx.listener(|w, _, window, cx| w.run_command("review_changes", window, cx)),
+                )
+                .child(icon("file-diff", 12., p.text_secondary))
+                .child(
+                    div()
+                        .font_family("JetBrains Mono")
+                        .text_size(px(11.))
+                        .text_color(hsla(p.text_secondary))
+                        .child(r.changed.to_string()),
+                )
+                .child(diff_stat(r.added, r.removed, p))
+                .into_any_element()
+        });
+        let palette_button = div()
+            .id("search-field")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(6.))
+            .h(px(24.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(metrics::RADIUS))
+            .bg(hsla(p.raised))
+            .hover(|s| s.bg(hsla(p.pressed)))
+            .text_size(px(11.5))
+            .text_color(hsla(p.text_tertiary))
+            .role(gpui_kit::Role::Button)
+            .aria_label("Command Palette")
+            .tooltip(tooltip(with_shortcut(
+                "Command Palette",
+                "command_palette",
+                cx,
+            )))
+            .on_click(cx.listener(|w, _, window, cx| w.run_command("command_palette", window, cx)))
+            .child(icon("search", 12., p.text_tertiary))
+            .child("Search or run a command")
+            .child(
+                // The Swift `KeyHint`.
+                div()
+                    .h(px(16.))
+                    .px(px(4.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(3.))
+                    .border_1()
+                    .border_color(hsla(p.hairline_strong))
+                    .text_size(px(10.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(shortcut),
+            )
+            .into_any_element();
+        // The window-level actions 4 apart, the gaps moving the window too.
+        let mut trailing = div().flex().flex_none().items_center().h_full();
+        let actions = self
+            .agent_inbox_button(cx)
+            .into_iter()
+            .chain([palette_button])
+            .chain(diff_pill);
+        for (n, action) in actions.enumerate() {
+            if n > 0 {
+                trailing = trailing.child(
+                    crate::window_frame::drag_area(("titlebar-trailing-gap", n), window)
+                        .flex_none()
+                        .w(px(4.))
+                        .h_full(),
+                );
+            }
+            trailing = trailing.child(action);
+        }
         div()
             .flex()
             .items_center()
             .h(px(metrics::TITLEBAR_HEIGHT))
-            .pr(px(8.))
             .bg(hsla(p.chrome))
             .border_b_1()
             .border_color(hsla(p.hairline))
@@ -923,104 +1128,23 @@ impl Workbench {
             .when(!tabs_in_sidebar, |d| {
                 d.child(
                     tabs.child(
-                        div()
-                            .id("new-tab")
-                            .flex_none()
-                            .ml(px(4.))
-                            .p(px(4.))
-                            .rounded(px(metrics::RADIUS_SMALL))
-                            .hover(|s| s.bg(hsla(p.hover)))
-                            .on_click(
-                                cx.listener(|w, _, window, cx| {
-                                    w.run_command("new_tab", window, cx)
-                                }),
-                            )
-                            .child(icon("plus", metrics::ICON, p.text_secondary)),
+                        chrome_icon_button(
+                            "new-tab",
+                            "plus",
+                            with_shortcut("New Tab", "new_tab", cx),
+                            p,
+                        )
+                        .on_click(
+                            cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)),
+                        ),
                     ),
                 )
             })
-            .child(crate::window_frame::drag_region(window))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(4.))
-                    .children(self.agent_inbox_button(cx))
-                    .child(
-                        div()
-                            .id("search-field")
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .gap(px(6.))
-                            .h(px(24.))
-                            .pl(px(8.))
-                            .pr(px(4.))
-                            .rounded(px(metrics::RADIUS))
-                            .bg(hsla(p.raised))
-                            .hover(|s| s.bg(hsla(p.pressed)))
-                            .text_size(px(11.5))
-                            .text_color(hsla(p.text_tertiary))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|w, _, window, cx| {
-                                w.run_command("command_palette", window, cx)
-                            }))
-                            .child(icon("search", 12., p.text_tertiary))
-                            .child("Search or run a command")
-                            .child(
-                                // The Swift `KeyHint`.
-                                div()
-                                    .h(px(16.))
-                                    .px(px(4.))
-                                    .flex()
-                                    .items_center()
-                                    .rounded(px(3.))
-                                    .border_1()
-                                    .border_color(hsla(p.hairline_strong))
-                                    .text_size(px(10.5))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(shortcut),
-                            ),
-                    )
-                    .children(repo.filter(|r| r.changed > 0).map(|r| {
-                        let help: gpui_kit::SharedString = format!(
-                            "Review {} changed file{}",
-                            r.changed,
-                            if r.changed == 1 { "" } else { "s" }
-                        )
-                        .into();
-                        div()
-                            .id("diff-pill")
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .gap(px(6.))
-                            .h(px(24.))
-                            .px(px(8.))
-                            .rounded(px(metrics::RADIUS))
-                            .bg(hsla(p.raised))
-                            .hover(|s| s.bg(hsla(p.pressed)))
-                            .cursor_pointer()
-                            .tooltip(move |window, cx| {
-                                gpui_kit::component::tooltip::Tooltip::new(help.clone())
-                                    .build(window, cx)
-                            })
-                            .on_click(cx.listener(|w, _, window, cx| {
-                                w.run_command("review_changes", window, cx)
-                            }))
-                            .child(icon("file-diff", 12., p.text_secondary))
-                            .child(
-                                div()
-                                    .font_family("JetBrains Mono")
-                                    .text_size(px(11.))
-                                    .text_color(hsla(p.text_secondary))
-                                    .child(r.changed.to_string()),
-                            )
-                            .child(diff_stat(r.added, r.removed, p))
-                    })),
-            )
+            // At least the trailing actions' 8 of padding (Swift's).
+            .child(crate::window_frame::drag_region(window).min_w(px(8.)))
+            .child(trailing)
             .children(crate::window_frame::controls(window, p))
+            .child(space("titlebar-end", 8.))
     }
 
     fn workspace_row(&self, index: usize, indented: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -1148,10 +1272,12 @@ impl Workbench {
                     .into_any_element(),
                 },
             )
+            // The name and branch give way to the badges, the branch first
+            // (Swift's `layoutPriority(-1)`).
             .child(
                 div()
-                    .flex_none()
-                    .max_w(px(150.))
+                    .min_w_0()
+                    .flex_shrink(1.)
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis_middle()
@@ -1170,6 +1296,7 @@ impl Workbench {
                     d.child(
                         div()
                             .min_w_0()
+                            .flex_shrink(10.)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_middle()
@@ -1184,6 +1311,7 @@ impl Workbench {
                 d.child(
                     div()
                         .min_w_0()
+                        .flex_shrink(10.)
                         .truncate()
                         .text_size(px(10.5))
                         .text_color(hsla(p.text_tertiary))
@@ -1229,7 +1357,6 @@ impl Workbench {
                             .font_family("JetBrains Mono")
                             .text_size(px(10.))
                             .text_color(hsla(p.text_tertiary))
-                            .cursor_pointer()
                             .tooltip(move |window, cx| {
                                 gpui_kit::component::tooltip::Tooltip::new(format!(
                                     "{behind} commit{} behind {upstream}: click to pull",
@@ -1294,6 +1421,9 @@ impl Workbench {
                 let surface = tab.focused_surface();
                 let active_tab = selected && t == workspace.active;
                 let menu = self.tab_menu(index, t, cx);
+                let title = surface.title(cx);
+                let attention = !active_tab && Self::tab_needs_attention(tab, cx);
+                let dirty = tab.panes.values().any(|s| s.is_dirty(cx));
                 column = column.child(
                     div()
                         .id(("workspace-tab", tab.id))
@@ -1339,13 +1469,22 @@ impl Workbench {
                                 .whitespace_nowrap()
                                 .text_ellipsis_middle()
                                 .when(tab.preview, |d| d.italic())
-                                .child(surface.title(cx)),
+                                .child(title.clone()),
                         )
-                        .children(
-                            (!active_tab && Self::tab_needs_attention(tab, cx))
-                                .then(|| crate::agent_views::status_dot(6., p.attention)),
-                        )
-                        .children(tab.pinned.then(|| icon("pin", 10., p.text_tertiary)))
+                        // As the titlebar's tab has it, but smaller.
+                        .child(self.tab_close_slot(
+                            ("workspace-tab-close", tab.id),
+                            "workspace-tab",
+                            &title,
+                            10.,
+                            6.,
+                            (attention, dirty, tab.pinned),
+                            cx.listener(move |w, _, window, cx| {
+                                cx.stop_propagation();
+                                w.active = index;
+                                w.close_tab_at(t, window, cx)
+                            }),
+                        ))
                         .context_menu(menu),
                 );
             }
@@ -1363,6 +1502,7 @@ impl Workbench {
                         .text_size(px(11.5))
                         .text_color(hsla(p.text_tertiary))
                         .child(row_background(false, "workspace-new-tab", p))
+                        .tooltip(tooltip(with_shortcut("New Tab", "new_tab", cx)))
                         .on_click(
                             cx.listener(|w, _, window, cx| w.run_command("new_tab", window, cx)),
                         )
@@ -1387,7 +1527,16 @@ impl Workbench {
         let workspace = self.workspace();
         let row = row.clone();
         let expanded = workspace.expanded_dirs.contains(&row.path);
+        // Swift's FlatFileRowView: the open file in the accent, the tree's
+        // selection (the last click) faintly when it's another row.
+        let active = !row.is_dir && open_path == Some(row.path.as_path());
+        let tree_selected = self.tree_selection.as_deref() == Some(row.path.as_path());
         let selected = self.tree_selection.as_deref().or(open_path) == Some(row.path.as_path());
+        let ink = if p.is_light {
+            KitRgba::BLACK
+        } else {
+            KitRgba::WHITE
+        };
         let path = row.path.clone();
         let is_dir = row.is_dir;
         let status = self.git.tree_status(&row.path, p, ignored, cx);
@@ -1411,8 +1560,11 @@ impl Workbench {
                 .pr(px(8.))
                 .rounded(px(5.))
                 .text_size(px(13.))
-                .when(selected, |d| d.bg(hsla(p.accent).opacity(0.2)))
-                .when(!selected, |d| d.hover(|style| style.bg(hsla(p.hover))))
+                .map(|d| match (active, tree_selected) {
+                    (true, _) => d.bg(hsla(p.accent.opacity(0.2))),
+                    (false, true) => d.bg(hsla(ink.opacity(0.08))),
+                    (false, false) => d.hover(|style| style.bg(hsla(ink.opacity(0.06)))),
+                })
                 .on_click(
                     cx.listener(move |this, event: &gpui_kit::ClickEvent, window, cx| {
                         this.tree_selection = Some(path.clone());
@@ -1467,7 +1619,7 @@ impl Workbench {
                         .min_w_0()
                         .overflow_hidden()
                         .whitespace_nowrap()
-                        .text_ellipsis()
+                        .text_ellipsis_middle()
                         .when_some(status, |d, (_, color)| d.text_color(hsla(color)))
                         .child(row.name),
                 )
@@ -1496,8 +1648,12 @@ impl Workbench {
                     cx.new(|_| crate::file_tree_actions::DragPreview(drag_name.clone()))
                 },
             )
-            .drag_over::<crate::file_tree_actions::DraggedPath>(|style, _, _, _| {
-                style.bg(gpui_kit::black().opacity(0.12))
+            // Only a folder lights up as a drop target (Swift's accent 0.3).
+            .when(is_dir, |d| {
+                let target = hsla(p.accent.opacity(0.3));
+                d.drag_over::<crate::file_tree_actions::DraggedPath>(move |style, _, _, _| {
+                    style.bg(target)
+                })
             })
             .on_drop(cx.listener(
                 move |this, dragged: &crate::file_tree_actions::DraggedPath, window, cx| {
@@ -1542,7 +1698,11 @@ impl Workbench {
             .flex_col()
             .flex_1()
             .min_h_0();
-        if self.panel == SidebarPanel::Files {
+        // Search shows the tree under its field until there's a query
+        // (Swift's LeftDockView).
+        let tree_under_search =
+            self.panel == SidebarPanel::Search && self.search.read(cx).query_is_empty(cx);
+        if self.panel == SidebarPanel::Files || tree_under_search {
             // Scratch's tree follows the tab: list its folder when it's new
             // (once: kept with the workspace's other folders after).
             let rows = if workspace.children.contains_key(&root) {
@@ -1595,10 +1755,6 @@ impl Workbench {
             self.search
                 .update(cx, |search, cx| search.set_root(root, cx));
         }
-        // With the Files panel's actions there's room for the selected
-        // label only; otherwise every segment shows its label (Swift's
-        // DockSegmentedTabs).
-        let all_labels = self.panel != SidebarPanel::Files;
         let changed = crate::repository_state::RepositoryStore::summary(&workspace.root, cx)
             .map_or(0, |r| r.changed);
         let changes_label = if changed > 0 {
@@ -1606,66 +1762,139 @@ impl Workbench {
         } else {
             "Changes".to_string()
         };
-        let panel_button = |id: &'static str,
-                            panel: SidebarPanel,
-                            name: &'static str,
-                            label: String,
-                            cx: &mut Context<Self>| {
-            let selected = self.panel == panel;
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .px(px(7.))
-                .h(px(24.))
-                .rounded(px(metrics::RADIUS))
-                .cursor_pointer()
-                .text_size(px(11.5))
-                .font_weight(if selected {
-                    FontWeight::SEMIBOLD
-                } else {
-                    FontWeight::MEDIUM
-                })
-                .when(selected, |d| d.bg(hsla(p.raised)))
-                .role(gpui_kit::Role::Tab)
-                .aria_label(label.clone())
-                .aria_selected(selected)
-                .on_click(cx.listener(move |w, _, _, cx| {
-                    w.panel = panel;
-                    cx.notify();
-                }))
-                .child(icon(
-                    name,
-                    12.,
-                    if selected { p.text } else { p.text_tertiary },
-                ))
-                .when(selected || all_labels, |d| {
-                    d.text_color(hsla(if selected { p.text } else { p.text_secondary }))
-                        .child(label)
-                })
+        let segments = [
+            (
+                "panel-files",
+                SidebarPanel::Files,
+                "folder-tree",
+                "Files".to_string(),
+            ),
+            (
+                "panel-changes",
+                SidebarPanel::Changes,
+                "git-branch",
+                changes_label,
+            ),
+            (
+                "panel-search",
+                SidebarPanel::Search,
+                "search",
+                "Search".to_string(),
+            ),
+        ];
+        // Swift's DockSegmentedTabs (a ViewThatFits): every label if they
+        // fit, else the selected one's, else none, the label then the
+        // tooltip. A segment is 7 each side, the 12 icon, then 5 and its
+        // label; segments are 2 apart.
+        #[derive(Clone, Copy, PartialEq)]
+        enum Labels {
+            All,
+            Selected,
+            None,
+        }
+        let shows_label = |labels: Labels, selected: bool| {
+            labels == Labels::All || labels == Labels::Selected && selected
         };
-        let show_hidden = settings.sidebar_show_hidden;
-        let tree_action =
-            |id: &'static str, name: &'static str, help: &'static str, active: bool| {
+        let label_width = |label: &str, selected: bool| {
+            let run = gpui_kit::TextRun {
+                len: label.len(),
+                font: gpui_kit::Font {
+                    weight: if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::MEDIUM
+                    },
+                    ..gpui_kit::font(crate::workbench::UI_FONT)
+                },
+                color: hsla(p.text),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            f32::from(
+                window
+                    .text_system()
+                    .shape_line(label.to_string().into(), px(11.5), &[run], None)
+                    .width,
+            )
+        };
+        let row_width = |labels: Labels| {
+            segments
+                .iter()
+                .map(|(_, panel, _, label)| {
+                    let selected = self.panel == *panel;
+                    14. + 12.
+                        + if shows_label(labels, selected) {
+                            5. + label_width(label, selected)
+                        } else {
+                            0.
+                        }
+                })
+                .sum::<f32>()
+                + 2. * (segments.len() - 1) as f32
+        };
+        // The sidebar less its edge, the header's 8 each side, the spacer's
+        // 4 and the 2 before it, and the Files panel's five 22-point
+        // actions, each 2 after the last.
+        let room = self.sidebar_width(cx)
+            - 1.
+            - 16.
+            - 6.
+            - if self.panel == SidebarPanel::Files {
+                5. * 24.
+            } else {
+                0.
+            };
+        let labels = [Labels::All, Labels::Selected]
+            .into_iter()
+            .find(|&labels| row_width(labels) <= room)
+            .unwrap_or(Labels::None);
+        let mut segment_row = div().flex().flex_none().items_center().gap(px(2.));
+        for (id, panel, name, label) in segments {
+            let selected = self.panel == panel;
+            let labelled = shows_label(labels, selected);
+            let color = if selected { p.text } else { p.text_tertiary };
+            segment_row = segment_row.child(
                 div()
                     .id(id)
-                    .flex_none()
-                    .size(px(22.))
                     .flex()
+                    .flex_none()
                     .items_center()
-                    .justify_center()
-                    .rounded(px(metrics::RADIUS_SMALL))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(hsla(p.hover)))
-                    .tooltip(move |window, cx| {
-                        gpui_kit::component::tooltip::Tooltip::new(help).build(window, cx)
+                    .gap(px(5.))
+                    .px(px(7.))
+                    .h(px(24.))
+                    .rounded(px(metrics::RADIUS_SMALL + 1.))
+                    .text_size(px(11.5))
+                    .font_weight(if selected {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::MEDIUM
                     })
-                    .child(icon(
-                        name,
-                        13.,
-                        if active { p.accent } else { p.text_secondary },
-                    ))
+                    .text_color(hsla(color))
+                    .whitespace_nowrap()
+                    .when(selected, |d| d.bg(hsla(p.raised)))
+                    .role(gpui_kit::Role::Tab)
+                    .aria_label(label.clone())
+                    .aria_selected(selected)
+                    .on_click(cx.listener(move |w, _, _, cx| {
+                        w.panel = panel;
+                        cx.notify();
+                    }))
+                    .child(icon(name, 12., color))
+                    .map(|d| {
+                        if labelled {
+                            d.child(label)
+                        } else {
+                            d.tooltip(tooltip(label))
+                        }
+                    }),
+            );
+        }
+        let show_hidden = settings.sidebar_show_hidden;
+        // Swift's 22-point `ChromeIconButton`s with 13-point icons.
+        let tree_action =
+            |id: &'static str, name: &'static str, help: &'static str, active: bool| {
+                icon_button(id, name, help, 22., 13., active, p)
             };
         // Swift's WorkspacesSection: rows 1 pt apart, 6 pt above and below,
         // scrolling past 280 pt unless its handle set a height.
@@ -1708,104 +1937,89 @@ impl Workbench {
             .flex_none()
             .w(px(self.sidebar_width(cx)))
             .h_full()
-            .bg(hsla(p.panel))
+            // The dock is the chrome's color (Swift's LeftDockView), and
+            // clipped to its width as Swift's DockContainer is.
+            .bg(hsla(p.chrome))
+            .overflow_hidden()
             .border_r_1()
             .border_color(hsla(p.hairline))
             .child(self.sidebar_divider(cx))
             .child(workspaces)
             .child(self.workspaces_handle(cx))
             .child(
+                // Swift's LeftDockView.header: everything 2 apart.
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
-                    .gap(px(4.))
+                    .gap(px(2.))
                     .h(px(metrics::PANE_HEADER_HEIGHT + 6.))
                     .px(px(8.))
-                    .child(panel_button(
-                        "panel-files",
-                        SidebarPanel::Files,
-                        "folder-tree",
-                        "Files".into(),
-                        cx,
-                    ))
-                    .child(panel_button(
-                        "panel-changes",
-                        SidebarPanel::Changes,
-                        "git-branch",
-                        changes_label,
-                        cx,
-                    ))
-                    .child(panel_button(
-                        "panel-search",
-                        SidebarPanel::Search,
-                        "search",
-                        "Search".into(),
-                        cx,
-                    ))
+                    .child(segment_row)
+                    .child(div().flex_1().min_w(px(4.)))
                     .when(self.panel == SidebarPanel::Files, |d| {
                         let (new_file_root, new_folder_root) = (root.clone(), root.clone());
-                        d.child(div().flex_1().min_w(px(4.)))
-                            .child(
-                                tree_action("tree-new-file", "file-plus", "New File", false)
-                                    .on_click(cx.listener(move |w, _, window, cx| {
-                                        w.tree_new(&new_file_root, false, window, cx)
-                                    })),
-                            )
-                            .child(
-                                tree_action("tree-new-folder", "folder-plus", "New Folder", false)
-                                    .on_click(cx.listener(move |w, _, window, cx| {
-                                        w.tree_new(&new_folder_root, true, window, cx)
-                                    })),
-                            )
-                            .child(
-                                tree_action(
-                                    "tree-refresh",
-                                    "refresh-cw",
-                                    "Refresh File Tree",
-                                    false,
-                                )
+                        d.child(
+                            tree_action("tree-new-file", "file-plus", "New File", false).on_click(
+                                cx.listener(move |w, _, window, cx| {
+                                    w.tree_new(&new_file_root, false, window, cx)
+                                }),
+                            ),
+                        )
+                        .child(
+                            tree_action("tree-new-folder", "folder-plus", "New Folder", false)
+                                .on_click(cx.listener(move |w, _, window, cx| {
+                                    w.tree_new(&new_folder_root, true, window, cx)
+                                })),
+                        )
+                        .child(
+                            tree_action("tree-refresh", "refresh-cw", "Refresh File Tree", false)
                                 .on_click(cx.listener(|w, _, _, cx| w.reload_tree(cx))),
+                        )
+                        .child(
+                            tree_action(
+                                "tree-collapse",
+                                "chevrons-down-up",
+                                "Collapse All Folders",
+                                false,
                             )
-                            .child(
-                                tree_action(
-                                    "tree-collapse",
-                                    "chevrons-down-up",
-                                    "Collapse All Folders",
-                                    false,
-                                )
-                                .on_click(cx.listener(
-                                    |w, _, _, cx| {
-                                        let workspace = w.workspace_mut();
-                                        workspace.expanded_dirs.clear();
-                                        workspace.save_expanded();
-                                        cx.notify();
-                                    },
-                                )),
+                            .on_click(cx.listener(|w, _, _, cx| {
+                                let workspace = w.workspace_mut();
+                                workspace.expanded_dirs.clear();
+                                workspace.save_expanded();
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            tree_action(
+                                "tree-hidden",
+                                if show_hidden { "eye" } else { "eye-off" },
+                                if show_hidden {
+                                    "Hide Hidden Files"
+                                } else {
+                                    "Show Hidden Files"
+                                },
+                                show_hidden,
                             )
-                            .child(
-                                tree_action(
-                                    "tree-hidden",
-                                    if show_hidden { "eye" } else { "eye-off" },
-                                    if show_hidden {
-                                        "Hide Hidden Files"
-                                    } else {
-                                        "Show Hidden Files"
-                                    },
-                                    show_hidden,
-                                )
-                                .on_click(cx.listener(
-                                    |w, _, _, cx| {
-                                        SettingsStore::update(cx, |s| {
-                                            s.sidebar_show_hidden = !s.sidebar_show_hidden
-                                        });
-                                        w.reload_tree(cx);
-                                    },
-                                )),
-                            )
+                            .on_click(cx.listener(|w, _, _, cx| {
+                                SettingsStore::update(cx, |s| {
+                                    s.sidebar_show_hidden = !s.sidebar_show_hidden
+                                });
+                                w.reload_tree(cx);
+                            })),
+                        )
                     }),
             )
             .child(match self.panel {
                 SidebarPanel::Changes => self.changes_panel(window, cx),
+                SidebarPanel::Search if tree_under_search => div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.search.clone())
+                    .child(files)
+                    .into_any_element(),
                 SidebarPanel::Search => self.search.clone().into_any_element(),
                 SidebarPanel::Files => files.into_any_element(),
             })
@@ -1855,7 +2069,7 @@ impl Workbench {
         });
         if self.is_restricted() {
             left.push(
-                status_item(
+                status_button(
                     "restricted",
                     Some("shield-alert"),
                     "Restricted: language servers, formatters on save and background fetch are off in this folder. Click to trust it.",
@@ -1868,27 +2082,22 @@ impl Workbench {
             );
         }
         if !workspace.branch.is_empty() {
-            left.push(
-                status_item(
-                    "status-branch",
-                    Some("git-branch"),
-                    "Switch branch",
-                    None,
-                    &p,
-                )
-                .on_click(
-                    cx.listener(|w, _, window, cx| w.run_command("switch_branch", window, cx)),
-                )
-                .child(workspace.branch.clone())
-                .into_any_element(),
-            );
+            let item = status_button(
+                "status-branch",
+                Some("git-branch"),
+                &with_shortcut("Switch branch", "switch_branch", cx),
+                None,
+                &p,
+            )
+            .on_click(cx.listener(|w, _, window, cx| w.run_command("switch_branch", window, cx)));
+            left.push(shrinking(item, workspace.branch.clone()).into_any_element());
         }
         if let Some(repo) = repo.filter(|r| r.changed > 0) {
             left.push(
-                status_item(
+                status_button(
                     "status-changes",
                     Some("file-diff"),
-                    "Review changes",
+                    &with_shortcut("Review changes", "review_changes", cx),
                     None,
                     &p,
                 )
@@ -1904,7 +2113,7 @@ impl Workbench {
         for port in workspace.ports.iter().take(3) {
             let number = port.port;
             left.push(
-                status_item(
+                status_button(
                     ("status-port", number as usize),
                     Some("globe"),
                     &format!(
@@ -1952,12 +2161,18 @@ impl Workbench {
                     );
                 }
                 right.push(
-                    status_item("status-line", None, "Go to Line", None, &p)
-                        .on_click(
-                            cx.listener(|w, _, window, cx| w.run_command("go_to_line", window, cx)),
-                        )
-                        .child(format!("Ln {line}, Col {column}"))
-                        .into_any_element(),
+                    status_button(
+                        "status-line",
+                        None,
+                        &with_shortcut("Go to Line", "go_to_line", cx),
+                        None,
+                        &p,
+                    )
+                    .on_click(
+                        cx.listener(|w, _, window, cx| w.run_command("go_to_line", window, cx)),
+                    )
+                    .child(format!("Ln {line}, Col {column}"))
+                    .into_any_element(),
                 );
                 let indent = if editor.use_spaces {
                     format!("Spaces: {}", editor.tab_size)
@@ -1985,14 +2200,18 @@ impl Workbench {
                 ) {
                     let previewing = editor.preview.is_some();
                     right.push(
-                        status_item(
+                        status_button(
                             "status-preview",
                             Some(if previewing { "eye-off" } else { "eye" }),
-                            if previewing {
-                                "Hide preview"
-                            } else {
-                                "Show preview"
-                            },
+                            &with_shortcut(
+                                if previewing {
+                                    "Hide preview"
+                                } else {
+                                    "Show preview"
+                                },
+                                "toggle_markdown_preview",
+                                cx,
+                            ),
                             previewing.then_some(p.accent),
                             &p,
                         )
@@ -2007,11 +2226,8 @@ impl Workbench {
             Some(Surface::Terminal(terminal)) => {
                 let cwd = terminal.read(cx).cwd.clone();
                 if !cwd.is_empty() {
-                    left.push(
-                        status_item("status-cwd", Some("folder"), &cwd, None, &p)
-                            .child(abbreviate_home(&cwd))
-                            .into_any_element(),
-                    );
+                    let item = status_item("status-cwd", Some("folder"), &cwd, None, &p);
+                    left.push(shrinking(item, abbreviate_home(&cwd)).into_any_element());
                 }
                 right.extend(progress.take());
                 right.push(
@@ -2028,11 +2244,8 @@ impl Workbench {
                 });
                 if let Some(folder) = folder {
                     let cwd = folder.to_string_lossy().into_owned();
-                    left.push(
-                        status_item("status-cwd", Some("folder"), &cwd, None, &p)
-                            .child(abbreviate_home(&cwd))
-                            .into_any_element(),
-                    );
+                    let item = status_item("status-cwd", Some("folder"), &cwd, None, &p);
+                    left.push(shrinking(item, abbreviate_home(&cwd)).into_any_element());
                 }
             }
             None => {}
@@ -2053,6 +2266,7 @@ impl Workbench {
             .gap(px(2.))
             .h(px(metrics::STATUS_BAR_HEIGHT))
             .px(px(6.))
+            .overflow_hidden()
             .bg(hsla(p.chrome))
             .border_t_1()
             .border_color(hsla(p.hairline))
@@ -2072,20 +2286,11 @@ impl Workbench {
             .clone()?;
         let p = &self.palette;
         let help = format!("Impulse {} is available", update.version);
+        let label = format!("Update {}", update.version);
         Some(
-            div()
-                .id("update")
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .cursor_pointer()
-                .text_color(hsla(p.success))
+            status_button("update", Some("arrow-down"), &help, Some(p.success), p)
                 .on_click(move |_, _, cx| cx.open_url(&update.url))
-                .tooltip(move |window, cx| {
-                    gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
-                })
-                .child(icon("arrow-down", metrics::ICON_SMALL, p.success))
-                .child(format!("Update {}", update.version))
+                .child(label)
                 .into_any_element(),
         )
     }
@@ -2160,9 +2365,7 @@ pub(crate) fn chrome_button(
             d.border_1().border_color(hsla(p.hairline_strong))
         })
         .when(disabled, |d| d.opacity(0.45))
-        .when(!disabled, |d| {
-            d.cursor_pointer().hover(|s| s.bg(hsla(hover)))
-        })
+        .when(!disabled, |d| d.hover(|s| s.bg(hsla(hover))))
         .children(icon_name.map(|name| icon(name, metrics::ICON_SMALL, fg)))
         .role(gpui_kit::Role::Button)
         .aria_label(title.clone())
@@ -2417,6 +2620,21 @@ pub(crate) fn chrome_icon_button(
     help: impl Into<gpui_kit::SharedString>,
     p: &impulse_kit::chrome::ChromePalette,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
+    icon_button(id, icon_name, help, 24., metrics::ICON, false, p)
+}
+
+/// `ChromeIconButton` with its size, icon size and `isActive`: while
+/// active it's filled with `pressed` and the icon takes the text color.
+/// The arrow cursor stays, as on AppKit's buttons.
+pub(crate) fn icon_button(
+    id: impl Into<gpui_kit::ElementId>,
+    icon_name: &str,
+    help: impl Into<gpui_kit::SharedString>,
+    size: f32,
+    icon_size: f32,
+    active: bool,
+    p: &impulse_kit::chrome::ChromePalette,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let help = help.into();
     div()
         .id(id)
@@ -2424,16 +2642,18 @@ pub(crate) fn chrome_icon_button(
         .flex_none()
         .items_center()
         .justify_center()
-        .size(px(24.))
+        .size(px(size))
         .rounded(px(metrics::RADIUS_SMALL + 1.))
-        .cursor_pointer()
-        .hover(|s| s.bg(hsla(p.hover)))
+        .when(active, |d| d.bg(hsla(p.pressed)))
+        .when(!active, |d| d.hover(|s| s.bg(hsla(p.hover))))
         .role(gpui_kit::Role::Button)
         .aria_label(help.clone())
-        .tooltip(move |window, cx| {
-            gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
-        })
-        .child(icon(icon_name, metrics::ICON, p.text_secondary))
+        .tooltip(tooltip(help))
+        .child(icon(
+            icon_name,
+            icon_size,
+            if active { p.text } else { p.text_secondary },
+        ))
 }
 
 /// The banner under the titlebar while settings.json doesn't load (Swift's
@@ -2637,8 +2857,7 @@ impl RenderOnce for ChromeCheckbox {
             .gap(px(gap))
             .when(self.disabled, |d| d.opacity(0.5))
             .when_some(handler, |d, handler| {
-                d.cursor_pointer()
-                    .on_click(move |_, window, cx| handler(&!checked, window, cx))
+                d.on_click(move |_, window, cx| handler(&!checked, window, cx))
             })
             .child(
                 div()
