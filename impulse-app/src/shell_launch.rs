@@ -30,12 +30,14 @@ fn random() -> u64 {
 /// This run's private folder for shell startup files: made fresh with a
 /// random name (never one that's already there, which another user could
 /// have planted in a shared `/tmp`), readable by the user only, in
-/// `$XDG_RUNTIME_DIR` when there is one (the Swift app uses the per-user
-/// temporary folder and a UUID).
+/// `$XDG_RUNTIME_DIR` when there is one on Linux, and on the Mac the
+/// per-user temporary folder, as the Swift app (short enough for the
+/// control socket's path, which can't be longer than 103 bytes).
 pub(crate) fn private_dir() -> Option<&'static PathBuf> {
     static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let base = std::env::var_os("XDG_RUNTIME_DIR")
+            .filter(|_| cfg!(not(target_os = "macos")))
             .map(PathBuf::from)
             .filter(|p| p.is_absolute() && p.is_dir())
             .unwrap_or_else(std::env::temp_dir);
