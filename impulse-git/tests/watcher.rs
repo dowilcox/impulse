@@ -17,6 +17,8 @@ fn classifies_git_directory_paths() {
     assert_eq!(classify("index"), Change::INDEX);
     assert_eq!(classify("HEAD"), Change::REFS);
     assert_eq!(classify("refs/heads/main"), Change::REFS);
+    assert_eq!(classify("refs/tags/v1.0"), Change::REFS);
+    assert_eq!(classify("packed-refs"), Change::REFS);
     assert_eq!(classify("refs/stash"), Change::REFS);
     assert_eq!(classify("MERGE_HEAD"), Change::OPERATION);
     assert_eq!(classify("rebase-merge/msgnum"), Change::OPERATION);

@@ -23,6 +23,7 @@ use impulse_git::cli::{self, RunOptions};
 use impulse_git::operation_abort;
 use impulse_git::operations::{self, GitResult, OperationError};
 use impulse_git::safety::{self, SafetySnapshot};
+use impulse_git::watcher::Change;
 use impulse_git::{RepoSnapshot, RepoWatcher};
 
 /// The file tree's status letters: folder path, then name, then letter
@@ -35,9 +36,10 @@ pub enum RepositoryEvent {
     /// another.
     HeadMoved { from: String, to: String },
     /// The watcher saw files or git's own state change (a refresh
-    /// follows). Sent even when the refresh finds nothing new, as a file's
-    /// content can change without its status.
-    FilesChanged,
+    /// follows), with what changed. Sent even when the refresh finds nothing
+    /// new, as a file's content can change without its status, and a tag or
+    /// a remote branch can move without the snapshot changing.
+    FilesChanged(Change),
 }
 
 pub struct RepositoryState {
@@ -63,6 +65,21 @@ pub struct RepositoryState {
     /// When the background fetch last started (`git_auto_fetch_minutes`).
     last_fetch: Option<std::time::Instant>,
     quiet_fetch_in_flight: bool,
+}
+
+impl RepositoryEvent {
+    /// Whether what History shows (the commits and the branch and tag chips
+    /// on them) may have changed: a ref moved (a tag, a branch, a fetch, from
+    /// Impulse or a terminal) or an operation started or ended. Such a change
+    /// needn't change the snapshot, so `generation` can't tell.
+    pub fn moves_refs(&self) -> bool {
+        match self {
+            RepositoryEvent::HeadMoved { .. } => true,
+            RepositoryEvent::FilesChanged(change) => {
+                change.contains(Change::REFS) || change.contains(Change::OPERATION)
+            }
+        }
+    }
 }
 
 impl EventEmitter<RepositoryEvent> for RepositoryState {}
@@ -203,9 +220,9 @@ impl RepositoryState {
         }
         self.watcher = Some(watcher);
         self._watching = Some(cx.spawn(async move |this, cx| {
-            while receiver.recv().await.is_ok() {
+            while let Ok(change) = receiver.recv().await {
                 let changed = this.update(cx, |this, cx| {
-                    cx.emit(RepositoryEvent::FilesChanged);
+                    cx.emit(RepositoryEvent::FilesChanged(change));
                     this.refresh(cx)
                 });
                 if changed.is_err() {
@@ -539,5 +556,26 @@ impl RepositoryStore {
         store.states.retain(|_, weak| weak.upgrade().is_some());
         store.states.insert(root, state.downgrade());
         state
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ref_and_operation_changes_move_refs() {
+        let moved = |change| RepositoryEvent::FilesChanged(change).moves_refs();
+        assert!(moved(Change::REFS));
+        assert!(moved(Change::OPERATION));
+        assert!(moved(Change::WORKING_TREE | Change::REFS));
+        assert!(!moved(Change::WORKING_TREE));
+        assert!(!moved(Change::INDEX));
+        assert!(!moved(Change::WORKING_TREE | Change::INDEX));
+        let head = RepositoryEvent::HeadMoved {
+            from: "a".into(),
+            to: "b".into(),
+        };
+        assert!(head.moves_refs());
     }
 }

@@ -40,7 +40,7 @@ use impulse_kit::git::commit_graph::{GraphCommit, GraphRow, Layout as GraphLayou
 use impulse_kit::git::refs::RefDecoration;
 use impulse_kit::theme::ResolvedTheme;
 
-use crate::repository_state::RepositoryStore;
+use crate::repository_state::{RepositoryEvent, RepositoryStore};
 use crate::review_view::ReviewView;
 use crate::workbench_chrome::{hsla, icon};
 
@@ -194,8 +194,15 @@ impl HistoryView {
                     view.filter_changed(cx)
                 }
             }),
-            // Refs moved (a commit, a fetch, a tag): refresh what's loaded,
-            // not for progress lines.
+            // Refs moved (a tag, a branch, a fetch, from Impulse or a
+            // terminal): refresh what's loaded. A new tag leaves the
+            // snapshot as it was, so this comes from the watcher's events.
+            cx.subscribe(&repository, |view, _, event: &RepositoryEvent, cx| {
+                if event.moves_refs() {
+                    view.schedule_refresh(cx);
+                }
+            }),
+            // The snapshot changed (not for progress lines): refresh too.
             {
                 let mut seen = repository.read(cx).generation;
                 cx.observe(&repository, move |view, repository, cx| {
