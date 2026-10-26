@@ -56,6 +56,12 @@ const TAKEN: &[&str] = &[
     "ctrl-[",
     // Leaves Visual mode (Linux's Copy otherwise).
     "ctrl-c",
+    // The Mac's Emacs keys (`editor_keys`), which would delete or move
+    // past Vim.
+    "ctrl-n",
+    "ctrl-p",
+    "ctrl-h",
+    "ctrl-k",
 ];
 
 /// Unbind GPUI Kit's (and `editor_keys`') bindings of the keys Vim reads.

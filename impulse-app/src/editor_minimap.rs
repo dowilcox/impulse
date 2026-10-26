@@ -41,7 +41,10 @@ impl EditorTab {
         let ink = theme.foreground.opacity(0.45);
         let slider = theme.foreground.opacity(0.08);
         let slider_active = theme.foreground.opacity(0.14);
-        let background = theme.background;
+        // Monaco's `minimap.background` is the editor's.
+        let background = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(theme.background, |b| b.background);
         Some(
             div()
                 .h_full()

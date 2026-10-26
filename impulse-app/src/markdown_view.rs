@@ -540,7 +540,16 @@ fn code_block(
         .line_height(px(BODY * 1.6))
         .child(
             div()
-                .when(!shell, |d| d.whitespace_nowrap())
+                .id(("md-code", id))
+                // Long lines scroll sideways rather than being cut off
+                // (Swift's `pre { overflow-x: auto }`); shell blocks wrap
+                // beside their Run button. A vertical swipe stays the
+                // page's (GPUI turns it sideways otherwise).
+                .when(!shell, |d| {
+                    d.whitespace_nowrap()
+                        .overflow_x_scroll()
+                        .restrict_scroll_to_axis()
+                })
                 .child(StyledText::new(SharedString::from(text.to_string())).with_runs(runs)),
         )
         .when(shell, |d| {

@@ -1,17 +1,20 @@
 //! Monaco's editor commands that GPUI Kit's editor doesn't have, on top of
 //! `impulse_kit::line_edits`: Toggle Block Comment, Go to Bracket, Next
 //! and Previous Problem, Expand and Shrink Selection, parameter hints,
-//! Cursor Undo, cursors at line ends, Trim Trailing Whitespace (their keys
-//! are in `editor_keys`).
+//! Cursor Undo, cursors at line ends, Trim Trailing Whitespace, Home to the
+//! first non-blank character and Expand Line Selection (their keys are in
+//! `editor_keys`).
 
 use std::ops::Range;
 
-use gpui_kit::{Context, EntityInputHandler as _, Window};
+use gpui_kit::component::input::MoveHome;
+use gpui_kit::{Context, EntityInputHandler as _, Focusable as _, Window};
 use impulse_kit::{line_edits, linked_tags};
 
 use crate::editor_keys::{
-    CursorUndo, CursorsAtLineEnds, ExpandSelection, GoToBracket, NextProblem, PreviousProblem,
-    ShowParameterHints, ShrinkSelection, ToggleBlockComment, TrimTrailingWhitespace,
+    CursorHome, CursorUndo, CursorsAtLineEnds, ExpandLineSelection, ExpandSelection, GoToBracket,
+    NextProblem, PreviousProblem, ShowParameterHints, ShrinkSelection, ToggleBlockComment,
+    TrimTrailingWhitespace,
 };
 use crate::editor_tab::EditorTab;
 
@@ -341,5 +344,123 @@ impl EditorTab {
                 state.focus(window, cx);
             });
         }
+    }
+}
+
+impl EditorTab {
+    /// Home and ⌘←: to the line's first non-blank character, then from
+    /// there to column 0 (Monaco's `cursorHome`). Where that's the line's
+    /// start anyway, and on a wrapped line's later rows, GPUI Kit's own
+    /// move does it for every cursor; otherwise only the active cursor
+    /// moves (GPUI Kit doesn't let others be read or moved one by one).
+    pub(crate) fn cursor_home(
+        &mut self,
+        _: &CursorHome,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (target, line_start, wrapped) = {
+            let state = self.state.read(cx);
+            let text = state.value();
+            let cursor = state.cursor();
+            let line_start = line_start(&text, cursor);
+            let top = |offset: usize| state.range_to_bounds(&(offset..offset)).map(|b| b.top());
+            let wrapped = matches!((top(line_start), top(cursor)), (Some(a), Some(b)) if a != b);
+            (home_target(&text, cursor), line_start, wrapped)
+        };
+        if target == line_start || wrapped {
+            let focus = self.state.focus_handle(cx);
+            focus.dispatch_action(&MoveHome, window, cx);
+            return;
+        }
+        self.state
+            .update(cx, |state, cx| state.set_selected_range(target..target, cx));
+    }
+
+    /// ⌘L: select the cursor's line, line end included; again, the next
+    /// line too (Monaco's `expandLineSelection`).
+    pub(crate) fn expand_line_selection(
+        &mut self,
+        _: &ExpandLineSelection,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (text, selection) = {
+            let state = self.state.read(cx);
+            (state.value().to_string(), state.selected_range())
+        };
+        let lines = line_selection(&text, selection);
+        self.state
+            .update(cx, |state, cx| state.set_selected_range(lines, cx));
+    }
+}
+
+/// Where the line holding byte `offset` starts.
+fn line_start(text: &str, offset: usize) -> usize {
+    text[..offset].rfind('\n').map_or(0, |i| i + 1)
+}
+
+/// Where Home takes a cursor at `cursor`: the line's first non-blank
+/// character, or its start when it's there already (or the line is
+/// blank).
+fn home_target(text: &str, cursor: usize) -> usize {
+    let start = line_start(text, cursor);
+    let line = text[start..].split('\n').next().unwrap_or("");
+    let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+    let first = if indent == line.len() {
+        start
+    } else {
+        start + indent
+    };
+    if cursor == first {
+        start
+    } else {
+        first
+    }
+}
+
+/// `selection` grown to whole lines: from its first line's start to the
+/// start of the line after its last (the end of the text on the last
+/// line). A selection ending at a line's start takes that line as well, so
+/// each press adds one.
+fn line_selection(text: &str, selection: Range<usize>) -> Range<usize> {
+    let start = line_start(text, selection.start);
+    let end = text[selection.end..]
+        .find('\n')
+        .map_or(text.len(), |i| selection.end + i + 1);
+    start..end
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn home_goes_to_the_first_non_blank_then_column_zero() {
+        let text = "fn a() {\n    let x = 1;\n\n  \n}";
+        // From inside the line, to its first non-blank character.
+        assert_eq!(home_target(text, 20), 13);
+        // From there, to the line's start, and back.
+        assert_eq!(home_target(text, 13), 9);
+        assert_eq!(home_target(text, 9), 13);
+        // Inside the indent, to the first non-blank character.
+        assert_eq!(home_target(text, 11), 13);
+        // Unindented and blank lines start at their first character.
+        assert_eq!(home_target(text, 4), 0);
+        assert_eq!(home_target(text, 24), 24);
+        assert_eq!(home_target(text, 26), 25);
+    }
+
+    #[test]
+    fn each_line_selection_takes_one_more_line() {
+        let text = "one\ntwo\nthree";
+        assert_eq!(line_selection(text, 1..1), 0..4);
+        assert_eq!(line_selection(text, 0..4), 0..8);
+        assert_eq!(line_selection(text, 0..8), 0..13);
+        // The last line ends at the end of the text.
+        assert_eq!(line_selection(text, 10..10), 8..13);
+        assert_eq!(line_selection(text, 8..13), 8..13);
+        // A selection inside a line, from its line's start.
+        assert_eq!(line_selection(text, 5..10), 4..13);
     }
 }

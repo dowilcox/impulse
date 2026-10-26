@@ -4,11 +4,18 @@
 //! code actions, undo) already match Monaco's. Ours are bound for GPUI
 //! Kit's `Input` inside an editor tab (`ImpulseEditor > Input`): as deep as
 //! GPUI Kit's own, so ours, registered later, win where both bind a key
-//! (⌘↩ inserts a line, as in Monaco), and only in editor tabs. Folding
+//! (⌘↩ inserts a line, as in Monaco), and only in editor tabs. Keys that
+//! act on the buffer rather than the field with the keyboard (Home, ⌘L)
+//! leave out the find field inside the editor (`mode == editor`). On the
+//! Mac, the Emacs keys every text view has (⌃F ⌃B ⌃N ⌃P ⌃D ⌃H ⌃K; GPUI
+//! Kit binds ⌃A and ⌃E) name GPUI Kit's own moves and deletes. Folding
 //! from the keyboard waits on GPUI Kit (its folds are set only by a gutter
 //! click).
 
-use gpui_kit::component::input::{GoToDefinition, Redo, Replace, ShowCompletions};
+use gpui_kit::component::input::{
+    Backspace, Delete, DeleteToEndOfLine, GoToDefinition, MoveDown, MoveLeft, MoveRight, MoveUp,
+    Redo, Replace, ShowCompletions,
+};
 use gpui_kit::{actions, App, KeyBinding};
 
 use crate::commands::RunCommand;
@@ -43,6 +50,8 @@ actions!(
         CursorUndo,
         CursorsAtLineEnds,
         TrimTrailingWhitespace,
+        CursorHome,
+        ExpandLineSelection,
     ]
 );
 
@@ -51,8 +60,19 @@ pub const CONTEXT: &str = "ImpulseEditor";
 
 pub fn bind_keys(cx: &mut App) {
     let c = Some("ImpulseEditor > Input");
+    let buffer = Some("ImpulseEditor > Input && mode == editor");
     if cfg!(target_os = "macos") {
         cx.bind_keys([
+            KeyBinding::new("home", CursorHome, buffer),
+            KeyBinding::new("cmd-left", CursorHome, buffer),
+            KeyBinding::new("cmd-l", ExpandLineSelection, buffer),
+            KeyBinding::new("ctrl-f", MoveRight, c),
+            KeyBinding::new("ctrl-b", MoveLeft, c),
+            KeyBinding::new("ctrl-n", MoveDown, c),
+            KeyBinding::new("ctrl-p", MoveUp, c),
+            KeyBinding::new("ctrl-d", Delete, c),
+            KeyBinding::new("ctrl-h", Backspace, c),
+            KeyBinding::new("ctrl-k", DeleteToEndOfLine, c),
             KeyBinding::new("cmd-/", ToggleLineComment, c),
             KeyBinding::new("alt-up", MoveLinesUp, c),
             KeyBinding::new("alt-down", MoveLinesDown, c),
@@ -84,6 +104,8 @@ pub fn bind_keys(cx: &mut App) {
         ]);
     } else {
         cx.bind_keys([
+            KeyBinding::new("home", CursorHome, buffer),
+            KeyBinding::new("ctrl-l", ExpandLineSelection, buffer),
             KeyBinding::new("ctrl-/", ToggleLineComment, c),
             KeyBinding::new("alt-up", MoveLinesUp, c),
             KeyBinding::new("alt-down", MoveLinesDown, c),

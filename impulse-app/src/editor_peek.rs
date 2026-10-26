@@ -217,6 +217,8 @@ impl EditorTab {
         let (name, dir) = name_and_dir(&selected.path, root);
         let mut editor = Editor::new(&peek.preview)
             .size_full()
+            // No inset above line 1, as in Monaco's peek.
+            .xsmall()
             .font_family(crate::fonts::family(&settings.font_family))
             .text_size(px(settings.font_size as f32))
             .bordered(false);

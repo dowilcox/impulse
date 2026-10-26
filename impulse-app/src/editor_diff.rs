@@ -355,13 +355,17 @@ impl EditorTab {
     }
 
     /// The inline document's "12 hidden lines" rows, over the empty rows
-    /// standing in for them (Monaco's unchanged region widget).
+    /// standing in for them (Monaco's unchanged region widget): placed from
+    /// the last frame, and kept up with the scroll by `FollowScroll`.
     fn hidden_rows(&self, view: &InlineView, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(origin) = view.origin.get() else {
             return Vec::new();
         };
         let state = view.state.read(cx);
-        let Some(visible) = state.visible_row_range() else {
+        let (Some(visible), Some(area)) = (
+            state.visible_row_range(),
+            crate::editor_git::text_area(state),
+        ) else {
             return Vec::new();
         };
         let text = state.text();
@@ -379,33 +383,35 @@ impl EditorTab {
                 let line = state.range_to_bounds(&(offset..offset))?;
                 let count = h.buffer_rows.len();
                 let row = h.row;
+                let bar = div()
+                    .id(("diff-hidden", row as usize))
+                    .absolute()
+                    .top(line.top() - origin.y)
+                    // Across the text column, not scrolled sideways.
+                    .left(area.text_left - origin.x - px(4.))
+                    .right_0()
+                    .h(line.size.height)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .px(px(8.))
+                    .bg(widget)
+                    .text_size(px(12.))
+                    .font_family(crate::workbench::UI_FONT)
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .hover(move |d| d.text_color(hover))
+                    .child(
+                        gpui_kit::svg()
+                            .path("icons/chevrons-up-down.svg")
+                            .size(px(12.))
+                            .flex_none()
+                            .text_color(muted),
+                    )
+                    .child(format!("{count} hidden lines"))
+                    .on_click(cx.listener(move |tab, _, _, cx| tab.reveal_hidden(row, cx)));
                 Some(
-                    div()
-                        .id(("diff-hidden", row as usize))
-                        .absolute()
-                        .top(line.top() - origin.y)
-                        .left(line.left() - origin.x - px(4.))
-                        .right_0()
-                        .h(line.size.height)
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .px(px(8.))
-                        .bg(widget)
-                        .text_size(px(12.))
-                        .font_family(crate::workbench::UI_FONT)
-                        .text_color(muted)
-                        .cursor_pointer()
-                        .hover(move |d| d.text_color(hover))
-                        .child(
-                            gpui_kit::svg()
-                                .path("icons/chevrons-up-down.svg")
-                                .size(px(12.))
-                                .flex_none()
-                                .text_color(muted),
-                        )
-                        .child(format!("{count} hidden lines"))
-                        .on_click(cx.listener(move |tab, _, _, cx| tab.reveal_hidden(row, cx)))
+                    crate::editor_git::FollowScroll::new(&view.state, false, bar)
                         .into_any_element(),
                 )
             })
@@ -458,6 +464,8 @@ impl EditorTab {
         let styled = |state: &Entity<EditorState>| {
             let mut editor = Editor::new(state)
                 .size_full()
+                // No inset above line 1, as Monaco has none.
+                .xsmall()
                 .font_family(crate::fonts::family(&settings.font_family))
                 .text_size(px(settings.font_size as f32))
                 .pl(crate::editor_tab::gutter_inset(
@@ -627,15 +635,67 @@ pub(crate) fn center(
     window: &mut Window,
     cx: &mut gpui_kit::App,
 ) {
+    center_at(state, Position::new(row as u32, 0), window, cx);
+}
+
+/// The cursor to `position`, its line scrolled to the middle of the view;
+/// false before the editor's first layout, which this needs (the cursor
+/// is put there either way).
+pub(crate) fn center_at(
+    state: &Entity<EditorState>,
+    position: Position,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+) -> bool {
     state.update(cx, |state, cx| {
-        state.set_cursor_position(Position::new(row as u32, 0), window, cx);
-        let (Some(rows), Some(lh)) = (state.visible_row_range(), state.line_height()) else {
-            return;
+        state.set_cursor_position(position, window, cx);
+        let (Some(_), Some(lh)) = (state.visible_row_range(), state.line_height()) else {
+            return false;
         };
-        let top = row.saturating_sub(rows.len() / 2);
-        let x = state.scroll_offset().x;
+        // In display rows, which wrapped and folded lines change.
+        let row = state
+            .display_map()
+            .buffer_line_to_display_row(position.line as usize);
+        let rows = (state.input_bounds().size.height / lh).floor() as usize;
+        let top = row.saturating_sub(rows / 2);
+        // The scroll set here replaces the one GPUI Kit's layout would
+        // pick to show the cursor, so it has to show the column too: back
+        // to the left edge where the column fits, else the column in the
+        // middle (its place guessed from a character's width).
+        let column = position.character as f32;
+        let x = match (crate::editor_git::text_area(state), char_width(state)) {
+            _ if column == 0. => px(0.),
+            (Some(area), Some(width)) => {
+                let shown = state.input_bounds().right() - area.text_left;
+                let at = width * column;
+                if at < shown - px(20.) {
+                    px(0.)
+                } else {
+                    -(at - shown / 2.)
+                }
+            }
+            _ => state.scroll_offset().x,
+        };
         state.set_scroll_offset(point(x, -lh * top as f32), cx);
-    });
+        true
+    })
+}
+
+/// A character's width, measured on a visible line.
+fn char_width(state: &EditorState) -> Option<Pixels> {
+    let text = state.text();
+    state.visible_row_range()?.find_map(|row| {
+        if row >= text.lines_len() || text.line_len(row) == 0 {
+            return None;
+        }
+        let start = text.line_start_offset(row);
+        let width = text
+            .slice(start..start + text.line_len(row))
+            .chars()
+            .next()?
+            .len_utf8();
+        Some(state.range_to_bounds(&(start..start + width))?.size.width)
+    })
 }
 
 fn tints(rows: Vec<std::ops::Range<u32>>, color: Hsla, sign: &'static str) -> Tints {
@@ -680,7 +740,10 @@ fn tinted(
                 |_, _, _| {},
                 move |bounds, _, window, cx| {
                     let state = state.read(cx);
-                    let Some(visible) = state.visible_row_range() else {
+                    let (Some(visible), Some(area)) = (
+                        state.visible_row_range(),
+                        crate::editor_git::text_area(state),
+                    ) else {
                         return;
                     };
                     let text = state.text();
@@ -689,24 +752,48 @@ fn tinted(
                             .then(|| text.line_start_offset(row))
                             .and_then(|o| state.range_to_bounds(&(o..o)))
                     };
-                    for (rows, color, _) in &tints.rows {
-                        let first = (rows.start as usize).max(visible.start);
-                        let last = (rows.end as usize).min(visible.end);
-                        if first >= last {
-                            continue;
+                    // The tints stay right of the line numbers when the text
+                    // scrolls sideways.
+                    let column = gpui_kit::ContentMask {
+                        bounds: area.text_column(bounds.right()),
+                    };
+                    window.with_content_mask(Some(column), |window| {
+                        for (rows, color, _) in &tints.rows {
+                            let first = (rows.start as usize).max(visible.start);
+                            let last = (rows.end as usize).min(visible.end);
+                            if first >= last {
+                                continue;
+                            }
+                            if let (Some(top), Some(bottom)) = (at(first), at(last - 1)) {
+                                window.paint_quad(fill(
+                                    Bounds::from_corners(
+                                        point(area.text_left, top.top()),
+                                        point(bounds.right(), bottom.bottom()),
+                                    ),
+                                    *color,
+                                ));
+                            }
                         }
-                        if let (Some(top), Some(bottom)) = (at(first), at(last - 1)) {
-                            window.paint_quad(fill(
-                                Bounds::from_corners(
-                                    point(top.origin.x - px(4.), top.top()),
-                                    point(bounds.right(), bottom.bottom()),
-                                ),
-                                *color,
-                            ));
+                        let offset = |row: usize| {
+                            if row < text.lines_len() {
+                                text.line_start_offset(row)
+                            } else {
+                                text.len()
+                            }
+                        };
+                        let shown = offset(visible.start)..offset(visible.end);
+                        for (range, color) in &tints.words {
+                            if range.end <= shown.start || range.start >= shown.end {
+                                continue;
+                            }
+                            if let Some(word) = state.range_to_bounds(range) {
+                                window.paint_quad(fill(word, *color));
+                            }
                         }
-                    }
-                    // Monaco's diff indicators, in the folding lane (painted
-                    // last: painting text needs the app, which `state` holds).
+                    });
+                    // Monaco's diff indicators, in the folding lane, fixed
+                    // whatever the horizontal scroll (painted last: painting
+                    // text needs the app, which `state` holds).
                     let mut spots = Vec::new();
                     for (rows, _, sign) in &tints.rows {
                         for row in (rows.start as usize).max(visible.start)
@@ -717,44 +804,35 @@ fn tinted(
                             }
                         }
                     }
-                    let offset = |row: usize| {
-                        if row < text.lines_len() {
-                            text.line_start_offset(row)
-                        } else {
-                            text.len()
-                        }
+                    let view = gpui_kit::ContentMask {
+                        bounds: area.view(bounds),
                     };
-                    let shown = offset(visible.start)..offset(visible.end);
-                    for (range, color) in &tints.words {
-                        if range.end <= shown.start || range.start >= shown.end {
-                            continue;
+                    window.with_content_mask(Some(view), |window| {
+                        for (line, sign) in spots {
+                            let run = gpui_kit::TextRun {
+                                len: sign.len(),
+                                font: signs.font.clone(),
+                                color: signs.color,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            };
+                            let shaped = window.text_system().shape_line(
+                                sign.into(),
+                                signs.size,
+                                &[run],
+                                None,
+                            );
+                            let _ = shaped.paint(
+                                point(area.text_left - px(14.), line.origin.y),
+                                line.size.height,
+                                gpui_kit::TextAlign::Left,
+                                None,
+                                window,
+                                cx,
+                            );
                         }
-                        if let Some(word) = state.range_to_bounds(range) {
-                            window.paint_quad(fill(word, *color));
-                        }
-                    }
-                    for (line, sign) in spots {
-                        let run = gpui_kit::TextRun {
-                            len: sign.len(),
-                            font: signs.font.clone(),
-                            color: signs.color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        };
-                        let shaped =
-                            window
-                                .text_system()
-                                .shape_line(sign.into(), signs.size, &[run], None);
-                        let _ = shaped.paint(
-                            point(line.origin.x - px(14.), line.origin.y),
-                            line.size.height,
-                            gpui_kit::TextAlign::Left,
-                            None,
-                            window,
-                            cx,
-                        );
-                    }
+                    });
                 },
             )
             .absolute()

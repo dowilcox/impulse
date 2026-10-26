@@ -471,8 +471,21 @@ impl EditorTab {
             |bounds, window, _| window.insert_hitbox(bounds, gpui_kit::HitboxBehavior::Normal),
             move |bounds, hitbox, window, cx| {
                 origin.set(Some(bounds.origin));
+                // Painted after the editor, so its layout is this frame's.
+                // Only the text area: GPUI Kit's find bar sits above it,
+                // inside the editor element.
+                let Some(area) = text_area(state.read(cx)) else {
+                    return;
+                };
+                let view = area.view(bounds);
+                // What scrolls sideways stays right of the line numbers.
+                let column = gpui_kit::ContentMask {
+                    bounds: area.text_column(bounds.right()),
+                };
                 if let Some((brackets, bracket_colors)) = &brackets {
-                    brackets.paint(*bracket_colors, state.read(cx), bounds, window);
+                    window.with_content_mask(Some(column), |window| {
+                        brackets.paint(*bracket_colors, state.read(cx), column.bounds, window)
+                    });
                 }
                 let Some(colors) = colors else {
                     return;
@@ -482,95 +495,105 @@ impl EditorTab {
                 let sticky_layout = sticky
                     .as_ref()
                     .and_then(|style| sticky_layout(state, &text, style.tab_size));
-                // The right margin, at a column measured on a visible line.
-                if let (Some(column), Some(rows)) = (margin, state.visible_row_range()) {
-                    let measured = rows.clone().find_map(|row| {
-                        if row >= text.lines_len() || text.line_len(row) == 0 {
-                            return None;
-                        }
-                        let start = text.line_start_offset(row);
-                        let first = text.slice(start..start + text.line_len(row)).to_string();
-                        let width = first.chars().next()?.len_utf8();
-                        let at = state.range_to_bounds(&(start..start + width))?;
-                        Some((at.origin.x, at.size.width))
-                    });
-                    if let Some((left, width)) = measured {
-                        let x = left + width * column as f32;
-                        if x > bounds.left() && x < bounds.right() {
-                            window.paint_quad(fill(
-                                Bounds::new(
-                                    point(x, bounds.top()),
-                                    size(px(1.), bounds.size.height),
-                                ),
-                                margin_color,
-                            ));
-                        }
-                    }
-                }
                 let line_offset = |line: usize| -> Option<usize> {
                     let row = line.checked_sub(1)?;
                     (row < text.lines_len()).then(|| text.line_start_offset(row))
                 };
-                // Whole-line tints, from the text's left edge to the right.
-                if let Some(rows) = state.visible_row_range() {
-                    for (lines, color) in &line_fills {
-                        let first = (*lines.start()).max(rows.start + 1);
-                        let last = (*lines.end()).min(rows.end);
-                        if first > last {
-                            continue;
-                        }
-                        let top = line_offset(first).and_then(|o| state.range_to_bounds(&(o..o)));
-                        let bottom = line_offset(last).and_then(|o| state.range_to_bounds(&(o..o)));
-                        if let (Some(top), Some(bottom)) = (top, bottom) {
-                            let left = top.origin.x - px(4.);
-                            window.paint_quad(fill(
-                                Bounds::from_corners(
-                                    point(left, top.top()),
-                                    point(bounds.right(), bottom.bottom()),
-                                ),
-                                *color,
-                            ));
+                window.with_content_mask(Some(column), |window| {
+                    // The right margin, at a column measured on a visible
+                    // line.
+                    if let (Some(column), Some(rows)) = (margin, state.visible_row_range()) {
+                        let measured = rows.clone().find_map(|row| {
+                            if row >= text.lines_len() || text.line_len(row) == 0 {
+                                return None;
+                            }
+                            let start = text.line_start_offset(row);
+                            let first = text.slice(start..start + text.line_len(row)).to_string();
+                            let width = first.chars().next()?.len_utf8();
+                            let at = state.range_to_bounds(&(start..start + width))?;
+                            Some((at.origin.x, at.size.width))
+                        });
+                        if let Some((left, width)) = measured {
+                            let x = left + width * column as f32;
+                            if x >= area.text_left && x < bounds.right() {
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(x, view.top()),
+                                        size(px(1.), view.size.height),
+                                    ),
+                                    margin_color,
+                                ));
+                            }
                         }
                     }
-                }
+                    // Whole-line tints, from the text's left edge to the
+                    // right.
+                    if let Some(rows) = state.visible_row_range() {
+                        for (lines, color) in &line_fills {
+                            let first = (*lines.start()).max(rows.start + 1);
+                            let last = (*lines.end()).min(rows.end);
+                            if first > last {
+                                continue;
+                            }
+                            let top =
+                                line_offset(first).and_then(|o| state.range_to_bounds(&(o..o)));
+                            let bottom =
+                                line_offset(last).and_then(|o| state.range_to_bounds(&(o..o)));
+                            if let (Some(top), Some(bottom)) = (top, bottom) {
+                                window.paint_quad(fill(
+                                    Bounds::from_corners(
+                                        point(area.text_left, top.top()),
+                                        point(bounds.right(), bottom.bottom()),
+                                    ),
+                                    *color,
+                                ));
+                            }
+                        }
+                    }
+                });
+                // The change bars stay in the gutter whatever the
+                // horizontal scroll (inside the text area's height).
                 let mut bars: Vec<(Bounds<Pixels>, usize)> = Vec::new();
-                for hunk in &hunks {
-                    let (color, lines) = match hunk.kind() {
-                        MarkKind::Added => (colors.added, hunk.marked_lines()),
-                        MarkKind::Modified => (colors.modified, hunk.marked_lines()),
-                        MarkKind::Deleted => (colors.deleted, hunk.marked_lines()),
-                    };
-                    let first = lines
-                        .clone()
-                        .find_map(|l| line_offset(l).and_then(|o| state.range_to_bounds(&(o..o))));
-                    let last = lines
-                        .clone()
-                        .rev()
-                        .find_map(|l| line_offset(l).and_then(|o| state.range_to_bounds(&(o..o))));
-                    let (Some(first), Some(last)) = (first, last) else {
-                        continue;
-                    };
-                    // In Monaco's decorations lane, left of the folding one.
-                    let x = first.origin.x - px(18.);
-                    let bar = if hunk.kind() == MarkKind::Deleted {
-                        // A small wedge where the lines were, under the line.
-                        Bounds::new(
-                            point(x - px(1.), last.bottom() - px(3.)),
-                            size(px(6.), px(6.)),
-                        )
-                    } else {
-                        Bounds::from_corners(
-                            point(x, first.top()),
-                            point(x + px(3.), last.bottom()),
-                        )
-                    };
-                    window.paint_quad(fill(bar, color));
-                    bars.push((bar, hunk.new_start));
-                }
+                window.with_content_mask(Some(gpui_kit::ContentMask { bounds: view }), |window| {
+                    for hunk in &hunks {
+                        let (color, lines) = match hunk.kind() {
+                            MarkKind::Added => (colors.added, hunk.marked_lines()),
+                            MarkKind::Modified => (colors.modified, hunk.marked_lines()),
+                            MarkKind::Deleted => (colors.deleted, hunk.marked_lines()),
+                        };
+                        let first = lines.clone().find_map(|l| {
+                            line_offset(l).and_then(|o| state.range_to_bounds(&(o..o)))
+                        });
+                        let last = lines.clone().rev().find_map(|l| {
+                            line_offset(l).and_then(|o| state.range_to_bounds(&(o..o)))
+                        });
+                        let (Some(first), Some(last)) = (first, last) else {
+                            continue;
+                        };
+                        // In Monaco's decorations lane, left of the folding
+                        // one.
+                        let x = area.text_left - px(18.);
+                        let bar = if hunk.kind() == MarkKind::Deleted {
+                            // A small wedge where the lines were, under the
+                            // line.
+                            Bounds::new(
+                                point(x - px(1.), last.bottom() - px(3.)),
+                                size(px(6.), px(6.)),
+                            )
+                        } else {
+                            Bounds::from_corners(
+                                point(x, first.top()),
+                                point(x + px(3.), last.bottom()),
+                            )
+                        };
+                        window.paint_quad(fill(bar, color));
+                        bars.push((bar, hunk.new_start));
+                    }
+                });
                 // The same marks in the overview ruler's left lane, where the
-                // whole file fits the editor's height (Monaco's ruler).
+                // whole file fits the text area's height (Monaco's ruler).
                 let total = text.lines_len().max(1) as f32;
-                let height = bounds.size.height;
+                let height = view.size.height;
                 for hunk in &hunks {
                     let color = match hunk.kind() {
                         MarkKind::Added => colors.added,
@@ -581,8 +604,8 @@ impl EditorTab {
                     let (Some(first), Some(last)) = (lines.clone().next(), lines.last()) else {
                         continue;
                     };
-                    let top = bounds.top() + height * ((first - 1) as f32 / total);
-                    let bottom = (bounds.top() + height * (last as f32 / total)).max(top + px(3.));
+                    let top = view.top() + height * ((first - 1) as f32 / total);
+                    let bottom = (view.top() + height * (last as f32 / total)).max(top + px(3.));
                     window.paint_quad(fill(
                         Bounds::from_corners(
                             point(bounds.right() - px(10.), top),
@@ -592,14 +615,20 @@ impl EditorTab {
                     ));
                 }
                 let pinned = match (&sticky, sticky_layout) {
-                    (Some(style), Some(layout)) => paint_sticky(layout, bounds, style, window, cx),
+                    (Some(style), Some(layout)) => {
+                        paint_sticky(layout, view, area, style, window, cx)
+                    }
                     _ => Vec::new(),
                 };
                 // A click on a mark opens its peek, one on a sticky line goes
-                // there (before the editor sees the click).
+                // there (before the editor sees the click); the find bar's
+                // clicks stay its own.
                 let tab = tab.clone();
                 window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture || !hitbox.is_hovered(window) {
+                    if phase != DispatchPhase::Capture
+                        || !hitbox.is_hovered(window)
+                        || !view.contains(&event.position)
+                    {
                         return;
                     }
                     if let Some((_, row)) = pinned.iter().find(|(r, _)| r.contains(&event.position))
@@ -660,20 +689,28 @@ impl EditorTab {
                 if !state.selected_range().is_empty() {
                     return;
                 }
-                let text = state.text();
-                let row = state.cursor_position().line as usize;
-                if row >= text.lines_len() {
+                // Painted before the editor lays this frame out: the caret's
+                // row from this frame's prepaint, so the band doesn't trail
+                // the text as it scrolls. From the text column on, as
+                // Monaco's `renderLineHighlight: "line"` (the Swift app's)
+                // leaves the gutter alone.
+                let (Some(geometry), Some(area)) =
+                    (state.prepaint_caret_geometry(), text_area(state))
+                else {
                     return;
-                }
-                let offset = text.line_start_offset(row);
-                if let Some(line) = state.range_to_bounds(&(offset..offset)) {
-                    window.paint_quad(fill(
-                        Bounds::from_corners(
-                            point(bounds.left(), line.top()),
-                            point(bounds.right(), line.bottom()),
-                        ),
-                        color,
-                    ));
+                };
+                let caret = geometry.cursor_bounds();
+                let line_height = geometry.line_height();
+                let input = geometry.input_bounds();
+                let top = caret.top() - (line_height - caret.size.height) / 2.
+                    + geometry.scroll_offset().y;
+                let left = input.left() + (area.text_left - state.input_bounds().left());
+                let band = Bounds::from_corners(
+                    point(left, top.max(input.top())),
+                    point(bounds.right(), (top + line_height).min(input.bottom())),
+                );
+                if band.size.height > px(0.) {
+                    window.paint_quad(fill(band, color));
                 }
             },
         )
@@ -687,13 +724,12 @@ impl EditorTab {
         let (inline, below) = match (peek, self.peek_position(cx)) {
             (Some(peek), Some((left, top))) => (
                 Some(
-                    div()
-                        .absolute()
-                        .top(top)
-                        .left(left)
-                        .right_0()
-                        .child(peek)
-                        .into_any_element(),
+                    FollowScroll::new(
+                        &self.state,
+                        false,
+                        div().absolute().top(top).left(left).right_0().child(peek),
+                    )
+                    .into_any_element(),
                 ),
                 None,
             ),
@@ -723,15 +759,16 @@ impl EditorTab {
     /// Accept Current, Incoming or Both, "HEAD ⟷ feature", and with more
     /// than one, "1 of 2" with ↑ and ↓. Monaco puts the same bar in a view
     /// zone above the conflict; GPUI Kit has no view zones, so it floats
-    /// on the marker line, as the peek floats under its change.
-    fn conflict_bars(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(origin) = self.git.origin.get() else {
-            return Vec::new();
-        };
+    /// on the marker line, as the peek floats under its change, clipped
+    /// to the text column (it scrolls sideways with the text).
+    fn conflict_bars(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.git.conflicts.is_empty() {
+            return None;
+        }
+        let origin = self.git.origin.get()?;
         let state = self.state.read(cx);
-        let Some(rows) = state.visible_row_range() else {
-            return Vec::new();
-        };
+        let rows = state.visible_row_range()?;
+        let area = text_area(state)?;
         let text = state.text();
         let places: Vec<(ConflictBlock, Pixels, Pixels, Pixels)> = self
             .git
@@ -746,8 +783,8 @@ impl EditorTab {
                 let at = state.range_to_bounds(&(end..end))?;
                 Some((
                     block.clone(),
-                    at.left() - origin.x + px(16.),
-                    at.top() - origin.y,
+                    at.left() - area.text_left + px(16.),
+                    at.top() - area.top,
                     at.size.height,
                 ))
             })
@@ -763,7 +800,7 @@ impl EditorTab {
         let theme = cx.theme();
         let color = theme.foreground.opacity(0.9);
         let muted = theme.foreground.opacity(0.72);
-        places
+        let bars = places
             .into_iter()
             .map(|(block, left, top, height)| {
                 let start = block.start;
@@ -826,11 +863,28 @@ impl EditorTab {
                 }
                 bar.into_any_element()
             })
-            .collect()
+            .collect::<Vec<_>>();
+        Some(
+            div()
+                .absolute()
+                .left(area.text_left - origin.x)
+                .top(area.top - origin.y)
+                .right_0()
+                .h(area.bottom - area.top)
+                .overflow_hidden()
+                .child(FollowScroll::new(
+                    &self.state,
+                    true,
+                    div().absolute().top_0().left_0().size_full().children(bars),
+                ))
+                .into_any_element(),
+        )
     }
 
     /// Where the peek goes: under the peeked change's last line, from the
-    /// text's left edge, relative to the editor (from the last frame).
+    /// text column's left edge (it doesn't scroll sideways, as Monaco's
+    /// view zones don't), relative to the editor (from the last frame;
+    /// `FollowScroll` brings it up to date).
     fn peek_position(&self, cx: &App) -> Option<(Pixels, Pixels)> {
         let start = self.git.peek?;
         let hunk = self.git.hunks.iter().find(|h| h.new_start == start)?;
@@ -847,8 +901,9 @@ impl EditorTab {
         }
         let offset = text.line_start_offset(row);
         let line = state.range_to_bounds(&(offset..offset))?;
+        let area = text_area(state)?;
         Some((
-            line.left() - origin.x - px(4.),
+            area.text_left - origin.x - px(4.),
             line.bottom() - origin.y + px(4.),
         ))
     }
@@ -1247,6 +1302,155 @@ impl crate::workbench::Workbench {
     }
 }
 
+/// Where an editor's text sits on screen, from its last paint.
+#[derive(Clone, Copy)]
+pub(crate) struct TextArea {
+    /// The text column's left edge, right of the line numbers, wherever
+    /// the text is scrolled sideways: gutter marks sit left of it.
+    pub text_left: Pixels,
+    /// The text area's top and bottom: under GPUI Kit's find bar, which
+    /// sits inside the editor element.
+    pub top: Pixels,
+    pub bottom: Pixels,
+}
+
+impl TextArea {
+    /// The text column, from `text_left` to `right`: what scrolls
+    /// sideways is painted inside it, so it never slides over the gutter.
+    pub fn text_column(&self, right: Pixels) -> Bounds<Pixels> {
+        Bounds::from_corners(point(self.text_left, self.top), point(right, self.bottom))
+    }
+
+    /// The whole text area across `bounds`, gutter included.
+    pub fn view(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        Bounds::from_corners(
+            point(bounds.left(), self.top),
+            point(bounds.right(), self.bottom),
+        )
+    }
+}
+
+/// The text area of `state`'s last layout. `range_to_bounds` counts the
+/// horizontal scroll in; a line's start, less the painted text origin,
+/// is the line numbers' width.
+pub(crate) fn text_area(state: &gpui_kit::component::input::EditorState) -> Option<TextArea> {
+    let painted = state.text_bounds()?;
+    let input = state.input_bounds();
+    let text = state.text();
+    let row = state
+        .visible_row_range()?
+        .start
+        .min(text.lines_len().saturating_sub(1));
+    let start = text.line_start_offset(row);
+    let line = state.range_to_bounds(&(start..start))?;
+    Some(TextArea {
+        text_left: input.left() + (line.left() - painted.left()),
+        top: input.top(),
+        bottom: input.bottom(),
+    })
+}
+
+/// How far the editor has scrolled since its last paint, by this frame's
+/// prepaint (`prepaint_caret_geometry`, which GPUI Kit's completion menu
+/// reads for the same reason); zero before then.
+fn scrolled_since_paint(
+    state: &gpui_kit::component::input::EditorState,
+) -> gpui_kit::Point<Pixels> {
+    let (Some(geometry), Some(painted)) = (state.prepaint_caret_geometry(), state.text_bounds())
+    else {
+        return gpui_kit::Point::default();
+    };
+    let before = painted.origin - state.input_bounds().origin;
+    geometry.scroll_offset() - before
+}
+
+/// Elements laid over the editor in render, from its last frame's layout
+/// (the peek, the conflict bars, the Diff View's hidden-lines rows),
+/// moved in prepaint by however far the text scrolled since, so they keep
+/// up with it rather than trailing it by a frame.
+pub(crate) struct FollowScroll {
+    state: gpui_kit::Entity<gpui_kit::component::input::EditorState>,
+    /// Follow the horizontal scroll too (what sits on a line's text).
+    sideways: bool,
+    child: AnyElement,
+}
+
+impl FollowScroll {
+    pub fn new(
+        state: &gpui_kit::Entity<gpui_kit::component::input::EditorState>,
+        sideways: bool,
+        child: impl IntoElement,
+    ) -> Self {
+        FollowScroll {
+            state: state.clone(),
+            sideways,
+            child: child.into_any_element(),
+        }
+    }
+}
+
+impl IntoElement for FollowScroll {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui_kit::Element for FollowScroll {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui_kit::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui_kit::LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mut delta = scrolled_since_paint(self.state.read(cx));
+        if !self.sideways {
+            delta.x = px(0.);
+        }
+        window.with_element_offset(delta, |window| {
+            self.child.prepaint(window, cx);
+        });
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+    }
+}
+
 /// How sticky lines look (the editor's font and colors).
 struct StickyStyle {
     font: gpui_kit::Font,
@@ -1305,11 +1509,13 @@ fn sticky_layout(
     })
 }
 
-/// Paint the sticky lines over the view's first rows: each line's bounds
-/// and row.
+/// Paint the sticky lines over the text area's first rows (`view`): each
+/// line's bounds and row. The text scrolls sideways with the editor's,
+/// inside the text column; the numbers stay in the gutter.
 fn paint_sticky(
     layout: StickyLayout,
-    bounds: Bounds<Pixels>,
+    view: Bounds<Pixels>,
+    area: TextArea,
     style: &StickyStyle,
     window: &mut Window,
     cx: &mut App,
@@ -1319,14 +1525,14 @@ fn paint_sticky(
         line_height,
         lines,
     } = layout;
+    let column = gpui_kit::ContentMask {
+        bounds: area.text_column(view.right()),
+    };
     let mut painted = Vec::new();
     for (i, (row, line)) in lines.iter().enumerate() {
-        let y = bounds.top() + line_height * i as f32;
-        let area = Bounds::new(
-            point(bounds.left(), y),
-            size(bounds.size.width, line_height),
-        );
-        window.paint_quad(fill(area, style.background));
+        let y = view.top() + line_height * i as f32;
+        let area_row = Bounds::new(point(view.left(), y), size(view.size.width, line_height));
+        window.paint_quad(fill(area_row, style.background));
         let shape = |content: String, color: Hsla, window: &mut Window| {
             let run = gpui_kit::TextRun {
                 len: content.len(),
@@ -1341,29 +1547,31 @@ fn paint_sticky(
                 .shape_line(content.into(), style.size, &[run], None)
         };
         let shaped = shape(line.clone(), style.text, window);
-        let _ = shaped.paint(
-            point(text_x, y),
-            line_height,
-            gpui_kit::TextAlign::Left,
-            None,
-            window,
-            cx,
-        );
+        window.with_content_mask(Some(column), |window| {
+            let _ = shaped.paint(
+                point(text_x, y),
+                line_height,
+                gpui_kit::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        });
         let number = shape((row + 1).to_string(), style.number, window);
         let _ = number.paint(
-            point(text_x - number.width - px(18.), y),
+            point(area.text_left - number.width - px(18.), y),
             line_height,
             gpui_kit::TextAlign::Left,
             None,
             window,
             cx,
         );
-        painted.push((area, *row));
+        painted.push((area_row, *row));
     }
     if !lines.is_empty() {
-        let y = bounds.top() + line_height * lines.len() as f32;
+        let y = view.top() + line_height * lines.len() as f32;
         window.paint_quad(fill(
-            Bounds::new(point(bounds.left(), y), size(bounds.size.width, px(1.))),
+            Bounds::new(point(view.left(), y), size(view.size.width, px(1.))),
             style.border,
         ));
     }

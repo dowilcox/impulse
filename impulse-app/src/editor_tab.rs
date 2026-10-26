@@ -11,6 +11,7 @@ use gpui_kit::component::input::{
     RangeDecorationCollection, RangeDecorationStyle, RopeExt, TabSize,
 };
 use gpui_kit::component::native_menu::NativeMenu;
+use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     prelude::*, px, App, Context, Entity, EntityInputHandler, EventEmitter, Subscription, Window,
 };
@@ -137,6 +138,9 @@ pub struct EditorTab {
     settings_file: bool,
     /// The Markdown preview's scroll, for its `#anchor` links.
     preview_scroll: gpui_kit::ScrollHandle,
+    /// Where `go_to` put the cursor before the editor's first layout: its
+    /// line is centered once there is one.
+    pending_center: Option<Position>,
 }
 
 impl EventEmitter<EditorTabChanged> for EditorTab {}
@@ -249,6 +253,10 @@ impl EditorTab {
             });
         let observe_state = cx.observe(&state, |tab, _, cx| {
             tab.selection_moved(cx);
+            // Laid out at last: render centers `go_to`'s line.
+            if tab.pending_center.is_some() {
+                cx.notify();
+            }
             // The peek follows its change as the editor scrolls.
             if tab.git.peek.is_some() {
                 cx.notify();
@@ -306,6 +314,7 @@ impl EditorTab {
             too_large_told: false,
             settings_file: false,
             preview_scroll: gpui_kit::ScrollHandle::new(),
+            pending_center: None,
         };
         tab.apply_settings(&settings, window, cx);
         tab.refresh_git(cx);
@@ -1018,11 +1027,30 @@ impl EditorTab {
         });
     }
 
-    /// Put the cursor at a 0-based line and character.
-    pub fn go_to(&self, position: Position, window: &mut Window, cx: &mut Context<Self>) {
-        self.state.update(cx, |state, cx| {
-            state.set_cursor_position(position, window, cx)
-        });
+    /// Put the cursor at a 0-based line and character, its line in the
+    /// middle of the view (Go to Line, search results, problems,
+    /// definitions: Swift's `revealPositionInCenter`). A tab not laid out
+    /// yet centers it after its first layout.
+    pub fn go_to(&mut self, position: Position, window: &mut Window, cx: &mut Context<Self>) {
+        let centered = crate::editor_diff::center_at(&self.state, position, window, cx);
+        self.pending_center = (!centered).then_some(position);
+        cx.notify();
+    }
+
+    /// Center the line `go_to` asked for before the first layout, once
+    /// there is one (unless the cursor has moved on since).
+    fn apply_pending_center(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(position) = self.pending_center else {
+            return;
+        };
+        let state = self.state.read(cx);
+        if state.visible_row_range().is_none() {
+            return;
+        }
+        self.pending_center = None;
+        if state.cursor_position() == position {
+            crate::editor_diff::center_at(&self.state, position, window, cx);
+        }
     }
 
     /// Show or hide the Markdown or SVG preview (`beside`: next to the
@@ -1572,7 +1600,8 @@ impl Drop for EditorTab {
 
 /// Monaco keeps room for five-digit line numbers where GPUI Kit's editor
 /// keeps three, growing with the file: the difference, so the numbers and
-/// the code sit where the Swift app's do.
+/// the code sit where the Swift app's do. Plus the 2px the extra-small
+/// size takes off GPUI Kit's left padding (4px where medium has 6).
 pub(crate) fn gutter_inset(
     state: &Entity<EditorState>,
     font_size: f32,
@@ -1586,12 +1615,13 @@ pub(crate) fn gutter_inset(
         .to_string()
         .len()
         .max(3);
-    px((font_size * 6. / 7. - font_size * 0.6 * (digits - 3) as f32).max(0.))
+    px((font_size * 6. / 7. - font_size * 0.6 * (digits - 3) as f32).max(0.) + 2.)
 }
 
 impl Render for EditorTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_inline_text(window, cx);
+        self.apply_pending_center(window, cx);
         self.track_text_focus(window, cx);
         let signature = self.signature_popup(cx);
         let rename = self.rename_box(cx);
@@ -1603,6 +1633,9 @@ impl Render for EditorTab {
         let line_height = settings.editor_line_height;
         let mut editor = Editor::new(&self.state)
             .size_full()
+            // No inset above line 1, as Monaco has none (GPUI Kit's medium
+            // size pads 8px above and below).
+            .xsmall()
             .font_family(family)
             .text_size(px(size))
             .pl(gutter_inset(&self.state, size, cx))
@@ -1665,6 +1698,8 @@ impl Render for EditorTab {
             .on_action(cx.listener(Self::cursor_undo))
             .on_action(cx.listener(Self::cursors_at_line_ends))
             .on_action(cx.listener(Self::trim_trailing_whitespace))
+            .on_action(cx.listener(Self::cursor_home))
+            .on_action(cx.listener(Self::expand_line_selection))
             .on_key_down(
                 cx.listener(|tab, event: &gpui_kit::KeyDownEvent, window, cx| {
                     if event.keystroke.key == "escape" && tab.signature.is_some() {
@@ -1765,6 +1800,11 @@ impl EditorTab {
             self.selections.moved(previous);
         }
         self.find_linked_tag(cx);
+        // Monaco's parameter hints follow the cursor: asked again where it
+        // now is, and gone once the server has none there.
+        if self.signature.is_some() {
+            self.request_signature(cx);
+        }
         let settings = crate::settings_store::SettingsStore::get(cx);
         let wanted = self.text_focused
             && if range.is_empty() {
@@ -2002,9 +2042,7 @@ impl EditorTab {
                     tab.show_peek(title, locations, (&own_uri, &own_text), hooks, window, cx)
                 }
                 [location] if location.uri == own_uri => {
-                    let start = location.range.start;
-                    tab.state
-                        .update(cx, |state, cx| state.set_cursor_position(start, window, cx));
+                    tab.go_to(location.range.start, window, cx);
                 }
                 [location] => {
                     let params = lsp_types::ShowDocumentParams {
@@ -2081,8 +2119,6 @@ impl EditorTab {
         }
     }
 
-    /// The signature over the caret: the active parameter in bold, its
-    /// documentation and the signature's under it, and which of several.
     /// Take Rename Symbol's box away and give the editor the keyboard back.
     fn close_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.rename.take().is_some() {
@@ -2156,17 +2192,26 @@ impl EditorTab {
         ))
     }
 
+    /// The signature over the caret: the active parameter in bold, its
+    /// documentation and the signature's under it (Markdown where the
+    /// server sends it), and which of several. In the editor's font, on
+    /// the editor widgets' background, as the rename box.
     fn signature_popup(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        use gpui_kit::component::text::{TextView, TextViewStyle};
         use gpui_kit::component::ActiveTheme as _;
         use impulse_lsp::signature::{active_parameter_range, active_signature};
         let help = self.signature.as_ref()?;
         let (index, signature) = active_signature(help)?;
-        let (caret, _) = self.state.read(cx).cursor_layout()?;
         let theme = cx.theme();
+        let widget = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(theme.popover, |b| b.widget);
+        let settings = crate::settings_store::SettingsStore::get(cx);
+        let font = gpui_kit::font(crate::fonts::family(&settings.font_family));
+        let font_size = px(settings.font_size as f32);
         let label = signature.label.clone();
         let bold = active_parameter_range(help, signature);
         let mut runs = Vec::new();
-        let font = gpui_kit::font("JetBrains Mono");
         let run = |len: usize, weight| gpui_kit::TextRun {
             len,
             font: gpui_kit::Font {
@@ -2187,19 +2232,46 @@ impl EditorTab {
             }
             None => runs.push(run(label.len(), gpui_kit::FontWeight::NORMAL)),
         }
-        let documentation = |doc: &Option<lsp_types::Documentation>| -> Option<String> {
-            match doc.as_ref()? {
-                lsp_types::Documentation::String(s) => Some(s.clone()),
-                lsp_types::Documentation::MarkupContent(m) => Some(m.value.clone()),
+        // Markdown as GPUI Kit's hover shows it; plain text as it is.
+        let documentation = |id: &'static str,
+                             doc: &Option<lsp_types::Documentation>|
+         -> Option<gpui_kit::AnyElement> {
+            let (text, markdown) = match doc.as_ref()? {
+                lsp_types::Documentation::String(s) => (s.clone(), false),
+                lsp_types::Documentation::MarkupContent(m) => {
+                    (m.value.clone(), m.kind == lsp_types::MarkupKind::Markdown)
+                }
+            };
+            if text.trim().is_empty() {
+                return None;
             }
-            .filter(|s| !s.trim().is_empty())
+            Some(if markdown {
+                TextView::markdown(id, text)
+                    .style(
+                        TextViewStyle::default()
+                            .paragraph_gap(gpui_kit::rems(0.5))
+                            .code_block(
+                                gpui_kit::StyleRefinement::default()
+                                    .bg(gpui_kit::transparent_black())
+                                    .p_0()
+                                    .text_size(px(11.)),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                gpui_kit::div()
+                    .whitespace_normal()
+                    .child(text)
+                    .into_any_element()
+            })
         };
         let active = signature
             .active_parameter
             .or(help.active_parameter)
             .and_then(|i| signature.parameters.as_ref()?.get(i as usize));
-        let parameter_doc = active.and_then(|p| documentation(&p.documentation));
-        let signature_doc = documentation(&signature.documentation);
+        let parameter_doc =
+            active.and_then(|p| documentation("signature-parameter-doc", &p.documentation));
+        let signature_doc = documentation("signature-doc", &signature.documentation);
         let count = help.signatures.len();
         let popup = gpui_kit::div()
             .occlude()
@@ -2209,9 +2281,10 @@ impl EditorTab {
             .rounded(px(6.))
             .border_1()
             .border_color(theme.border)
-            .bg(theme.popover)
+            .bg(widget)
             .shadow_md()
             .text_size(px(12.))
+            .text_color(theme.popover_foreground)
             .flex()
             .flex_col()
             .gap(px(4.))
@@ -2227,13 +2300,13 @@ impl EditorTab {
                                 .child(format!("{}/{count}", index + 1)),
                         )
                     })
-                    .child(gpui_kit::StyledText::new(label).with_runs(runs)),
+                    .child(
+                        gpui_kit::div()
+                            .text_size(font_size)
+                            .child(gpui_kit::StyledText::new(label).with_runs(runs)),
+                    ),
             )
-            .children(parameter_doc.map(|doc| {
-                gpui_kit::div()
-                    .text_color(theme.popover_foreground)
-                    .child(doc)
-            }))
+            .children(parameter_doc)
             .children(signature_doc.map(|doc| {
                 gpui_kit::div()
                     .text_color(theme.muted_foreground)
@@ -2241,12 +2314,113 @@ impl EditorTab {
                     .overflow_hidden()
                     .child(doc)
             }));
-        Some(gpui_kit::deferred(
-            gpui_kit::anchored()
-                .position(caret.origin)
-                .anchor(gpui_kit::Anchor::BottomLeft)
-                .child(gpui_kit::div().pb(px(4.)).child(popup)),
-        ))
+        Some(gpui_kit::deferred(OverCaret {
+            state: self.state.clone(),
+            content: gpui_kit::div().pb(px(4.)).child(popup).into_any_element(),
+            shown: false,
+        }))
+    }
+}
+
+/// A popup over the caret's line (Monaco's parameter hints), placed in
+/// prepaint from this frame's caret (`prepaint_caret_geometry`, as GPUI
+/// Kit places its completion menu with an element it keeps to itself), so
+/// it stays on the caret as the file scrolls: above the line, or under it
+/// where there's no room; gone while the line is scrolled out of view.
+/// Used inside `deferred`, whose prepaint runs after the editor's.
+struct OverCaret {
+    state: Entity<EditorState>,
+    content: gpui_kit::AnyElement,
+    shown: bool,
+}
+
+impl IntoElement for OverCaret {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui_kit::Element for OverCaret {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui_kit::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui_kit::LayoutId, ()) {
+        // Laid out in prepaint, once the caret is known.
+        (
+            window.request_layout(gpui_kit::Style::default(), [], cx),
+            (),
+        )
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(geometry) = self.state.read(cx).prepaint_caret_geometry() else {
+            return;
+        };
+        // The caret's y leaves the vertical scroll out (its x has it).
+        let caret = geometry.cursor_bounds();
+        let line_height = geometry.line_height();
+        let top = caret.top() - (line_height - caret.size.height) / 2. + geometry.scroll_offset().y;
+        let input = geometry.input_bounds();
+        if top + line_height <= input.top() || top >= input.bottom() {
+            return;
+        }
+        let viewport = window.viewport_size();
+        let size = self.content.layout_as_root(
+            gpui_kit::Size {
+                width: gpui_kit::AvailableSpace::MaxContent,
+                height: gpui_kit::AvailableSpace::MaxContent,
+            },
+            window,
+            cx,
+        );
+        let x = caret.left().min(viewport.width - size.width).max(px(0.));
+        let above = top - size.height;
+        let y = if above >= px(0.) {
+            above
+        } else {
+            top + line_height
+        };
+        self.content.prepaint_at(gpui_kit::point(x, y), window, cx);
+        self.shown = true;
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui_kit::GlobalElementId>,
+        _: Option<&gpui_kit::InspectorElementId>,
+        _: gpui_kit::Bounds<gpui_kit::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.shown {
+            self.content.paint(window, cx);
+        }
     }
 }
 
