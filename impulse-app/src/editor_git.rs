@@ -77,7 +77,7 @@ pub(crate) struct GitLayer {
     _repository: Option<Subscription>,
 }
 
-type ScannedBrackets = (
+pub(crate) type ScannedBrackets = (
     Vec<(std::ops::Range<usize>, impulse_kit::bracket_pairs::Color)>,
     Vec<impulse_kit::bracket_pairs::Pair>,
     Vec<impulse_kit::bracket_pairs::Guide>,
@@ -94,6 +94,34 @@ struct Marks {
 /// Documents past this size get no links or bracket colors.
 const MAX_DECORATED: usize = 2 * 1024 * 1024;
 
+/// The peek's header row, a line of its original lines, and its tallest
+/// under the editor.
+const PEEK_HEADER: f32 = 30.;
+const PEEK_LINE: f32 = 16.;
+const PEEK_MAX: f32 = 260.;
+/// The peek's margin above and below, inside its band (`.git-peek`).
+const PEEK_MARGIN: f32 = 4.;
+
+/// Where the peek's band sits over the text (`EditorTab::peek_position`).
+struct PeekPlace {
+    left: Pixels,
+    top: Pixels,
+    /// The row it sits under (0-based).
+    row: usize,
+    /// The band's height, the peek's margins included.
+    height: Pixels,
+}
+
+/// The peek's band over the text: the Swift view zone's height (1.6 lines
+/// plus one per original line, up to 12, and the peek's margins), rounded
+/// up to whole lines of `line_height`, so the lines it hides are hidden
+/// whole rather than cut in half.
+fn peek_height(hunk: &LineHunk, line_height: Pixels) -> Pixels {
+    let line_height = f32::from(line_height).max(1.);
+    let zone = (1.6 + hunk.old_lines.len().min(12) as f32) * line_height + PEEK_MARGIN * 2.;
+    px((zone / line_height).ceil().max(1.) * line_height)
+}
+
 impl Marks {
     fn compute(
         text: &str,
@@ -102,7 +130,6 @@ impl Marks {
         tab_size: usize,
         brackets_on: bool,
     ) -> Marks {
-        use impulse_kit::bracket_pairs;
         let small = text.len() <= MAX_DECORATED;
         Marks {
             hunks: base
@@ -114,13 +141,64 @@ impl Marks {
             } else {
                 Vec::new()
             },
-            brackets: (brackets_on && small).then(|| {
-                let (brackets, pairs) = bracket_pairs::scan(text, language);
-                let guides = bracket_pairs::guides(text, &pairs, tab_size);
-                (brackets, pairs, guides)
-            }),
+            brackets: scan_brackets(text, language, tab_size, brackets_on),
         }
     }
+}
+
+/// `text`'s bracket pairs, their colors and guides; none with
+/// `bracket_pair_colorization` off or past `MAX_DECORATED`.
+pub(crate) fn scan_brackets(
+    text: &str,
+    language: &str,
+    tab_size: usize,
+    on: bool,
+) -> Option<ScannedBrackets> {
+    use impulse_kit::bracket_pairs;
+    (on && text.len() <= MAX_DECORATED).then(|| {
+        let (brackets, pairs) = bracket_pairs::scan(text, language);
+        let guides = bracket_pairs::guides(text, &pairs, tab_size);
+        (brackets, pairs, guides)
+    })
+}
+
+/// Scanned brackets as the pair colors (Monaco's three, unmatched ones
+/// red) to decorate the text with, and the pairs and guides to paint.
+pub(crate) fn bracket_marks(
+    scanned: ScannedBrackets,
+    dark: bool,
+) -> (Vec<TextDecoration>, crate::editor_brackets::Brackets) {
+    use impulse_kit::bracket_pairs::{self, Color};
+    let (brackets, pairs, guides) = scanned;
+    let hex = |h: &str| crate::workbench_chrome::hsla(impulse_kit::chrome::Rgba::from_hex(h));
+    let levels = if dark {
+        bracket_pairs::DARK
+    } else {
+        bracket_pairs::LIGHT
+    }
+    .map(hex);
+    let unexpected = hex(bracket_pairs::UNEXPECTED);
+    let decorations = brackets
+        .into_iter()
+        .map(|(range, color)| {
+            let color = match color {
+                Color::Level(depth) => levels[depth % 3],
+                Color::Unexpected => unexpected,
+            };
+            TextDecoration::new(
+                range,
+                gpui_kit::HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    let painted = crate::editor_brackets::Brackets {
+        guides: std::rc::Rc::new(guides),
+        pairs: std::rc::Rc::new(pairs),
+    };
+    (decorations, painted)
 }
 
 impl EditorTab {
@@ -251,42 +329,15 @@ impl EditorTab {
     /// Color bracket pairs by depth (`bracket_pair_colorization`, Monaco's
     /// three colors), unmatched ones red.
     fn paint_brackets(&mut self, scanned: Option<ScannedBrackets>, cx: &mut Context<Self>) {
-        use impulse_kit::bracket_pairs::{self, Color};
-        let Some((brackets, pairs, guides)) = scanned else {
+        let Some(scanned) = scanned else {
             if let Some(marks) = self.git.brackets.as_ref() {
                 marks.clear(cx);
             }
             self.git.bracket_pairs = Default::default();
             return;
         };
-        let hex = |h: &str| crate::workbench_chrome::hsla(impulse_kit::chrome::Rgba::from_hex(h));
-        let levels = if cx.theme().mode.is_dark() {
-            bracket_pairs::DARK
-        } else {
-            bracket_pairs::LIGHT
-        }
-        .map(hex);
-        let unexpected = hex(bracket_pairs::UNEXPECTED);
-        self.git.bracket_pairs = crate::editor_brackets::Brackets {
-            guides: std::rc::Rc::new(guides),
-            pairs: std::rc::Rc::new(pairs),
-        };
-        let decorations: Vec<TextDecoration> = brackets
-            .into_iter()
-            .map(|(range, color)| {
-                let color = match color {
-                    Color::Level(depth) => levels[depth % 3],
-                    Color::Unexpected => unexpected,
-                };
-                TextDecoration::new(
-                    range,
-                    gpui_kit::HighlightStyle {
-                        color: Some(color),
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect();
+        let (decorations, painted) = bracket_marks(scanned, cx.theme().mode.is_dark());
+        self.git.bracket_pairs = painted;
         let marks = self.git.brackets.get_or_insert_with(|| {
             self.state.update(cx, |state, cx| {
                 state.create_decorations_collection(Vec::new(), cx)
@@ -434,6 +485,15 @@ impl EditorTab {
         };
         let line_fills = self.git.line_fills.clone();
         let origin = self.git.origin.clone();
+        // The gutter beside the peek, blanked: the peek can't push the
+        // lines under it down as Monaco's view zone does, so it hides them
+        // whole, numbers and marks too.
+        let peek_mask = self.peek_position(cx).map(|place| {
+            let color = cx
+                .try_global::<crate::kit_theme::EditorBackdrop>()
+                .map_or(cx.theme().background, |b| b.background);
+            (place.row, place.height, color)
+        });
         let brackets = (!self.git.bracket_pairs.pairs.is_empty()).then(|| {
             (
                 self.git.bracket_pairs.clone(),
@@ -614,6 +674,25 @@ impl EditorTab {
                         color,
                     ));
                 }
+                if let Some((row, height, color)) = peek_mask {
+                    if let Some(line) =
+                        line_offset(row + 1).and_then(|o| state.range_to_bounds(&(o..o)))
+                    {
+                        let top = line.bottom();
+                        window.with_content_mask(
+                            Some(gpui_kit::ContentMask { bounds: view }),
+                            |window| {
+                                window.paint_quad(fill(
+                                    Bounds::from_corners(
+                                        point(bounds.left(), top),
+                                        point(area.text_left, top + height),
+                                    ),
+                                    color,
+                                ));
+                            },
+                        );
+                    }
+                }
                 let pinned = match (&sticky, sticky_layout) {
                     (Some(style), Some(layout)) => {
                         paint_sticky(layout, view, area, style, window, cx)
@@ -720,20 +799,32 @@ impl EditorTab {
         .size_full();
         // The peek under its change's last line when that's on screen, else
         // under the editor.
-        let peek = self.git_peek(cx);
-        let (inline, below) = match (peek, self.peek_position(cx)) {
-            (Some(peek), Some((left, top))) => (
-                Some(
-                    FollowScroll::new(
-                        &self.state,
-                        false,
-                        div().absolute().top(top).left(left).right_0().child(peek),
-                    )
-                    .into_any_element(),
-                ),
+        let band = cx
+            .try_global::<crate::kit_theme::EditorBackdrop>()
+            .map_or(cx.theme().background, |b| b.background);
+        let (inline, below) = match self.peek_position(cx) {
+            Some(place) => (
+                self.git_peek(Some(place.height - px(PEEK_MARGIN * 2.)), cx)
+                    .map(|peek| {
+                        // The band hides the lines under it, margins too.
+                        FollowScroll::new(
+                            &self.state,
+                            false,
+                            div()
+                                .absolute()
+                                .top(place.top)
+                                .left(place.left)
+                                .right_0()
+                                .h(place.height)
+                                .py(px(PEEK_MARGIN))
+                                .bg(band)
+                                .child(peek),
+                        )
+                        .into_any_element()
+                    }),
                 None,
             ),
-            (peek, _) => (None, peek),
+            None => (None, self.git_peek(None, cx)),
         };
         let conflicts = self.conflict_bars(cx);
         div()
@@ -884,8 +975,9 @@ impl EditorTab {
     /// Where the peek goes: under the peeked change's last line, from the
     /// text column's left edge (it doesn't scroll sideways, as Monaco's
     /// view zones don't), relative to the editor (from the last frame;
-    /// `FollowScroll` brings it up to date).
-    fn peek_position(&self, cx: &App) -> Option<(Pixels, Pixels)> {
+    /// `FollowScroll` brings it up to date); with the row it sits under
+    /// (0-based) and its height, in whole lines (`peek_height`).
+    fn peek_position(&self, cx: &App) -> Option<PeekPlace> {
         let start = self.git.peek?;
         let hunk = self.git.hunks.iter().find(|h| h.new_start == start)?;
         let origin = self.git.origin.get()?;
@@ -902,14 +994,18 @@ impl EditorTab {
         let offset = text.line_start_offset(row);
         let line = state.range_to_bounds(&(offset..offset))?;
         let area = text_area(state)?;
-        Some((
-            area.text_left - origin.x - px(4.),
-            line.bottom() - origin.y + px(4.),
-        ))
+        Some(PeekPlace {
+            left: area.text_left - origin.x,
+            top: line.bottom() - origin.y,
+            row,
+            height: peek_height(hunk, state.line_height()?),
+        })
     }
 
-    /// The peeked change: what it was, and Revert, Stage, Diff and Review.
-    fn git_peek(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The peeked change: what it was, and Revert, Stage, Diff and Review;
+    /// `height` tall when it sits over the text (in its band), else as
+    /// tall as it needs up to `PEEK_MAX`.
+    fn git_peek(&self, height: Option<Pixels>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let start = self.git.peek?;
         let hunk = self
             .git
@@ -935,7 +1031,10 @@ impl EditorTab {
             div()
                 .flex()
                 .flex_col()
-                .max_h(px(260.))
+                .map(|d| match height {
+                    Some(height) => d.h(height),
+                    None => d.max_h(px(PEEK_MAX)),
+                })
                 .border_t_1()
                 .border_b_1()
                 .border_color(edge)
@@ -944,10 +1043,11 @@ impl EditorTab {
                 .child(
                     div()
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap(px(6.))
                         .px(px(10.))
-                        .py(px(4.))
+                        .h(px(PEEK_HEADER))
                         .text_size(px(12.))
                         .child(div().flex_1().opacity(0.8).child(hunk.title()))
                         .child(button("peek-revert", "Revert").on_click(cx.listener(
@@ -977,7 +1077,7 @@ impl EditorTab {
                         )))
                         .child(
                             Button::new("peek-close")
-                                .label("✕")
+                                .label("×")
                                 .small()
                                 .outline()
                                 .on_click(cx.listener(|tab, _, _, cx| {
@@ -990,6 +1090,7 @@ impl EditorTab {
                     d.child(
                         div()
                             .id("peek-old")
+                            .min_h_0()
                             .overflow_y_scroll()
                             .pl(px(14.))
                             .pr(px(10.))
@@ -998,7 +1099,9 @@ impl EditorTab {
                             .bg(removed)
                             .font_family(mono)
                             .text_size(px(12.))
-                            .text_color(theme.muted_foreground)
+                            .line_height(px(PEEK_LINE))
+                            // `.git-peek`'s color: the editor's text.
+                            .text_color(theme.foreground)
                             .children(hunk.old_lines.iter().map(|l| {
                                 div().whitespace_nowrap().child(if l.is_empty() {
                                     " ".to_string()

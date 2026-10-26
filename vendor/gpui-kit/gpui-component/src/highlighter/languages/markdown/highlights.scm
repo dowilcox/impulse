@@ -19,9 +19,18 @@
   (fenced_code_block)
 ] @text.literal
 
+; Impulse: a code fence and its info string are strings, as in Monaco's
+; Markdown tokenizer (was `@punctuation.delimiter`, the fence alone).
 [
   (fenced_code_block_delimiter)
-] @punctuation.delimiter
+  (info_string)
+] @string
+
+; Impulse: tables as Monaco's tokenizer colors them: the header row and the
+; delimiter row whole, and the pipes of the other rows, as keywords.
+(pipe_table_header) @keyword
+(pipe_table_delimiter_row) @keyword
+(pipe_table_row "|" @keyword)
 
 (code_fence_content) @none
 

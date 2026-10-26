@@ -257,6 +257,8 @@ impl<M: InputModeKind> Element for EditorScrollbar<M> {
             return None;
         };
         let scroll_handle = state.scroll_handle.clone();
+        // Impulse: the host's mode, else the theme's (`set_scrollbar_mode`).
+        let mode = state.editor_options.scrollbar_mode;
 
         if scroll_handle.offset() != snapshot.cursor_scroll_offset {
             scroll_handle.set_offset(snapshot.cursor_scroll_offset);
@@ -269,8 +271,11 @@ impl<M: InputModeKind> Element for EditorScrollbar<M> {
         }
         .viewport_bounds(snapshot.layout.bounds)
         .scroll_viewport_size(snapshot.layout.scroll_viewport_size)
-        .scroll_size(snapshot.layout.scroll_size)
-        .into_any_element();
+        .scroll_size(snapshot.layout.scroll_size);
+        if let Some(mode) = mode {
+            scrollbar = scrollbar.mode(mode);
+        }
+        let mut scrollbar = scrollbar.into_any_element();
 
         scrollbar.prepaint_as_root(
             snapshot.layout.bounds.origin,

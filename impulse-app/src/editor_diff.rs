@@ -52,6 +52,14 @@ pub(crate) struct DiffView {
     base_pending: Option<String>,
     base_tints: Tints,
     own_tints: Tints,
+    /// The base's bracket pair colors and guides, as the buffer has them
+    /// (`editor_git::bracket_marks`), worked out once per base text:
+    /// `base_generation` counts the base texts, `base_marked` is the one
+    /// the marks are for.
+    base_brackets: crate::editor_brackets::Brackets,
+    base_bracket_marks: Option<gpui_kit::component::input::TextDecorationCollection>,
+    base_generation: u64,
+    base_marked: Option<u64>,
     hunks: Vec<LineHunk>,
     /// Inline: the combined document, rebuilt as the buffer changes.
     inline: Option<InlineView>,
@@ -111,6 +119,10 @@ impl EditorTab {
             base_pending: None,
             base_tints: Tints::default(),
             own_tints: Tints::default(),
+            base_brackets: Default::default(),
+            base_bracket_marks: None,
+            base_generation: 0,
+            base_marked: None,
             hunks: Vec::new(),
             inline: None,
             synced: Rc::default(),
@@ -152,6 +164,7 @@ impl EditorTab {
                 .language(grammar)
                 .line_number(settings.show_line_numbers)
                 .folding(settings.folding)
+                .indent_guides(settings.indent_guides)
                 .soft_wrap(settings.word_wrap)
                 .tab_size(TabSize {
                     tab_size,
@@ -226,13 +239,24 @@ impl EditorTab {
         let old = diff.base_text.clone();
         let new = self.state.read(cx).value().to_string();
         let revealed = diff.revealed.clone();
+        // The base's bracket colors, unless it has them already.
+        let generation = diff.base_generation;
+        let scan_base = (diff.base_marked != Some(generation)).then(|| {
+            let on = crate::settings_store::SettingsStore::get(cx).bracket_pair_colorization;
+            (self.language.clone(), self.tab_size, on)
+        });
         diff._refresh = Some(cx.spawn(async move |tab, cx| {
             if !delay.is_zero() {
                 cx.background_executor().timer(delay).await;
             }
-            let (hunks, removed, added, inline, (removed_words, added_words)) = cx
+            let (hunks, removed, added, inline, (removed_words, added_words), base_brackets) = cx
                 .background_executor()
                 .spawn(async move {
+                    let base_brackets = scan_base.map(|(language, tab_size, on)| {
+                        let scanned =
+                            crate::editor_git::scan_brackets(&old, &language, tab_size, on);
+                        (old.clone(), scanned)
+                    });
                     let hunks = line_hunks(&old, &new);
                     let rows = |start: usize, len: usize| {
                         let start = start.saturating_sub(1) as u32;
@@ -264,13 +288,36 @@ impl EditorTab {
                             )
                         }),
                     );
-                    (hunks, removed, added, inline, words)
+                    (hunks, removed, added, inline, words, base_brackets)
                 })
                 .await;
             let _ = tab.update(cx, |tab, cx| {
                 let Some(diff) = tab.diff.as_mut() else {
                     return;
                 };
+                // Colored only once the base editor holds the text scanned
+                // (a new base is set at the next frame, which refreshes).
+                if let Some((scanned_text, scanned)) = base_brackets {
+                    if diff.base_generation == generation
+                        && diff.base.read(cx).value().as_ref() == scanned_text.as_str()
+                    {
+                        let (decorations, painted) = match scanned {
+                            Some(scanned) => {
+                                crate::editor_git::bracket_marks(scanned, cx.theme().mode.is_dark())
+                            }
+                            None => (Vec::new(), Default::default()),
+                        };
+                        diff.base_brackets = painted;
+                        let base = diff.base.clone();
+                        let marks = diff.base_bracket_marks.get_or_insert_with(|| {
+                            base.update(cx, |state, cx| {
+                                state.create_decorations_collection(Vec::new(), cx)
+                            })
+                        });
+                        marks.set(decorations, cx);
+                        diff.base_marked = Some(generation);
+                    }
+                }
                 let red: Hsla = gpui_kit::rgba(0xff000033).into();
                 let green: Hsla = gpui_kit::rgba(0x9bb95533).into();
                 diff.hunks = hunks;
@@ -312,17 +359,24 @@ impl EditorTab {
         }
         diff.base_text = base.to_string();
         diff.base_pending = Some(base.to_string());
+        diff.base_generation += 1;
         self.refresh_diff(Duration::ZERO, cx);
         cx.notify();
     }
 
     /// The inline document's new text, once there's a window to set it in.
     pub(crate) fn apply_inline_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut new_base = false;
         if let Some(diff) = self.diff.as_mut() {
             if let Some(text) = diff.base_pending.take() {
                 diff.base
                     .update(cx, |state, cx| state.set_value(text, window, cx));
+                new_base = true;
             }
+        }
+        if new_base {
+            // Its bracket colors, now that it holds the text.
+            self.refresh_diff(Duration::ZERO, cx);
         }
         let Some(view) = self.diff.as_mut().and_then(|d| d.inline.as_mut()) else {
             return;
@@ -514,6 +568,7 @@ impl EditorTab {
                         &view.tints,
                         background,
                         &signs,
+                        None,
                     ))
                     .child(
                         canvas(
@@ -529,6 +584,12 @@ impl EditorTab {
                     .into_any_element()
             }
             None => {
+                let base_brackets = (!diff.base_brackets.pairs.is_empty()).then(|| {
+                    (
+                        diff.base_brackets.clone(),
+                        crate::editor_brackets::BracketColors::new(cx.theme().mode.is_dark()),
+                    )
+                });
                 let sync = scroll_sync(
                     self.state.clone(),
                     diff.base.clone(),
@@ -546,6 +607,7 @@ impl EditorTab {
                         &diff.base_tints,
                         background,
                         &signs,
+                        base_brackets,
                     )))
                     .child(div().w(px(1.)).h_full().bg(border))
                     .child(div().flex_1().min_w_0().h_full().child(tinted(
@@ -554,6 +616,7 @@ impl EditorTab {
                         &diff.own_tints,
                         background,
                         &signs,
+                        None,
                     )))
                     .child(sync)
                     .into_any_element()
@@ -734,6 +797,10 @@ fn tinted(
     tints: &Tints,
     background: Hsla,
     signs: &Signs,
+    brackets: Option<(
+        crate::editor_brackets::Brackets,
+        crate::editor_brackets::BracketColors,
+    )>,
 ) -> AnyElement {
     let signs = signs.clone();
     let (state, tints) = (state.clone(), tints.clone());
@@ -766,6 +833,11 @@ fn tinted(
                         bounds: area.text_column(bounds.right()),
                     };
                     window.with_content_mask(Some(column), |window| {
+                        // The base's bracket pair guides and matching
+                        // brackets, as the buffer's own layer paints them.
+                        if let Some((brackets, colors)) = &brackets {
+                            brackets.paint(*colors, state, column.bounds, window);
+                        }
                         for (rows, color, _) in &tints.rows {
                             let first = (rows.start as usize).max(visible.start);
                             let last = (rows.end as usize).min(visible.end);
@@ -799,6 +871,23 @@ fn tinted(
                             }
                         }
                     });
+                    // The diff editor's overview ruler: each change where
+                    // it falls in the whole file, in the right edge's lane
+                    // the buffer's change marks use.
+                    let view = area.view(bounds);
+                    let total = text.lines_len().max(1) as f32;
+                    for (rows, color, _) in &tints.rows {
+                        let top = view.top() + view.size.height * (rows.start as f32 / total);
+                        let bottom = (view.top() + view.size.height * (rows.end as f32 / total))
+                            .max(top + px(3.));
+                        window.paint_quad(fill(
+                            Bounds::from_corners(
+                                point(bounds.right() - px(10.), top),
+                                point(bounds.right() - px(5.), bottom),
+                            ),
+                            Hsla { a: 0.7, ..*color },
+                        ));
+                    }
                     // Monaco's diff indicators, in the folding lane, fixed
                     // whatever the horizontal scroll (painted last: painting
                     // text needs the app, which `state` holds).
@@ -812,9 +901,7 @@ fn tinted(
                             }
                         }
                     }
-                    let view = gpui_kit::ContentMask {
-                        bounds: area.view(bounds),
-                    };
+                    let view = gpui_kit::ContentMask { bounds: view };
                     window.with_content_mask(Some(view), |window| {
                         for (line, sign) in spots {
                             let run = gpui_kit::TextRun {

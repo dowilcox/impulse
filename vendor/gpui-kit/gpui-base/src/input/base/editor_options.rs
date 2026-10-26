@@ -128,6 +128,8 @@ pub(crate) struct EditorOptions {
     /// Keep the I-beam while ⌥ is held, as Monaco does, instead of GPUI
     /// Kit's crosshair.
     pub(crate) hide_column_select_pointer: bool,
+    /// When the scrollbars show; `None`: the theme's `scrollbar_mode`.
+    pub(crate) scrollbar_mode: Option<crate::ScrollbarMode>,
 }
 
 /// A pause without events that ends a gesture, as `overscroll`'s
@@ -202,6 +204,20 @@ impl<M: InputModeKind> InputBaseState<M> {
     pub fn set_hide_column_select_pointer(&mut self, hide: bool, cx: &mut Context<Self>) {
         self.editor_options.hide_column_select_pointer = hide;
         cx.notify();
+    }
+
+    /// Impulse: when the editor's scrollbars show, whatever the theme's
+    /// `scrollbar_mode` (Monaco's `scrollbar.vertical: "visible"` is
+    /// [`crate::ScrollbarMode::Always`]); `None` follows the theme.
+    pub fn set_scrollbar_mode(
+        &mut self,
+        mode: Option<crate::ScrollbarMode>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editor_options.scrollbar_mode != mode {
+            self.editor_options.scrollbar_mode = mode;
+            cx.notify();
+        }
     }
 
     /// Impulse: which whitespace gets a marker. [`Self::set_show_whitespaces`]

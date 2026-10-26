@@ -19,7 +19,7 @@ again (or drop the ones upstream now has), and update this file.
 
 ## Patches
 
-Each is marked `// Impulse:` in the code.
+Each is marked `// Impulse:` in the code (`; Impulse:` in a query).
 
 ### gpui-base
 
@@ -73,6 +73,10 @@ because gpui-component builds that struct as a full literal.
   and wrapping, the current one and reveals it, as Monaco's find widget
   moves from the selection; `next_search_match` still steps from the
   current match.
+- **Scrollbar mode** (`editor_options.rs`, `input/base/element.rs`,
+  `set_scrollbar_mode`): the editor's scrollbars can show always (or on
+  hover) whatever the theme's `scrollbar_mode`, as Monaco's vertical slider
+  stays shown. `None` (the default) follows the theme.
 
 ### gpui-component
 
@@ -102,6 +106,22 @@ because gpui-component builds that struct as a full literal.
   of 2 ms and the background parse starts without its 150 ms debounce, so
   a file opens colored rather than gaining its colors a moment later.
   Later edits keep the 2 ms budget and the debounce.
+- **Captures for a host** (`highlighter/highlighter.rs`,
+  `SyntaxHighlighter::captures`): the capture names over a range, injected
+  languages included, in precedence order, for a host that colors them its
+  own way (Review imitates highlight.js's classes from them and the text
+  around them).
+- **Conflict markers left out of the parse** (`highlighter/highlighter.rs`,
+  `conflict_free_ranges`; `highlighter/input_adapter.rs`): the lines of a
+  complete merge conflict's markers (`<<<<<<<`, `|||||||`, `=======`,
+  `>>>>>>>`) are excluded with `Parser::set_included_ranges`, in the
+  synchronous and the background parse, so both sides parse as code and keep
+  their colors, as Monaco's line tokenizer does. A marker inside a function
+  otherwise turns the rest of it into an error node.
+- **Markdown tables and fences** (`highlighter/languages/markdown/highlights.scm`):
+  a code fence and its info string are `@string`, the table header and
+  delimiter rows and the other rows' pipes `@keyword`, as Monaco's Markdown
+  tokenizer colors them.
 - **Scrollbar gutter** (`input/editor.rs`, `input/input.rs`):
   `Editor::scrollbar_gutter(width)` keeps room between the text and the
   vertical scrollbar, for a minimap there as in Monaco (0 by default).

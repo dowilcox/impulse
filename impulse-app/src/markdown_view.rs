@@ -6,6 +6,8 @@
 //! the file. Shell blocks get a Run button, as the Swift page's
 //! `run_button_script` adds. Web and mail links open in the browser,
 //! links to files open in the editor and `#anchors` scroll to the heading.
+//! Block margins collapse between neighbors, as the page's CSS margins do,
+//! and inline code is set at 0.9em of its text, as the page's `code` is.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -128,29 +130,90 @@ fn render_blocks(
     page: &mut Page,
     cx: &mut Context<EditorTab>,
 ) -> Vec<AnyElement> {
-    blocks
-        .iter()
-        .map(|block| render_block(block, page, cx))
-        .collect()
+    flow_blocks(blocks, Flow::Page, page, cx)
+}
+
+/// Where blocks are laid out: their margins and paragraphs' differ.
+#[derive(Clone, Copy, PartialEq)]
+enum Flow {
+    /// The page: the first block's top margin and the last's bottom one
+    /// stay (the body's padding keeps them from collapsing).
+    Page,
+    /// Inside a quote: the outer margins collapse into the quote's.
+    Nested,
+    /// A list item: tight, its paragraphs without margins.
+    Item,
+}
+
+/// A block's top and bottom margins, the page's CSS (`h1` 1.2em and
+/// 0.4em of its size, `p` 0.6em, `pre`, `blockquote` and `table` 0.8em,
+/// `hr` 1.5em).
+fn margins(block: &Block, flow: Flow) -> (f32, f32) {
+    match block {
+        Block::Heading { level, .. } => {
+            let size = heading_size(*level);
+            (size * 1.2, size * 0.4)
+        }
+        Block::Paragraph(_) if flow == Flow::Item => (0., 0.),
+        Block::Paragraph(_) | Block::List { .. } | Block::Image { .. } => (BODY * 0.6, BODY * 0.6),
+        Block::Code { .. } | Block::Quote(_) | Block::Table { .. } => (BODY * 0.8, BODY * 0.8),
+        Block::Rule => (BODY * 1.5, BODY * 1.5),
+    }
+}
+
+/// `blocks`, each spaced from the one before by the larger of the two
+/// margins between them (CSS's collapsing margins), not their sum.
+fn flow_blocks(
+    blocks: &[Block],
+    flow: Flow,
+    page: &mut Page,
+    cx: &mut Context<EditorTab>,
+) -> Vec<AnyElement> {
+    let mut out = Vec::with_capacity(blocks.len());
+    let mut above: Option<f32> = None;
+    for (i, block) in blocks.iter().enumerate() {
+        let (top, bottom) = margins(block, flow);
+        let gap = match above {
+            Some(above) => above.max(top),
+            None if flow == Flow::Page => top,
+            None => 0.,
+        };
+        above = Some(bottom);
+        let last = i + 1 == blocks.len() && flow == Flow::Page;
+        let element = match block {
+            Block::Paragraph(text) if flow == Flow::Item => {
+                inline_text(text, page, page.colors.fg, false, BODY, false)
+            }
+            other => render_block(other, page, cx),
+        };
+        out.push(
+            div()
+                .pt(px(gap))
+                .when(last, |d| d.pb(px(bottom)))
+                .child(element)
+                .into_any_element(),
+        );
+    }
+    out
+}
+
+fn heading_size(level: u8) -> f32 {
+    BODY * match level {
+        1 => 2.,
+        2 => 1.5,
+        3 => 1.25,
+        4 => 1.,
+        5 => 0.83,
+        _ => 0.67,
+    }
 }
 
 fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> AnyElement {
     let c = page.colors;
     match block {
         Block::Heading { level, text } => {
-            let size = match level {
-                1 => 2.,
-                2 => 1.5,
-                3 => 1.25,
-                4 => 1.,
-                5 => 0.83,
-                _ => 0.67,
-            } * BODY;
+            let size = heading_size(*level);
             div()
-                // The page's body padding doesn't swallow the first
-                // heading's margin.
-                .mt(px(size * 1.2))
-                .mb(px(size * 0.4))
                 .text_size(px(size))
                 .line_height(gpui_kit::relative(1.3))
                 .font_weight(FontWeight::BOLD)
@@ -158,28 +221,23 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
                 .when(*level <= 2, |d| {
                     d.pb(px(size * 0.3)).border_b_1().border_color(c.border)
                 })
-                .child(inline_text(text, page, c.heading, true))
+                .child(inline_text(text, page, c.heading, true, size, false))
                 .into_any_element()
         }
-        Block::Paragraph(text) => div()
-            .my(px(BODY * 0.6))
-            .child(inline_text(text, page, c.fg, false))
-            .into_any_element(),
+        Block::Paragraph(text) => inline_text(text, page, c.fg, false, BODY, false),
         Block::Code { language, text } => code_block(language, text, page, cx),
         Block::Quote(blocks) => div()
-            .my(px(BODY * 0.8))
             .pl(px(16.))
             .border_l(px(3.))
             .border_color(c.border)
             .text_color(c.quote)
-            .children(render_blocks(blocks, page, cx))
+            .children(flow_blocks(blocks, Flow::Nested, page, cx))
             .into_any_element(),
         Block::List {
             ordered,
             start,
             items,
         } => div()
-            .my(px(BODY * 0.6))
             .flex()
             .flex_col()
             .children(items.iter().enumerate().map(|(n, item)| {
@@ -220,12 +278,7 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
                             .flex()
                             .flex_col()
                             // A tight item's paragraph has no margins.
-                            .children(item.blocks.iter().map(|b| match b {
-                                Block::Paragraph(text) => {
-                                    inline_text(text, page, c.fg, false).into_any_element()
-                                }
-                                other => render_block(other, page, cx),
-                            })),
+                            .children(flow_blocks(&item.blocks, Flow::Item, page, cx)),
                     )
                     .into_any_element()
             }))
@@ -246,7 +299,7 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
                     .when(head, |d| d.bg(c.code_bg).font_weight(FontWeight::SEMIBOLD))
                     .when(align == Align::Center, |d| d.text_center())
                     .when(align == Align::Right, |d| d.text_right())
-                    .child(inline_text(text, page, c.fg, head))
+                    .child(inline_text(text, page, c.fg, head, BODY, true))
             };
             let row = |cells: &[Inlines], head: bool, page: &mut Page| {
                 div().flex().border_b_1().border_color(c.border).children(
@@ -261,7 +314,6 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
                 )
             };
             let mut table = div()
-                .my(px(BODY * 0.8))
                 .flex()
                 .flex_col()
                 .border_t_1()
@@ -280,7 +332,6 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
             let path = page.folder.join(url);
             if local && path.is_file() {
                 div()
-                    .my(px(BODY * 0.6))
                     .child(
                         gpui_kit::img(path)
                             .max_w_full()
@@ -292,7 +343,6 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
                 // Remote images aren't loaded (the Swift page's CSP allows
                 // only file: and data:).
                 div()
-                    .my(px(BODY * 0.6))
                     .text_color(c.quote)
                     .child(if alt.is_empty() {
                         url.clone()
@@ -302,65 +352,33 @@ fn render_block(block: &Block, page: &mut Page, cx: &mut Context<EditorTab>) -> 
                     .into_any_element()
             }
         }
-        Block::Rule => div()
-            .my(px(BODY * 1.5))
-            .h(px(1.))
-            .bg(c.border)
-            .into_any_element(),
+        Block::Rule => div().h(px(1.)).bg(c.border).into_any_element(),
     }
 }
 
-/// `text` as one paragraph: bold, italic, struck-through and code runs,
-/// and links that open when clicked.
-fn inline_text(text: &Inlines, page: &mut Page, color: Hsla, bold: bool) -> AnyElement {
-    let c = page.colors;
+/// `text` as one paragraph at `size`: bold, italic, struck-through and code
+/// runs, and links that open when clicked. With inline code it's laid out
+/// word by word (`flowed_text`), since a text's runs share one size.
+fn inline_text(
+    text: &Inlines,
+    page: &mut Page,
+    color: Hsla,
+    bold: bool,
+    size: f32,
+    in_table: bool,
+) -> AnyElement {
+    if text.iter().any(|span| span.code) {
+        return flowed_text(text, page, color, bold, size, in_table);
+    }
     let mut string = String::new();
     let mut runs = Vec::new();
     let mut links: Vec<(Range<usize>, String)> = Vec::new();
-    // Swift's `code` padding (0.4em each side), as a space of the page's
-    // font in the code's background: runs take no padding of their own.
-    let pad = |string: &mut String, runs: &mut Vec<TextRun>| {
-        string.push(' ');
-        runs.push(TextRun {
-            len: 1,
-            font: gpui_kit::font(page.font),
-            color,
-            background_color: Some(c.code_bg),
-            underline: None,
-            strikethrough: None,
-        });
-    };
     for span in text {
-        if span.code {
-            pad(&mut string, &mut runs);
-        }
         let start = string.len();
         string.push_str(&span.text);
-        let mut font = gpui_kit::font(if span.code { MONO } else { page.font });
-        font.features = gpui_kit::FontFeatures::disable_ligatures();
-        if span.bold || bold {
-            font.weight = FontWeight::BOLD;
-        }
-        if span.italic {
-            font.style = FontStyle::Italic;
-        }
-        let run_color = if span.link.is_some() { c.link } else { color };
-        runs.push(TextRun {
-            len: span.text.len(),
-            font,
-            color: run_color,
-            background_color: span.code.then_some(c.code_bg),
-            underline: None,
-            strikethrough: span.strike.then_some(StrikethroughStyle {
-                thickness: px(1.),
-                color: Some(run_color),
-            }),
-        });
+        runs.push(span_run(span, page, color, bold));
         if let Some(link) = &span.link {
             links.push((start..string.len(), link.clone()));
-        }
-        if span.code {
-            pad(&mut string, &mut runs);
         }
     }
     let styled = StyledText::new(SharedString::from(string)).with_runs(runs);
@@ -368,38 +386,187 @@ fn inline_text(text: &Inlines, page: &mut Page, color: Hsla, bold: bool) -> AnyE
         return styled.into_any_element();
     }
     let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
+    let open = link_opener(page);
+    InteractiveText::new(("md-text", page.id()), styled)
+        .on_click(ranges, move |index, _, cx: &mut App| {
+            if let Some(url) = targets.get(index) {
+                open(url, cx);
+            }
+        })
+        .into_any_element()
+}
+
+/// A span's run (its whole text) in the page's font, or the code font.
+fn span_run(span: &markdown_blocks::Span, page: &Page, color: Hsla, bold: bool) -> TextRun {
+    let c = page.colors;
+    let mut font = gpui_kit::font(if span.code { MONO } else { page.font });
+    font.features = gpui_kit::FontFeatures::disable_ligatures();
+    if span.bold || bold {
+        font.weight = FontWeight::BOLD;
+    }
+    if span.italic {
+        font.style = FontStyle::Italic;
+    }
+    let run_color = if span.link.is_some() { c.link } else { color };
+    TextRun {
+        len: span.text.len(),
+        font,
+        color: run_color,
+        background_color: None,
+        underline: None,
+        strikethrough: span.strike.then_some(StrikethroughStyle {
+            thickness: px(1.),
+            color: Some(run_color),
+        }),
+    }
+}
+
+/// What a click on a link does: web and mail links open in the browser,
+/// files in the editor, `#anchors` scroll to their heading.
+fn link_opener(page: &Page) -> Rc<dyn Fn(&str, &mut App)> {
     let (folder, editor, scroll, anchors) = (
         page.folder.clone(),
         page.editor.clone(),
         page.scroll.clone(),
         page.anchors.clone(),
     );
-    InteractiveText::new(("md-text", page.id()), styled)
-        .on_click(ranges, move |index, _, cx: &mut App| {
-            let Some(url) = targets.get(index) else {
-                return;
-            };
-            match markdown_blocks::resolve_link(url, &folder) {
-                markdown_blocks::LinkTarget::Web(url) => cx.open_url(&url),
-                markdown_blocks::LinkTarget::Anchor(anchor) => {
-                    if let Some((block, _)) = anchors.iter().find(|(_, slug)| *slug == anchor) {
-                        scroll.scroll_to_top_of_item(*block);
-                        let _ = editor.update(cx, |_, cx| cx.notify());
-                    }
+    Rc::new(
+        move |url, cx| match markdown_blocks::resolve_link(url, &folder) {
+            markdown_blocks::LinkTarget::Web(url) => cx.open_url(&url),
+            markdown_blocks::LinkTarget::Anchor(anchor) => {
+                if let Some((block, _)) = anchors.iter().find(|(_, slug)| *slug == anchor) {
+                    scroll.scroll_to_top_of_item(*block);
+                    let _ = editor.update(cx, |_, cx| cx.notify());
                 }
-                markdown_blocks::LinkTarget::File(path) => {
-                    let _ = editor.update(cx, |_, cx| {
-                        cx.emit(crate::editor_git::EditorGitAction {
-                            action: format!("open:{}", path.display()),
-                            line: 0,
-                        })
-                    });
-                }
-                // A page is never navigated elsewhere, as the Swift
-                // preview keeps it.
-                markdown_blocks::LinkTarget::Other => {}
             }
-        })
+            markdown_blocks::LinkTarget::File(path) => {
+                let _ = editor.update(cx, |_, cx| {
+                    cx.emit(crate::editor_git::EditorGitAction {
+                        action: format!("open:{}", path.display()),
+                        line: 0,
+                    })
+                });
+            }
+            // A page is never navigated elsewhere, as the Swift preview
+            // keeps it.
+            markdown_blocks::LinkTarget::Other => {}
+        },
+    )
+}
+
+/// `text` split after each run of whitespace: the places a line may break.
+fn words(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut in_space = false;
+    for (i, ch) in text.char_indices() {
+        let space = ch.is_whitespace();
+        if in_space && !space {
+            out.push(&text[start..i]);
+            start = i;
+        }
+        in_space = space;
+    }
+    if start < text.len() {
+        out.push(&text[start..]);
+    }
+    out
+}
+
+/// A paragraph with inline code, word by word in a wrapping row: each word
+/// with what's attached to it (a code span and the punctuation after it
+/// break together), code at 0.9em of `size` in its rounded background
+/// (padded 0.4em at its ends, 0.3em in a table), broken across lines the
+/// way a browser breaks an inline box, padding and corners only at its
+/// ends.
+fn flowed_text(
+    text: &Inlines,
+    page: &mut Page,
+    color: Hsla,
+    bold: bool,
+    size: f32,
+    in_table: bool,
+) -> AnyElement {
+    let c = page.colors;
+    let code_size = size * 0.9;
+    let pad = code_size * if in_table { 0.3 } else { 0.4 };
+    let open = link_opener(page);
+    // Words: pieces that don't break apart (span, its text, the code
+    // span's ends), and line breaks.
+    enum Word {
+        Pieces(Vec<(usize, String, bool, bool)>),
+        Break,
+    }
+    let mut flow: Vec<Word> = vec![Word::Pieces(Vec::new())];
+    for (i, span) in text.iter().enumerate() {
+        let parts = words(&span.text);
+        let count = parts.len();
+        for (k, part) in parts.into_iter().enumerate() {
+            if let Some(Word::Pieces(pieces)) = flow.last_mut() {
+                pieces.push((i, part.to_string(), k == 0, k + 1 == count));
+            }
+            if part.ends_with(char::is_whitespace) {
+                if part.contains('\n') && !span.code {
+                    flow.push(Word::Break);
+                }
+                flow.push(Word::Pieces(Vec::new()));
+            }
+        }
+    }
+    let mut elements = Vec::with_capacity(flow.len());
+    for word in flow {
+        let pieces = match word {
+            Word::Break => {
+                elements.push(div().w_full().h(px(0.)).into_any_element());
+                continue;
+            }
+            Word::Pieces(pieces) if pieces.is_empty() => continue,
+            Word::Pieces(pieces) => pieces,
+        };
+        let mut row = div().flex().flex_none().items_center();
+        for (i, piece, first, last) in pieces {
+            let span = &text[i];
+            let shown = if span.code {
+                piece.clone()
+            } else {
+                // A hard break's newline shows as nothing.
+                piece.replace('\n', "")
+            };
+            let mut run = span_run(span, page, color, bold);
+            run.len = shown.len();
+            let styled = StyledText::new(SharedString::from(shown)).with_runs(vec![run]);
+            let element = if span.code {
+                div()
+                    .bg(c.code_bg)
+                    .font_family(MONO)
+                    .text_size(px(code_size))
+                    .line_height(gpui_kit::relative(1.5))
+                    .when(first, |d| d.pl(px(pad)).rounded_l(px(4.)))
+                    .when(last, |d| d.pr(px(pad)).rounded_r(px(4.)))
+                    .child(styled)
+            } else {
+                div().child(styled)
+            };
+            let element = match span.link.clone() {
+                Some(url) => {
+                    let open = open.clone();
+                    element
+                        .id(("md-link", page.id()))
+                        .cursor_pointer()
+                        .on_click(move |_, _, cx| open(&url, cx))
+                        .into_any_element()
+                }
+                None => element.into_any_element(),
+            };
+            row = row.child(element);
+        }
+        elements.push(row.into_any_element());
+    }
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .children(elements)
         .into_any_element()
 }
 
@@ -526,7 +693,6 @@ fn code_block(
     let id = page.id();
     div()
         .relative()
-        .my(px(BODY * 0.8))
         .px(px(16.))
         .py(px(14.))
         .when(shell, |d| d.pr(px(72.)))

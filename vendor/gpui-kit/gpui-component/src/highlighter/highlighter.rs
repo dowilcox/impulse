@@ -166,6 +166,122 @@ pub(crate) fn parse_input_bytes(text: &Rope, offset: usize) -> &[u8] {
     &chunk.as_bytes()[offset - chunk_byte_ix..]
 }
 
+// Impulse: merge-conflict markers (`<<<<<<<`, `|||||||`, `=======`,
+// `>>>>>>>` lines of a complete conflict) are left out of the parse, as if
+// they weren't there, so each side's code parses and colors as code: a
+// marker in the middle of a function otherwise turns the rest of it into
+// an error node and its keywords lose their colors. Monaco's line
+// tokenizer copes the same way. The ranges for `Parser::set_included_ranges`
+// around the markers; none (the whole text) without a conflict.
+pub(crate) fn conflict_free_ranges(text: &Rope) -> Vec<tree_sitter::Range> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Marker {
+        Start,
+        Middle,
+        End,
+    }
+    fn marker(prefix: &[u8]) -> Option<Marker> {
+        let (head, rest) = prefix.split_at(prefix.len().min(7));
+        if head.len() < 7 {
+            return None;
+        }
+        let ends = |spaced: bool| match rest.first() {
+            None | Some(b'\r' | b'\n') => true,
+            Some(b' ' | b'\t') => spaced,
+            _ => false,
+        };
+        match head {
+            b"<<<<<<<" if ends(true) => Some(Marker::Start),
+            b"|||||||" if ends(true) => Some(Marker::Middle),
+            b"=======" if ends(false) => Some(Marker::Middle),
+            b">>>>>>>" if ends(true) => Some(Marker::End),
+            _ => None,
+        }
+    }
+
+    // Marker lines: (start byte, end byte past the newline, row).
+    let mut markers: Vec<(usize, usize, usize)> = Vec::new();
+    let mut block: Vec<(usize, usize, usize)> = Vec::new();
+    let mut in_block = false;
+    let mut line = |start: usize, end: usize, row: usize, prefix: &[u8]| {
+        match marker(prefix) {
+            Some(Marker::Start) => {
+                block.clear();
+                block.push((start, end, row));
+                in_block = true;
+            }
+            Some(Marker::Middle) if in_block => block.push((start, end, row)),
+            Some(Marker::End) if in_block => {
+                block.push((start, end, row));
+                markers.append(&mut block);
+                in_block = false;
+            }
+            _ => {}
+        }
+    };
+    let mut prefix = [0u8; 8];
+    let mut prefix_len = 0;
+    let (mut offset, mut row, mut line_start) = (0, 0, 0);
+    for chunk in text.chunks() {
+        for &byte in chunk.as_bytes() {
+            if prefix_len < prefix.len() {
+                prefix[prefix_len] = byte;
+                prefix_len += 1;
+            }
+            offset += 1;
+            if byte == b'\n' {
+                line(line_start, offset, row, &prefix[..prefix_len]);
+                row += 1;
+                line_start = offset;
+                prefix_len = 0;
+            }
+        }
+    }
+    if line_start < offset {
+        line(line_start, offset, row, &prefix[..prefix_len]);
+    }
+    if markers.is_empty() {
+        return Vec::new();
+    }
+
+    let point = |offset: usize| {
+        let p = text.offset_to_point(offset);
+        Point::new(p.row, p.column)
+    };
+    let mut ranges = Vec::with_capacity(markers.len() + 1);
+    let mut from = (0, Point::new(0, 0));
+    for (start, end, row) in markers {
+        if start > from.0 {
+            ranges.push(tree_sitter::Range {
+                start_byte: from.0,
+                end_byte: start,
+                start_point: from.1,
+                end_point: Point::new(row, 0),
+            });
+        }
+        from = (end, point(end));
+    }
+    if text.len() > from.0 {
+        ranges.push(tree_sitter::Range {
+            start_byte: from.0,
+            end_byte: text.len(),
+            start_point: from.1,
+            end_point: point(text.len()),
+        });
+    }
+    if ranges.is_empty() {
+        // Nothing but markers: an empty range, since no ranges at all
+        // would mean the whole text.
+        ranges.push(tree_sitter::Range {
+            start_byte: 0,
+            end_byte: 0,
+            start_point: Point::new(0, 0),
+            end_point: Point::new(0, 0),
+        });
+    }
+    ranges
+}
+
 fn injection_range_len(range: &tree_sitter::Range) -> usize {
     range.end_byte.saturating_sub(range.start_byte)
 }
@@ -665,6 +781,10 @@ impl SyntaxHighlighter {
         };
 
         let options = ParseOptions::new().progress_callback(&mut progress);
+        // Impulse: conflict markers left out (`conflict_free_ranges`).
+        let _ = self
+            .parser
+            .set_included_ranges(&conflict_free_ranges(text));
         let new_tree = self.parser.parse_with_options(
             &mut move |offset, _| parse_input_bytes(text, offset),
             Some(&old_tree),
@@ -1134,6 +1254,17 @@ impl SyntaxHighlighter {
         // }
 
         highlights
+    }
+
+    // Impulse: the capture names over `range` of the parsed text, injected
+    // languages included, in precedence order (later ones win where they
+    // overlap), for a host that colors captures its own way: Review imitates
+    // highlight.js's classes, which a capture's name alone can't say.
+    pub fn captures(&self, range: Range<usize>) -> Vec<(Range<usize>, SharedString)> {
+        self.match_styles(range)
+            .into_iter()
+            .map(|item| (item.range, item.name))
+            .collect()
     }
 
     /// Parses `text` without reusing a tree from unrelated text and returns

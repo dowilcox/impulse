@@ -17,7 +17,10 @@ use gpui_base::input::{
 use ropey::Rope;
 use tree_sitter::{InputEdit, ParseOptions, Point};
 
-use super::{LanguageRegistry, SyntaxHighlighter, highlighter::parse_input_bytes};
+use super::{
+    LanguageRegistry, SyntaxHighlighter,
+    highlighter::{conflict_free_ranges, parse_input_bytes},
+};
 
 pub(crate) fn input_highlighter_factory() -> InputHighlighterFactory {
     Rc::new(|language| {
@@ -96,6 +99,9 @@ impl TreeSitterInputHighlighter {
                     let (mut parser, grammar) =
                         LanguageRegistry::singleton().parser(&language).ok()?;
                     parser.set_language(&grammar).ok()?;
+                    // Impulse: conflict markers left out, as in the
+                    // synchronous parse (`conflict_free_ranges`).
+                    let _ = parser.set_included_ranges(&conflict_free_ranges(&text));
                     let mut progress = |_: &tree_sitter::ParseState| {
                         if parse_cancel.load(Ordering::Relaxed) {
                             std::ops::ControlFlow::Break(())

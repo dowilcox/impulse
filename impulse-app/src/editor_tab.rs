@@ -174,8 +174,9 @@ pub(crate) fn grammar_for<'a>(language: &'a str, path: &Path) -> &'a str {
 /// blinking, whitespace markers, auto-closing brackets, fold chevrons only
 /// while the pointer is over the gutter, the theme's line number colors and
 /// a selection that stays (dimmer) when the window is inactive, one scroll
-/// axis per trackpad gesture, the I-beam kept while ⌥ is held, and a 300 ms
-/// hover. The Diff View's sides take them too.
+/// axis per trackpad gesture, the I-beam kept while ⌥ is held, a 300 ms
+/// hover and a scrollbar that stays shown. The Diff View's sides take them
+/// too.
 pub(crate) fn apply_editor_options(
     state: &mut EditorState,
     settings: &impulse_kit::settings::Settings,
@@ -236,6 +237,8 @@ pub(crate) fn apply_editor_options(
     state.set_scroll_predominant_axis(true);
     state.set_hide_column_select_pointer(true, cx);
     state.set_hover_delay(std::time::Duration::from_millis(300));
+    // Monaco's vertical slider stays shown, not only while scrolling.
+    state.set_scrollbar_mode(Some(gpui_kit::base::ScrollbarMode::Always), cx);
 }
 
 impl EditorTab {
@@ -1909,15 +1912,21 @@ impl Render for EditorTab {
                 (None, Some(_)) => d.child(self.diff_element(editor, cx)),
                 (None, None) => d.child(editor),
                 (Some(false), _) => d.child(self.preview_element(cx)),
+                // The editor on the left half, the preview from 1 pt past
+                // the middle, as the Swift tab lays them out (no rule
+                // between them). A fixed half: flex shares would give the
+                // padded preview more.
                 (Some(true), _) => d
                     .flex()
-                    .child(gpui_kit::div().flex_1().min_w_0().h_full().child(editor))
                     .child(
                         gpui_kit::div()
-                            .w(px(1.))
+                            .flex_none()
+                            .w(gpui_kit::relative(0.5))
+                            .min_w_0()
                             .h_full()
-                            .bg(gpui_kit::component::ActiveTheme::theme(&**cx).border),
+                            .child(editor),
                     )
+                    .child(gpui_kit::div().flex_none().w(px(1.)).h_full())
                     .child(self.preview_element(cx)),
             })
     }
