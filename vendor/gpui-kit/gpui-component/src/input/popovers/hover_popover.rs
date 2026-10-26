@@ -172,7 +172,11 @@ impl Element for Popover {
                 .id("hover-popover-content")
                 .flex_none()
                 .occlude()
-                .p_1()
+                // Impulse: room between the text and the border (Monaco's
+                // hover pads its contents 4px 8px), not p_1, where the text
+                // touched the border.
+                .px(px(8.))
+                .py(px(6.))
                 // Impulse: the editor's font size (the theme's mono size,
                 // which the host sets to it), not text_xs, so a hover reads
                 // at the size of the code it explains.

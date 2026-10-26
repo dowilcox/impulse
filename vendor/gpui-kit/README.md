@@ -201,6 +201,10 @@ because gpui-component builds that struct as a full literal.
   theme's `mono_font_size` (the host sets it to the editor's font size), not
   `text_xs` and an 11px code block.
 
+- **Padding in hovers and diagnostics** (`input/popovers/hover_popover.rs`,
+  `input/popovers/diagnostic_popover.rs`): 6 by 8 points around the text, as
+  Monaco pads its hover, instead of 4 (2 by 4 for a diagnostic), where the
+  text touched the border.
 - **Hover popover placement** (`input/popovers/hover_popover.rs`): the room
   above a word is measured from the editor's top, not the window's, so a
   hover on the first lines opens below the word instead of over the tabs and

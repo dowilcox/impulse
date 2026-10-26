@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, AppContext as _, Context, Empty, Entity, IntoElement, Render, Styled, WeakEntity, Window,
+    px,
 };
 
 use crate::{
@@ -51,8 +52,9 @@ impl Render for DiagnosticPopover {
             self.diagnostic.range.clone(),
             move |window, cx| render_markdown("message", message.clone(), window, cx),
         )
-        .px_1()
-        .py_0p5()
+        // Impulse: as the hover popover's (hover_popover.rs).
+        .px(px(8.))
+        .py(px(6.))
         .bg(bg)
         .text_color(fg)
         .border_1()
