@@ -225,9 +225,10 @@ settings! {
     terminal_scroll_on_output: bool = "terminal_scroll_on_output" => true,
     terminal_allow_hyperlink: bool = "terminal_allow_hyperlink" => true,
     terminal_allow_notifications: bool = "terminal_allow_notifications" => true,
-    /// Play Impulse's chime with desktop notifications (Rust app; the Swift
-    /// app plays the system's default sound and doesn't read this key).
-    notification_sound: bool = "notification_sound" => true,
+    /// The sound Impulse plays with desktop notifications: ack, two-tone,
+    /// chime or off (Rust app; the Swift app plays the system's default
+    /// sound and doesn't read this key).
+    notification_sound: String = "notification_sound" => "ack".into(),
     terminal_attention_on_long_command: bool = "terminal_attention_on_long_command" => true,
     terminal_long_command_seconds: i64 = "terminal_long_command_seconds" => 30,
     terminal_bold_is_bright: bool = "terminal_bold_is_bright" => true,
@@ -292,6 +293,9 @@ impl Settings {
             "left" | "right" | "both" => meta,
             _ => "off".into(),
         };
+        if !["ack", "two-tone", "chime", "off"].contains(&self.notification_sound.as_str()) {
+            self.notification_sound = "ack".into();
+        }
         if !["ask", "trusted_projects", "off"].contains(&self.agent_task_creation.as_str()) {
             self.agent_task_creation = "ask".into();
         }
@@ -1038,8 +1042,9 @@ pub fn catalog() -> Vec<SettingItem> {
         toggle("terminal_attention_on_bell", "Request attention on bell", Terminal, "Bell & notifications", none),
         toggle("terminal_allow_notifications", "Allow terminal notifications", Terminal, "Bell & notifications",
             Some("OSC 9 / 99 / 777 notifications from programs and agents.")),
-        toggle("notification_sound", "Notification sound", Terminal, "Bell & notifications",
-            Some("Play Impulse's chime with desktop notifications.")),
+        choice("notification_sound", "Notification sound", Terminal, "Bell & notifications",
+            &[("ack", "Acknowledge"), ("two-tone", "Two-tone"), ("chime", "Chime"), ("off", "Off")],
+            Some("Played with desktop notifications, in place of the system's sound.")),
         toggle("terminal_attention_on_long_command", "Notify when long commands finish", Terminal,
             "Bell & notifications", none),
         integer("terminal_long_command_seconds", "Long command threshold", Terminal, "Bell & notifications",
@@ -1158,24 +1163,35 @@ mod tests {
     }
 
     #[test]
-    fn the_notification_sound_is_on_unless_turned_off() {
-        assert!(Settings::default().notification_sound);
-        assert!(Settings::from_json(&json!({})).notification_sound);
-        assert!(
-            Settings::from_json(&json!({"notification_sound": "no"})).notification_sound,
-            "a mistyped value takes its default"
-        );
-        let off = Settings::from_json(&json!({"notification_sound": false}));
-        assert!(!off.notification_sound);
-        assert_eq!(off.to_json()["notification_sound"], json!(false));
+    fn the_notification_sound_is_ack_unless_chosen() {
+        assert_eq!(Settings::default().notification_sound, "ack");
+        assert_eq!(Settings::from_json(&json!({})).notification_sound, "ack");
+        // Loaded settings are validated (`validate`), as the store does.
+        let load = |value: Value| {
+            let mut settings = Settings::from_json(&value);
+            settings.validate();
+            settings
+        };
+        for value in [json!("beep"), json!(true), json!(false)] {
+            assert_eq!(
+                load(json!({ "notification_sound": value })).notification_sound,
+                "ack",
+                "{value} isn't a sound"
+            );
+        }
+        for name in ["two-tone", "chime", "off"] {
+            let chosen = load(json!({ "notification_sound": name }));
+            assert_eq!(chosen.notification_sound, name);
+            assert_eq!(chosen.to_json()["notification_sound"], json!(name));
+        }
         let schema = json_schema();
         assert_eq!(
-            schema["properties"]["notification_sound"]["type"],
-            json!("boolean")
+            schema["properties"]["notification_sound"]["enum"],
+            json!(["ack", "two-tone", "chime", "off"])
         );
         assert_eq!(
             schema["properties"]["notification_sound"]["default"],
-            json!(true)
+            json!("ack")
         );
     }
 

@@ -262,7 +262,7 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 | Audible bell                     | `terminal_bell`                      | on / off | on      | Play the system alert sound when a program rings the bell.                                                                    |
 | Request attention on bell        | `terminal_attention_on_bell`         | on / off | on      | Mark the terminal as needing attention, bounce the Dock icon if Impulse is in the background, and post a "Bell" notification. |
 | Allow terminal notifications     | `terminal_allow_notifications`       | on / off | on      | OSC 9 / 99 / 777 notifications from programs and agents.                                                                      |
-| Notification sound               | `notification_sound`                 | on / off | on      | Play Impulse's chime with each desktop notification, instead of the system's sound.                                           |
+| Notification sound               | `notification_sound`                 | `ack`, `two-tone`, `chime`, `off` (Acknowledge, Two-tone, Chime, Off) | `ack`   | Impulse's sound for each desktop notification, instead of the system's. Picking one plays it.                                 |
 | Notify when long commands finish | `terminal_attention_on_long_command` | on / off | on      | Tell you when a command that ran longer than the threshold below finishes.                                                    |
 | Long command threshold           | `terminal_long_command_seconds`      | 1–86,400 | 30      | Seconds.                                                                                                                      |
 

@@ -7,7 +7,7 @@
 //! terminal; `osascript` has no way to say. Where it prints the
 //! notification's id, a terminal's notifications are withdrawn when its
 //! attention clears (`clear`), and only its latest ten stay up, as
-//! Swift's `DesktopNotifier` does. With `sound`, Impulse's own chime
+//! Swift's `DesktopNotifier` does. With `sound`, Impulse's own sound
 //! (`notification_sound`) plays with it; on Linux the notification then
 //! asks the desktop not to play one too (`suppress-sound`), and on macOS
 //! `display notification` is given no `sound name`.
@@ -121,7 +121,7 @@ const CLICK: &str = "default";
 /// Show a notification, for a terminal (`terminal`, its entity id) or
 /// not:
 /// `title`, then `subtitle` (the workspace and tab) and `body`, with
-/// Impulse's chime when `sound` (the `notification_sound` setting). Runs
+/// Impulse's `sound` (the `notification_sound` setting's). Runs
 /// off the main thread; failures are ignored. The receiver hears once if
 /// the notification is clicked (it closes otherwise).
 pub fn post(
@@ -129,18 +129,18 @@ pub fn post(
     subtitle: &str,
     body: &str,
     terminal: Option<u64>,
-    sound: bool,
+    sound: Option<crate::notification_sound::Sound>,
 ) -> Option<async_channel::Receiver<()>> {
     // A snapshot posts no sound, and on the Mac no notification: nothing
     // of it shows on screen (`debug_snapshot`).
     #[cfg(debug_assertions)]
-    let sound = sound && !crate::debug_snapshot::is_active();
+    let sound = sound.filter(|_| !crate::debug_snapshot::is_active());
     #[cfg(all(debug_assertions, target_os = "macos"))]
     if crate::debug_snapshot::is_active() {
         return None;
     }
-    if sound {
-        crate::notification_sound::play();
+    if let Some(sound) = sound {
+        crate::notification_sound::play(sound);
     }
     let (title, subtitle, body) = (title.to_string(), subtitle.to_string(), body.to_string());
     let (clicked, receiver) = async_channel::bounded(1);
@@ -148,7 +148,8 @@ pub fn post(
         .name("impulse-notification".into())
         .spawn(move || {
             let options = options();
-            let Some(mut command) = command(&title, &subtitle, &body, options, sound) else {
+            let Some(mut command) = command(&title, &subtitle, &body, options, sound.is_some())
+            else {
                 return;
             };
             let piped = options.actions || options.print_id;

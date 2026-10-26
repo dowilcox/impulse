@@ -815,7 +815,7 @@ impl Workbench {
                         "",
                         &sentence,
                         None,
-                        crate::settings_store::SettingsStore::get(cx).notification_sound,
+                        crate::notification_sound::chosen(cx),
                     );
                 }
             }

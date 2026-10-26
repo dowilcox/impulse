@@ -1,27 +1,88 @@
-//! Impulse's notification sound: a soft two-note chime
-//! (`assets/sounds/notification.wav`, made by
-//! `scripts/sounds/make-notification-sound.py`), compiled in so no install
-//! step has to copy it. `agent_notify::post` plays it with each desktop
-//! notification while `notification_sound` is on, in place of the
-//! desktop's own sound: NSSound from memory on macOS; on Linux PulseAudio's
-//! or PipeWire's player, else libcanberra's, from a copy in the cache
-//! folder. Nothing when none of them is there.
+//! Impulse's notification sounds: two console chirps and a soft chime
+//! (`assets/sounds/`, made by `scripts/sounds/make-notification-sound.py`),
+//! compiled in so no install step has to copy them. `agent_notify::post`
+//! plays the one `notification_sound` names with each desktop
+//! notification, in place of the desktop's own sound: NSSound from memory
+//! on macOS; on Linux PulseAudio's or PipeWire's player, else libcanberra's,
+//! from a copy in the cache folder. Nothing when none of them is there.
 
-/// The sound: 16-bit mono PCM WAV, peaking at -3 dBFS.
-pub(crate) const WAV: &[u8] = include_bytes!("../../assets/sounds/notification.wav");
+/// A notification sound (`notification_sound`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sound {
+    /// Two chirps flicking upward, then a settled blip (the default).
+    Ack,
+    /// A chirp sliding up, answered by one sliding down.
+    TwoTone,
+    /// Two soft notes rising a fifth.
+    Chime,
+}
 
-/// The playback volume (0 to 1). The file is normalized to -3 dBFS; at
-/// 0.2 (-14 dB) it sits level with the system's alert sounds.
+impl Sound {
+    const ALL: [Sound; 3] = [Sound::Ack, Sound::TwoTone, Sound::Chime];
+
+    /// The setting's value as a sound; none for "off".
+    pub(crate) fn named(name: &str) -> Option<Sound> {
+        Sound::ALL.into_iter().find(|sound| sound.name() == name)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Sound::Ack => "ack",
+            Sound::TwoTone => "two-tone",
+            Sound::Chime => "chime",
+        }
+    }
+
+    /// 16-bit mono PCM WAV, peaking at -3 dBFS at most.
+    fn wav(self) -> &'static [u8] {
+        match self {
+            Sound::Ack => include_bytes!("../../assets/sounds/ack.wav"),
+            Sound::TwoTone => include_bytes!("../../assets/sounds/two-tone.wav"),
+            Sound::Chime => include_bytes!("../../assets/sounds/chime.wav"),
+        }
+    }
+}
+
+/// The sound the settings choose, if any.
+pub(crate) fn chosen(cx: &gpui_kit::App) -> Option<Sound> {
+    Sound::named(&crate::settings_store::SettingsStore::get(cx).notification_sound)
+}
+
+/// Play the sound when it's chosen (in Settings or settings.json), so
+/// picking one lets you hear it.
+pub(crate) fn preview_on_change(cx: &mut gpui_kit::App) {
+    use crate::settings_store::SettingsStore;
+    let mut current = SettingsStore::get(cx).notification_sound.clone();
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let now = &SettingsStore::get(cx).notification_sound;
+        if *now == current {
+            return;
+        }
+        current = now.clone();
+        #[cfg(debug_assertions)]
+        if crate::debug_snapshot::is_active() {
+            return;
+        }
+        if let Some(sound) = Sound::named(&current) {
+            play(sound);
+        }
+    })
+    .detach();
+}
+
+/// The playback volume (0 to 1). The files are no louder than the chime,
+/// which peaks at -3 dBFS; at 0.2 (-14 dB) they sit level with the
+/// system's alert sounds.
 const VOLUME: f32 = 0.2;
 
-/// Play the sound once, without waiting for it. On the main thread on
+/// Play `sound` once, without waiting for it. On the main thread on
 /// macOS.
-pub(crate) fn play() {
+pub(crate) fn play(sound: Sound) {
     #[cfg(target_os = "macos")]
-    mac::play();
+    mac::play(sound);
     #[cfg(not(target_os = "macos"))]
-    std::thread::spawn(|| {
-        let Some(file) = cached_file() else {
+    std::thread::spawn(move || {
+        let Some(file) = cached_file(sound) else {
             return;
         };
         let Some((program, args)) = player(&file) else {
@@ -43,11 +104,12 @@ mod mac {
     use objc::{msg_send, sel, sel_impl};
 
     thread_local! {
-        /// The NSSound, made once (retained for the run).
-        static SOUND: *mut Object = make();
+        /// Each sound's NSSound, made when first played (retained for the
+        /// run), in `Sound::ALL`'s order.
+        static SOUNDS: [std::cell::Cell<Option<*mut Object>>; 3] = Default::default();
     }
 
-    fn make() -> *mut Object {
+    fn make(wav: &'static [u8]) -> *mut Object {
         let (Some(data_class), Some(sound_class)) = (Class::get("NSData"), Class::get("NSSound"))
         else {
             return std::ptr::null_mut();
@@ -56,8 +118,8 @@ mod mac {
         // and an NSSound made from it; both stay alive for the run.
         unsafe {
             let data: *mut Object = msg_send![data_class,
-                dataWithBytesNoCopy: super::WAV.as_ptr() as *mut std::ffi::c_void
-                length: super::WAV.len()
+                dataWithBytesNoCopy: wav.as_ptr() as *mut std::ffi::c_void
+                length: wav.len()
                 freeWhenDone: NO];
             if data.is_null() {
                 return std::ptr::null_mut();
@@ -71,8 +133,14 @@ mod mac {
         }
     }
 
-    pub(super) fn play() {
-        SOUND.with(|&sound| {
+    pub(super) fn play(which: super::Sound) {
+        let index = super::Sound::ALL.iter().position(|s| *s == which);
+        SOUNDS.with(|sounds| {
+            let Some(cell) = index.map(|i| &sounds[i]) else {
+                return;
+            };
+            let sound = cell.get().unwrap_or_else(|| make(which.wav()));
+            cell.set(Some(sound));
             if sound.is_null() {
                 return;
             }
@@ -89,30 +157,34 @@ mod mac {
     }
 }
 
-/// The sound written to `<cache>/impulse/notification.wav` for players that
-/// take a file (once a run, and only when it differs).
+/// `sound` written to `<cache>/impulse/<name>.wav` for players that take
+/// a file (once a run, and only when it differs).
 #[cfg(not(target_os = "macos"))]
-fn cached_file() -> Option<std::path::PathBuf> {
+fn cached_file(sound: Sound) -> Option<std::path::PathBuf> {
     use std::sync::OnceLock;
-    static FILE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
-    FILE.get_or_init(|| {
-        let dir = cache_dir(std::env::var_os("XDG_CACHE_HOME"), std::env::var_os("HOME"))?
-            .join("impulse");
-        let file = dir.join("notification.wav");
-        if std::fs::read(&file).is_ok_and(|bytes| bytes == WAV) {
-            return Some(file);
-        }
-        std::fs::create_dir_all(&dir).ok()?;
-        let partial = dir.join(format!("notification.wav.{}", std::process::id()));
-        std::fs::write(&partial, WAV).ok()?;
-        std::fs::rename(&partial, &file)
-            .inspect_err(|_| {
-                let _ = std::fs::remove_file(&partial);
-            })
-            .ok()?;
-        Some(file)
-    })
-    .clone()
+    static FILES: [OnceLock<Option<std::path::PathBuf>>; 3] =
+        [OnceLock::new(), OnceLock::new(), OnceLock::new()];
+    let index = Sound::ALL.iter().position(|s| *s == sound)?;
+    FILES[index]
+        .get_or_init(|| {
+            let dir = cache_dir(std::env::var_os("XDG_CACHE_HOME"), std::env::var_os("HOME"))?
+                .join("impulse");
+            let name = format!("{}.wav", sound.name());
+            let file = dir.join(&name);
+            if std::fs::read(&file).is_ok_and(|bytes| bytes == sound.wav()) {
+                return Some(file);
+            }
+            std::fs::create_dir_all(&dir).ok()?;
+            let partial = dir.join(format!("{name}.{}", std::process::id()));
+            std::fs::write(&partial, sound.wav()).ok()?;
+            std::fs::rename(&partial, &file)
+                .inspect_err(|_| {
+                    let _ = std::fs::remove_file(&partial);
+                })
+                .ok()?;
+            Some(file)
+        })
+        .clone()
 }
 
 /// The user's cache folder: `$XDG_CACHE_HOME` when it's absolute, else
@@ -195,8 +267,33 @@ mod tests {
     }
 
     #[test]
-    fn the_sound_is_a_short_quiet_chime() {
-        let (fmt, data) = chunks(WAV);
+    fn the_setting_names_the_sounds() {
+        assert_eq!(Sound::named("ack"), Some(Sound::Ack));
+        assert_eq!(Sound::named("two-tone"), Some(Sound::TwoTone));
+        assert_eq!(Sound::named("chime"), Some(Sound::Chime));
+        assert_eq!(Sound::named("off"), None);
+        // Every choice the settings offer is a sound or off.
+        let item = impulse_kit::settings::catalog()
+            .into_iter()
+            .find(|item| item.key == "notification_sound")
+            .unwrap();
+        let impulse_kit::settings::Control::Choice(options) = item.control else {
+            panic!("a choice");
+        };
+        for (value, _) in options {
+            assert!(value == "off" || Sound::named(value).is_some(), "{value}");
+        }
+    }
+
+    #[test]
+    fn the_sounds_are_short_and_quiet() {
+        for sound in Sound::ALL {
+            check(sound.wav(), sound.name());
+        }
+    }
+
+    fn check(wav: &[u8], name: &str) {
+        let (fmt, data) = chunks(wav);
         let fmt = fmt.expect("a fmt chunk");
         let field = |at: usize| u16::from_le_bytes(fmt[at..at + 2].try_into().unwrap());
         let rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
@@ -211,12 +308,16 @@ mod tests {
             .map(|s| i16::from_le_bytes([s[0], s[1]]))
             .collect();
         let seconds = samples.len() as f64 / rate as f64;
-        assert!((0.4..=0.9).contains(&seconds), "{seconds} s");
+        assert!((0.4..=0.9).contains(&seconds), "{name}: {seconds} s");
 
-        // Peak about -3 dBFS, nothing clipped.
+        // Peak at -3 dBFS at most, nothing clipped, and none much quieter
+        // than the others.
         let peak = samples.iter().map(|s| s.unsigned_abs()).max().unwrap();
         let peak_db = 20.0 * (peak as f64 / 32768.0).log10();
-        assert!((-3.5..=-2.5).contains(&peak_db), "peak {peak_db} dBFS");
+        assert!(
+            (-8.0..=-2.5).contains(&peak_db),
+            "{name}: peak {peak_db} dBFS"
+        );
         // It starts and ends at silence (no click), with no DC offset.
         assert_eq!(samples[0], 0);
         assert_eq!(*samples.last().unwrap(), 0);

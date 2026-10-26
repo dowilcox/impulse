@@ -221,7 +221,9 @@ impl Workbench {
                     .chain([terminal.read(cx).display_title()])
                     .collect::<Vec<_>>()
                     .join(" · ");
-                let sound = *sound && SettingsStore::get(cx).notification_sound;
+                let sound = sound
+                    .then(|| crate::notification_sound::chosen(cx))
+                    .flatten();
                 // Clicking it (where the desktop says) shows the terminal.
                 let Some(clicked) =
                     crate::agent_notify::post(title, &subtitle, body, Some(id.as_u64()), sound)

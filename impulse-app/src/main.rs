@@ -378,6 +378,7 @@ fn main() {
         commands::rebind_on_change(cx);
         menus::init(cx);
         session::init(cx);
+        notification_sound::preview_on_change(cx);
         quick_terminal::init(cx);
         repository_state::start_auto_fetch(cx);
         update_check::start(cx);

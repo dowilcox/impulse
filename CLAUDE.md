@@ -343,13 +343,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           its terminal where notify-send takes --action,
                           withdrawn when its attention clears where it
                           takes --print-id (agent_notify::clear), with
-                          Impulse's chime while `notification_sound` is on
-                          (notification_sound.rs: the compiled-in WAV by
+                          the sound `notification_sound` names
+                          (notification_sound.rs: the compiled-in WAVs by
                           NSSound from memory on macOS, by paplay, pw-play
                           or canberra-gtk-play from a copy in
                           ~/.cache/impulse on Linux, the desktop's own
                           sound suppressed; a bell that beeped notifies
-                          silently);
+                          silently; choosing one in Settings plays it);
                           badge.rs: the terminals needing attention on the
                           Dock tile, or Unity's LauncherEntry by gdbus;
                           agent_send.rs: text for agents as a paste, queued
@@ -503,7 +503,7 @@ assets/                   file icons + icon-mapping.json (copied into the
                           in Lucide's style where Lucide has none
                           (flag-checkered, symbol-variable), compiled into the app
                           (resources.rs OWN_ICONS) and loaded as icons/<name>.svg;
-                          sounds/notification.wav, the notification chime
+                          sounds/{ack,two-tone,chime}.wav, the notification sounds
                           (made by scripts/sounds/make-notification-sound.py,
                           compiled in by notification_sound.rs)
 docs/                     user documentation, one Markdown page per area;
@@ -516,7 +516,7 @@ scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
                           smoke/ (release smoke checks), check-macos.sh
                           (rust branch: type-check the app for macOS),
                           package-linux.sh (rust branch: Linux packages),
-                          sounds/ (rust branch: the notification chime)
+                          sounds/ (rust branch: the notification sounds)
 CHANGELOG.md              user-facing changes per release
 ```
 
@@ -606,7 +606,7 @@ Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo bu
 - **scripts/vendor-monaco-vim.sh** — refreshes `vendor/monaco-vim` (the editor's optional Vim mode; pinned version and checksum).
 - **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for Markdown preview and review/history syntax colors; pinned version and checksum).
 - **scripts/vendor-lucide.sh** — regenerates `LucideIcons.swift` from the pinned lucide-static icons (add a name to its list for a new icon). An icon Lucide doesn't have goes in `assets/icons/impulse/` instead (rust branch: listed in `OWN_ICONS` in `impulse-app/src/resources.rs`), out of this script's way.
-- **scripts/sounds/make-notification-sound.py [output.wav]** — (rust branch) synthesizes the notification chime, `assets/sounds/notification.wav` (two soft notes rising a fifth, 0.8 s, 16-bit mono, peak -3 dBFS; standard library only, the same bytes every run). `impulse-app/src/notification_sound.rs` compiles it in and sets the playback volume (`VOLUME`); rebuild the app after regenerating.
+- **scripts/sounds/make-notification-sound.py [output folder]** — (rust branch) synthesizes the notification sounds into `assets/sounds/`: `ack.wav` (the default: two upward chirps and a settled blip), `two-tone.wav` (a chirp up answered by one down) and `chime.wav` (two soft notes rising a fifth); 16-bit mono, peak -3 dBFS at most and no louder than the chime; standard library only, the same bytes every run. `impulse-app/src/notification_sound.rs` compiles them in (`Sound`) and sets the playback volume (`VOLUME`); rebuild the app after regenerating.
 - **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `FileIcons.swift`) from upstream material-icon-theme.
 - **impulse-macos/build.sh** — builds the .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg). On Linux (rust branch) it builds the Rust app instead: `--dev` the debug `impulse-app` and `impulse` CLI that capture.py and the smoke checks run, no flags `scripts/package-linux.sh`.
 - **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
