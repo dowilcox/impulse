@@ -8,10 +8,8 @@ use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::Sizable as _;
 use gpui_kit::{
-    div, prelude::*, px, AnyElement, App, Context, Entity, EntityId, FontWeight, SharedString,
-    Window,
+    div, prelude::*, px, AnyElement, App, Context, Entity, EntityId, FontWeight, Window,
 };
 use impulse_kit::agents::state_machine::AgentState;
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
@@ -733,8 +731,11 @@ impl Workbench {
         )
         .unwrap_or_default();
         Some(
+            // The panel draws its own frame, as the palette's: GPUI Kit's
+            // would put a padded box around it (Swift's NSPopover is one).
             Popover::new("agent-inbox-popover")
                 .anchor(gpui_kit::Anchor::TopRight)
+                .appearance(false)
                 .trigger(trigger)
                 .content(move |_, _, cx| inbox(&agents, &p, &hint, workbench.clone(), cx))
                 .into_any_element(),
@@ -774,17 +775,22 @@ fn inbox(
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" · ");
-        let group: SharedString = format!("agent-row-{index}").into();
         list = list.child(
             div()
                 .id(("agent-row", index))
-                .group(group.clone())
+                .group("agent-row")
+                .relative()
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .h(px(40.))
                 .px(px(12.))
-                .hover(|s| s.bg(hsla(p.hover)))
+                // Swift's rowBackground: inset and rounded, as the sidebar's.
+                .child(crate::workbench_chrome::row_background(
+                    false,
+                    "agent-row",
+                    p,
+                ))
                 .on_click(cx.listener(move |state, _, window, cx| {
                     state.dismiss(window, cx);
                     let terminal = terminal.clone();
@@ -807,7 +813,7 @@ fn inbox(
                             div()
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .text_ellipsis()
+                                .text_ellipsis_middle()
                                 .text_size(px(12.))
                                 .font_weight(if agent.state.wants_user() {
                                     FontWeight::SEMIBOLD
@@ -837,25 +843,33 @@ fn inbox(
                         div()
                             .flex_none()
                             .when(!done, |d| {
-                                d.invisible().group_hover(group.clone(), |s| s.visible())
+                                d.invisible().group_hover("agent-row", |s| s.visible())
                             })
                             .child(
-                                Button::new(("agent-review", index))
-                                    .small()
-                                    .icon(
-                                        gpui_kit::component::Icon::empty()
-                                            .path("icons/file-diff.svg"),
+                                crate::workbench_chrome::chrome_button(
+                                    ("agent-review", index),
+                                    "Review",
+                                    Some("file-diff"),
+                                    crate::workbench_chrome::ButtonKind::Secondary,
+                                    false,
+                                    p,
+                                )
+                                .tooltip(|window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new(
+                                        "Review the last turn's changes",
                                     )
-                                    .label("Review")
-                                    .tooltip("Review the last turn's changes")
-                                    .on_click(cx.listener(move |state, _, window, cx| {
+                                    .build(window, cx)
+                                })
+                                .on_click(cx.listener(
+                                    move |state, _, window, cx| {
                                         cx.stop_propagation();
                                         state.dismiss(window, cx);
                                         let terminal = review_terminal.clone();
                                         let _ = review_workbench.update(cx, |w, cx| {
                                             w.review_last_agent_turn(Some(terminal), window, cx)
                                         });
-                                    })),
+                                    },
+                                )),
                             ),
                     )
                 }),
@@ -867,7 +881,13 @@ fn inbox(
         .flex()
         .flex_col()
         .w(px(340.))
+        .mt(px(4.))
         .bg(hsla(p.overlay))
+        .rounded(px(metrics::RADIUS_LARGE + 2.))
+        .border_1()
+        .border_color(hsla(p.hairline_strong))
+        .shadow_lg()
+        .overflow_hidden()
         .text_color(hsla(p.text))
         .font_family(crate::workbench::UI_FONT)
         .child(crate::overlays::probe())
@@ -922,7 +942,7 @@ fn inbox(
                 .px(px(12.))
                 .text_size(px(11.))
                 .text_color(hsla(p.text_tertiary))
-                .hover(|s| s.bg(hsla(p.hover)))
+                .hover(|s| s.text_color(hsla(p.text_secondary)))
                 .on_click(cx.listener(move |state, _, window, cx| {
                     state.dismiss(window, cx);
                     let _ = hooks_workbench.update(cx, |w, cx| {
