@@ -363,12 +363,14 @@ mod tests {
     fn a_timeout_stops_everything_the_program_started() {
         let started = Instant::now();
         // The background sleep is a grandchild; killing only sh would leave it.
+        // 2 s, not less: with the whole suite running and process launches
+        // slowed (endpoint security), sh may not have printed the pid yet.
         let output = sh("sleep 30 & echo $!; wait")
-            .timeout(Duration::from_millis(500))
+            .timeout(Duration::from_secs(2))
             .run()
             .unwrap();
         assert!(output.timed_out);
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(8));
         let grandchild: libc::pid_t = output.stdout_text().trim().parse().unwrap_or(0);
         assert!(grandchild > 0);
         // Gone, or a zombie its new parent hasn't reaped yet.
