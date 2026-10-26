@@ -507,7 +507,7 @@ The [`impulse notify`](cli.md) command does the same from any script in an Impul
 
 - **Tab and sidebar.** A terminal you aren't looking at gets an attention dot on its tab, and its workspace row in the sidebar counts terminals that need you.
 - **Dock.** The Dock icon's badge counts terminals that need attention across all windows, and the Dock icon bounces when Impulse is in the background.
-- **Desktop notifications.** When Impulse is in the background, these events also post a macOS notification, with the workspace and tab as its subtitle. Click it to bring that terminal forward. macOS asks for permission the first time.
+- **Desktop notifications.** When Impulse is in the background, these events also post a macOS notification, with the workspace and tab as its subtitle. Click it to bring that terminal forward. macOS asks for permission the first time. Each one plays Impulse's own short chime unless you turn off **Notification sound** (`notification_sound`); a bell's notification stays quiet when **Audible bell** has already beeped.
 
 The attention clears when you click into the terminal or its input bar, and its notifications are removed from Notification Center.
 
@@ -586,6 +586,7 @@ All of these are in Settings ▸ Terminal, and in `settings.json` under the keys
 | Audible bell                                              | `terminal_bell`                      | On                     |
 | Request attention on bell                                 | `terminal_attention_on_bell`         | On                     |
 | Allow terminal notifications                              | `terminal_allow_notifications`       | On                     |
+| Notification sound                                        | `notification_sound`                 | On                     |
 | Notify when long commands finish                          | `terminal_attention_on_long_command` | On                     |
 | Long command threshold (seconds)                          | `terminal_long_command_seconds`      | 30                     |
 | Scrollback lines                                          | `terminal_scrollback`                | 10000                  |

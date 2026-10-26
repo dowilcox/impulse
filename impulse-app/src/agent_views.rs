@@ -200,7 +200,7 @@ impl Workbench {
                 self.reveal_surface(&Surface::Terminal(terminal.clone()), cx);
                 self.toggle_agent_composer(window, cx)
             }
-            AgentSignal::Notify { title, body } => {
+            AgentSignal::Notify { title, body, sound } => {
                 // In front, the tab's dot is enough.
                 if crate::agent_notify::app_in_front(cx) {
                     return;
@@ -221,9 +221,10 @@ impl Workbench {
                     .chain([terminal.read(cx).display_title()])
                     .collect::<Vec<_>>()
                     .join(" · ");
+                let sound = *sound && SettingsStore::get(cx).notification_sound;
                 // Clicking it (where the desktop says) shows the terminal.
                 let Some(clicked) =
-                    crate::agent_notify::post(title, &subtitle, body, Some(id.as_u64()))
+                    crate::agent_notify::post(title, &subtitle, body, Some(id.as_u64()), sound)
                 else {
                     return;
                 };

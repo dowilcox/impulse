@@ -164,6 +164,7 @@ These settings are under **Settings › Terminal › Bell & notifications**:
 - **Audible bell** plays the system alert sound when a program rings the terminal bell. Turn it off if you'd rather not hear it.
 - **Request attention on bell** marks the terminal as needing attention, bounces the Dock icon when Impulse is in the background, and posts a notification.
 - **Allow terminal notifications** lets programs and agents post macOS notifications.
+- **Notification sound** plays Impulse's short chime with each desktop notification. Turn it off for silent notifications.
 - **Notify when long commands finish** tells you when a command that ran longer than **Long command threshold** (30 seconds by default) finishes.
 
 Impulse's Dock icon shows a badge with the number of terminals that need your attention.

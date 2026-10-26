@@ -24,10 +24,13 @@ use crate::terminal_view::TerminalView;
 pub enum AgentSignal {
     /// The agent came, went, or changed state; or the attention mark did.
     Changed,
-    /// A desktop notification, shown while the window isn't active.
+    /// A desktop notification, shown while the window isn't active;
+    /// `sound`: with the notification sound (when it's on), which a bell
+    /// that already beeped goes without.
     Notify {
         title: String,
         body: String,
+        sound: bool,
     },
     /// Text for an agent in another terminal (a command block sent with
     /// Send to Agent): the window picks the agent.
@@ -215,13 +218,19 @@ impl TerminalView {
                     .is_none_or(|last| now.duration_since(last) >= BELL_INTERVAL)
                 {
                     self.agent.last_bell = Some(now);
-                    if SettingsStore::get(cx).terminal_bell {
+                    let beeped = SettingsStore::get(cx).terminal_bell;
+                    if beeped {
                         crate::bell::ring();
                     }
                     if SettingsStore::get(cx).terminal_attention_on_bell {
                         self.request_attention(cx);
-                        notified =
-                            self.post_notification(self.display_title(), "Bell".into(), true, cx);
+                        notified = self.post_notification(
+                            self.display_title(),
+                            "Bell".into(),
+                            true,
+                            !beeped,
+                            cx,
+                        );
                     }
                 }
                 self.agent_event_notified(AgentEvent::Bell, notified, cx);
@@ -236,7 +245,7 @@ impl TerminalView {
                         } else {
                             title.clone()
                         };
-                        notified = self.post_notification(title, body.clone(), true, cx);
+                        notified = self.post_notification(title, body.clone(), true, true, cx);
                     }
                 }
                 let text = [title.as_str(), body.as_str()]
@@ -351,12 +360,14 @@ impl TerminalView {
     /// it isn't active (in front, the tab's dot is enough). `coalesced`
     /// ones (bells and the program's own) go out at most once per interval
     /// until the terminal is seen; the latest held back meanwhile goes out
-    /// when the interval is up. Returns whether one went out now.
+    /// when the interval is up. `sound`: with the notification sound
+    /// (`AgentSignal::Notify`). Returns whether one went out now.
     pub(crate) fn post_notification(
         &mut self,
         title: String,
         body: String,
         coalesced: bool,
+        sound: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         if crate::agent_notify::app_in_front(cx) {
@@ -372,7 +383,7 @@ impl TerminalView {
                         cx.background_executor().timer(wait).await;
                         let _ = this.update(cx, |view, cx| {
                             view.agent.held = None;
-                            view.post_notification(title, body, true, cx);
+                            view.post_notification(title, body, true, sound, cx);
                         });
                     }));
                     return false;
@@ -380,7 +391,7 @@ impl TerminalView {
             }
             self.agent.last_coalesced = Some(now);
         }
-        cx.emit(AgentSignal::Notify { title, body });
+        cx.emit(AgentSignal::Notify { title, body, sound });
         true
     }
 
@@ -416,7 +427,7 @@ impl TerminalView {
             .chain([duration_text(elapsed)])
             .collect::<Vec<_>>()
             .join(" · ");
-        self.post_notification(title, body, false, cx);
+        self.post_notification(title, body, false, true, cx);
     }
 
     /// The running (or last) command's text.
@@ -640,7 +651,7 @@ impl TerminalView {
                 if !echoed {
                     let title = headline(&agent.display_name, state, cause.as_ref());
                     let body = self.display_title();
-                    self.post_notification(title, body, false, cx);
+                    self.post_notification(title, body, false, true, cx);
                 }
             }
         }

@@ -7,7 +7,10 @@
 //! terminal; `osascript` has no way to say. Where it prints the
 //! notification's id, a terminal's notifications are withdrawn when its
 //! attention clears (`clear`), and only its latest ten stay up, as
-//! Swift's `DesktopNotifier` does.
+//! Swift's `DesktopNotifier` does. With `sound`, Impulse's own chime
+//! (`notification_sound`) plays with it; on Linux the notification then
+//! asks the desktop not to play one too (`suppress-sound`), and on macOS
+//! `display notification` is given no `sound name`.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader};
@@ -117,20 +120,27 @@ const CLICK: &str = "default";
 
 /// Show a notification, for a terminal (`terminal`, its entity id) or
 /// not:
-/// `title`, then `subtitle` (the workspace and tab) and `body`. Runs off
-/// the main thread; failures are ignored. The receiver hears once if the
-/// notification is clicked (it closes otherwise).
+/// `title`, then `subtitle` (the workspace and tab) and `body`, with
+/// Impulse's chime when `sound` (the `notification_sound` setting). Runs
+/// off the main thread; failures are ignored. The receiver hears once if
+/// the notification is clicked (it closes otherwise).
 pub fn post(
     title: &str,
     subtitle: &str,
     body: &str,
     terminal: Option<u64>,
+    sound: bool,
 ) -> Option<async_channel::Receiver<()>> {
-    // A snapshot on the Mac posts none: nothing of it shows on screen
-    // (`debug_snapshot`).
+    // A snapshot posts no sound, and on the Mac no notification: nothing
+    // of it shows on screen (`debug_snapshot`).
+    #[cfg(debug_assertions)]
+    let sound = sound && !crate::debug_snapshot::is_active();
     #[cfg(all(debug_assertions, target_os = "macos"))]
     if crate::debug_snapshot::is_active() {
         return None;
+    }
+    if sound {
+        crate::notification_sound::play();
     }
     let (title, subtitle, body) = (title.to_string(), subtitle.to_string(), body.to_string());
     let (clicked, receiver) = async_channel::bounded(1);
@@ -138,7 +148,7 @@ pub fn post(
         .name("impulse-notification".into())
         .spawn(move || {
             let options = options();
-            let Some(mut command) = command(&title, &subtitle, &body, options) else {
+            let Some(mut command) = command(&title, &subtitle, &body, options, sound) else {
                 return;
             };
             let piped = options.actions || options.print_id;
@@ -217,15 +227,25 @@ fn was_clicked(output: &str) -> bool {
     output.lines().any(|line| line.trim() == CLICK)
 }
 
-/// `notify-send`'s arguments.
+/// `notify-send`'s arguments; with `sound` (Impulse plays its own) the
+/// desktop is asked to play none.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn linux_arguments(title: &str, subtitle: &str, body: &str, options: Options) -> Vec<String> {
+fn linux_arguments(
+    title: &str,
+    subtitle: &str,
+    body: &str,
+    options: Options,
+    sound: bool,
+) -> Vec<String> {
     let mut arguments = vec!["--app-name=Impulse".to_string()];
     if options.print_id {
         arguments.push("--print-id".to_string());
     }
     if options.actions {
         arguments.push(format!("--action={CLICK}=Show"));
+    }
+    if sound {
+        arguments.push("--hint=boolean:suppress-sound:true".to_string());
     }
     // The title and body come from programs (OSC 9, 777 and 99): after
     // `--`, one starting with `-` stays text instead of becoming an option.
@@ -236,14 +256,21 @@ fn linux_arguments(title: &str, subtitle: &str, body: &str, options: Options) ->
 }
 
 #[cfg(target_os = "linux")]
-fn command(title: &str, subtitle: &str, body: &str, options: Options) -> Option<Command> {
+fn command(
+    title: &str,
+    subtitle: &str,
+    body: &str,
+    options: Options,
+    sound: bool,
+) -> Option<Command> {
     let mut command = Command::new("notify-send");
-    command.args(linux_arguments(title, subtitle, body, options));
+    command.args(linux_arguments(title, subtitle, body, options, sound));
     Some(command)
 }
 
+/// Silent (no `sound name`): Impulse plays its own sound.
 #[cfg(target_os = "macos")]
-fn command(title: &str, subtitle: &str, body: &str, _: Options) -> Option<Command> {
+fn command(title: &str, subtitle: &str, body: &str, _: Options, _: bool) -> Option<Command> {
     let script = format!(
         "display notification {} with title {} subtitle {}",
         applescript_string(body),
@@ -256,7 +283,7 @@ fn command(title: &str, subtitle: &str, body: &str, _: Options) -> Option<Comman
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn command(_: &str, _: &str, _: &str, _: Options) -> Option<Command> {
+fn command(_: &str, _: &str, _: &str, _: Options, _: bool) -> Option<Command> {
     None
 }
 
@@ -299,7 +326,8 @@ mod tests {
                 Options {
                     actions: true,
                     print_id: true
-                }
+                },
+                false
             ),
             vec![
                 "--app-name=Impulse",
@@ -310,15 +338,36 @@ mod tests {
                 "impulse · zsh"
             ]
         );
-        assert_eq!(linux_arguments("Bell", "", "", Options::default()).len(), 4);
+        assert_eq!(
+            linux_arguments("Bell", "", "", Options::default(), false).len(),
+            4
+        );
         // A title that looks like an option stays text.
-        let arguments = linux_arguments("--icon=/x", "", "", Options::default());
+        let arguments = linux_arguments("--icon=/x", "", "", Options::default(), false);
         assert_eq!(arguments[1], "--");
         assert!(was_clicked("default\n"));
         assert!(!was_clicked(""));
         assert!(!was_clicked("other\n"));
         assert_eq!(notification_id("42\n"), Some(42));
         assert_eq!(notification_id("default"), None);
+    }
+
+    #[test]
+    fn the_desktop_plays_no_sound_over_impulses() {
+        let arguments = linux_arguments("Bell", "", "", Options::default(), true);
+        assert_eq!(
+            arguments,
+            vec![
+                "--app-name=Impulse",
+                "--hint=boolean:suppress-sound:true",
+                "--",
+                "Bell",
+                ""
+            ]
+        );
+        assert!(!linux_arguments("Bell", "", "", Options::default(), false)
+            .iter()
+            .any(|a| a.contains("suppress-sound")));
     }
 
     #[test]

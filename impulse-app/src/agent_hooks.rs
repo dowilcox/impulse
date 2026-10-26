@@ -433,7 +433,7 @@ impl Workbench {
                         .get("title")
                         .cloned()
                         .unwrap_or_else(|| t.display_title());
-                    t.post_notification(title, message.clone(), false, cx);
+                    t.post_notification(title, message.clone(), false, true, cx);
                 });
                 let title = args
                     .get("title")

@@ -64,6 +64,7 @@ mod kit_theme;
 mod lsp_hub;
 mod markdown_view;
 mod menus;
+mod notification_sound;
 mod overlays;
 mod palette;
 mod port_scan;

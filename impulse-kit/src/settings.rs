@@ -225,6 +225,9 @@ settings! {
     terminal_scroll_on_output: bool = "terminal_scroll_on_output" => true,
     terminal_allow_hyperlink: bool = "terminal_allow_hyperlink" => true,
     terminal_allow_notifications: bool = "terminal_allow_notifications" => true,
+    /// Play Impulse's chime with desktop notifications (Rust app; the Swift
+    /// app plays the system's default sound and doesn't read this key).
+    notification_sound: bool = "notification_sound" => true,
     terminal_attention_on_long_command: bool = "terminal_attention_on_long_command" => true,
     terminal_long_command_seconds: i64 = "terminal_long_command_seconds" => 30,
     terminal_bold_is_bright: bool = "terminal_bold_is_bright" => true,
@@ -1035,6 +1038,8 @@ pub fn catalog() -> Vec<SettingItem> {
         toggle("terminal_attention_on_bell", "Request attention on bell", Terminal, "Bell & notifications", none),
         toggle("terminal_allow_notifications", "Allow terminal notifications", Terminal, "Bell & notifications",
             Some("OSC 9 / 99 / 777 notifications from programs and agents.")),
+        toggle("notification_sound", "Notification sound", Terminal, "Bell & notifications",
+            Some("Play Impulse's chime with desktop notifications.")),
         toggle("terminal_attention_on_long_command", "Notify when long commands finish", Terminal,
             "Bell & notifications", none),
         integer("terminal_long_command_seconds", "Long command threshold", Terminal, "Bell & notifications",
@@ -1150,6 +1155,28 @@ mod tests {
         );
         assert_eq!(defaults.get("workspace_trust"), Some(json!(true)));
         assert_eq!(defaults.color_scheme, "nord");
+    }
+
+    #[test]
+    fn the_notification_sound_is_on_unless_turned_off() {
+        assert!(Settings::default().notification_sound);
+        assert!(Settings::from_json(&json!({})).notification_sound);
+        assert!(
+            Settings::from_json(&json!({"notification_sound": "no"})).notification_sound,
+            "a mistyped value takes its default"
+        );
+        let off = Settings::from_json(&json!({"notification_sound": false}));
+        assert!(!off.notification_sound);
+        assert_eq!(off.to_json()["notification_sound"], json!(false));
+        let schema = json_schema();
+        assert_eq!(
+            schema["properties"]["notification_sound"]["type"],
+            json!("boolean")
+        );
+        assert_eq!(
+            schema["properties"]["notification_sound"]["default"],
+            json!(true)
+        );
     }
 
     #[test]
