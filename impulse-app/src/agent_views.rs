@@ -79,6 +79,28 @@ pub(crate) fn spinner_turn() -> f32 {
     ((elapsed % 900) * 12 / 900) as f32 / 12.
 }
 
+/// Swift's `ProgressRing(progress: nil, color: chrome.working)`.
+pub(crate) fn working_ring(size: f32, line_width: f32, p: &ChromePalette) -> AnyElement {
+    let turn = if crate::display_options::reduce_motion() {
+        0.
+    } else {
+        spinner_turn()
+    };
+    swift_ring(None, p.working, size, line_width, turn)
+}
+
+/// Swift's `ProgressRing` at `size` with `line_width`.
+pub(crate) fn swift_ring(
+    progress: Option<f32>,
+    color: KitRgba,
+    size: f32,
+    line_width: f32,
+    turn: f32,
+) -> AnyElement {
+    crate::workbench_chrome::progress_ring(progress, color, size, line_width, turn)
+        .into_any_element()
+}
+
 /// A coding agent's state at a glance: a spinner while it works, a bot
 /// with a badge when it wants the user, a quiet bot otherwise. The badges
 /// differ in shape as well as color: a solid dot asks for input, a check
@@ -87,33 +109,13 @@ pub fn agent_glyph(state: AgentState, size: f32, p: &ChromePalette) -> AnyElemen
     match state {
         // Swift's ProgressRing with no progress, turning every 0.9 s (still
         // with Reduce Motion on).
-        AgentState::Working if crate::display_options::reduce_motion() => div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(size))
-            .flex_none()
-            .child(crate::workbench_chrome::progress_ring(
-                None,
-                p.working,
-                size - 1.,
-                1.6,
-                0.,
-            ))
-            .into_any_element(),
         AgentState::Working => div()
             .flex()
             .items_center()
             .justify_center()
             .size(px(size))
             .flex_none()
-            .child(crate::workbench_chrome::progress_ring(
-                None,
-                p.working,
-                size - 1.,
-                1.6,
-                spinner_turn(),
-            ))
+            .child(working_ring(size - 1., 1.6, p))
             .into_any_element(),
         AgentState::NeedsInput | AgentState::Done => {
             let badge = if state == AgentState::NeedsInput {
@@ -296,13 +298,7 @@ impl Workbench {
                     .flex_none()
                     .items_center()
                     .justify_center()
-                    .child(crate::workbench_chrome::progress_ring(
-                        fraction,
-                        color,
-                        size - 1.,
-                        1.6,
-                        0.,
-                    ))
+                    .child(swift_ring(fraction, color, size - 1., 1.6, 0.))
                     .into_any_element();
             }
             if let Some(dot) = t.session_status.dot_color() {
@@ -392,9 +388,7 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .when(working > 0, |d| {
-                    d.child(agent_glyph(AgentState::Working, 10., p))
-                })
+                .when(working > 0, |d| d.child(working_ring(10., 1.4, p)))
                 .when(waiting > 0, |d| {
                     d.child(
                         div()
@@ -705,7 +699,7 @@ impl Workbench {
                         icon("bot", 13., p.text_secondary)
                     })
                     .when(working > 0, |d| {
-                        d.child(agent_glyph(AgentState::Working, 11., &p)).child(
+                        d.child(working_ring(10., 1.4, &p)).child(
                             div()
                                 .font_family("JetBrains Mono")
                                 .text_size(px(10.5))
@@ -733,8 +727,10 @@ impl Workbench {
         Some(
             // The panel draws its own frame, as the palette's: GPUI Kit's
             // would put a padded box around it (Swift's NSPopover is one).
+            // NSPopover centers under the button, touching its bottom edge.
             Popover::new("agent-inbox-popover")
-                .anchor(gpui_kit::Anchor::TopRight)
+                .anchor(gpui_kit::Anchor::TopCenter)
+                .offset(px(0.))
                 .appearance(false)
                 .trigger(trigger)
                 .content(move |_, _, cx| inbox(&agents, &p, &hint, workbench.clone(), cx))
@@ -752,7 +748,6 @@ fn inbox(
     workbench: gpui_kit::WeakEntity<Workbench>,
     cx: &mut Context<gpui_kit::component::popover::PopoverState>,
 ) -> AnyElement {
-    let hairline = || div().h(px(1.)).bg(hsla(p.hairline));
     let mut list = div()
         .id("agent-inbox-list")
         .flex()
@@ -876,21 +871,36 @@ fn inbox(
         );
     }
     let hooks_workbench = workbench.clone();
+    // NSPopover's frame: a 13pt margin of the same color round Swift's
+    // 340-wide view, large rounded corners and a shadow, no border.
     div()
         .relative()
-        .flex()
-        .flex_col()
-        .w(px(340.))
-        .mt(px(4.))
+        .p(px(13.))
         .bg(hsla(p.overlay))
-        .rounded(px(metrics::RADIUS_LARGE + 2.))
-        .border_1()
-        .border_color(hsla(p.hairline_strong))
+        .rounded(px(metrics::RADIUS_LARGE + 4.))
         .shadow_lg()
         .overflow_hidden()
         .text_color(hsla(p.text))
         .font_family(crate::workbench::UI_FONT)
         .child(crate::overlays::probe())
+        .child(inbox_body(agents, list, p, hint, hooks_workbench, cx))
+        .into_any_element()
+}
+
+/// The inbox's content, Swift's 340-wide `AgentInboxView`.
+fn inbox_body(
+    agents: &[AgentSummary],
+    list: gpui_kit::Stateful<gpui_kit::Div>,
+    p: &ChromePalette,
+    hint: &str,
+    hooks_workbench: gpui_kit::WeakEntity<Workbench>,
+    cx: &mut Context<gpui_kit::component::popover::PopoverState>,
+) -> AnyElement {
+    let hairline = || div().h(px(1.)).bg(hsla(p.hairline));
+    div()
+        .flex()
+        .flex_col()
+        .w(px(340.))
         .child(
             div()
                 .flex()

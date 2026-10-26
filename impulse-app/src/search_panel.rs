@@ -399,7 +399,7 @@ impl Render for SearchPanel {
                                 panel.schedule(Duration::ZERO, cx);
                                 cx.emit(SearchPanelEvent::Close);
                             }))
-                            .child(icon("circle-x", 12., tertiary)),
+                            .child(filled_circle_x(12., tertiary)),
                     ),
             )
             .when(replacing, |d| {
@@ -433,4 +433,55 @@ impl Render for SearchPanel {
             .child(div().flex_none().h(px(1.)).bg(hsla(p.hairline)))
             .when(!empty, |d| d.children(count).child(list))
     }
+}
+
+/// SF Symbols' xmark.circle.fill (Lucide has no filled icons): a disc with
+/// the cross cut out, so whatever is behind shows through it.
+fn filled_circle_x(size: f32, color: impulse_kit::chrome::Rgba) -> impl IntoElement {
+    use gpui_kit::{point, FillOptions, PathBuilder, PathStyle, Pixels};
+    gpui_kit::canvas(
+        |_, _, _| {},
+        move |bounds: gpui_kit::Bounds<Pixels>, _, window, _| {
+            let center = bounds.center();
+            let radius = f32::from(bounds.size.width) / 2.;
+            let at = |x: f32, y: f32| point(center.x + px(x), center.y + px(y));
+            let mut path = PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::even_odd()));
+            let steps = 48;
+            let disc: Vec<_> = (0..steps)
+                .map(|i| {
+                    let angle = i as f32 / steps as f32 * std::f32::consts::TAU;
+                    at(radius * angle.cos(), radius * angle.sin())
+                })
+                .collect();
+            path.add_polygon(&disc, true);
+            // A plus turned 45 degrees: arms 0.21 of the size from the
+            // center, 1.3pt thick at 12 points.
+            let (half, arm) = (size * 0.054, size * 0.21);
+            let plus = [
+                (-half, -arm),
+                (half, -arm),
+                (half, -half),
+                (arm, -half),
+                (arm, half),
+                (half, half),
+                (half, arm),
+                (-half, arm),
+                (-half, half),
+                (-arm, half),
+                (-arm, -half),
+                (-half, -half),
+            ];
+            let turn = std::f32::consts::FRAC_1_SQRT_2;
+            let cross: Vec<_> = plus
+                .iter()
+                .map(|&(x, y)| at((x - y) * turn, (x + y) * turn))
+                .collect();
+            path.add_polygon(&cross, true);
+            if let Ok(path) = path.build() {
+                window.paint_path(path, hsla(color));
+            }
+        },
+    )
+    .size(px(size))
+    .flex_none()
 }

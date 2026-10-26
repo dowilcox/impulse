@@ -873,7 +873,7 @@ impl TerminalView {
             crate::workbench_chrome::spinner(c(&theme.fg), 13., self.bar.spinner_step)
                 .into_any_element()
         } else {
-            crate::workbench_chrome::icon("chevron-right", 12., c(&theme.accent)).into_any_element()
+            prompt_chevron(c(&theme.accent))
         };
         div()
             .w(px(14.))
@@ -899,7 +899,7 @@ impl TerminalView {
             chips.push((Some("folder"), abbreviate_home(&self.cwd), false, None));
         }
         if let Some(branch) = self.branch.as_ref().filter(|b| !b.is_empty()) {
-            chips.push((Some("split"), branch.clone(), true, None));
+            chips.push((Some("git-branch"), branch.clone(), true, None));
         }
         // The repository's changes (Swift's ReviewChip), opening Review.
         let review = (!self.cwd.is_empty())
@@ -1047,7 +1047,11 @@ impl TerminalView {
                                 )
                             })
                         })
-                        .when_some(leading, |d, icon| d.child(icon))
+                        // SF Symbols' images are wider than their glyphs:
+                        // the text starts about 1.5pt further in.
+                        .when_some(leading, |d, icon| {
+                            d.child(div().flex_none().ml(px(0.5)).mr(px(1.)).child(icon))
+                        })
                         .child(
                             div()
                                 .min_w_0()
@@ -1082,9 +1086,11 @@ impl TerminalView {
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
+                    // SF Symbols' clock.arrow.circlepath at 11 points medium
+                    // is about 12pt across.
                     .child(crate::workbench_chrome::icon(
                         "history",
-                        11.,
+                        14.,
                         c(&theme.fg_muted),
                     ))
                     .on_mouse_down(
@@ -1204,9 +1210,12 @@ impl TerminalView {
                 .left_0()
                 .child(
                     deferred(
+                        // Its bottom on the field's top edge, as Swift's: the
+                        // editor is the field's 6pt padding and 1pt border
+                        // below it.
                         anchored()
                             .anchor(Anchor::BottomLeft)
-                            .offset(point(px(0.), px(-13.)))
+                            .offset(point(px(0.), px(-6.)))
                             .snap_to_window()
                             .child(menu),
                     )
@@ -1261,6 +1270,28 @@ pub fn command_text(command: &str) -> Option<String> {
     } else {
         trimmed.to_string()
     })
+}
+
+/// The prompt mark: SF Symbols' chevron.right at 12 points semibold, about
+/// 6.5 by 10.5 with a 2pt line (Lucide's at that size is thinner).
+fn prompt_chevron(color: KitRgba) -> AnyElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds: gpui_kit::Bounds<Pixels>, _, window, _| {
+            let at = |x: f32, y: f32| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
+            let mut path = gpui_kit::PathBuilder::stroke(px(2.));
+            path.move_to(at(1.2, 1.25));
+            path.line_to(at(5.7, 5.5));
+            path.line_to(at(1.2, 9.75));
+            if let Ok(path) = path.build() {
+                window.paint_path(path, hsla(color));
+            }
+        },
+    )
+    .w(px(7.))
+    .h(px(11.))
+    .flex_none()
+    .into_any_element()
 }
 
 /// A line as the Return key would end it (`TerminalTab.typedLine`): every
@@ -1365,7 +1396,7 @@ fn candidate_icon(
         "command" => "square-terminal",
         "subcommand" => "chevron-right",
         "option" => "flag",
-        "branch" => "split",
+        "branch" => "git-branch",
         "tag" => "tag",
         "remote" | "host" => "globe",
         "script" => "play",

@@ -309,13 +309,14 @@ impl AgentComposer {
     }
 }
 
-/// The Swift `KeyHint`: a shortcut in a hairline box.
+/// The Swift `KeyHint`: a shortcut in a hairline box (3 of padding: GPUI
+/// adds the border to the width, SwiftUI doesn't).
 pub(crate) fn key_hint(text: &str, p: &ChromePalette) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
         .items_center()
-        .px(px(4.))
+        .px(px(3.))
         .h(px(16.))
         .rounded(px(3.))
         .border_1()

@@ -674,7 +674,7 @@ pub fn catalog(settings: &Settings) -> Vec<AppCommand> {
             "Component Gallery",
             "Developer",
             &["themes", "design", "components"],
-            "palette",
+            "eye",
         );
     }
     for custom in settings

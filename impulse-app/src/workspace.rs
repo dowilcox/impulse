@@ -81,7 +81,7 @@ impl Surface {
         match self {
             Surface::Terminal(_) => "terminal",
             Surface::Editor(_) => "file-code",
-            Surface::Review(_) => "split",
+            Surface::Review(_) => "git-branch",
             Surface::History(_) => "history",
             Surface::Image(_) => "file",
             Surface::Settings(_) => "settings",
