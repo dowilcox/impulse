@@ -91,6 +91,10 @@ pub struct Workbench {
     pub(crate) workspaces: Vec<Workspace>,
     pub(crate) active: usize,
     pub(crate) next_id: u64,
+    /// Where Scratch's file tree was when an editor or image tab opened
+    /// (Swift's `projectDirectory`): the tree goes back there for the tab,
+    /// rather than into the file's own folder.
+    pub(crate) tree_dirs: std::collections::HashMap<gpui_kit::EntityId, PathBuf>,
     pub(crate) focus: FocusHandle,
     /// A message for the status bar, such as why a file didn't open.
     pub(crate) notice: Option<String>,
@@ -257,6 +261,7 @@ impl Workbench {
             workspaces: Vec::new(),
             active: 0,
             next_id: 1,
+            tree_dirs: Default::default(),
             focus: cx.focus_handle(),
             notice: None,
             trust: args.trust_store.clone(),
@@ -738,8 +743,16 @@ impl Workbench {
             cx.notify();
             return;
         }
+        // A file under the folder the tree shows keeps the tree there (a
+        // click in the tree, the palette); one from elsewhere (the CLI, the
+        // file manager) takes the tree to its own folder, as Swift's
+        // `openFile` does.
+        let tree_dir = Some(self.tree_root(cx)).filter(|root| path.starts_with(root));
         if crate::image_view::is_image_file(path) {
             let surface = self.make_image(path, cx);
+            if let (Surface::Image(image), Some(dir)) = (&surface, tree_dir) {
+                self.tree_dirs.insert(image.entity_id(), dir);
+            }
             let index = self.active;
             self.add_tab(index, surface, window, cx);
             return;
@@ -748,6 +761,9 @@ impl Workbench {
             .map(|opened| cx.new(|cx| EditorTab::new(path, opened, window, cx)))
         {
             Ok(editor) => {
+                if let Some(dir) = tree_dir {
+                    self.tree_dirs.insert(editor.entity_id(), dir);
+                }
                 let index = self.active;
                 self.start_lsp(index, &editor, window, cx);
                 self.wire_editor_git(&editor, window, cx);

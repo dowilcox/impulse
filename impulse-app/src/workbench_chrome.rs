@@ -458,14 +458,22 @@ fn tree_rows(workspace: &Workspace, root: &Path) -> Vec<TreeRow> {
 
 impl Workbench {
     /// The folder the file tree shows: a folder workspace's root, or for
-    /// Scratch the active tab's folder.
+    /// Scratch the active tab's folder (for a file, where the tree was when
+    /// it opened: `tree_dirs`).
     pub(crate) fn tree_root(&self, cx: &gpui_kit::App) -> PathBuf {
         let workspace = self.workspace();
         match workspace.kind {
             Kind::Folder => workspace.root.clone(),
             Kind::Scratch => self
                 .focused_surface()
-                .and_then(|s| s.directory(cx))
+                .and_then(|s| {
+                    let opened_at = match s {
+                        Surface::Editor(e) => self.tree_dirs.get(&e.entity_id()),
+                        Surface::Image(i) => self.tree_dirs.get(&i.entity_id()),
+                        _ => None,
+                    };
+                    opened_at.cloned().or_else(|| s.directory(cx))
+                })
                 .filter(|d| d.is_dir())
                 .unwrap_or_else(|| workspace.root.clone()),
         }
