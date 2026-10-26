@@ -20,15 +20,15 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _};
+use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::Sizable as _;
 use gpui_kit::{
-    canvas, div, point, prelude::*, px, uniform_list, AnyElement, App, Bounds, ClipboardItem,
-    Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla, KeyDownEvent, PathBuilder,
-    Pixels, ScrollStrategy, Subscription, Task, UniformListScrollHandle, Window,
+    AnyElement, App, Bounds, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, FontWeight,
+    Hsla, KeyDownEvent, PathBuilder, Pixels, ScrollStrategy, Subscription, Task,
+    UniformListScrollHandle, Window, canvas, div, point, prelude::*, px, uniform_list,
 };
 use impulse_git::history_query::HistoryQuery;
 use impulse_git::log::{CommitDetails, ForkPoint, LogEntry, LogScope};
@@ -158,6 +158,10 @@ pub struct HistoryView {
     /// A commit to select once its page is loaded (Show Commit for This
     /// Line).
     reveal: Option<String>,
+    /// The graph's height as you last dragged it (Swift's
+    /// `historyGraphHeight`); none for 40% of the view.
+    graph_height: Option<f32>,
+    _save_graph_height: Option<Task<()>>,
     _query_reload: Option<Task<()>>,
     _refresh: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -251,6 +255,8 @@ impl HistoryView {
             exhausted: false,
             error: None,
             reveal: None,
+            graph_height: load_graph_height(),
+            _save_graph_height: None,
             _query_reload: None,
             _refresh: None,
             _subscriptions: subscriptions,
@@ -1331,21 +1337,141 @@ impl Render for HistoryView {
             .flex_col()
             .size_full()
             .bg(hsla(p.content))
-            // The graph (with its header) gets 40% of the height.
+            .on_drag_move(cx.listener(Self::drag_divider))
+            // The graph (with its header) gets the height you last gave it,
+            // or 40%; a shorter window takes it from the graph down to 120.
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .h(gpui_kit::relative(0.4))
-                    .min_h(px(140.))
-                    .border_b_1()
-                    .border_color(hsla(p.hairline))
+                    .map(|d| match self.graph_height {
+                        Some(height) => d.h(px(height)),
+                        None => d.h(gpui_kit::relative(0.4)),
+                    })
+                    .min_h(px(GRAPH_MIN_HEIGHT))
                     .child(self.header(window, cx))
                     .child(list),
             )
-            .child(self.details_bar(cx))
-            .child(div().flex_1().min_h_0().child(self.review.clone()))
+            .child(self.divider(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(CHANGES_MIN_HEIGHT))
+                    .child(self.details_bar(cx))
+                    .child(div().flex_1().min_h_0().child(self.review.clone())),
+            )
     }
+}
+
+/// The divider between the graph and the changes being dragged.
+struct GraphDivider;
+
+/// A drag that draws nothing under the pointer.
+struct NoPreview;
+
+impl Render for NoPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+const GRAPH_MIN_HEIGHT: f32 = 120.;
+const CHANGES_MIN_HEIGHT: f32 = 160.;
+const DIVIDER_GRIP: f32 = 7.;
+
+impl HistoryView {
+    /// The hairline under the graph, with a taller grab band (Swift's
+    /// split view divider): drag to resize, double-click for 40% again;
+    /// accent while hovered.
+    fn divider(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = &self.palette;
+        div()
+            .relative()
+            .flex_none()
+            .h(px(1.))
+            .group("history-divider")
+            .bg(hsla(p.hairline))
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-0.5))
+                    .h(px(2.))
+                    .bg(hsla(p.accent.opacity(0.8)))
+                    .invisible()
+                    .group_hover("history-divider", |s| s.visible()),
+            )
+            .child(
+                div()
+                    .id("history-divider")
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(-(DIVIDER_GRIP / 2.)))
+                    .h(px(DIVIDER_GRIP))
+                    .cursor_row_resize()
+                    .on_drag(GraphDivider, |_, _, _, cx| cx.new(|_| NoPreview))
+                    .on_click(cx.listener(|view, event: &gpui_kit::ClickEvent, _, cx| {
+                        if event.click_count() == 2 {
+                            view.graph_height = None;
+                            view.save_graph_height(cx);
+                            cx.notify();
+                        }
+                    })),
+            )
+    }
+
+    fn drag_divider(
+        &mut self,
+        event: &gpui_kit::DragMoveEvent<GraphDivider>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let total = f32::from(event.bounds.size.height);
+        let wanted = f32::from(event.event.position.y - event.bounds.top());
+        let height = wanted
+            .min(total - CHANGES_MIN_HEIGHT)
+            .max(GRAPH_MIN_HEIGHT)
+            .round();
+        if self.graph_height != Some(height) {
+            self.graph_height = Some(height);
+            self.save_graph_height(cx);
+            cx.notify();
+        }
+    }
+
+    /// Remember the height once the dragging stops.
+    fn save_graph_height(&mut self, cx: &mut Context<Self>) {
+        let height = self.graph_height;
+        self._save_graph_height = Some(cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(300))
+                .await;
+            let path = graph_height_path();
+            let _ = match height {
+                Some(height) => std::fs::write(path, format!("{height}\n")),
+                None => std::fs::remove_file(path),
+            };
+        }));
+    }
+}
+
+/// Where the graph's height is kept (the Swift app keeps it in its
+/// defaults; here, a file in the data directory), for every History.
+fn graph_height_path() -> std::path::PathBuf {
+    impulse_kit::paths::data_dir(cfg!(debug_assertions)).join("history-graph-height")
+}
+
+fn load_graph_height() -> Option<f32> {
+    std::fs::read_to_string(graph_height_path())
+        .ok()?
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|height| height.is_finite() && *height >= GRAPH_MIN_HEIGHT)
 }
 
 impl gpui_kit::Focusable for HistoryView {

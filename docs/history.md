@@ -24,7 +24,7 @@ When History opens, the newest commit is selected and the commit list has the ke
 - **The top half** is the commit list with its graph, and a header with the scope and the filter.
 - **The bottom half** shows the selected commit: its full message and details, then its changes in the same diff view as [Review](review.md).
 
-Drag the divider between them to give either half more room. Impulse remembers the height of the top half.
+Drag the divider between them to give either half more room. Impulse remembers the height of the top half. Double-click the divider to go back to the usual split.
 
 ## Current branch or all branches
 
