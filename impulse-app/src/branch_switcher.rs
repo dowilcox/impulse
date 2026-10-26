@@ -7,8 +7,8 @@
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
-    div, prelude::*, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, SharedString,
-    Subscription, WeakEntity, Window,
+    div, prelude::*, px, Context, Entity, FocusHandle, Focusable, KeyDownEvent, ScrollHandle,
+    SharedString, Subscription, WeakEntity, Window,
 };
 use impulse_kit::chrome::{metrics, ChromePalette};
 
@@ -32,6 +32,8 @@ pub struct BranchSwitcher {
     /// Local branches then remote ones; `None` while loading.
     branches: Option<Vec<(String, bool)>>,
     selected: usize,
+    /// The list's scroll, kept on the selection as Up and Down move it.
+    scroll: ScrollHandle,
     _query_events: Subscription,
 }
 
@@ -52,6 +54,7 @@ impl BranchSwitcher {
         let events = cx.subscribe_in(&query, window, |this, _, event: &InputEvent, _, cx| {
             if let InputEvent::Change = event {
                 this.selected = 0;
+                this.scroll.scroll_to_item(0);
                 cx.notify();
             }
         });
@@ -117,6 +120,7 @@ impl BranchSwitcher {
             current,
             branches: None,
             selected: 0,
+            scroll: ScrollHandle::new(),
             _query_events: events,
         }
     }
@@ -178,6 +182,7 @@ impl BranchSwitcher {
             "up" => self.selected = self.selected.saturating_sub(1),
             _ => return,
         }
+        self.scroll.scroll_to_item(self.selected);
         cx.stop_propagation();
         cx.notify();
     }
@@ -199,7 +204,8 @@ impl Render for BranchSwitcher {
             .flex()
             .flex_col()
             .max_h(px(320.))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll);
         for (index, row) in rows.iter().enumerate() {
             let (glyph, title, trailing) = match row {
                 Row::Branch { name, remote } => (
@@ -233,7 +239,6 @@ impl Render for BranchSwitcher {
                     .h(px(28.))
                     .px(px(8.))
                     .rounded(px(metrics::RADIUS))
-                    .cursor_pointer()
                     .when(index == selected, |d| d.bg(hsla(p.selection)))
                     .when(index != selected, |d| d.hover(|s| s.bg(hsla(p.hover))))
                     .on_click(cx.listener(move |this, _, window, cx| this.pick(index, window, cx)))

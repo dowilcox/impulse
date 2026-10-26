@@ -22,10 +22,12 @@ use std::time::Duration;
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     canvas, div, point, prelude::*, px, uniform_list, AnyElement, App, Bounds, ClipboardItem,
     Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla, KeyDownEvent, PathBuilder,
-    Pixels, Subscription, Task, UniformListScrollHandle, Window,
+    Pixels, ScrollStrategy, Subscription, Task, UniformListScrollHandle, Window,
 };
 use impulse_git::history_query::HistoryQuery;
 use impulse_git::log::{CommitDetails, ForkPoint, LogEntry, LogScope};
@@ -147,6 +149,9 @@ pub struct HistoryView {
     focus: FocusHandle,
     palette: ChromePalette,
     loading: bool,
+    /// The read under way is a page (not a refresh in place): the
+    /// spinner shows under the rows.
+    paging: bool,
     exhausted: bool,
     error: Option<String>,
     /// A commit to select once its page is loaded (Show Commit for This
@@ -234,6 +239,7 @@ impl HistoryView {
             focus: cx.focus_handle(),
             palette: palette.clone(),
             loading: false,
+            paging: false,
             exhausted: false,
             error: None,
             reveal: None,
@@ -307,6 +313,7 @@ impl HistoryView {
         self.max_lanes = 1;
         self.tips = None;
         self.loading = false;
+        self.paging = false;
         self.exhausted = false;
         self.applied = Request {
             scope: self.scope.clone(),
@@ -324,6 +331,7 @@ impl HistoryView {
             return;
         }
         self.loading = true;
+        self.paging = true;
         let (root, request, skip, generation) = (
             self.root.clone(),
             self.applied.clone(),
@@ -353,6 +361,7 @@ impl HistoryView {
                     return;
                 }
                 view.loading = false;
+                view.paging = false;
                 match page {
                     Ok(page) => {
                         view.error = None;
@@ -365,7 +374,7 @@ impl HistoryView {
                             view.reveal_pending(cx);
                         } else if view.selected.is_none() {
                             if let Some(first) = view.visible.first().copied() {
-                                view.select(first, cx);
+                                view.select(first, ScrollStrategy::Nearest, cx);
                             }
                         }
                     }
@@ -606,12 +615,12 @@ impl HistoryView {
         });
         if let Some(index) = found {
             self.reveal = None;
-            self.select(index, cx);
+            self.select(index, ScrollStrategy::Center, cx);
         } else if self.exhausted || self.entries.len() > 20 * PAGE {
             self.reveal = None;
             if self.selected.is_none() {
                 if let Some(first) = self.visible.first().copied() {
-                    self.select(first, cx);
+                    self.select(first, ScrollStrategy::Center, cx);
                 }
             }
         } else {
@@ -653,15 +662,16 @@ impl HistoryView {
         .detach();
     }
 
-    /// Select entry `index`.
-    fn select(&mut self, index: usize, cx: &mut Context<Self>) {
+    /// Select entry `index`, scrolled into view: a click or an arrow key
+    /// only as far as it takes (`Nearest`), a reveal to the middle, as
+    /// Swift's `scrollTo(sha)` and its `scrollToken` do.
+    fn select(&mut self, index: usize, strategy: ScrollStrategy, cx: &mut Context<Self>) {
         let Some(entry) = self.entries.get(index) else {
             return;
         };
         let sha = entry.sha.clone();
         if let Some(row) = self.visible.iter().position(|&i| i == index) {
-            self.scroll
-                .scroll_to_item(row, gpui_kit::ScrollStrategy::Center);
+            self.scroll.scroll_to_item(row, strategy);
             if row + 50 >= self.visible.len() {
                 self.load_page(cx);
             }
@@ -689,7 +699,7 @@ impl HistoryView {
         }
         let row = self.selected_row().map(|r| r as i64).unwrap_or(-1);
         let next = (row + delta).clamp(0, self.visible.len() as i64 - 1) as usize;
-        self.select(self.visible[next], cx);
+        self.select(self.visible[next], ScrollStrategy::Nearest, cx);
         cx.stop_propagation();
     }
 
@@ -749,6 +759,9 @@ impl HistoryView {
             .gap(px(3.))
             .px(px(5.))
             .h(px(17.))
+            // A long branch name is cut short rather than pushing the
+            // subject out of the row.
+            .max_w(px(160.))
             .rounded(px(4.))
             .bg(hsla(
                 if remote { p.text_tertiary } else { color }.opacity(0.14),
@@ -761,7 +774,14 @@ impl HistoryView {
             })
             .text_color(hsla(color))
             .child(icon(name, 9., color))
-            .child(div().whitespace_nowrap().child(label))
+            .child(
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(label),
+            )
             .context_menu(move |menu, _, cx| {
                 let context = view.read(cx).context.clone();
                 menu::ref_items(menu, &view, &decoration, &entry, &context)
@@ -794,14 +814,12 @@ impl HistoryView {
             .h(px(ROW_HEIGHT))
             .pl(px(if lanes > 0 { 2. } else { 10. }))
             .pr(px(10.))
+            .relative()
             .when(selected, |d| d.bg(hsla(p.selection)))
-            .when(selected && focused, |d| {
-                d.border(px(1.5)).border_color(hsla(p.focus_ring))
-            })
             .when(!selected, |d| d.hover(|s| s.bg(hsla(p.hover))))
             .on_click(cx.listener(move |view, _, window, cx| {
                 window.focus(&view.focus, cx);
-                view.select(index, cx)
+                view.select(index, ScrollStrategy::Nearest, cx)
             }))
             .when(lanes > 0, |d| {
                 d.child(
@@ -889,6 +907,17 @@ impl HistoryView {
                 .text_color(hsla(p.text_tertiary))
                 .child(entry.short_sha().to_string()),
         )
+        // The focus ring is drawn over the row, so it takes no room from
+        // the graph, whose lanes must meet the rows above and below.
+        .when(selected && focused, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .border(px(1.5))
+                    .border_color(hsla(p.focus_ring)),
+            )
+        })
         .context_menu(move |menu, window, cx| {
             menu::commit_items(menu, &view, &menu_entry, window, cx)
         })
@@ -1036,7 +1065,6 @@ impl HistoryView {
             .h(px(18.))
             .rounded(px(4.))
             .bg(hsla(p.raised))
-            .cursor_pointer()
             .text_color(hsla(p.text_secondary))
             .tooltip(move |window, cx| {
                 gpui_kit::component::tooltip::Tooltip::new(tooltip).build(window, cx)
@@ -1223,7 +1251,10 @@ impl Render for HistoryView {
             0
         };
         let focused = self.focus.is_focused(window);
-        let count = self.visible.len();
+        // While a page loads, a spinner under the rows (Swift's
+        // ProgressRing), so an empty list doesn't read as no history.
+        let spinner = self.paging && self.error.is_none();
+        let count = self.visible.len() + usize::from(spinner);
         let view = cx.entity();
         let list: AnyElement = match &self.error {
             Some(error) => div()
@@ -1240,9 +1271,19 @@ impl Render for HistoryView {
                         cx.defer(move |cx| this.update(cx, |view, cx| view.load_page(cx)));
                     }
                     range
-                        .map(|row| {
-                            let index = view.visible[row];
-                            view.row(index, lanes, focused, cx).into_any_element()
+                        .map(|row| match view.visible.get(row) {
+                            Some(&index) => view.row(index, lanes, focused, cx).into_any_element(),
+                            None => div()
+                                .h(px(ROW_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    Spinner::new()
+                                        .with_size(px(12.))
+                                        .color(hsla(view.palette.text_tertiary)),
+                                )
+                                .into_any_element(),
                         })
                         .collect::<Vec<_>>()
                 })

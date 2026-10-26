@@ -2,12 +2,13 @@
 //! (T or / puts the cursor there, Return goes to the first match), a bar of
 //! how much is viewed, and the files under their folders, each with its
 //! viewed checkbox, status, name, a dot when it changed since viewed, its
-//! comment count and line stats. The focused file is highlighted.
+//! comment count and line stats. The file at the top of the diff is
+//! highlighted and kept in view.
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{div, prelude::*, px, Context, FontWeight, Window};
 
-use super::{icon, stat, status_letter, ReviewView, NAVIGATOR_WIDTH};
+use super::{stat, status_letter, viewed_checkbox, ReviewView, NAVIGATOR_WIDTH};
 use crate::workbench_chrome::hsla;
 
 impl ReviewView {
@@ -65,7 +66,8 @@ impl ReviewView {
     ) -> impl IntoElement {
         let filter = self.nav_filter(window, cx);
         let p = self.palette.clone();
-        let current = self.focused.map(|(f, _)| f);
+        // Swift's `model.current`: the file the diff is scrolled to.
+        let current = self.top_file();
         let viewed = self.files.iter().filter(|f| f.viewed).count();
         let fraction = if self.files.is_empty() {
             0.
@@ -79,8 +81,11 @@ impl ReviewView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&self.nav_scroll)
             .pb(px(12.));
         let mut last_dir: Option<String> = None;
+        // Its rows are the list's children, folders among them.
+        let mut child = 0;
         for index in self.visible_files(cx) {
             let file = &self.files[index];
             let path = std::path::Path::new(&file.change.path);
@@ -98,9 +103,12 @@ impl ReviewView {
                             .pb(px(2.))
                             .text_size(px(10.5))
                             .text_color(hsla(p.text_tertiary))
-                            .truncate()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_start()
                             .child(dir.clone()),
                     );
+                    child += 1;
                 }
                 last_dir = Some(dir);
             }
@@ -109,6 +117,10 @@ impl ReviewView {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let selected = current == Some(index);
+            if selected && self.nav_top != current {
+                self.nav_scroll.scroll_to_item(child);
+            }
+            child += 1;
             let is_viewed = file.viewed;
             let lines = file
                 .diff
@@ -131,21 +143,8 @@ impl ReviewView {
                     .when(!selected, |d| d.hover(|s| s.bg(hsla(p.hover))))
                     .on_click(cx.listener(move |view, _, _, cx| view.reveal_file(index, cx)))
                     .child(
-                        div()
+                        viewed_checkbox(is_viewed, &p)
                             .id(("nav-viewed", index))
-                            .size(px(13.))
-                            .flex_none()
-                            .rounded(px(3.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .border_1()
-                            .when(is_viewed, |d| {
-                                d.bg(hsla(p.success))
-                                    .border_color(hsla(p.success))
-                                    .child(icon("check", 9., p.text_on_accent))
-                            })
-                            .when(!is_viewed, |d| d.border_color(hsla(p.text_tertiary)))
                             .on_click(cx.listener(move |view, _, _, cx| {
                                 cx.stop_propagation();
                                 view.set_viewed(index, !is_viewed, cx);
@@ -156,7 +155,9 @@ impl ReviewView {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
                             .text_size(px(12.))
                             .text_color(hsla(if is_viewed { p.text_tertiary } else { p.text }))
                             .child(name),
@@ -167,6 +168,9 @@ impl ReviewView {
                     .children(self.navigator_count(index))
                     .children(lines.map(|(added, removed)| stat(added, removed, &p))),
             );
+        }
+        if current.is_some() {
+            self.nav_top = current;
         }
         div()
             .flex()

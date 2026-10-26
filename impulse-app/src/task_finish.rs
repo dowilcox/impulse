@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use gpui_kit::component::Sizable as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, Context, Entity, FocusHandle, FontWeight, Subscription,
     WeakEntity, Window,
@@ -290,9 +291,24 @@ fn file_name(path: &str) -> String {
 impl TaskFinishView {
     fn status_icon(&self, status: &Status) -> AnyElement {
         let p = &self.palette;
+        // The running step turns (Swift's ProgressRing), as the Changes
+        // panel's activity does.
+        if matches!(status, Status::Running(_)) {
+            return div()
+                .w(px(16.))
+                .h(px(16.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui_kit::component::spinner::Spinner::new()
+                        .with_size(px(13.))
+                        .color(hsla(p.text_secondary)),
+                )
+                .into_any_element();
+        }
         let (name, color): (&str, Rgba) = match status {
-            Status::Pending => ("circle", p.text_tertiary),
-            Status::Running(_) => ("loader-circle", p.text_secondary),
+            Status::Pending | Status::Running(_) => ("circle", p.text_tertiary),
             Status::Done(_) => ("circle-check", p.success),
             Status::Skipped(_) => ("minus", p.text_tertiary),
             Status::Failed(_) => ("circle-x", p.danger),
@@ -430,7 +446,6 @@ impl TaskFinishView {
                     .flex()
                     .items_start()
                     .gap(px(8.))
-                    .cursor_pointer()
                     .on_click(self.act(move |_, view, _, cx| {
                         if !running {
                             view.update(cx, |v, cx| {

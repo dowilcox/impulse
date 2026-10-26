@@ -150,16 +150,18 @@ pub(super) fn outdated_ids(
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum ButtonKind {
+pub(super) enum ButtonKind {
     Plain,
     Primary,
     Danger,
 }
 
-/// The small text buttons in comment cards (`ReviewActionButton`).
-fn action_button(
+/// The small text buttons of comment cards and file and hunk headers
+/// (`ReviewActionButton`): 22 high, primary outlined, danger red only on
+/// hover.
+pub(super) fn action_button(
     id: impl Into<gpui_kit::ElementId>,
-    title: &'static str,
+    title: impl Into<gpui_kit::SharedString>,
     kind: ButtonKind,
     p: &impulse_kit::chrome::ChromePalette,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -173,7 +175,7 @@ fn action_button(
         .h(px(22.))
         .rounded(px(5.))
         .text_size(px(11.))
-        .cursor_pointer()
+        .whitespace_nowrap()
         .text_color(hsla(if kind == ButtonKind::Primary {
             p.text
         } else {
@@ -190,7 +192,7 @@ fn action_button(
                 text
             }))
         })
-        .child(title)
+        .child(title.into())
 }
 
 impl ReviewView {
@@ -647,6 +649,8 @@ impl ReviewView {
                             .top_0()
                             .bottom_0()
                             .w(px(3.))
+                            // Inside the card's corners, which don't clip it.
+                            .rounded_l(px(5.))
                             .bg(hsla(bar)),
                     ),
             )
@@ -881,7 +885,7 @@ impl ReviewView {
             ButtonKind::Plain,
             &self.palette,
         )
-        .h(px(18.))
+        .tooltip(super::help("Comment (c)"))
         .on_click(cx.listener(move |view, _, window, cx| {
             cx.stop_propagation();
             view.open_composer(f, h, None, window, cx)
@@ -908,7 +912,6 @@ impl ReviewView {
             .items_center()
             .opacity(0.)
             .group_hover(super::LINE_GROUP, |s| s.opacity(1.))
-            .cursor_pointer()
             .on_click(cx.listener(move |view, _, window, cx| {
                 cx.stop_propagation();
                 view.open_composer(f, h, Some(l), window, cx)

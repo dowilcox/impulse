@@ -18,8 +18,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use gpui_kit::{
-    div, list, prelude::*, px, AnyElement, App, Context, FocusHandle, FontWeight, Hsla,
-    KeyDownEvent, ListAlignment, ListState, SharedString, StyledText, TextRun, Window,
+    canvas, div, list, prelude::*, px, AnyElement, AnyView, App, Context, FocusHandle, FontWeight,
+    Hsla, KeyDownEvent, ListAlignment, ListState, Pixels, ScrollHandle, SharedString, StyledText,
+    TextRun, Window,
 };
 use impulse_git::hunks::{DiffLine, DiffLineKind};
 use impulse_git::scoped_diff::{DiffOptions, FileDiff};
@@ -28,6 +29,7 @@ use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 use impulse_kit::theme::ResolvedTheme;
 
 use crate::workbench_chrome::{hsla, icon};
+use comments::{action_button, ButtonKind};
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _};
 
@@ -35,6 +37,11 @@ use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _};
 const WHOLE_FILE: i32 = 100_000;
 const NAVIGATOR_WIDTH: f32 = 250.0;
 const CARD_INSET: f32 = 12.0;
+/// `ReviewMetrics.fileHeaderHeight`: the floating header's room too.
+const FILE_HEADER_HEIGHT: f32 = 34.0;
+/// Narrower than this (a split pane, History's lower half), the navigator
+/// gives the diff its room (`ReviewSurface.layout`).
+const NAVIGATOR_MIN_WIDTH: f32 = 620.0;
 /// The hover group of a diff line's column (its comment button shows).
 const LINE_GROUP: &str = "review-line";
 
@@ -102,6 +109,24 @@ enum Row {
     /// Split layout: an old-side line beside a new-side line.
     Split(usize, usize, Option<usize>, Option<usize>),
     FileEnd(usize),
+}
+
+impl Row {
+    /// The file the row belongs to.
+    fn file(&self) -> Option<usize> {
+        match self {
+            Row::PageTop => None,
+            Row::FileHeader(f)
+            | Row::Notice(f, _)
+            | Row::OutdatedTitle(f)
+            | Row::Comment(f, _)
+            | Row::Composer(f)
+            | Row::HunkHeader(f, _)
+            | Row::Line(f, _, _)
+            | Row::Split(f, _, _, _)
+            | Row::FileEnd(f) => Some(*f),
+        }
+    }
 }
 
 /// Diff colors (the Swift `ReviewColors`).
@@ -193,6 +218,46 @@ fn content_hash(diff: &FileDiff) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// A tooltip of `text` (Swift's `.help`).
+fn help(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text = text.into();
+    move |window, cx| gpui_kit::component::tooltip::Tooltip::new(text.clone()).build(window, cx)
+}
+
+/// One of Review's own ⌘ shortcuts (Ctrl on Linux, as `key_down` reads
+/// them), shown the platform's way: "⇧⌘Y", "Ctrl+Shift+Y".
+fn command_key(shift: bool, alt: bool, key: &str) -> String {
+    use impulse_kit::keybindings::{Platform, Shortcut};
+    let mac = cfg!(target_os = "macos");
+    Shortcut {
+        ctrl: !mac,
+        alt,
+        shift,
+        cmd: mac,
+        key: key.into(),
+    }
+    .display(Platform::current())
+}
+
+/// The Viewed checkbox, in the file header and the navigator alike
+/// (`ReviewCheckbox`).
+fn viewed_checkbox(on: bool, p: &ChromePalette) -> gpui_kit::Div {
+    div()
+        .size(px(13.))
+        .flex_none()
+        .rounded(px(3.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .when(on, |d| {
+            d.bg(hsla(p.success))
+                .border_color(hsla(p.success))
+                .child(icon("check", 9., p.text_on_accent))
+        })
+        .when(!on, |d| d.border_color(hsla(p.text_tertiary)))
 }
 
 /// What a scope is called in the header.
@@ -306,6 +371,12 @@ pub struct ReviewView {
     /// The navigator's filter field (`navigator`), made on first render.
     nav_filter: Option<gpui_kit::Entity<gpui_kit::component::input::InputState>>,
     _nav_filter_events: Option<gpui_kit::Subscription>,
+    /// The navigator's scroll, and the file it last scrolled to (the one
+    /// at the top of the diff).
+    nav_scroll: ScrollHandle,
+    nav_top: Option<usize>,
+    /// The view's width in the last frame (whether the navigator fits).
+    width: std::rc::Rc<std::cell::Cell<Option<Pixels>>>,
     pub scope: DiffScope,
     options: DiffOptions,
     default_context: i32,
@@ -413,6 +484,9 @@ impl ReviewView {
             composer: None,
             nav_filter: None,
             _nav_filter_events: None,
+            nav_scroll: ScrollHandle::new(),
+            nav_top: None,
+            width: Default::default(),
             editing: None,
             stale: false,
             reviewed: None,
@@ -1085,7 +1159,23 @@ impl ReviewView {
             .iter()
             .position(|r| *r == Row::HunkHeader(stops[next].0, stops[next].1))
         {
-            self.list.scroll_to_reveal_item(row);
+            // A hunk above, or under the floating file header, goes just
+            // below that header (Swift's `reveal` leaves it the room).
+            let room = self.list.viewport_bounds().top() + px(FILE_HEADER_HEIGHT);
+            let hidden = row < self.list.logical_scroll_top().item_ix
+                || self
+                    .list
+                    .bounds_for_item(row)
+                    .is_some_and(|b| b.top() < room);
+            if hidden {
+                self.list.scroll_to(gpui_kit::ListOffset {
+                    item_ix: row,
+                    offset_in_item: px(0.),
+                });
+                self.list.scroll_by(-px(FILE_HEADER_HEIGHT));
+            } else {
+                self.list.scroll_to_reveal_item(row);
+            }
         }
         cx.notify();
     }
@@ -1306,8 +1396,12 @@ impl ReviewView {
                     .id("whitespace")
                     .p(px(4.))
                     .rounded(px(metrics::RADIUS_SMALL))
-                    .cursor_pointer()
                     .hover(|s| s.bg(hsla(p.hover)))
+                    .tooltip(help(if self.options.ignore_whitespace {
+                        "Show whitespace changes"
+                    } else {
+                        "Hide whitespace changes"
+                    }))
                     .on_click(cx.listener(|view, _, _, cx| {
                         view.options.ignore_whitespace = !view.options.ignore_whitespace;
                         view.refresh(cx);
@@ -1347,8 +1441,17 @@ impl ReviewView {
                     .id("show-changes")
                     .p(px(4.))
                     .rounded(px(metrics::RADIUS_SMALL))
-                    .cursor_pointer()
                     .hover(|s| s.bg(hsla(p.hover)))
+                    .tooltip(help(
+                        match impulse_kit::keybindings::display_for(
+                            "show_changes",
+                            &crate::settings_store::SettingsStore::get(cx).keybinding_overrides,
+                            impulse_kit::keybindings::Platform::current(),
+                        ) {
+                            Some(key) => format!("Show Changes panel to commit ({key})"),
+                            None => "Show Changes panel to commit".into(),
+                        },
+                    ))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ReviewEvent::ShowChanges)))
                     .child(icon("git-branch", 13., p.text_secondary)),
             )
@@ -1357,8 +1460,8 @@ impl ReviewView {
                     .id("refresh")
                     .p(px(4.))
                     .rounded(px(metrics::RADIUS_SMALL))
-                    .cursor_pointer()
                     .hover(|s| s.bg(hsla(p.hover)))
+                    .tooltip(help("Refresh"))
                     .on_click(cx.listener(|view, _, _, cx| view.refresh(cx)))
                     .child(icon("refresh-cw", 13., p.text_secondary)),
             )
@@ -1393,9 +1496,22 @@ impl ReviewView {
         match row {
             Row::PageTop => div().h(px(10.)).into_any_element(),
             Row::FileHeader(f) => self.file_header(f, cx),
-            Row::FileEnd(_) => div()
+            // An open card ends in a 6 high rounded bottom; a folded one
+            // is all header (`ReviewRowView.drawBackground`).
+            Row::FileEnd(f) => div()
                 .h(px(12.))
-                .child(div().w_full().h(px(1.)).bg(hsla(colors.border)))
+                .when(self.files.get(f).is_some_and(|f| f.expanded), |d| {
+                    d.child(
+                        div()
+                            .h(px(6.))
+                            .border_l_1()
+                            .border_r_1()
+                            .border_b_1()
+                            .border_color(hsla(colors.border))
+                            .rounded_b(px(6.))
+                            .bg(hsla(colors.page)),
+                    )
+                })
                 .into_any_element(),
             Row::Notice(_, text) => card(div())
                 .h(px(42.))
@@ -1438,55 +1554,48 @@ impl ReviewView {
                             .child("Whole file only"),
                     );
                 }
-                let button = |id: &'static str, label: String, primary: bool| {
-                    div()
-                        .id(id)
-                        .px(px(8.))
-                        .h(px(18.))
-                        .flex()
-                        .items_center()
-                        .rounded(px(metrics::RADIUS_SMALL))
-                        .text_size(px(11.))
-                        .cursor_pointer()
-                        // Swift's ChromeButton: secondary (raised, bordered) for
-                        // the main action, ghost for the others.
-                        .text_color(hsla(p.text))
-                        // Revert is Swift's danger kind: red.
-                        .when(id.starts_with("revert"), |d| d.text_color(hsla(p.danger)))
-                        .when(primary, |d| {
-                            d.bg(hsla(p.raised))
-                                .border_1()
-                                .border_color(hsla(p.hairline_strong))
-                        })
-                        .when(!primary, |d| d.hover(|s| s.bg(hsla(p.hover))))
-                        .child(label)
+                let button = |id: &'static str, label: String, kind: ButtonKind| {
+                    action_button(id, label, kind, p)
                 };
                 if !busy {
                     if stage {
                         actions = actions.child(
-                            button("stage-hunk", format!("Stage {what}"), true).on_click(
-                                cx.listener(move |v, _, _, cx| {
+                            button("stage-hunk", format!("Stage {what}"), ButtonKind::Primary)
+                                .tooltip(help(format!(
+                                    "Stage (s / {})",
+                                    command_key(false, false, "y")
+                                )))
+                                .on_click(cx.listener(move |v, _, _, cx| {
                                     v.act(Action::Stage, f, Some(h), cx)
-                                }),
-                            ),
+                                })),
                         );
                     }
                     if unstage {
                         actions = actions.child(
-                            button("unstage-hunk", format!("Unstage {what}"), true).on_click(
-                                cx.listener(move |v, _, _, cx| {
-                                    v.act(Action::Unstage, f, Some(h), cx)
-                                }),
-                            ),
+                            button(
+                                "unstage-hunk",
+                                format!("Unstage {what}"),
+                                ButtonKind::Primary,
+                            )
+                            .tooltip(help(format!(
+                                "Unstage (u / {})",
+                                command_key(true, false, "y")
+                            )))
+                            .on_click(cx.listener(
+                                move |v, _, _, cx| v.act(Action::Unstage, f, Some(h), cx),
+                            )),
                         );
                     }
                     if revert {
                         actions = actions.child(
-                            button("revert-hunk", format!("Revert {what}"), false).on_click(
-                                cx.listener(move |v, _, _, cx| {
+                            button("revert-hunk", format!("Revert {what}"), ButtonKind::Danger)
+                                .tooltip(help(format!(
+                                    "Revert in the working tree (x / {})",
+                                    command_key(false, true, "z")
+                                )))
+                                .on_click(cx.listener(move |v, _, _, cx| {
                                     v.act(Action::Revert, f, Some(h), cx)
-                                }),
-                            ),
+                                })),
                         );
                     }
                 }
@@ -1498,11 +1607,10 @@ impl ReviewView {
                     .items_center()
                     .gap(px(8.))
                     .px(px(10.))
+                    .relative()
                     .bg(hsla(colors.hunk_header))
-                    .border_t_1()
-                    .when(focused, |d| {
-                        d.border_l_2().border_color(hsla(colors.accent))
-                    })
+                    // The first hunk sits under the header's own line.
+                    .when(h > 0, |d| d.border_t_1())
                     .on_click(cx.listener(move |v, _, _, cx| {
                         v.focused = Some((f, h));
                         cx.notify();
@@ -1519,6 +1627,19 @@ impl ReviewView {
                             .child(header),
                     )
                     .child(actions)
+                    // The focused hunk's bar, inside the card's border, as
+                    // its lines draw theirs.
+                    .when(focused, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .w(px(2.))
+                                .h_full()
+                                .bg(hsla(colors.accent)),
+                        )
+                    })
                     .into_any_element()
             }
             Row::Line(f, h, l) => {
@@ -1573,42 +1694,13 @@ impl ReviewView {
         let can_edit_diff = stage && file.change.status != ChangeStatus::Deleted;
         let relative_path = file.change.path.clone();
         let view = cx.entity().downgrade();
-        let plain = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .px(px(6.))
-                .h(px(22.))
-                .flex()
-                .items_center()
-                .rounded(px(metrics::RADIUS_SMALL))
-                .text_size(px(11.5))
-                .text_color(hsla(p.text_secondary))
-                .cursor_pointer()
-                .hover(|s| s.bg(hsla(p.hover)).text_color(hsla(p.text)))
-                .child(label)
+        let plain = |id: &'static str, label: &'static str, tip: &'static str| {
+            action_button(id, label, ButtonKind::Plain, p).tooltip(help(tip))
         };
-        let action = |id: &'static str, label: &'static str, primary: bool| {
-            div()
-                .id(id)
-                .px(px(8.))
-                .h(px(22.))
-                .flex()
-                .items_center()
-                .rounded(px(metrics::RADIUS_SMALL))
-                .text_size(px(11.5))
-                .cursor_pointer()
-                // Swift's ChromeButton: secondary for the main action, ghost
-                // for the others.
-                .text_color(hsla(p.text))
-                .when(id.starts_with("revert"), |d| d.text_color(hsla(p.danger)))
-                .when(primary, |d| {
-                    d.bg(hsla(p.raised))
-                        .border_1()
-                        .border_color(hsla(p.hairline_strong))
-                })
-                .when(!primary, |d| d.hover(|s| s.bg(hsla(p.hover))))
-                .child(label)
-        };
+        let action =
+            |id: &'static str, label: &'static str, kind: ButtonKind, tip: &'static str| {
+                action_button(id, label, kind, p).tooltip(help(tip))
+            };
         div()
             .id(("file-header", f))
             .w_full()
@@ -1620,8 +1712,9 @@ impl ReviewView {
             .bg(hsla(self.colors.header))
             .border_1()
             .border_color(hsla(self.colors.border))
-            .rounded_t(px(metrics::RADIUS))
-            .cursor_pointer()
+            // A folded file's header is its whole card.
+            .when(expanded, |d| d.rounded_t(px(8.)))
+            .when(!expanded, |d| d.rounded(px(8.)))
             .on_click(cx.listener(move |v, _, _, cx| v.toggle_expanded(f, cx)))
             .child(icon(
                 if file.expanded {
@@ -1633,28 +1726,42 @@ impl ReviewView {
                 p.text_tertiary,
             ))
             .child(status_letter(file.change.status, p))
+            // A long path gives up its start, never the file's name (Swift
+            // truncates the head).
             .child(
                 div()
+                    .id(("file-path", f))
                     .flex()
                     .min_w_0()
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_size(px(12.))
+                    .tooltip(help(path.clone()))
                     .when_some(file.change.old_path.clone(), |d, old| {
                         d.child(
                             div()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis_start()
                                 .text_color(hsla(p.text_tertiary))
                                 .line_through()
                                 .child(old),
                         )
-                        .child(div().px(px(4.)).child(icon(
+                        .child(div().flex_none().px(px(4.)).child(icon(
                             "chevron-right",
                             10.,
                             p.text_tertiary,
                         )))
                     })
-                    .child(div().text_color(hsla(p.text_tertiary)).child(dir))
-                    .child(div().text_color(hsla(p.text)).child(name)),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis_start()
+                            .text_color(hsla(p.text_tertiary))
+                            .child(dir),
+                    )
+                    .child(div().flex_none().text_color(hsla(p.text)).child(name)),
             )
             .when(file.changed_since_viewed, |d| {
                 d.child(
@@ -1685,23 +1792,12 @@ impl ReviewView {
                     .h(px(22.))
                     .rounded(px(metrics::RADIUS_SMALL))
                     .hover(|s| s.bg(hsla(p.hover)))
+                    .tooltip(help("Mark as viewed (v)"))
                     .on_click(cx.listener(move |v, _, _, cx| {
                         cx.stop_propagation();
                         v.set_viewed(f, !viewed, cx)
                     }))
-                    .child(
-                        div()
-                            .size(px(13.))
-                            .rounded(px(3.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(viewed, |d| d.bg(hsla(p.accent)))
-                            .when(!viewed, |d| {
-                                d.border_1().border_color(hsla(p.hairline_strong))
-                            })
-                            .when(viewed, |d| d.child(icon("check", 10., p.text_on_accent))),
-                    )
+                    .child(viewed_checkbox(viewed, p))
                     .child(
                         div()
                             .text_size(px(11.))
@@ -1710,44 +1806,63 @@ impl ReviewView {
                     ),
             )
             .when(stage && !file.busy, |d| {
-                d.child(action("stage-file", "Stage", true).on_click(cx.listener(
-                    move |v, _, _, cx| {
-                        cx.stop_propagation();
-                        v.act(Action::Stage, f, None, cx)
-                    },
-                )))
+                d.child(
+                    action("stage-file", "Stage", ButtonKind::Primary, "Stage file").on_click(
+                        cx.listener(move |v, _, _, cx| {
+                            cx.stop_propagation();
+                            v.act(Action::Stage, f, None, cx)
+                        }),
+                    ),
+                )
             })
             .when(unstage && !file.busy, |d| {
                 d.child(
-                    action("unstage-file", "Unstage", true).on_click(cx.listener(
-                        move |v, _, _, cx| {
-                            cx.stop_propagation();
-                            v.act(Action::Unstage, f, None, cx)
-                        },
-                    )),
+                    action(
+                        "unstage-file",
+                        "Unstage",
+                        ButtonKind::Primary,
+                        "Unstage file",
+                    )
+                    .on_click(cx.listener(move |v, _, _, cx| {
+                        cx.stop_propagation();
+                        v.act(Action::Unstage, f, None, cx)
+                    })),
                 )
             })
             .when(revert && !file.busy, |d| {
-                d.child(action("revert-file", "Revert", false).on_click(cx.listener(
-                    move |v, _, _, cx| {
+                d.child(
+                    action(
+                        "revert-file",
+                        "Revert",
+                        ButtonKind::Danger,
+                        "Discard changes to this file",
+                    )
+                    .on_click(cx.listener(move |v, _, _, cx| {
                         cx.stop_propagation();
                         v.act(Action::Revert, f, None, cx)
-                    },
-                )))
+                    })),
+                )
             })
             .when(can_edit_diff, |d| {
-                d.child(plain("edit-diff", "Edit Diff").on_click(cx.listener(
-                    move |v, _, _, cx| {
+                d.child(
+                    plain(
+                        "edit-diff",
+                        "Edit Diff",
+                        "Edit the file beside its staged version",
+                    )
+                    .on_click(cx.listener(move |v, _, _, cx| {
                         cx.stop_propagation();
                         v.open_diff(f, cx)
-                    },
-                )))
+                    })),
+                )
             })
             .child(
-                plain("open-file", "Open").on_click(cx.listener(move |v, _, _, cx| {
-                    cx.stop_propagation();
-                    v.open(f, Some(0), cx)
-                })),
+                plain("open-file", "Open", "Open file (o)").on_click(cx.listener(
+                    move |v, _, _, cx| {
+                        cx.stop_propagation();
+                        v.open(f, Some(0), cx)
+                    },
+                )),
             )
             .context_menu(move |menu, _, _| {
                 let item = |label: &'static str, act: ViewAct| {
@@ -1896,7 +2011,6 @@ impl ReviewView {
             );
             if let (Some(l), true) = (*index, selectable) {
                 gutter = gutter
-                    .cursor_pointer()
                     .hover(|d| d.bg(hsla(colors.hover)))
                     .on_click(cx.listener(move |v, event: &gpui_kit::ClickEvent, _, cx| {
                         cx.stop_propagation();
@@ -1916,6 +2030,7 @@ impl ReviewView {
             column = column.child(gutter).child(
                 div().flex_1().min_w_0().pr(px(12.)).child(code_text(
                     line,
+                    &self.font_family,
                     colors.text,
                     word,
                     index
@@ -1973,16 +2088,18 @@ enum Side {
     New,
 }
 
-/// A line's code: syntax colors (byte ranges of its content), its
-/// word-level changes highlighted (spans are UTF-16 offsets) unless they
-/// cover most of it, tabs as four spaces, free to wrap at any character.
+/// A line's code in the editor font: syntax colors (byte ranges of its
+/// content), its word-level changes highlighted (spans are UTF-16 offsets)
+/// unless they cover most of it, tabs as four spaces, free to wrap at any
+/// character.
 fn code_text(
     line: &DiffLine,
+    family: &SharedString,
     text: KitRgba,
     word: KitRgba,
     syntax: &[(std::ops::Range<usize>, Hsla)],
 ) -> StyledText {
-    let font = gpui_kit::font("JetBrains Mono");
+    let font = gpui_kit::font(family.clone());
     // A line changed through most of its length shows no word changes
     // (they'd only repeat the line's tint), as in the Swift app.
     let length: u32 = line.content.encode_utf16().count() as u32;
@@ -2011,7 +2128,9 @@ fn code_text(
         let before = shown.len();
         // A zero-width space between characters lets a long line break
         // anywhere, as Swift's character-wrapped rows do (GPUI wraps at
-        // words).
+        // words). It's default-ignorable, so it shapes to nothing in any
+        // font (CoreText, and HarfBuzz on Linux, hide it; a font without
+        // the glyph falls back to one where it's zero wide).
         if !shown.is_empty() {
             shown.push('\u{200B}');
         }
@@ -2074,11 +2193,79 @@ fn stat(added: usize, removed: usize, p: &ChromePalette) -> impl IntoElement {
         })
 }
 
+impl ReviewView {
+    /// The file at the top of the diff, just under where its floating
+    /// header sits (Swift's `reviewTopFileChanged`).
+    fn top_file(&self) -> Option<usize> {
+        let below = self.list.viewport_bounds().top() + px(FILE_HEADER_HEIGHT + 2.);
+        let mut ix = self.list.logical_scroll_top().item_ix;
+        while ix + 1 < self.rows.len()
+            && self
+                .list
+                .bounds_for_item(ix)
+                .is_some_and(|b| b.bottom() <= below)
+        {
+            ix += 1;
+        }
+        match self.rows.get(ix) {
+            Some(Row::PageTop) | None => self.rows.get(1).and_then(Row::file),
+            Some(row) => row.file(),
+        }
+    }
+
+    /// A copy of the header of the file scrolled into, pinned over the
+    /// list's top, as Swift's table floats its group rows; the next file's
+    /// header pushes it up as it arrives.
+    fn floating_header(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let top = self.list.logical_scroll_top();
+        let f = match self.rows.get(top.item_ix)? {
+            Row::FileHeader(_) if top.offset_in_item <= px(0.) => return None,
+            row => row.file()?,
+        };
+        let viewport = self.list.viewport_bounds();
+        let shift = self.rows[top.item_ix + 1..]
+            .iter()
+            .position(|r| matches!(r, Row::FileHeader(_)))
+            .and_then(|n| self.list.bounds_for_item(top.item_ix + 1 + n))
+            .map_or(px(0.), |next| {
+                (next.top() - viewport.top() - px(FILE_HEADER_HEIGHT)).min(px(0.))
+            });
+        Some(
+            div()
+                .id("review-floating-header")
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(shift)
+                .px(px(CARD_INSET))
+                .bg(hsla(self.colors.page))
+                .child(self.file_header(f, cx))
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for ReviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_if_stale(cx);
         let p = self.palette.clone();
-        let wide = window.viewport_size().width >= px(900.);
+        // By the view's own width (the window's until it's been laid out).
+        let width = self.width.get().unwrap_or(window.viewport_size().width);
+        let wide = width >= px(NAVIGATOR_MIN_WIDTH);
+        let measure = {
+            let (cell, view) = (self.width.clone(), cx.entity_id());
+            canvas(
+                move |bounds, _, cx| {
+                    cell.set(Some(bounds.size.width));
+                    if (bounds.size.width >= px(NAVIGATOR_MIN_WIDTH)) != wide {
+                        cx.notify(view);
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full()
+        };
         let body: AnyElement = match &self.message {
             Some(message) if self.files.is_empty() => div()
                 .flex_1()
@@ -2088,9 +2275,14 @@ impl Render for ReviewView {
                 .text_color(hsla(p.text_secondary))
                 .child(message.clone())
                 .into_any_element(),
-            _ => list(self.list.clone(), cx.processor(Self::render_row))
+            _ => div()
+                .relative()
                 .flex_1()
+                .min_w_0()
                 .h_full()
+                .overflow_hidden()
+                .child(list(self.list.clone(), cx.processor(Self::render_row)).size_full())
+                .children(self.floating_header(cx))
                 .into_any_element(),
         };
         div()
@@ -2098,10 +2290,12 @@ impl Render for ReviewView {
             .key_context("Review")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
+            .relative()
             .flex()
             .flex_col()
             .size_full()
             .bg(hsla(self.colors.page))
+            .child(measure)
             .child(self.header(cx))
             .child(
                 div()
