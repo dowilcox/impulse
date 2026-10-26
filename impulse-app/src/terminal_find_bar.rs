@@ -6,13 +6,8 @@
 use gpui_kit::{AnyElement, Context, Window};
 use impulse_kit::terminal_find::TerminalFindQuery;
 
+use crate::find_bar::{FindBar, FindHost};
 use crate::terminal_view::TerminalView;
-
-// The bar terminals and editors share, declared here rather than in
-// main.rs (which can name it directly as `mod find_bar;`).
-#[path = "find_bar.rs"]
-pub(crate) mod find_bar;
-pub(crate) use find_bar::{FindBar, FindHost};
 
 impl FindHost for TerminalView {
     fn find_bar_mut(&mut self) -> Option<&mut FindBar> {

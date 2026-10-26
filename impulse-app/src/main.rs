@@ -39,6 +39,7 @@ mod display_options;
 mod editor_actions;
 mod editor_brackets;
 mod editor_diff;
+mod editor_find;
 mod editor_git;
 mod editor_keys;
 mod editor_links;
@@ -49,6 +50,7 @@ mod editor_vim;
 mod editor_watch;
 mod file_icons;
 mod file_tree_actions;
+mod find_bar;
 mod fonts;
 mod git_actions;
 mod history_actions;
@@ -127,7 +129,7 @@ impl AssetSource for Assets {
         match std::fs::read(file) {
             Ok(bytes) => Ok(Some(Cow::Owned(bytes))),
             // The completion menu's kind icons (vendored GPUI Kit's), then
-            // GPUI Kit's own (the editor's search panel, menus).
+            // GPUI Kit's own (menus, dialogs).
             Err(_) => match gpui_kit::component::input::CompletionIconAssets.load(path)? {
                 Some(bytes) => Ok(Some(bytes)),
                 None => gpui_kit::assets::Assets.load(path),

@@ -17,8 +17,7 @@ use gpui_kit::{AnyElement, Context, Window};
 use impulse_kit::terminal_find::TerminalFindQuery;
 
 use crate::editor_tab::EditorTab;
-use crate::terminal_find_bar::find_bar::ChromeTheme;
-use crate::terminal_find_bar::{FindBar, FindHost};
+use crate::find_bar::{ChromeTheme, FindBar, FindHost};
 use gpui_kit::base::input::SearchOptions;
 
 impl FindHost for EditorTab {

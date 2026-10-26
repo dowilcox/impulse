@@ -152,7 +152,7 @@ pub fn apply(
         widget: hsla(Rgba::from_hex(&theme.bg_dark)),
     });
     // The editor's find bar is drawn in the chrome's colors.
-    cx.set_global(crate::terminal_find_bar::find_bar::ChromeTheme {
+    cx.set_global(crate::find_bar::ChromeTheme {
         theme: theme.clone(),
         palette: p.clone(),
     });

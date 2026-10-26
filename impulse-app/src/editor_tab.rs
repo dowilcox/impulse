@@ -21,11 +21,6 @@ use impulse_kit::uri::language_for_path;
 
 use crate::lsp_hub::{DocumentLink, LspHub};
 
-// Find and replace, declared here rather than in main.rs (which can name
-// it directly as `mod editor_find;`).
-#[path = "editor_find.rs"]
-mod editor_find;
-
 /// Opens a `window/showDocument` target (go to definition in another file)
 /// and says whether it did.
 pub type ShowDocument = Rc<dyn Fn(&lsp_types::ShowDocumentParams, &mut Window, &mut App) -> bool>;
@@ -128,7 +123,7 @@ pub struct EditorTab {
     /// The pointer over the minimap (`editor_minimap`).
     pub(crate) minimap: crate::editor_minimap::MinimapState,
     /// The find bar at the top, while it's open (`editor_find`).
-    pub(crate) find: Option<crate::terminal_find_bar::FindBar>,
+    pub(crate) find: Option<crate::find_bar::FindBar>,
     /// The last find's query and toggles, for the next ⌘F and F3.
     pub(crate) last_find: impulse_kit::terminal_find::TerminalFindQuery,
     _marking: Option<gpui_kit::Task<()>>,

@@ -43,11 +43,11 @@ use impulse_terminal::{
 
 use crate::command_editor::{CommandEditor, EditorColors};
 use crate::command_history::CommandHistory;
+use crate::find_bar::FindBar;
 use crate::settings_store::SettingsStore;
 use crate::terminal_blocks::{
     Blocks, FileChecks, Hints, HoverLink, LinkTarget, RowText, ToolbarButton,
 };
-use crate::terminal_find_bar::FindBar;
 use crate::terminal_input_bar::InputBar;
 
 /// Same inset as the Swift renderer's `padding`.
