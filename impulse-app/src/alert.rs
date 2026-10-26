@@ -6,7 +6,8 @@
 //! it. A wide accessory widens the alert. Escape picks the button titled
 //! "Cancel", and ⌘D the one titled "Don't Save", as in `NSAlert`.
 //!
-//! The colors are the system's, not the theme's, as `NSAlert` has them.
+//! The colors are the theme's (its overlay surface, accent and danger), so
+//! an alert sits with the panels and popovers around it.
 
 use std::rc::Rc;
 
@@ -17,7 +18,7 @@ use gpui_kit::{
 };
 
 use crate::workbench_chrome::hsla;
-use impulse_kit::chrome::Rgba;
+use impulse_kit::chrome::ChromePalette;
 
 actions!(alert, [DontSave]);
 
@@ -47,10 +48,12 @@ pub(crate) struct Alert {
     pub escape: Option<usize>,
 }
 
-/// Whether alerts take the light system colors (the theme is light).
-pub(crate) fn is_light(cx: &App) -> bool {
-    use gpui_kit::component::ActiveTheme as _;
-    !cx.theme().mode.is_dark()
+/// The chrome colors alerts are drawn in (`kit_theme::apply` sets them).
+pub(crate) fn palette(cx: &App) -> ChromePalette {
+    match cx.try_global::<crate::find_bar::ChromeTheme>() {
+        Some(chrome) => chrome.palette.clone(),
+        None => ChromePalette::new(&impulse_kit::theme::get_theme("nord"), false),
+    }
 }
 
 impl Alert {
@@ -105,7 +108,7 @@ impl Alert {
     /// Show it over `window`'s content. A button's action closes it
     /// (`window.close_dialog`), as every answer to an `NSAlert` does.
     pub fn show(self, window: &mut Window, cx: &mut App) {
-        let colors = Colors::new(is_light(cx));
+        let colors = Colors::new(&palette(cx));
         // A wide accessory sets the width, 16 in from each side.
         let width = self
             .accessory_width
@@ -191,30 +194,32 @@ struct Colors {
     button_text: Hsla,
     default: Hsla,
     default_hover: Hsla,
-    /// A destructive button's fill and title: red, as `NSAlert` tints it.
+    default_text: Hsla,
+    /// A destructive button's fill and title: tinted with the theme's red.
     danger_fill: Hsla,
     danger_fill_hover: Hsla,
     danger_text: Hsla,
 }
 
 impl Colors {
-    fn new(light: bool) -> Self {
-        let rgba = |hex: &str| hsla(Rgba::from_hex(hex));
-        let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
+    /// The popovers' surface (`kit_theme`'s `popover`), raised buttons and
+    /// the accent's default button, as the rest of the chrome has them.
+    fn new(p: &ChromePalette) -> Self {
+        let surface = p.overlay.mix(p.text, 0.02);
         Colors {
-            background: rgba(if light { "#F5F5F5" } else { "#1C1C1C" }),
-            border: hsla(ink.opacity(if light { 0.12 } else { 0.16 })),
-            // NSAlert's title and message: #FAFAFA on its dark background.
-            text: hsla(ink.opacity(if light { 0.88 } else { 0.98 })),
-            button: hsla(ink.opacity(if light { 0.06 } else { 0.08 })),
-            button_hover: hsla(ink.opacity(if light { 0.1 } else { 0.12 })),
-            button_pressed: hsla(ink.opacity(if light { 0.14 } else { 0.16 })),
-            button_text: hsla(ink.opacity(0.85)),
-            default: rgba(if light { "#007AFF" } else { "#0A84FF" }),
-            default_hover: rgba(if light { "#1A87FF" } else { "#2490FF" }),
-            danger_fill: rgba(if light { "#F6D3D1" } else { "#562927" }),
-            danger_fill_hover: rgba(if light { "#F2C4C1" } else { "#63302D" }),
-            danger_text: rgba(if light { "#E0241B" } else { "#F01D15" }),
+            background: hsla(surface),
+            border: hsla(p.hairline_strong),
+            text: hsla(p.text),
+            button: hsla(p.raised),
+            button_hover: hsla(p.raised.mix(p.text, 0.06)),
+            button_pressed: hsla(p.raised.mix(p.text, 0.1)),
+            button_text: hsla(p.text),
+            default: hsla(p.accent),
+            default_hover: hsla(p.accent.mix(p.text, 0.12)),
+            default_text: hsla(p.text_on_accent),
+            danger_fill: hsla(surface.mix(p.danger, 0.22)),
+            danger_fill_hover: hsla(surface.mix(p.danger, 0.3)),
+            danger_text: hsla(p.danger),
         }
     }
 }
@@ -302,7 +307,7 @@ fn body(
                 })
                 .text_size(px(13.))
                 .text_color(if default {
-                    gpui_kit::white()
+                    colors.default_text
                 } else if destructive {
                     colors.danger_text
                 } else {
@@ -379,58 +384,80 @@ pub(crate) fn checkbox(
     id: &'static str,
     title: impl Into<SharedString>,
     checked: bool,
-    light: bool,
     toggle: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap(px(9.))
-        .max_w_full()
-        .cursor_pointer()
-        .on_click(move |_, window, cx| toggle(window, cx))
-        .child(
-            div()
-                .flex_none()
-                .size(px(16.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(4.))
-                .bg(if checked {
-                    hsla(Rgba::from_hex(if light { "#007AFF" } else { "#0A84FF" }))
-                } else {
-                    hsla(ink.opacity(0.1))
-                })
-                .when(checked, |d| {
-                    d.child(crate::workbench_chrome::icon("check", 12., Rgba::WHITE))
-                }),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .text_size(px(13.))
-                .line_height(px(16.))
-                .text_color(hsla(ink.opacity(0.88)))
-                .child(title.into()),
-        )
+    Checkbox {
+        id,
+        title: title.into(),
+        checked,
+        toggle: Rc::new(toggle),
+    }
 }
 
-/// `NSTextField` in an alert: the field color, a hairline that turns into
-/// the accent's focus ring, text at 13.
+/// `checkbox`, drawn when the theme's colors are at hand.
+#[derive(IntoElement)]
+struct Checkbox {
+    id: &'static str,
+    title: SharedString,
+    checked: bool,
+    toggle: AlertAction,
+}
+
+impl RenderOnce for Checkbox {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let p = palette(cx);
+        let (checked, toggle) = (self.checked, self.toggle);
+        div()
+            .id(self.id)
+            .flex()
+            .items_center()
+            .gap(px(9.))
+            .max_w_full()
+            .cursor_pointer()
+            .on_click(move |_, window, cx| toggle(window, cx))
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .when(checked, |d| {
+                        d.bg(hsla(p.accent)).child(crate::workbench_chrome::icon(
+                            "check",
+                            12.,
+                            p.text_on_accent,
+                        ))
+                    })
+                    .when(!checked, |d| {
+                        d.bg(hsla(p.raised))
+                            .border_1()
+                            .border_color(hsla(p.hairline_strong))
+                    }),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .text_size(px(13.))
+                    .line_height(px(16.))
+                    .text_color(hsla(p.text))
+                    .child(self.title),
+            )
+    }
+}
+
+/// `NSTextField` in an alert: the content's color, a hairline that turns
+/// into the theme's focus ring, text at 13.
 pub(crate) fn field(
     state: &Entity<gpui_kit::component::input::InputState>,
     width: f32,
     height: f32,
-    light: bool,
 ) -> impl IntoElement {
     Field {
         state: state.clone(),
         width,
         height,
-        light,
     }
 }
 
@@ -440,7 +467,6 @@ struct Field {
     state: Entity<gpui_kit::component::input::InputState>,
     width: f32,
     height: f32,
-    light: bool,
 }
 
 impl RenderOnce for Field {
@@ -448,10 +474,8 @@ impl RenderOnce for Field {
         use gpui_kit::component::input::Input;
         use gpui_kit::component::Sizable as _;
         use gpui_kit::Focusable as _;
-        let light = self.light;
-        let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
+        let p = palette(cx);
         let focused = self.state.read(cx).focus_handle(cx).is_focused(window);
-        let ring = Colors::new(light).default.opacity(0.75);
         div()
             .w(px(self.width))
             .h(px(self.height))
@@ -460,17 +484,13 @@ impl RenderOnce for Field {
             .px(px(6.))
             .rounded(px(7.))
             .border_1()
-            .border_color(if focused {
-                ring
+            .border_color(hsla(if focused {
+                p.focus_ring
             } else {
-                hsla(ink.opacity(0.1))
-            })
-            // NSTextField's fill: opaque, not a tint of what's behind.
-            .bg(if light {
-                gpui_kit::white()
-            } else {
-                hsla(Rgba::from_hex("#171717"))
-            })
+                p.hairline_strong
+            }))
+            .bg(hsla(p.content))
+            .text_color(hsla(p.text))
             .text_size(px(13.))
             .child(
                 Input::new(&self.state)
@@ -484,19 +504,19 @@ impl RenderOnce for Field {
 
 /// The project trust prompt's list of commands (an `NSTextView` in a bezel,
 /// 11-point mono): all of them, scrolling past fourteen lines.
-pub(crate) fn command_list(text: String, lines: usize, light: bool) -> impl IntoElement {
-    let ink = if light { Rgba::BLACK } else { Rgba::WHITE };
+pub(crate) fn command_list(text: String, lines: usize, p: &ChromePalette) -> impl IntoElement {
     let line = 13.;
     div()
         .id("alert-commands")
         .w(px(440.))
         .h(px(lines.clamp(2, 14) as f32 * line + 12.))
         .border_1()
-        .border_color(hsla(ink.opacity(0.25)))
+        .border_color(hsla(p.hairline_strong))
+        .bg(hsla(p.content))
         .font_family(crate::settings_view::MONO_FONT)
         .text_size(px(11.))
         .line_height(px(line))
-        .text_color(hsla(ink.opacity(0.88)))
+        .text_color(hsla(p.text))
         .whitespace_normal()
         // The bezel stays put while the text scrolls inside it.
         .child(

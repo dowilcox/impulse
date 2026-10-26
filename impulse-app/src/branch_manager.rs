@@ -397,7 +397,7 @@ impl Render for BranchManager {
                             .child(format!("merged means merged into {base}"))
                     }))
                     .child(div().flex_1())
-                    .child(crate::alert::field(&self.filter, 180., 22., p.is_light)),
+                    .child(crate::alert::field(&self.filter, 180., 22.)),
             )
             // The box stays put while the list scrolls inside it.
             .child(

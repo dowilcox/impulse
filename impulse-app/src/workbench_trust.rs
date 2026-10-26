@@ -139,7 +139,6 @@ impl Workbench {
                 ("Trust Folder", trust_it.clone()),
             ],
         );
-        let light = self.palette.is_light;
         let mut alert =
             crate::alert::Alert::new(title).message(format!("{ABOUT}\n\n{shown_folder}"));
         if offer_parent {
@@ -153,7 +152,6 @@ impl Workbench {
                     "trust-parent",
                     label.clone(),
                     checked.get(),
-                    light,
                     move |window, _| {
                         checked.set(!checked.get());
                         window.refresh();

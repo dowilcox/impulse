@@ -2975,12 +2975,8 @@ impl ChromeCheckbox {
 
 impl RenderOnce for ChromeCheckbox {
     fn render(self, _: &mut Window, cx: &mut gpui_kit::App) -> impl IntoElement {
-        let light = crate::alert::is_light(cx);
-        let ink = if light {
-            KitRgba::BLACK
-        } else {
-            KitRgba::WHITE
-        };
+        // The theme's colors, as the alerts' checkboxes.
+        let p = crate::alert::palette(cx);
         let (size, radius, gap, mark) = if self.small {
             (12., 3., 5., 9.)
         } else {
@@ -3005,15 +3001,11 @@ impl RenderOnce for ChromeCheckbox {
                     .items_center()
                     .justify_center()
                     .rounded(px(radius))
-                    .bg(if checked {
-                        hsla(KitRgba::from_hex(if light { "#007AFF" } else { "#0A84FF" }))
-                    } else {
-                        hsla(ink.opacity(0.1))
-                    })
+                    .bg(hsla(if checked { p.accent } else { p.raised }))
                     .when(!checked, |d| {
-                        d.border_1().border_color(hsla(ink.opacity(0.12)))
+                        d.border_1().border_color(hsla(p.hairline_strong))
                     })
-                    .when(checked, |d| d.child(icon("check", mark, KitRgba::WHITE))),
+                    .when(checked, |d| d.child(icon("check", mark, p.text_on_accent))),
             )
             .children(self.label.map(|label| {
                 div()

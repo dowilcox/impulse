@@ -1076,9 +1076,9 @@ impl Workbench {
         let lines = listed.lines().count();
         let mut alert = crate::alert::Alert::new(title).message(message);
         if !listed.is_empty() {
-            let light = crate::alert::is_light(cx);
+            let palette = crate::alert::palette(cx);
             alert = alert.accessory(Some(440.), move |_, _| {
-                crate::alert::command_list(listed.clone(), lines, light).into_any_element()
+                crate::alert::command_list(listed.clone(), lines, &palette).into_any_element()
             });
         }
         alert

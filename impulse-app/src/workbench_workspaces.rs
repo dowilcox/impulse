@@ -110,7 +110,6 @@ impl Workbench {
             }
         };
         let first = std::cell::Cell::new(true);
-        let light = self.palette.is_light;
         let mut alert = crate::alert::Alert::new(title.to_string());
         if !message.is_empty() {
             alert = alert.message(message.to_string());
@@ -123,7 +122,7 @@ impl Workbench {
                         field.select_all(window, cx);
                     });
                 }
-                crate::alert::field(&input, 260., 24., light).into_any_element()
+                crate::alert::field(&input, 260., 24.).into_any_element()
             })
             .button(confirm, done)
             .button("Cancel", |window, cx| window.close_dialog(cx))

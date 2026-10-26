@@ -1495,7 +1495,6 @@ impl Workbench {
             })
         };
         let focused = std::cell::Cell::new(false);
-        let light = self.palette.is_light;
         let mut alert = crate::alert::Alert::new(title);
         if let Some(subject) = subject {
             alert = alert.message(subject);
@@ -1512,14 +1511,13 @@ impl Workbench {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .child(crate::alert::field(&name, 300., 26., light))
-                    .child(crate::alert::field(&message, 300., 26., light))
+                    .child(crate::alert::field(&name, 300., 26.))
+                    .child(crate::alert::field(&message, 300., 26.))
                     .children(remote.clone().map(|remote| {
                         crate::alert::checkbox(
                             "push-tag",
                             format!("Push to {remote}"),
                             checkbox.get(),
-                            light,
                             move |window, _| {
                                 checkbox.set(!checkbox.get());
                                 window.refresh();

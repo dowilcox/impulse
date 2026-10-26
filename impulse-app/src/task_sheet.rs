@@ -633,24 +633,23 @@ impl TaskSheet {
 
 /// A `.roundedBorder` TextField: its bezel 26 high around the 24 the
 /// row lays out (the form's rows are 38 apart, as the Swift sheet's).
-fn ns_field(state: &Entity<InputState>, width: f32, light: bool) -> impl IntoElement {
+fn ns_field(state: &Entity<InputState>, width: f32) -> impl IntoElement {
     div()
         .h(px(24.))
         .flex()
         .items_center()
-        .child(crate::alert::field(state, width, 26., light))
+        .child(crate::alert::field(state, width, 26.))
 }
 
 impl Render for TaskSheet {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.palette.clone();
-        let light = p.is_light;
         let titled = !self.title_text(cx).is_empty();
         let base_row = div()
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(ns_field(&self.base, 220., light))
+            .child(ns_field(&self.base, 220.))
             .when(self.is_fetching, |d| {
                 d.child(
                     div()
@@ -772,7 +771,7 @@ impl Render for TaskSheet {
                             )),
                     )
             }))
-            .child(self.field("Task", ns_field(&self.title, 386., light)))
+            .child(self.field("Task", ns_field(&self.title, 386.)))
             .child(self.field("From", base_row))
             .children(
                 self.fetch_error
