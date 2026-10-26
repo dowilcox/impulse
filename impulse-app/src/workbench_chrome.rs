@@ -997,8 +997,11 @@ impl Workbench {
                 .child(
                     div()
                         .id("titlebar-workspace")
-                        .flex_shrink(1.)
-                        .min_w(px(30.))
+                        // Whole, as Swift's breadcrumb shows it: the branch
+                        // gives way instead, and only a very long name
+                        // truncates.
+                        .flex_none()
+                        .max_w(px(160.))
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis_middle()
