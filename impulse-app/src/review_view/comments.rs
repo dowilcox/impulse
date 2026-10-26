@@ -15,7 +15,6 @@ use std::time::SystemTime;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, ClipboardItem, Context, Entity, FontWeight, KeyDownEvent,
@@ -26,12 +25,27 @@ use impulse_kit::chrome::Rgba as KitRgba;
 use impulse_kit::review_comments::{self, CommentStore, ReviewComment, Side as CommentSide};
 
 use super::{Layout, ReviewView, Row};
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec};
 use crate::workbench_chrome::{hsla, icon};
 
 /// Space after the code in a comment card's row, as `ReviewMetrics`.
 const CODE_TRAILING: f32 = 12.0;
 /// The composer's card (Swift's 136 row less its 4 and 8 margins).
 const COMPOSER_CARD: f32 = 124.0;
+/// A comment's card being edited (Swift's 132 row,
+/// `ReviewMetrics.editingCommentHeight`, less its 4 and 8 margins).
+const EDITING_CARD: f32 = 120.0;
+/// The card's padding inside its 1 pt border: Swift's 8, whose border is
+/// drawn over the padding (`strokeBorder`) rather than beside it.
+const CARD_PADDING_Y: f32 = 7.0;
+/// Room above and below a comment's card. Swift sizes the row
+/// `ReviewMetrics.commentHeight`, the text's height in the system font plus
+/// 46, about 6.5 pt less than the card and its 4 and 8 margins, and the
+/// hosting view centres what overflows: the card sits 0.75 below the row's
+/// top and 4.75 above its end.
+const COMMENT_MARGINS: (f32, f32) = (0.75, 4.75);
+/// The composer's and an edited comment's margins, in rows sized to fit.
+const CARD_MARGINS: (f32, f32) = (4.0, 8.0);
 
 /// A comment being written, anchored after one line of a hunk.
 pub(super) struct Composer {
@@ -557,25 +571,50 @@ impl ReviewView {
 
     // MARK: Drawing
 
-    /// The header's comments menu: Copy Comments as Prompt and Delete All,
-    /// with this view's count.
+    /// The header's comments menu: Send Comments to each agent, Copy
+    /// Comments as Prompt and Delete All, with this view's count.
     pub(super) fn comments_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.files.iter().map(|f| f.comments.len()).sum::<usize>();
         let total = self.comments.comments.len();
         let view = cx.entity().downgrade();
-        let mut button = Button::new("review-comments")
+        // Accent while there are comments, the count beside the icon in
+        // the code font (Swift's header).
+        let p = &self.palette;
+        let tint = if count > 0 {
+            p.accent
+        } else {
+            p.text_secondary
+        };
+        // Swift's `ChromeMenuButton`: 4 either side, at least 22 square.
+        let button = Button::new("review-comments")
             .ghost()
             .compact()
-            .icon(gpui_kit::component::Icon::empty().path("icons/message-square.svg"))
-            .tooltip("Review comments");
-        if count > 0 {
-            button = button.label(count.to_string());
-        }
-        button.dropdown_menu(move |menu: PopupMenu, window, cx| {
+            .px(px(4.))
+            .h(px(22.))
+            .min_w(px(22.))
+            .tooltip("Review comments")
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(icon("message-square", 13., tint))
+                    .when(count > 0, |d| {
+                        d.child(
+                            div()
+                                .font_family("JetBrains Mono")
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(hsla(tint))
+                                .child(count.to_string()),
+                        )
+                    }),
+            );
+        button.dropdown(move |window, cx| {
             let (copy, clear, send, mark) =
                 (view.clone(), view.clone(), view.clone(), view.clone());
-            let menu = crate::agent_send::agent_menu_items(
-                menu,
+            crate::agent_send::agent_menu_spec(
+                MenuSpec::new(),
                 "Send Comments to",
                 count > 0,
                 std::rc::Rc::new(move |_, cx| {
@@ -590,21 +629,17 @@ impl ReviewView {
                 })),
                 window,
                 cx,
-            );
-            menu.item(
-                PopupMenuItem::new("Copy Comments as Prompt")
-                    .disabled(count == 0)
-                    .on_click(move |_, _, cx| {
-                        let _ = copy.update(cx, |view, cx| view.copy_prompt(cx));
-                    }),
             )
+            .item_enabled("Copy Comments as Prompt", count > 0, move |_, cx| {
+                let _ = copy.update(cx, |view, cx| view.copy_prompt(cx));
+            })
             .separator()
-            .item(
-                PopupMenuItem::new("Delete All Comments in Repository…")
-                    .disabled(total == 0)
-                    .on_click(move |_, window, cx| {
-                        let _ = clear.update(cx, |view, cx| view.confirm_clear(window, cx));
-                    }),
+            .item_enabled(
+                "Delete All Comments in Repository…",
+                total > 0,
+                move |window, cx| {
+                    let _ = clear.update(cx, |view, cx| view.confirm_clear(window, cx));
+                },
             )
         })
     }
@@ -618,8 +653,14 @@ impl ReviewView {
     }
 
     /// A card holding `content` (a comment or the composer), in its file's
-    /// card.
-    fn comment_card(&self, indent: f32, bar: KitRgba, content: gpui_kit::Div) -> gpui_kit::Div {
+    /// card, `margins` above and below it.
+    fn comment_card(
+        &self,
+        indent: f32,
+        margins: (f32, f32),
+        bar: KitRgba,
+        content: gpui_kit::Div,
+    ) -> gpui_kit::Div {
         let p = &self.palette;
         div()
             .w_full()
@@ -627,14 +668,16 @@ impl ReviewView {
             .border_r_1()
             .border_color(hsla(self.colors.border))
             .bg(hsla(self.colors.page))
-            .pt(px(4.))
-            .pb(px(8.))
-            .pl(px(indent))
-            .pr(px(CODE_TRAILING))
+            .pt(px(margins.0))
+            .pb(px(margins.1))
+            // Swift measures from the card's edge; here its 1 pt borders
+            // take room first.
+            .pl(px(indent - 1.))
+            .pr(px(CODE_TRAILING - 1.))
             .child(
                 div()
                     .relative()
-                    .py(px(8.))
+                    .py(px(CARD_PADDING_Y))
                     .px(px(10.))
                     .rounded(px(6.))
                     .bg(hsla(p.panel))
@@ -663,14 +706,15 @@ impl ReviewView {
             .flex()
             .items_end()
             .pb(px(4.))
-            .pl(px(12.))
+            // Swift's 12 from the card's edge, its border included.
+            .pl(px(11.))
             .border_l_1()
             .border_r_1()
             .border_color(hsla(self.colors.border))
             .bg(hsla(self.colors.page))
             .text_size(px(11.))
             .text_color(hsla(self.palette.text_tertiary))
-            .child("Outdated comments: their lines changed or aren't in this diff")
+            .child("Outdated comments — their lines changed or aren't in this diff")
             .into_any_element()
     }
 
@@ -755,9 +799,16 @@ impl ReviewView {
             )
             .child(div().flex_1())
             .child(buttons);
+        let is_editing = editing.is_some();
         let body: AnyElement = match editing {
+            // Swift's editor fills the fixed 132 row under the header, its
+            // text inset as the composer's.
             Some(input) => div()
                 .id("comment-editing")
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
                 .pt(px(3.))
                 .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key == "escape" {
@@ -765,7 +816,14 @@ impl ReviewView {
                         cx.stop_propagation();
                     }
                 }))
-                .child(Textarea::new(&input).appearance(false))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .ml(px(-6.))
+                        .mt(px(-3.))
+                        .child(Textarea::new(&input).appearance(false).h_full()),
+                )
                 .into_any_element(),
             None => div()
                 .flex()
@@ -797,7 +855,13 @@ impl ReviewView {
             p.accent
         };
         let indent = if outdated { 12. } else { self.comment_indent() };
-        self.comment_card(indent, bar, div().child(header).child(body))
+        let (margins, content) = if is_editing {
+            let content = div().h(px(EDITING_CARD - CARD_PADDING_Y * 2. - 2.));
+            (CARD_MARGINS, content)
+        } else {
+            (COMMENT_MARGINS, div())
+        };
+        self.comment_card(indent, margins, bar, content.child(header).child(body))
             .when(outdated, |d| d.opacity(0.85))
             .into_any_element()
     }
@@ -827,7 +891,7 @@ impl ReviewView {
         // Swift's composer row is a fixed 136 (`ReviewMetrics.composerHeight`):
         // a 124 card whose editor scrolls, its text 5 in from the padding.
         let content = div()
-            .h(px(COMPOSER_CARD - 18.))
+            .h(px(COMPOSER_CARD - CARD_PADDING_Y * 2. - 2.))
             .child(
                 div()
                     .id("composer")
@@ -868,7 +932,7 @@ impl ReviewView {
                             ),
                     ),
             );
-        self.comment_card(self.comment_indent(), p.accent, content)
+        self.comment_card(self.comment_indent(), CARD_MARGINS, p.accent, content)
             .into_any_element()
     }
 
@@ -937,7 +1001,7 @@ impl ReviewView {
                 .flex()
                 .flex_none()
                 .items_center()
-                .gap(px(3.))
+                .gap(px(2.))
                 .child(icon("message-square", 10., p.accent))
                 .child(
                     div()

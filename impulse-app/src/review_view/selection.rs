@@ -7,11 +7,11 @@
 
 use std::collections::BTreeSet;
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::{ClipboardItem, Context, Window};
+use gpui_kit::{App, ClipboardItem, Context, Window};
 use impulse_git::hunks::{DiffLine, DiffLineKind};
 
 use super::{Action, ReviewEvent, ReviewView};
+use crate::context_menu::MenuSpec;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct LineSelection {
@@ -136,15 +136,16 @@ impl ReviewView {
             .is_some_and(|s| s.hunk == h && s.lines.contains(&line))
     }
 
-    /// A diff line's context menu, as the Swift row's.
+    /// A diff line's context menu, as the Swift row's
+    /// (`DiffLineCellView.menu(for:)`).
     pub(super) fn line_menu(
         &self,
-        menu: PopupMenu,
         f: usize,
         h: usize,
         line: usize,
         view: gpui_kit::WeakEntity<Self>,
-    ) -> PopupMenu {
+    ) -> MenuSpec {
+        let menu = MenuSpec::new();
         let Some(file) = self.files.get(f) else {
             return menu;
         };
@@ -164,44 +165,43 @@ impl ReviewView {
         } else {
             self.capabilities()
         };
-        let item = |label: &'static str, act: WindowAct| {
+        let item = |act: WindowAct| {
             let view = view.clone();
-            PopupMenuItem::new(label).on_click(move |_, window, cx| {
+            move |window: &mut Window, cx: &mut App| {
                 let _ = view.update(cx, |v, cx| act(v, window, cx));
-            })
+            }
         };
-        let mut menu = menu.item(item(
+        let mut menu = menu.item(
             "Comment on This Line",
-            Box::new(move |v, window, cx| v.open_composer(f, h, Some(line), window, cx)),
-        ));
+            item(Box::new(move |v, window, cx| {
+                v.open_composer(f, h, Some(line), window, cx)
+            })),
+        );
         for (allowed, label, action) in [
             (stage, "Stage Hunk", Action::Stage),
             (unstage, "Unstage Hunk", Action::Unstage),
             (revert, "Revert Hunk", Action::Revert),
         ] {
             if allowed {
-                menu = menu.item(item(
+                menu = menu.item(
                     label,
-                    Box::new(move |v, _, cx| v.act(action, f, Some(h), cx)),
-                ));
+                    item(Box::new(move |v, _, cx| v.act(action, f, Some(h), cx))),
+                );
             }
         }
         let content = diff_line.content.clone();
         let number = diff_line.new_lineno.or(diff_line.old_lineno).unwrap_or(1);
         let path = std::path::PathBuf::from(&self.root).join(&file.change.path);
         menu.separator()
-            .item(item(
-                "Copy Line",
-                Box::new(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(content.clone()))
-                }),
-            ))
-            .item(item(
+            .item("Copy Line", move |_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(content.clone()))
+            })
+            .item(
                 "Open File at This Line",
-                Box::new(move |_, _, cx| {
+                item(Box::new(move |_, _, cx| {
                     cx.emit(ReviewEvent::OpenFile(path.clone(), Some(number)))
-                }),
-            ))
+                })),
+            )
     }
 }
 

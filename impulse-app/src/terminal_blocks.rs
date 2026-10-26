@@ -18,6 +18,7 @@ use gpui_kit::{
 use impulse_kit::terminal_hints::{self, HintKind};
 use impulse_terminal::{TerminalBlockId, TerminalCommandBlockSummary};
 
+use crate::context_menu::{MenuEntry, MenuSpec};
 use crate::terminal_view::{TerminalView, TerminalViewEvent};
 use crate::workbench_chrome::hsla;
 
@@ -546,15 +547,30 @@ impl TerminalView {
             .find(|o| !o.is_empty())
     }
 
-    /// The ⋯ menu or the right-click menu, when open (Swift's
+    /// Open the ⋯ menu (`full` false: the block's actions and block
+    /// navigation) or the right-click menu at `at`: an `NSMenu` on macOS,
+    /// as Swift's `NSMenu.popUp`; elsewhere drawn by `block_menu`.
+    pub(crate) fn open_block_menu(
+        &mut self,
+        block: Option<u64>,
+        at: Point<Pixels>,
+        full: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if cfg!(target_os = "macos") {
+            self.blocks.menu = None;
+            self.block_menu_spec(block, full, cx)
+                .show_native(at, window, cx);
+        } else {
+            self.blocks.menu = Some(BlockMenu { block, at, full });
+        }
+        cx.notify();
+    }
+
+    /// The ⋯ menu's or the right-click menu's items (Swift's
     /// `buildBlockActionMenu` and `buildTerminalContextMenu`).
-    pub(crate) fn block_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let BlockMenu {
-            block: id,
-            at,
-            full,
-        } = self.blocks.menu?;
-        let p = &self.palette;
+    fn block_menu_spec(&self, id: Option<u64>, full: bool, cx: &mut Context<Self>) -> MenuSpec {
         let block = id.and_then(|id| {
             self.backend
                 .block_overlay()
@@ -562,6 +578,10 @@ impl TerminalView {
                 .into_iter()
                 .find(|b| b.id == id)
         });
+        // The ⋯ menu is the block's: nothing once it's gone.
+        if !full && block.is_none() {
+            return MenuSpec::new();
+        }
         let flags = self.backend.command_block_flags();
         let mut items: Vec<(&str, &str, bool)> = Vec::new();
         if let (Some(id), Some(block)) = (id, block.as_ref()) {
@@ -626,6 +646,81 @@ impl TerminalView {
                 ("clear", "Clear", true),
             ]);
         }
+        let view = cx.entity().downgrade();
+        let mut menu = MenuSpec::new();
+        for (action, title, enabled) in items {
+            if action == "-" {
+                menu = menu.separator();
+                continue;
+            }
+            let (view, action) = (view.clone(), action.to_string());
+            menu = menu.item_enabled(title.to_string(), enabled, move |window, cx| {
+                let _ = view.update(cx, |view, cx| {
+                    view.blocks.menu = None;
+                    view.run_block_menu_item(&action, id, window, cx);
+                    cx.notify();
+                });
+            });
+        }
+        menu
+    }
+
+    /// Carry out a block menu item.
+    fn run_block_menu_item(
+        &mut self,
+        action: &str,
+        id: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match (action, id) {
+            ("copy_command", Some(id)) => self.copy_block(id, true, false, cx),
+            ("copy_output", Some(id)) => self.copy_block(id, false, true, cx),
+            ("copy_both", Some(id)) => self.copy_block(id, true, true, cx),
+            ("rerun", Some(id)) => self.rerun_block(id, cx),
+            ("send_to_agent", Some(id)) => self.send_blocks_to_agent(&[id], cx),
+            ("bookmark", Some(id)) => self.toggle_bookmarks(&[id], cx),
+            ("copy", _) => self.copy_selection(cx),
+            ("paste", _) => self.paste_clipboard(window, cx),
+            ("copy_last_command", _) => {
+                if let Some(command) = self.latest_command() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(command));
+                }
+            }
+            ("copy_last_output", _) => {
+                if let Some(output) = self.latest_output() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(output));
+                }
+            }
+            ("rerun_last", _) => {
+                if let Some(command) = self.latest_command() {
+                    self.backend.scroll_to_bottom();
+                    self.backend.rerun_command(&command);
+                }
+            }
+            ("command_history", _) => {
+                cx.emit(TerminalViewEvent::RunCommand("command_history".into()))
+            }
+            ("select_all", _) => self.backend.select_all(),
+            // ⌃L, which the shell takes as clearing the screen.
+            ("clear", _) => self.backend.write(b"\x0c"),
+            (other, _) => self.perform_block_command(other, window, cx),
+        }
+    }
+
+    /// The ⋯ menu or the right-click menu where it isn't native (Linux),
+    /// when open, drawn from `block_menu_spec`.
+    pub(crate) fn block_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let BlockMenu {
+            block: id,
+            at,
+            full,
+        } = self.blocks.menu?;
+        let spec = self.block_menu_spec(id, full, cx);
+        if spec.is_empty() {
+            return None;
+        }
+        let p = &self.palette;
         let mut list = div()
             .id("block-menu")
             .occlude()
@@ -641,15 +736,21 @@ impl TerminalView {
                 view.blocks.menu = None;
                 cx.notify();
             }));
-        for (action, title, enabled) in items {
-            if action == "-" {
+        for (index, entry) in spec.entries().iter().enumerate() {
+            let MenuEntry::Item {
+                label,
+                disabled,
+                run,
+                ..
+            } = entry.clone()
+            else {
                 list = list.child(div().my(px(4.)).h(px(1.)).bg(hsla(p.hairline)));
                 continue;
-            }
-            let action = action.to_string();
+            };
+            let enabled = !disabled;
             list = list.child(
                 div()
-                    .id(gpui_kit::ElementId::Name(action.clone().into()))
+                    .id(("block-menu-item", index))
                     .px(px(8.))
                     .h(px(24.))
                     .flex()
@@ -657,59 +758,12 @@ impl TerminalView {
                     .rounded(px(4.))
                     .text_color(hsla(if enabled { p.text } else { p.text_tertiary }))
                     .when(enabled, |d| d.hover(|d| d.bg(hsla(p.hover))))
-                    .child(title.to_string())
+                    .child(label)
                     .when(enabled, |d| {
-                        d.on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |view, _, window, cx| {
-                                cx.stop_propagation();
-                                view.blocks.menu = None;
-                                match (action.as_str(), id) {
-                                    ("copy_command", Some(id)) => {
-                                        view.copy_block(id, true, false, cx)
-                                    }
-                                    ("copy_output", Some(id)) => {
-                                        view.copy_block(id, false, true, cx)
-                                    }
-                                    ("copy_both", Some(id)) => view.copy_block(id, true, true, cx),
-                                    ("rerun", Some(id)) => view.rerun_block(id, cx),
-                                    ("send_to_agent", Some(id)) => {
-                                        view.send_blocks_to_agent(&[id], cx)
-                                    }
-                                    ("bookmark", Some(id)) => view.toggle_bookmarks(&[id], cx),
-                                    ("copy", _) => view.copy_selection(cx),
-                                    ("paste", _) => view.paste_clipboard(window, cx),
-                                    ("copy_last_command", _) => {
-                                        if let Some(command) = view.latest_command() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                command,
-                                            ));
-                                        }
-                                    }
-                                    ("copy_last_output", _) => {
-                                        if let Some(output) = view.latest_output() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                output,
-                                            ));
-                                        }
-                                    }
-                                    ("rerun_last", _) => {
-                                        if let Some(command) = view.latest_command() {
-                                            view.backend.scroll_to_bottom();
-                                            view.backend.rerun_command(&command);
-                                        }
-                                    }
-                                    ("command_history", _) => cx.emit(
-                                        TerminalViewEvent::RunCommand("command_history".into()),
-                                    ),
-                                    ("select_all", _) => view.backend.select_all(),
-                                    // ⌃L, which the shell takes as clearing the screen.
-                                    ("clear", _) => view.backend.write(b"\x0c"),
-                                    (other, _) => view.perform_block_command(other, window, cx),
-                                }
-                                cx.notify();
-                            }),
-                        )
+                        d.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            run(window, cx);
+                        })
                     }),
             );
         }

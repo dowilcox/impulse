@@ -28,10 +28,10 @@ use impulse_git::types::{ChangeStatus, DiffScope, FileChange};
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba as KitRgba};
 use impulse_kit::theme::ResolvedTheme;
 
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _};
 use crate::workbench_chrome::{hsla, icon};
 use comments::{action_button, ButtonKind};
 use gpui_kit::component::button::ButtonVariants as _;
-use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _};
 
 /// More context than any file shown has lines: the whole file.
 const WHOLE_FILE: i32 = 100_000;
@@ -1240,70 +1240,70 @@ impl ReviewView {
         let viewed = self.files.iter().filter(|f| f.viewed).count();
         let count = self.files.len();
         let view = cx.entity().downgrade();
-        let scope_menu =
-            {
-                let view = view.clone();
-                let (root, base) = (self.root.clone(), self.base_branch.clone());
-                let reviewed = self.reviewed.clone();
-                move |menu: gpui_kit::component::menu::PopupMenu,
-                  _: &mut Window,
-                  _: &mut gpui_kit::Context<gpui_kit::component::menu::PopupMenu>| {
-                let item = |label: String, scope: DiffScope| {
+        let scope_menu = {
+            let view = view.clone();
+            let (root, base) = (self.root.clone(), self.base_branch.clone());
+            let reviewed = self.reviewed.clone();
+            move |_: &mut Window, _: &mut App| {
+                let item = |menu: MenuSpec, label: String, scope: DiffScope| {
                     let view = view.clone();
-                    gpui_kit::component::menu::PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                    menu.item(label, move |_, cx| {
                         let _ = view.update(cx, |v, cx| v.set_scope(scope.clone(), cx));
                     })
                 };
-                let mut menu = menu
-                    .item(item("Unstaged changes".into(), DiffScope::Unstaged))
-                    .item(item("Staged changes".into(), DiffScope::Staged))
-                    .item(item("All uncommitted changes".into(), DiffScope::Uncommitted));
+                let mut menu = MenuSpec::new();
+                menu = item(menu, "Unstaged changes".into(), DiffScope::Unstaged);
+                menu = item(menu, "Staged changes".into(), DiffScope::Staged);
+                menu = item(
+                    menu,
+                    "All uncommitted changes".into(),
+                    DiffScope::Uncommitted,
+                );
                 if let Some(base) = &base {
-                    menu = menu.separator().item(item(
+                    menu = item(
+                        menu.separator(),
                         format!("Compare with {base}"),
                         DiffScope::Branch { base: base.clone() },
-                    ));
+                    );
                 }
-                menu = menu
-                    .separator()
-                    .item(item("Last commit".into(), DiffScope::Commit { sha: "HEAD".into() }));
+                menu = item(
+                    menu.separator(),
+                    "Last commit".into(),
+                    DiffScope::Commit { sha: "HEAD".into() },
+                );
                 if let Some(turn) = crate::agent_checkpoints::last_turn_in_repo(&root) {
-                    menu = menu.item(item(
+                    menu = item(
+                        menu,
                         format!("Last agent turn ({})", turn.agent_name),
                         turn.scope(),
-                    ));
+                    );
                 }
                 if let Some(review) = &reviewed {
                     let scope = DiffScope::Snapshot {
                         from: review.ref_name.clone(),
                         to: None,
                     };
-                    menu = menu.item(item(scope_title(&scope), scope));
+                    menu = item(menu, scope_title(&scope), scope);
                 }
                 menu
             }
-            };
+        };
+        // Swift's: the current choice disabled, not checked.
         let context_menu = {
             let view = view.clone();
             let (current, default) = (self.options.context_lines, self.default_context);
-            move |menu: gpui_kit::component::menu::PopupMenu,
-                  _: &mut Window,
-                  _: &mut gpui_kit::Context<gpui_kit::component::menu::PopupMenu>| {
+            move |_: &mut Window, _: &mut App| {
                 let mut steps = vec![default, 3, 10, 25, WHOLE_FILE];
                 steps.sort();
                 steps.dedup();
-                steps.into_iter().fold(menu, |menu, lines| {
+                steps.into_iter().fold(MenuSpec::new(), |menu, lines| {
                     let view = view.clone();
-                    menu.item(
-                        gpui_kit::component::menu::PopupMenuItem::new(context_title(lines))
-                            .disabled(lines == current)
-                            .on_click(move |_, _, cx| {
-                                let _ = view.update(cx, |v, cx| {
-                                    v.options.context_lines = lines;
-                                    v.refresh(cx);
-                                });
-                            }),
-                    )
+                    menu.item_enabled(context_title(lines), lines != current, move |_, cx| {
+                        let _ = view.update(cx, |v, cx| {
+                            v.options.context_lines = lines;
+                            v.refresh(cx);
+                        });
+                    })
                 })
             }
         };
@@ -1322,12 +1322,16 @@ impl ReviewView {
                     .text_size(px(12.))
                     .child(scope_title(&self.scope)),
             );
+        // Swift's `ChromeMenuButton`s here: 4 either side, at least 22 square.
         let title = gpui_kit::component::button::Button::new("review-scope")
             .ghost()
             .compact()
+            .px(px(4.))
+            .h(px(22.))
+            .min_w(px(22.))
             .tooltip("Choose what to compare")
             .child(title.child(icon("chevron-down", 10., p.text)))
-            .dropdown_menu(scope_menu);
+            .dropdown(scope_menu);
         div()
             .flex()
             .flex_none()
@@ -1346,7 +1350,7 @@ impl ReviewView {
                         .text_color(hsla(p.text_secondary))
                         .child(format!("{count} file{}", if count == 1 { "" } else { "s" })),
                 )
-                .child(stat(added, removed, p))
+                .child(diff_stat(added, removed, p))
             })
             .when(self.loading, |d| {
                 d.child(
@@ -1420,6 +1424,9 @@ impl ReviewView {
                 gpui_kit::component::button::Button::new("context")
                     .ghost()
                     .compact()
+                    .px(px(4.))
+                    .h(px(22.))
+                    .min_w(px(22.))
                     .tooltip(format!(
                         "Context: {}",
                         context_title(self.options.context_lines)
@@ -1433,7 +1440,7 @@ impl ReviewView {
                             p.text_secondary
                         },
                     ))
-                    .dropdown_menu(context_menu),
+                    .dropdown(context_menu),
             )
             .child(self.comments_menu(cx))
             .child(
@@ -1517,7 +1524,8 @@ impl ReviewView {
                 .h(px(42.))
                 .flex()
                 .items_center()
-                .px(px(14.))
+                // Swift's 16 from the card's edge, its border included.
+                .px(px(15.))
                 .text_size(px(12.))
                 .text_color(hsla(colors.text2))
                 .child(text)
@@ -1544,7 +1552,7 @@ impl ReviewView {
                     1 => "1 line".to_string(),
                     n => format!("{n} lines"),
                 };
-                let mut actions = div().flex().items_center().gap(px(4.));
+                let mut actions = div().flex().items_center().gap(px(6.));
                 let p = &self.palette;
                 if truncated && (can_stage || can_unstage || can_revert) {
                     actions = actions.child(
@@ -1605,12 +1613,15 @@ impl ReviewView {
                     .h(px(26.))
                     .flex()
                     .items_center()
-                    .gap(px(8.))
-                    .px(px(10.))
+                    .gap(px(6.))
+                    // `ReviewHunkHeaderRow`: 10 and 8 from the card's edges,
+                    // whose 1 pt borders are counted in.
+                    .pl(px(9.))
+                    .pr(px(7.))
                     .relative()
+                    // No line above a later hunk: Swift's row draws one, but
+                    // the header's own background covers it.
                     .bg(hsla(colors.hunk_header))
-                    // The first hunk sits under the header's own line.
-                    .when(h > 0, |d| d.border_t_1())
                     .on_click(cx.listener(move |v, _, _, cx| {
                         v.focused = Some((f, h));
                         cx.notify();
@@ -1708,7 +1719,10 @@ impl ReviewView {
             .flex()
             .items_center()
             .gap(px(8.))
-            .px(px(10.))
+            // `ReviewFileHeaderRow`: 10 and 8 from the card's edges, its
+            // border counted in.
+            .pl(px(9.))
+            .pr(px(7.))
             .bg(hsla(self.colors.header))
             .border_1()
             .border_color(hsla(self.colors.border))
@@ -1864,40 +1878,28 @@ impl ReviewView {
                     },
                 )),
             )
-            .context_menu(move |menu, _, _| {
-                let item = |label: &'static str, act: ViewAct| {
+            // Swift's `ReviewFileHeaderRow.contextMenu`.
+            .right_click_menu(move |_, _| {
+                let item = |act: fn(&mut ReviewView, usize, &mut Context<ReviewView>)| {
                     let view = view.clone();
-                    gpui_kit::component::menu::PopupMenuItem::new(label).on_click(
-                        move |_, _, cx| {
-                            let _ = view.update(cx, |v, cx| act(v, cx));
-                        },
-                    )
+                    move |_: &mut Window, cx: &mut App| {
+                        let _ = view.update(cx, |v, cx| act(v, f, cx));
+                    }
                 };
                 // The repository-relative path, as Swift's review copies it.
                 let copied = relative_path.clone();
-                let mut menu = menu
-                    .item(item(
-                        "Copy Path",
-                        Box::new(move |_, cx| {
-                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
-                                copied.clone(),
-                            ))
-                        }),
-                    ))
-                    .item(item(
-                        "Open File",
-                        Box::new(move |v, cx| v.open(f, Some(0), cx)),
-                    ));
+                let mut menu = MenuSpec::new()
+                    .item("Copy Path", move |_, cx| {
+                        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(copied.clone()))
+                    })
+                    .item("Open File", item(|v, f, cx| v.open(f, Some(0), cx)));
                 if can_edit_diff {
-                    menu = menu.item(item(
-                        "Open in Diff Editor",
-                        Box::new(move |v, cx| v.open_diff(f, cx)),
-                    ));
+                    menu = menu.item("Open in Diff Editor", item(|v, f, cx| v.open_diff(f, cx)));
                 }
-                menu.separator().item(item(
+                menu.separator().item(
                     if expanded { "Collapse" } else { "Expand" },
-                    Box::new(move |v, cx| v.toggle_expanded(f, cx)),
-                ))
+                    item(|v, f, cx| v.toggle_expanded(f, cx)),
+                )
             })
             .into_any_element()
     }
@@ -1951,12 +1953,23 @@ impl ReviewView {
                     Side::New => line.kind != DiffLineKind::Removed,
                     Side::Single => true,
                 });
+            // Split's halves meet with no line between them (Swift's
+            // `DiffLineCellView` draws none).
             let mut column = div().flex().flex_1().min_w_0().overflow_hidden();
-            if i > 0 {
-                column = column.border_l_1().border_color(hsla(colors.border));
-            }
             let Some(line) = line else {
-                row = row.child(column.bg(hsla(colors.hover)));
+                // Nothing on this side of a split row: hatched, as Swift's
+                // `drawHatch`, the old side's 1 pt short of the middle.
+                let (hatch, inset) = (hsla(colors.hover), if i == 0 { 1. } else { 0. });
+                row = row.child(
+                    column.relative().child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _| paint_hatch(bounds, inset, hatch, window),
+                        )
+                        .absolute()
+                        .inset_0(),
+                    ),
+                );
                 continue;
             };
             let (tint, word, marker, marker_color) = match line.kind {
@@ -1983,11 +1996,19 @@ impl ReviewView {
             // changed line (Shift: extends); elsewhere it focuses the hunk.
             let selectable = line.kind != DiffLineKind::Context && !busy;
             let mut gutter = div().id(("gutter", i)).flex_none().flex();
-            for number in numbers {
+            for (g, number) in numbers.into_iter().enumerate() {
+                // Swift's first gutter starts at the card's edge, under its
+                // border; here the border takes the room, so it's 1 narrower
+                // and the numbers and code sit where Swift's do.
+                let width = if i == 0 && g == 0 {
+                    gutter_width - 1.
+                } else {
+                    gutter_width
+                };
                 gutter = gutter.child(
                     div()
                         .flex_none()
-                        .w(px(gutter_width))
+                        .w(px(width))
                         .h(px(line_height))
                         .pr(px(8.))
                         .flex()
@@ -2056,11 +2077,11 @@ impl ReviewView {
                             v.focused = Some((f, h));
                             cx.notify();
                         }))
-                        .context_menu(move |menu, _, cx| {
+                        .right_click_menu(move |_, cx| {
                             let Some(entity) = view.upgrade() else {
-                                return menu;
+                                return MenuSpec::new();
                             };
-                            entity.read(cx).line_menu(menu, f, h, l, view.clone())
+                            entity.read(cx).line_menu(f, h, l, view.clone())
                         })
                         .into_any_element()
                 }
@@ -2081,6 +2102,29 @@ impl ReviewView {
         }
         row.into_any_element()
     }
+}
+
+/// Swift's `drawHatch`: 1 pt lines at 45°, rising to the right, 5 apart,
+/// each starting a row's height left of the last, clipped to the side (less
+/// `inset` at its right end).
+fn paint_hatch(bounds: gpui_kit::Bounds<Pixels>, inset: f32, color: Hsla, window: &mut Window) {
+    let mut area = bounds;
+    area.size.width -= px(inset);
+    let (top, bottom) = (area.origin.y, area.origin.y + area.size.height);
+    let height = area.size.height;
+    let mask = gpui_kit::ContentMask { bounds: area };
+    window.with_content_mask(Some(mask), |window| {
+        let mut path = gpui_kit::PathBuilder::stroke(px(1.));
+        let mut x = area.origin.x - height;
+        while x < area.origin.x + area.size.width {
+            path.move_to(gpui_kit::point(x, bottom));
+            path.line_to(gpui_kit::point(x + height, top));
+            x += px(5.);
+        }
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+        }
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -2312,22 +2356,49 @@ fn status_letter(status: ChangeStatus, p: &ChromePalette) -> impl IntoElement {
         ChangeStatus::Conflicted => p.git_conflict,
         _ => p.git_modified,
     };
+    // `ReviewStatusLetter`: bold 10.5 centred in 12.
     div()
-        .w(px(14.))
+        .w(px(12.))
         .flex_none()
+        .flex()
+        .justify_center()
         .font_family("JetBrains Mono")
-        .text_size(px(11.))
-        .font_weight(FontWeight::SEMIBOLD)
+        .text_size(px(10.5))
+        .font_weight(FontWeight::BOLD)
         .text_color(hsla(color))
         .child(status.letter())
 }
 
+/// The header's `DiffStat`: mono 11, 4 apart, no "+0" beside a removal.
+fn diff_stat(added: usize, removed: usize, p: &ChromePalette) -> impl IntoElement {
+    div()
+        .flex()
+        .gap(px(4.))
+        .font_family("JetBrains Mono")
+        .text_size(px(11.))
+        .when(added > 0 || removed == 0, |d| {
+            d.child(
+                div()
+                    .text_color(hsla(p.git_added))
+                    .child(format!("+{added}")),
+            )
+        })
+        .when(removed > 0, |d| {
+            d.child(
+                div()
+                    .text_color(hsla(p.git_deleted))
+                    .child(format!("−{removed}")),
+            )
+        })
+}
+
+/// `ReviewStat`: mono 10.5, 4 apart.
 fn stat(added: usize, removed: usize, p: &ChromePalette) -> impl IntoElement {
     div()
         .flex()
-        .gap(px(6.))
+        .gap(px(4.))
         .font_family("JetBrains Mono")
-        .text_size(px(11.))
+        .text_size(px(10.5))
         .child(
             div()
                 .text_color(hsla(p.git_added))
@@ -2477,6 +2548,3 @@ impl gpui_kit::Focusable for ReviewView {
         self.focus.clone()
     }
 }
-
-/// A menu item's action on the view.
-type ViewAct = Box<dyn Fn(&mut ReviewView, &mut Context<ReviewView>)>;

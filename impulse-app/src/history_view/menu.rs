@@ -2,7 +2,6 @@
 //! commit's, and one branch or tag's, both on its chip and as a submenu of
 //! its commit's.
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{App, Context, Entity, Window};
 use impulse_git::log::LogEntry;
 use impulse_git::operations::ResetMode;
@@ -10,34 +9,32 @@ use impulse_git::types::DiffScope;
 use impulse_kit::git::refs::RefDecoration;
 
 use super::{HistoryAction, HistoryContext, HistoryEvent, HistoryView};
+use crate::context_menu::MenuSpec;
 
-/// An item that asks the workbench for `action` on `entry`.
+/// What an item that asks the workbench for `action` on `entry` runs.
 fn ask(
     view: &Entity<HistoryView>,
-    label: impl Into<gpui_kit::SharedString>,
     action: HistoryAction,
     entry: &LogEntry,
-) -> PopupMenuItem {
+) -> impl Fn(&mut Window, &mut App) + 'static {
     let (view, entry) = (view.clone(), entry.clone());
-    PopupMenuItem::new(label).on_click(move |_, _, cx| {
+    move |_, cx| {
         let (action, entry) = (action.clone(), entry.clone());
         view.update(cx, |_, cx| cx.emit(HistoryEvent { action, entry }))
-    })
+    }
 }
 
-/// An item that runs `act` on the view.
+/// What an item that runs `act` on the view runs.
 fn local(
     view: &Entity<HistoryView>,
-    label: impl Into<gpui_kit::SharedString>,
     act: impl Fn(&mut HistoryView, &mut Context<HistoryView>) + 'static,
-) -> PopupMenuItem {
+) -> impl Fn(&mut Window, &mut App) + 'static {
     let view = view.clone();
-    PopupMenuItem::new(label).on_click(move |_, _, cx| view.update(cx, |view, cx| act(view, cx)))
+    move |_, cx| view.update(cx, |view, cx| act(view, cx))
 }
 
-fn copy(label: &'static str, text: String) -> PopupMenuItem {
-    PopupMenuItem::new(label)
-        .on_click(move |_, _, cx: &mut App| HistoryView::copy(text.clone(), cx))
+fn copy(text: String) -> impl Fn(&mut Window, &mut App) + 'static {
+    move |_, cx| HistoryView::copy(text.clone(), cx)
 }
 
 /// "Tag v1.0", "Remote Branch origin/main", "Branch main".
@@ -64,14 +61,8 @@ fn merge_target(decorations: &[RefDecoration], entry: &LogEntry) -> String {
     entry.sha.clone()
 }
 
-/// A commit's menu.
-pub(super) fn commit_items(
-    menu: PopupMenu,
-    view: &Entity<HistoryView>,
-    entry: &LogEntry,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
-) -> PopupMenu {
+/// A commit's menu (`HistoryRowView.menu`).
+pub(super) fn commit_items(view: &Entity<HistoryView>, entry: &LogEntry, cx: &App) -> MenuSpec {
     let (context, compare_base, decorations, entries_order) = {
         let history = view.read(cx);
         let position = |sha: &str| history.entries.iter().position(|e| e.sha == sha);
@@ -91,69 +82,45 @@ pub(super) fn commit_items(
         .iter()
         .any(|d| matches!(d, RefDecoration::Head { .. } | RefDecoration::DetachedHead));
     let target = merge_target(&decorations, entry);
-    let mut menu = menu
-        .item(ask(
-            view,
+    let mut menu = MenuSpec::new()
+        .item(
             "Check Out (Detached)",
-            HistoryAction::Checkout,
-            entry,
-        ))
-        .item(ask(
-            view,
+            ask(view, HistoryAction::Checkout, entry),
+        )
+        .item(
             "Create Branch Here…",
-            HistoryAction::BranchHere,
-            entry,
-        ))
-        .item(ask(view, "Create Tag Here…", HistoryAction::TagHere, entry))
+            ask(view, HistoryAction::BranchHere, entry),
+        )
+        .item("Create Tag Here…", ask(view, HistoryAction::TagHere, entry))
         .separator()
-        .item(
-            ask(
-                view,
-                format!("Merge into {current}"),
-                HistoryAction::Merge(target.clone()),
-                entry,
-            )
-            .disabled(is_head),
+        .item_enabled(
+            format!("Merge into {current}"),
+            !is_head,
+            ask(view, HistoryAction::Merge(target.clone()), entry),
         )
-        .item(
-            ask(
-                view,
-                format!("Rebase {current} onto Here"),
-                HistoryAction::RebaseOnto(target),
-                entry,
-            )
-            .disabled(is_head || context.branch.is_none()),
+        .item_enabled(
+            format!("Rebase {current} onto Here"),
+            !(is_head || context.branch.is_none()),
+            ask(view, HistoryAction::RebaseOnto(target), entry),
         )
-        .item(ask(view, "Cherry-Pick", HistoryAction::CherryPick, entry))
-        .item(ask(view, "Revert", HistoryAction::Revert, entry));
-    {
-        let (view, entry) = (view.clone(), entry.clone());
-        menu = menu.submenu(
+        .item("Cherry-Pick", ask(view, HistoryAction::CherryPick, entry))
+        .item("Revert", ask(view, HistoryAction::Revert, entry))
+        .submenu(
             format!("Reset {current} Here"),
-            window,
-            cx,
-            move |menu, _, _| {
-                menu.item(ask(
-                    &view,
+            MenuSpec::new()
+                .item(
                     "Soft (keep changes staged)",
-                    HistoryAction::Reset(ResetMode::Soft),
-                    &entry,
-                ))
-                .item(ask(
-                    &view,
+                    ask(view, HistoryAction::Reset(ResetMode::Soft), entry),
+                )
+                .item(
                     "Mixed (keep changes)",
-                    HistoryAction::Reset(ResetMode::Mixed),
-                    &entry,
-                ))
-                .item(ask(
-                    &view,
+                    ask(view, HistoryAction::Reset(ResetMode::Mixed), entry),
+                )
+                .item(
                     "Hard (discard changes)…",
-                    HistoryAction::Reset(ResetMode::Hard),
-                    &entry,
-                ))
-            },
+                    ask(view, HistoryAction::Reset(ResetMode::Hard), entry),
+                ),
         );
-    }
     let named: Vec<RefDecoration> = decorations
         .into_iter()
         .filter(|d| *d != RefDecoration::DetachedHead)
@@ -161,21 +128,21 @@ pub(super) fn commit_items(
     if !named.is_empty() {
         menu = menu.separator();
         for decoration in named {
-            let (view, entry, context) = (view.clone(), entry.clone(), context.clone());
-            menu = menu.submenu(menu_title(&decoration), window, cx, move |menu, _, _| {
-                ref_items(menu, &view, &decoration, &entry, &context)
-            });
+            let items = ref_items(view, &decoration, entry, &context);
+            menu = menu.submenu(menu_title(&decoration), items);
         }
     }
-    menu = menu.separator().item(ask(
-        view,
+    menu = menu.separator().item(
         "Compare with Working Tree",
-        HistoryAction::Compare(DiffScope::Snapshot {
-            from: entry.sha.clone(),
-            to: None,
-        }),
-        entry,
-    ));
+        ask(
+            view,
+            HistoryAction::Compare(DiffScope::Snapshot {
+                from: entry.sha.clone(),
+                to: None,
+            }),
+            entry,
+        ),
+    );
     let is_base = compare_base.as_ref().is_some_and(|b| b.sha == entry.sha);
     if let (Some(base), Some((base_at, entry_at))) = (&compare_base, entries_order) {
         if !is_base {
@@ -185,141 +152,116 @@ pub(super) fn commit_items(
             } else {
                 (entry.sha.clone(), base.sha.clone())
             };
-            menu = menu.item(ask(
-                view,
+            menu = menu.item(
                 format!("Compare with {} · {}", base.short_sha(), base.subject),
-                HistoryAction::Compare(DiffScope::Range { from, to }),
-                entry,
-            ));
+                ask(
+                    view,
+                    HistoryAction::Compare(DiffScope::Range { from, to }),
+                    entry,
+                ),
+            );
         }
     }
     let selected = entry.clone();
-    menu.item(local(
-        view,
+    menu.item(
         if is_base {
             "Clear Compare Selection"
         } else {
             "Select for Compare"
         },
-        move |view, cx| {
+        local(view, move |view, cx| {
             view.compare_base = if is_base {
                 None
             } else {
                 Some(selected.clone())
             };
             cx.notify();
-        },
-    ))
+        }),
+    )
     .separator()
-    .item(copy("Copy SHA", entry.sha.clone()))
-    .item(copy("Copy Subject", entry.subject.clone()))
+    .item("Copy SHA", copy(entry.sha.clone()))
+    .item("Copy Subject", copy(entry.subject.clone()))
 }
 
-/// The actions for one branch or tag on a commit.
+/// The actions for one branch or tag on a commit (`RefMenuItems`).
 pub(super) fn ref_items(
-    menu: PopupMenu,
     view: &Entity<HistoryView>,
     decoration: &RefDecoration,
     entry: &LogEntry,
     context: &HistoryContext,
-) -> PopupMenu {
+) -> MenuSpec {
     let current = context.branch.clone().unwrap_or_else(|| "HEAD".into());
     let detached = context.branch.is_none();
+    let menu = MenuSpec::new();
     match decoration {
         RefDecoration::Tag(name) => {
             let mut menu = menu;
             if let Some(remote) = &context.tag_remote {
-                menu = menu.item(ask(
-                    view,
+                menu = menu.item(
                     format!("Push to {remote}"),
-                    HistoryAction::PushTag(name.clone()),
-                    entry,
-                ));
+                    ask(view, HistoryAction::PushTag(name.clone()), entry),
+                );
             }
             menu = menu
-                .item(ask(
-                    view,
+                .item(
                     format!("Merge into {current}"),
-                    HistoryAction::Merge(name.clone()),
-                    entry,
-                ))
-                .item(copy("Copy Name", name.clone()))
+                    ask(view, HistoryAction::Merge(name.clone()), entry),
+                )
+                .item("Copy Name", copy(name.clone()))
                 .separator()
-                .item(ask(
-                    view,
+                .item(
                     "Delete Tag",
-                    HistoryAction::DeleteTag(name.clone()),
-                    entry,
-                ));
+                    ask(view, HistoryAction::DeleteTag(name.clone()), entry),
+                );
             if let Some(remote) = &context.tag_remote {
-                menu = menu.item(ask(
-                    view,
+                menu = menu.item(
                     format!("Delete from {remote}…"),
-                    HistoryAction::DeleteRemoteTag(name.clone()),
-                    entry,
-                ));
+                    ask(view, HistoryAction::DeleteRemoteTag(name.clone()), entry),
+                );
             }
             menu
         }
         RefDecoration::LocalBranch(name) => menu
-            .item(ask(
-                view,
-                format!("Switch to {name}"),
-                HistoryAction::SwitchToBranch(name.clone()),
-                entry,
-            ))
-            .item(ask(
-                view,
-                format!("Merge into {current}"),
-                HistoryAction::Merge(name.clone()),
-                entry,
-            ))
             .item(
-                ask(
-                    view,
-                    format!("Rebase {current} onto {name}"),
-                    HistoryAction::RebaseOnto(name.clone()),
-                    entry,
-                )
-                .disabled(detached),
+                format!("Switch to {name}"),
+                ask(view, HistoryAction::SwitchToBranch(name.clone()), entry),
             )
-            .item(copy("Copy Name", name.clone()))
+            .item(
+                format!("Merge into {current}"),
+                ask(view, HistoryAction::Merge(name.clone()), entry),
+            )
+            .item_enabled(
+                format!("Rebase {current} onto {name}"),
+                !detached,
+                ask(view, HistoryAction::RebaseOnto(name.clone()), entry),
+            )
+            .item("Copy Name", copy(name.clone()))
             .separator()
-            .item(ask(
-                view,
+            .item(
                 "Delete Branch…",
-                HistoryAction::DeleteBranch(name.clone()),
-                entry,
-            )),
-        RefDecoration::Head { branch } => menu.item(copy("Copy Name", branch.clone())),
+                ask(view, HistoryAction::DeleteBranch(name.clone()), entry),
+            ),
+        RefDecoration::Head { branch } => menu.item("Copy Name", copy(branch.clone())),
         RefDecoration::RemoteBranch { branch, .. } => {
             let full = decoration.label();
             let mut menu = menu;
             if branch != "HEAD" {
                 menu = menu
-                    .item(ask(
-                        view,
-                        format!("Check Out {branch}"),
-                        HistoryAction::SwitchToBranch(branch.clone()),
-                        entry,
-                    ))
-                    .item(ask(
-                        view,
-                        format!("Merge into {current}"),
-                        HistoryAction::Merge(full.clone()),
-                        entry,
-                    ))
                     .item(
-                        ask(
-                            view,
-                            format!("Rebase {current} onto {full}"),
-                            HistoryAction::RebaseOnto(full.clone()),
-                            entry,
-                        )
-                        .disabled(detached),
+                        format!("Check Out {branch}"),
+                        ask(view, HistoryAction::SwitchToBranch(branch.clone()), entry),
+                    )
+                    .item(
+                        format!("Merge into {current}"),
+                        ask(view, HistoryAction::Merge(full.clone()), entry),
+                    )
+                    .item_enabled(
+                        format!("Rebase {current} onto {full}"),
+                        !detached,
+                        ask(view, HistoryAction::RebaseOnto(full.clone()), entry),
                     );
             }
-            menu.item(copy("Copy Name", full))
+            menu.item("Copy Name", copy(full))
         }
         RefDecoration::DetachedHead => menu,
     }

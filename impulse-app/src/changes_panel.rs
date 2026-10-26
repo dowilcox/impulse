@@ -20,7 +20,6 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Icon;
 use gpui_kit::{
@@ -32,6 +31,7 @@ use impulse_git::operations::{self, CommitOptions, OperationAction, StashEntry};
 use impulse_git::{ChangeStatus, FileChange, RepoSnapshot};
 use impulse_kit::chrome::{metrics, Rgba};
 
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _};
 use crate::repository_state::{RepositoryEvent, RepositoryState, RepositoryStore};
 use crate::settings_store::SettingsStore;
 use crate::workbench::Workbench;
@@ -277,16 +277,15 @@ fn save_messages(history: &HashMap<String, Vec<String>>) {
     }
 }
 
-/// A menu item that runs `act` on the workbench.
-fn menu_item(
-    label: &str,
+/// A menu item's handler that runs `act` on the workbench.
+fn on_workbench(
     workbench: &WeakEntity<Workbench>,
     act: impl Fn(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static,
-) -> PopupMenuItem {
+) -> impl Fn(&mut Window, &mut App) + 'static {
     let workbench = workbench.clone();
-    PopupMenuItem::new(label.to_string()).on_click(move |_, window, cx| {
+    move |window, cx| {
         let _ = workbench.update(cx, |workbench, cx| act(workbench, window, cx));
-    })
+    }
 }
 
 impl Workbench {
@@ -774,82 +773,67 @@ impl Workbench {
                     .ghost()
                     .compact()
                     .icon(Icon::empty().path("icons/ellipsis.svg"))
-                    .dropdown_menu(move |menu: PopupMenu, _, _| {
+                    .dropdown(move |_, _| {
                         let w = &workbench;
                         let repo = menu_repo.clone();
                         let (r1, r2, r3, r4) = (repo.clone(), repo.clone(), repo.clone(), repo);
-                        menu.item(menu_item("Fetch", w, |wb, window, cx| {
-                            wb.run_command("git_fetch", window, cx)
-                        }))
-                        .item(menu_item("Fetch All Remotes", w, |wb, window, cx| {
-                            wb.run_command("git_fetch_all", window, cx)
-                        }))
-                        .item(menu_item("Pull", w, |wb, window, cx| {
-                            wb.run_command("git_pull", window, cx)
-                        }))
-                        .item(menu_item("Pull (Rebase)", w, |wb, window, cx| {
-                            wb.run_command("git_pull_rebase", window, cx)
-                        }))
-                        .item(menu_item("Push", w, |wb, window, cx| {
-                            wb.run_command("git_push", window, cx)
-                        }))
-                        .item(menu_item(
-                            "Force Push (With Lease)…",
-                            w,
-                            |wb, window, cx| wb.run_command("git_force_push", window, cx),
-                        ))
-                        .separator()
-                        .item(menu_item("Create Tag…", w, |wb, window, cx| {
-                            wb.run_command("git_create_tag", window, cx)
-                        }))
-                        .item(menu_item("Push All Tags", w, |wb, window, cx| {
-                            wb.run_command("git_push_tags", window, cx)
-                        }))
-                        .separator()
-                        .item(menu_item("Stage All Changes", w, move |wb, window, cx| {
-                            wb.git_stage_all(&r1, window, cx)
-                        }))
-                        .item(menu_item(
-                            "Unstage All Changes",
-                            w,
-                            move |wb, window, cx| wb.git_unstage_all(&r2, window, cx),
-                        ))
-                        .separator()
-                        .item(menu_item("Stash All Changes", w, move |wb, window, cx| {
-                            wb.git_stash_all(&r3, window, cx)
-                        }))
-                        .item(
-                            menu_item("Move All Changes to New Task…", w, |wb, window, cx| {
-                                wb.present_new_task(None, true, window, cx)
+                        let command = |id: &'static str| {
+                            on_workbench(w, move |wb, window, cx| wb.run_command(id, window, cx))
+                        };
+                        MenuSpec::new()
+                            .item("Fetch", command("git_fetch"))
+                            .item("Fetch All Remotes", command("git_fetch_all"))
+                            .item("Pull", command("git_pull"))
+                            .item("Pull (Rebase)", command("git_pull_rebase"))
+                            .item("Push", command("git_push"))
+                            .item("Force Push (With Lease)…", command("git_force_push"))
+                            .separator()
+                            .item("Create Tag…", command("git_create_tag"))
+                            .item("Push All Tags", command("git_push_tags"))
+                            .separator()
+                            .item(
+                                "Stage All Changes",
+                                on_workbench(w, move |wb, window, cx| {
+                                    wb.git_stage_all(&r1, window, cx)
+                                }),
+                            )
+                            .item(
+                                "Unstage All Changes",
+                                on_workbench(w, move |wb, window, cx| {
+                                    wb.git_unstage_all(&r2, window, cx)
+                                }),
+                            )
+                            .separator()
+                            .item(
+                                "Stash All Changes",
+                                on_workbench(w, move |wb, window, cx| {
+                                    wb.git_stash_all(&r3, window, cx)
+                                }),
+                            )
+                            .item_enabled(
+                                "Move All Changes to New Task…",
+                                can_move,
+                                on_workbench(w, |wb, window, cx| {
+                                    wb.present_new_task(None, true, window, cx)
+                                }),
+                            )
+                            .item("Pop Latest Stash", command("git_pop_stash"))
+                            .item_enabled("Undo Last Commit", has_head, command("git_undo_commit"))
+                            .separator()
+                            .item("Review Uncommitted Changes", {
+                                let root = review_root.clone();
+                                on_workbench(w, move |wb, window, cx| {
+                                    wb.open_review_of(
+                                        root.clone(),
+                                        Some(impulse_git::types::DiffScope::Uncommitted),
+                                        window,
+                                        cx,
+                                    )
+                                })
                             })
-                            .disabled(!can_move),
-                        )
-                        .item(menu_item("Pop Latest Stash", w, |wb, window, cx| {
-                            wb.run_command("git_pop_stash", window, cx)
-                        }))
-                        .item(
-                            menu_item("Undo Last Commit", w, |wb, window, cx| {
-                                wb.run_command("git_undo_commit", window, cx)
+                            .item("Refresh", move |_, cx| {
+                                r4.update(cx, |repo, cx| repo.refresh(cx))
                             })
-                            .disabled(!has_head),
-                        )
-                        .separator()
-                        .item(menu_item("Review Uncommitted Changes", w, {
-                            let root = review_root.clone();
-                            move |wb, window, cx| {
-                                wb.open_review_of(
-                                    root.clone(),
-                                    Some(impulse_git::types::DiffScope::Uncommitted),
-                                    window,
-                                    cx,
-                                )
-                            }
-                        }))
-                        .item(menu_item(
-                            "Refresh",
-                            w,
-                            move |_, _, cx| r4.update(cx, |repo, cx| repo.refresh(cx)),
-                        ))
                     }),
             )
             .into_any_element()
@@ -989,9 +973,8 @@ impl Workbench {
                         .icon(Icon::empty().path("icons/bot.svg"))
                         .when(wide, |b| b.label("Ask Agent"))
                         .tooltip("Ask Agent: ask an agent to resolve the conflicts")
-                        .dropdown_menu(move |menu: PopupMenu, window, cx| {
-                            crate::agent_send::conflict_menu_items(
-                                menu,
+                        .dropdown(move |window, cx| {
+                            crate::agent_send::conflict_menu_spec(
                                 "Send to",
                                 repo.clone(),
                                 Vec::new(),
@@ -1589,76 +1572,100 @@ impl Workbench {
                     cx.notify();
                 }),
             )
-            .context_menu(move |menu: PopupMenu, window, cx| {
+            .right_click_menu(move |window, cx| {
                 let w = &workbench;
                 let (repo, change, path) =
                     (menu_repo.clone(), menu_change.clone(), menu_path.clone());
                 let one = vec![change.clone()];
                 let (review_path, diff_path, open_path) =
                     (path.clone(), path.clone(), path.clone());
-                let mut menu = menu.item(menu_item("Open Changes", w, move |wb, window, cx| {
-                    wb.open_review_at(section.review_scope(), &review_path, window, cx)
-                }));
+                let mut menu = MenuSpec::new().item(
+                    "Open Changes",
+                    on_workbench(w, move |wb, window, cx| {
+                        wb.open_review_at(section.review_scope(), &review_path, window, cx)
+                    }),
+                );
                 if section.has_working_copy_diff() && change.status != ChangeStatus::Deleted {
-                    menu = menu.item(menu_item(
+                    menu = menu.item(
                         "Open in Diff Editor",
-                        w,
-                        move |wb, window, cx| wb.open_diff_editor(&diff_path, window, cx),
-                    ));
+                        on_workbench(w, move |wb, window, cx| {
+                            wb.open_diff_editor(&diff_path, window, cx)
+                        }),
+                    );
                 }
                 let mut menu = menu
-                    .item(menu_item("Open File", w, move |wb, window, cx| {
-                        wb.open_file(&open_path, window, cx)
-                    }))
+                    .item(
+                        "Open File",
+                        on_workbench(w, move |wb, window, cx| {
+                            wb.open_file(&open_path, window, cx)
+                        }),
+                    )
                     .separator();
                 let (r1, r2, r3, r4) = (repo.clone(), repo.clone(), repo.clone(), repo.clone());
                 let (c1, c2, c3, c4) = (one.clone(), one.clone(), one.clone(), one.clone());
                 menu = match section {
                     Section::Staged => menu
-                        .item(menu_item("Unstage", w, move |wb, window, cx| {
-                            wb.git_unstage(&r1, &c1, window, cx)
-                        }))
-                        .item(menu_item(
+                        .item(
+                            "Unstage",
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_unstage(&r1, &c1, window, cx)
+                            }),
+                        )
+                        .item(
                             "Discard Staged and Unstaged Changes…",
-                            w,
-                            move |wb, window, cx| wb.git_discard(&r2, c2.clone(), true, window, cx),
-                        )),
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_discard(&r2, c2.clone(), true, window, cx)
+                            }),
+                        ),
                     Section::Unstaged | Section::Untracked => menu
-                        .item(menu_item("Stage", w, move |wb, window, cx| {
-                            wb.git_stage(&r1, &c1, window, cx)
-                        }))
-                        .item(menu_item("Discard Changes…", w, move |wb, window, cx| {
-                            wb.git_discard(&r2, c2.clone(), false, window, cx)
-                        })),
+                        .item(
+                            "Stage",
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_stage(&r1, &c1, window, cx)
+                            }),
+                        )
+                        .item(
+                            "Discard Changes…",
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_discard(&r2, c2.clone(), false, window, cx)
+                            }),
+                        ),
                     Section::Conflicted => {
                         let resolve_path = path.clone();
-                        menu.item(menu_item("Open to Resolve", w, move |wb, window, cx| {
-                            wb.open_file(&resolve_path, window, cx)
-                        }))
-                        .item(menu_item(
+                        menu.item(
+                            "Open to Resolve",
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.open_file(&resolve_path, window, cx)
+                            }),
+                        )
+                        .item(
                             "Keep Current (HEAD)",
-                            w,
-                            move |wb, window, cx| wb.git_resolve(&r1, &c1, true, window, cx),
-                        ))
-                        .item(menu_item("Take Incoming", w, move |wb, window, cx| {
-                            wb.git_resolve(&r3, &c3, false, window, cx)
-                        }))
-                        .item(menu_item("Mark Resolved", w, move |wb, window, cx| {
-                            wb.git_mark_resolved(&r4, &c4, window, cx)
-                        }))
-                        .submenu("Ask Agent to Resolve", window, cx, {
-                            let (repo, paths) = (repo.clone(), vec![change.path.clone()]);
-                            move |menu, window, cx| {
-                                crate::agent_send::conflict_menu_items(
-                                    menu,
-                                    "",
-                                    repo.clone(),
-                                    paths.clone(),
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_resolve(&r1, &c1, true, window, cx)
+                            }),
+                        )
+                        .item(
+                            "Take Incoming",
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_resolve(&r3, &c3, false, window, cx)
+                            }),
+                        )
+                        .item(
+                            "Mark Resolved",
+                            on_workbench(w, move |wb, window, cx| {
+                                wb.git_mark_resolved(&r4, &c4, window, cx)
+                            }),
+                        )
+                        .submenu(
+                            "Ask Agent to Resolve",
+                            crate::agent_send::conflict_menu_spec(
+                                "",
+                                repo.clone(),
+                                vec![change.path.clone()],
+                                window,
+                                cx,
+                            ),
+                        )
                     }
                 };
                 let root = repo.read(cx).root.clone();
@@ -1667,25 +1674,22 @@ impl Workbench {
                     let paths: Vec<String> = std::iter::once(change.path.clone())
                         .chain(change.old_path.clone())
                         .collect();
-                    menu = menu.item(menu_item(
+                    menu = menu.item(
                         "Move to New Task…",
-                        w,
-                        move |wb, window, cx| {
+                        on_workbench(w, move |wb, window, cx| {
                             wb.present_moving_task(None, true, Some(paths.clone()), window, cx)
-                        },
-                    ));
+                        }),
+                    );
                 }
                 let relative = change.path.clone();
                 let reveal_path = path.clone();
                 menu.separator()
-                    .item(menu_item("Copy Path", w, move |_, _, cx| {
+                    .item("Copy Path", move |_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(relative.clone()))
-                    }))
-                    .item(menu_item(
-                        crate::file_tree_actions::REVEAL,
-                        w,
-                        move |_, _, cx| crate::file_tree_actions::reveal(&reveal_path, cx),
-                    ))
+                    })
+                    .item(crate::file_tree_actions::REVEAL, move |_, cx| {
+                        crate::file_tree_actions::reveal(&reveal_path, cx)
+                    })
             })
             .into_any_element()
     }
@@ -1980,26 +1984,32 @@ impl Workbench {
                             .ghost()
                             .compact()
                             .icon(Icon::empty().path("icons/chevron-down.svg"))
-                            .dropdown_menu(move |menu: PopupMenu, _, _| {
+                            .dropdown(move |_, _| {
                                 let w = &workbench;
-                                menu.item(menu_item("Commit", w, |wb, window, cx| {
-                                    wb.commit_from_composer(false, window, cx)
-                                }))
-                                .item(menu_item("Commit & Push", w, |wb, window, cx| {
-                                    wb.commit_from_composer(true, window, cx)
-                                }))
-                                .separator()
-                                .item(menu_item(
-                                    "Amend Last Commit",
-                                    w,
-                                    |wb, window, cx| {
-                                        if !wb.git.amend {
-                                            wb.git.amend = true;
-                                            wb.update_message_placeholder(window, cx);
-                                        }
-                                        wb.commit_from_composer(false, window, cx)
-                                    },
-                                ))
+                                MenuSpec::new()
+                                    .item(
+                                        "Commit",
+                                        on_workbench(w, |wb, window, cx| {
+                                            wb.commit_from_composer(false, window, cx)
+                                        }),
+                                    )
+                                    .item(
+                                        "Commit & Push",
+                                        on_workbench(w, |wb, window, cx| {
+                                            wb.commit_from_composer(true, window, cx)
+                                        }),
+                                    )
+                                    .separator()
+                                    .item(
+                                        "Amend Last Commit",
+                                        on_workbench(w, |wb, window, cx| {
+                                            if !wb.git.amend {
+                                                wb.git.amend = true;
+                                                wb.update_message_placeholder(window, cx);
+                                            }
+                                            wb.commit_from_composer(false, window, cx)
+                                        }),
+                                    )
                             }),
                     )
                     .child(div().flex_1())

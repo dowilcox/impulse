@@ -10,7 +10,6 @@ use std::time::{Duration, SystemTime};
 use crate::toasts::Toast;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable as _, WindowExt as _};
 use gpui_kit::{
     div, prelude::*, px, Context, Entity, FontWeight, Subscription, WeakEntity, Window,
@@ -19,6 +18,7 @@ use impulse_git::operations::{self, BranchInfo, OperationError, PushOptions};
 use impulse_git::DiffScope;
 use impulse_kit::chrome::{ChromePalette, Rgba};
 
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec};
 use crate::repository_state::RepositoryState;
 use crate::workbench::Workbench;
 use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
@@ -342,17 +342,18 @@ impl BranchManager {
                     .ghost()
                     .small()
                     .icon(Icon::empty().path("icons/ellipsis.svg"))
-                    .dropdown_menu(move |mut menu: PopupMenu, _, _| {
+                    // Swift's `BranchRow` menu: the merge and rebase apart
+                    // from the rest, and Delete at the end.
+                    .dropdown(move |_, _| {
+                        let mut menu = MenuSpec::new();
                         for (index, (label, enabled, _)) in menu_items.iter().enumerate() {
-                            if label == "Delete…" || (label == "Show History" && index > 0) {
+                            if label == "Delete…" || label == "Compare with Current Branch" {
                                 menu = menu.separator();
                             }
                             let items = menu_items.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(label.clone())
-                                    .disabled(!enabled)
-                                    .on_click(move |_, window, cx| (items[index].2)(window, cx)),
-                            );
+                            menu = menu.item_enabled(label.clone(), *enabled, move |window, cx| {
+                                (items[index].2)(window, cx)
+                            });
                         }
                         menu
                     }),

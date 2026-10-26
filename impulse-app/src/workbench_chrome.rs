@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 
 use std::rc::Rc;
 
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::{div, prelude::*, px, svg, AnyElement, Context, FontWeight, Hsla, Window};
 use impulse_kit::chrome::{metrics, Rgba as KitRgba};
 
+use crate::context_menu::{MenuSpec, RightClickMenu as _};
 use crate::settings_store::SettingsStore;
 use crate::workbench::{SidebarPanel, Workbench};
 use crate::workspace::{Kind, Surface, Workspace};
@@ -664,7 +664,7 @@ impl Workbench {
         ws: usize,
         index: usize,
         cx: &Context<Self>,
-    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    ) -> impl Fn(&mut Window, &mut gpui_kit::App) -> MenuSpec + 'static {
         type Run = Rc<dyn Fn(&mut Workbench, usize, usize, &mut Window, &mut Context<Workbench>)>;
         let workspace = &self.workspaces[ws];
         let tab = &workspace.tabs[index];
@@ -719,14 +719,15 @@ impl Workbench {
             })),
         ));
         let (id, workbench) = (tab.id, cx.entity().downgrade());
-        move |mut menu, _, _| {
+        move |_, _| {
+            let mut menu = MenuSpec::new();
             for (title, run) in &items {
                 let Some(run) = run.clone() else {
                     menu = menu.separator();
                     continue;
                 };
                 let workbench = workbench.clone();
-                menu = menu.item(PopupMenuItem::new(*title).on_click(move |_, window, cx| {
+                menu = menu.item(*title, move |window, cx| {
                     let _ = workbench.update(cx, |w, cx| {
                         let found = w.workspaces.iter().enumerate().find_map(|(ws, workspace)| {
                             let t = workspace.tabs.iter().position(|t| t.id == id)?;
@@ -736,7 +737,7 @@ impl Workbench {
                             run(w, ws, t, window, cx)
                         }
                     });
-                }));
+                });
             }
             menu
         }
@@ -744,7 +745,7 @@ impl Workbench {
 
     /// `sidebar_tabs`: the sidebar lists the tabs (while it's shown) and the
     /// titlebar doesn't.
-    fn tabs_in_sidebar(&self, cx: &gpui_kit::App) -> bool {
+    pub(crate) fn tabs_in_sidebar(&self, cx: &gpui_kit::App) -> bool {
         SettingsStore::get(cx).sidebar_tabs && self.sidebar_shown
     }
 
@@ -996,7 +997,7 @@ impl Workbench {
                         .bg(hsla(p.accent)),
                 );
             }
-            let t = t.context_menu(self.tab_menu(self.active, index, cx));
+            let t = t.right_click_menu(self.tab_menu(self.active, index, cx));
             tabs = tabs.child(t);
         }
         let tabs_in_sidebar = self.tabs_in_sidebar(cx);
@@ -1538,7 +1539,7 @@ impl Workbench {
                     gpui_kit::component::tooltip::Tooltip::new(help.clone()).build(window, cx)
                 }
             });
-        column = column.child(row.context_menu(self.workspace_menu(index, cx)));
+        column = column.child(row.right_click_menu(self.workspace_menu(index, cx)));
         if expanded {
             for (t, tab) in workspace.tabs.iter().enumerate() {
                 let surface = tab.focused_surface();
@@ -1608,7 +1609,7 @@ impl Workbench {
                                 w.close_tab_at(t, window, cx)
                             }),
                         ))
-                        .context_menu(menu),
+                        .right_click_menu(menu),
                 );
             }
             if tabs_in_sidebar && selected {
@@ -1794,7 +1795,7 @@ impl Workbench {
         // content without a full-width wrapper.
         div()
             .w_full()
-            .child(row_element.context_menu(menu))
+            .child(row_element.right_click_menu(menu))
             .into_any_element()
     }
 
@@ -2500,8 +2501,8 @@ impl Workbench {
     /// The row's + on hover (Swift's `newWorkspaceItems`): a task from its
     /// repository, named for the main checkout, or another folder.
     fn new_workspace_button(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::context_menu::DropdownMenuButton as _;
         use gpui_kit::component::button::ButtonVariants as _;
-        use gpui_kit::component::menu::DropdownMenu as _;
         use gpui_kit::component::Sizable as _;
         let workspace = &self.workspaces[index];
         let repository = workspace.task.common_dir.is_some().then(|| {
@@ -2521,29 +2522,25 @@ impl Workbench {
                     .ghost()
                     .xsmall()
                     .icon(gpui_kit::component::Icon::empty().path("icons/plus.svg"))
-                    .dropdown_menu(move |menu: PopupMenu, _, _| {
-                        let mut menu = menu;
+                    .dropdown(move |_, _| {
+                        let mut menu = MenuSpec::new();
                         if let Some(repository) = &repository {
                             let workbench = workbench.clone();
                             menu = menu.item(
-                                PopupMenuItem::new(format!("New Task from {repository}…"))
-                                    .on_click(move |_, window, cx| {
-                                        let _ = workbench.update(cx, |w, cx| {
-                                            let index =
-                                                w.workspaces.iter().position(|ws| ws.id == id);
-                                            w.present_new_task(index, false, window, cx)
-                                        });
-                                    }),
+                                format!("New Task from {repository}…"),
+                                move |window, cx| {
+                                    let _ = workbench.update(cx, |w, cx| {
+                                        let index = w.workspaces.iter().position(|ws| ws.id == id);
+                                        w.present_new_task(index, false, window, cx)
+                                    });
+                                },
                             );
                         }
                         let workbench = workbench.clone();
-                        menu.item(PopupMenuItem::new("Open Folder as Workspace…").on_click(
-                            move |_, window, cx| {
-                                let _ = workbench.update(cx, |w, cx| {
-                                    w.run_command("open_workspace", window, cx)
-                                });
-                            },
-                        ))
+                        menu.item("Open Folder as Workspace…", move |window, cx| {
+                            let _ = workbench
+                                .update(cx, |w, cx| w.run_command("open_workspace", window, cx));
+                        })
                     }),
             )
     }

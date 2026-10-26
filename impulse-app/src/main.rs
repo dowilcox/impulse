@@ -29,6 +29,7 @@ mod command_editor;
 mod command_history;
 mod commands;
 mod component_gallery;
+mod context_menu;
 mod control_commands;
 mod control_review;
 mod control_server;

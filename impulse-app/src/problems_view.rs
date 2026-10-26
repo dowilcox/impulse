@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::{
     div, prelude::*, px, AnyElement, App, ClipboardItem, Context, Entity, EventEmitter,
@@ -19,6 +18,7 @@ use gpui_kit::{
 use impulse_kit::chrome::{metrics, ChromePalette, Rgba};
 use impulse_kit::problems::{self, Problem, ProblemCounts, Severity};
 
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec};
 use crate::workbench::Workbench;
 use crate::workbench_chrome::{abbreviate_home, hsla, icon};
 use crate::workspace::Surface;
@@ -300,25 +300,25 @@ impl ProblemsView {
                     .icon(gpui_kit::component::Icon::empty().path("icons/bot.svg"))
                     .label("Fix with Agent")
                     .tooltip("Send to an agent or copy as a prompt")
-                    .dropdown_menu(move |menu: PopupMenu, window, cx| {
+                    .dropdown(move |window, cx| {
                         let prompt = prompt.clone();
                         let empty = prompt.is_empty();
                         let sent = prompt.clone();
-                        let menu = crate::agent_send::agent_menu_items(
-                            menu,
+                        crate::agent_send::agent_menu_spec(
+                            MenuSpec::new(),
                             "Send to",
                             !empty,
                             std::rc::Rc::new(move |_, _| Some(sent.clone())),
                             None,
                             window,
                             cx,
-                        );
-                        menu.item(
-                            PopupMenuItem::new("Copy as Prompt")
-                                .disabled(empty)
-                                .on_click(move |_, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(prompt.clone()))
-                                }),
+                        )
+                        .item_enabled(
+                            "Copy as Prompt",
+                            !empty,
+                            move |_, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(prompt.clone()))
+                            },
                         )
                     }),
             )

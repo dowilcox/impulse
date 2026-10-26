@@ -8,13 +8,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, Window};
 use impulse_kit::chrome::{metrics, ChromePalette};
 use impulse_kit::git::task_overlap::Pair;
 use impulse_kit::git::task_registry;
 
+use crate::context_menu::{MenuSpec, RightClickMenu as _};
 use crate::tasks;
 use crate::workbench::Workbench;
 use crate::workbench_chrome::{chrome_button, hsla, icon, ButtonKind};
@@ -165,17 +165,15 @@ impl Workbench {
         };
         let (id, workbench) = (workspace.id, cx.entity().downgrade());
         header
-            .context_menu(move |menu, _, _| {
+            .right_click_menu(move |_, _| {
                 let workbench = workbench.clone();
-                menu.item(PopupMenuItem::new("Archive Merged Tasks…").on_click(
-                    move |_, window, cx| {
-                        let _ = workbench.update(cx, |w, cx| {
-                            if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
-                                w.present_archive_merged_tasks(index, window, cx)
-                            }
-                        });
-                    },
-                ))
+                MenuSpec::new().item("Archive Merged Tasks…", move |window, cx| {
+                    let _ = workbench.update(cx, |w, cx| {
+                        if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
+                            w.present_archive_merged_tasks(index, window, cx)
+                        }
+                    });
+                })
             })
             .into_any_element()
     }
@@ -274,132 +272,150 @@ impl Workbench {
         lines.join("\n")
     }
 
-    /// The row's context menu, as the Swift sidebar's (the parts the Rust
-    /// app has).
+    /// The row's context menu, as the Swift sidebar's (`WorkspaceRow`'s
+    /// `contextMenu`; the parts the Rust app has).
     pub(crate) fn workspace_menu(
         &self,
         index: usize,
-        cx: &Context<Self>,
-    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&mut Window, &mut gpui_kit::App) -> MenuSpec + 'static {
         let workspace = &self.workspaces[index];
         let task = &workspace.task;
         let in_repository = task.common_dir.is_some();
-        let mut items: Vec<(String, Option<MenuAction>)> = Vec::new();
+        // Title, enabled, and what it does; `None` is a separator.
+        let mut items: Vec<(String, bool, Option<MenuAction>)> = Vec::new();
+        let mut push = |title: &str, enabled: bool, run: Option<MenuAction>| {
+            items.push((title.to_string(), enabled, run));
+        };
         if task.merged {
-            items.push((
-                "Archive Task…".into(),
+            push(
+                "Archive Task…",
+                true,
                 action(|w, i, window, cx| w.archive_task(i, window, cx)),
-            ));
-            items.push((String::new(), None));
+            );
+            push("", false, None);
         } else if task.is_task {
-            items.push((
-                "Finish Task…".into(),
+            push(
+                "Finish Task…",
+                true,
                 action(|w, i, window, cx| w.open_finish_task(Some(i), window, cx)),
-            ));
-            items.push((String::new(), None));
+            );
+            push("", false, None);
         }
         if in_repository {
-            items.push((
-                "New Task…".into(),
+            push(
+                "New Task…",
+                true,
                 action(|w, i, window, cx| w.present_new_task(Some(i), false, window, cx)),
-            ));
-            if !task.is_task {
-                items.push((
-                    "Move Changes to New Task…".into(),
+            );
+            let changed = crate::repository_state::RepositoryStore::summary(&workspace.root, cx)
+                .is_some_and(|r| r.changed > 0);
+            if !task.is_task && changed {
+                push(
+                    "Move Changes to New Task…",
+                    true,
                     action(|w, i, window, cx| w.present_new_task(Some(i), true, window, cx)),
-                ));
+                );
             }
-            items.push((
-                "Project Setup…".into(),
+            push(
+                "Project Setup…",
+                true,
                 action(|w, i, window, cx| w.open_project_setup(Some(i), None, window, cx)),
-            ));
+            );
         }
-        items.push((
-            "Open Folder as Workspace…".into(),
+        push(
+            "Open Folder as Workspace…",
+            true,
             action(|w, _, window, cx| w.run_command("open_workspace", window, cx)),
-        ));
-        items.push((String::new(), None));
-        items.push((
-            "Rename…".into(),
+        );
+        push("", false, None);
+        push(
+            "Rename…",
+            true,
             action(|w, i, window, cx| w.rename_workspace(i, window, cx)),
-        ));
+        );
         if workspace.kind == Kind::Folder {
-            items.push((
-                crate::file_tree_actions::REVEAL.into(),
+            push(
+                crate::file_tree_actions::REVEAL,
+                true,
                 action(|w, i, _, cx| {
                     crate::file_tree_actions::reveal(&w.workspaces[i].root.clone(), cx)
                 }),
-            ));
-            items.push((
-                "Copy Path".into(),
+            );
+            push(
+                "Copy Path",
+                true,
                 action(|w, i, _, cx| {
                     let path = w.workspaces[i].root.to_string_lossy().into_owned();
                     cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(path));
                 }),
-            ));
+            );
         }
-        items.push((String::new(), None));
-        if self.moved_order(index, -1).is_some() {
-            items.push((
-                "Move Up".into(),
-                action(|w, i, _, cx| w.move_workspace(i, -1, cx)),
-            ));
+        push("", false, None);
+        // The active workspace's tabs stay listed while the sidebar shows
+        // tabs: nothing to hide or show.
+        if !(self.tabs_in_sidebar(cx) && index == self.active) {
+            push(
+                if workspace.expanded {
+                    "Hide Tabs"
+                } else {
+                    "Show Tabs"
+                },
+                true,
+                action(|w, i, _, cx| {
+                    w.workspaces[i].expanded = !w.workspaces[i].expanded;
+                    cx.notify();
+                }),
+            );
         }
-        if self.moved_order(index, 1).is_some() {
-            items.push((
-                "Move Down".into(),
-                action(|w, i, _, cx| w.move_workspace(i, 1, cx)),
-            ));
-        }
-        items.push((
-            if workspace.expanded {
-                "Hide Tabs"
-            } else {
-                "Show Tabs"
-            }
-            .into(),
-            action(|w, i, _, cx| {
-                w.workspaces[i].expanded = !w.workspaces[i].expanded;
-                cx.notify();
-            }),
-        ));
-        items.push((String::new(), None));
+        push(
+            "Move Up",
+            self.moved_order(index, -1).is_some(),
+            action(|w, i, _, cx| w.move_workspace(i, -1, cx)),
+        );
+        push(
+            "Move Down",
+            self.moved_order(index, 1).is_some(),
+            action(|w, i, _, cx| w.move_workspace(i, 1, cx)),
+        );
+        push("", false, None);
         if task.is_task && !task.merged {
-            items.push((
-                "Archive Task…".into(),
+            push(
+                "Archive Task…",
+                true,
                 action(|w, i, window, cx| w.archive_task(i, window, cx)),
-            ));
+            );
         }
         if task.repository_has_merged_tasks {
-            items.push((
-                "Archive Merged Tasks…".into(),
+            push(
+                "Archive Merged Tasks…",
+                true,
                 action(|w, i, window, cx| w.present_archive_merged_tasks(i, window, cx)),
-            ));
+            );
         }
         if workspace.kind == Kind::Folder {
-            items.push((
-                "Close Workspace".into(),
+            push(
+                "Close Workspace",
+                true,
                 action(|w, i, window, cx| w.close_workspace(i, window, cx)),
-            ));
+            );
         }
         let (id, workbench) = (workspace.id, cx.entity().downgrade());
-        move |mut menu, _, _| {
-            for (title, run) in &items {
+        move |_, _| {
+            let mut menu = MenuSpec::new();
+            for (title, enabled, run) in &items {
                 let Some(run) = run.clone() else {
                     menu = menu.separator();
                     continue;
                 };
                 let workbench = workbench.clone();
-                menu = menu.item(PopupMenuItem::new(title.clone()).on_click(
-                    move |_, window, cx| {
-                        let run = run.clone();
-                        let _ = workbench.update(cx, |w, cx| {
-                            if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
-                                run(w, index, window, cx)
-                            }
-                        });
-                    },
-                ));
+                menu = menu.item_enabled(title.clone(), *enabled, move |window, cx| {
+                    let _ = workbench.update(cx, |w, cx| {
+                        if let Some(index) = w.workspaces.iter().position(|ws| ws.id == id) {
+                            run(w, index, window, cx)
+                        }
+                    });
+                });
             }
             menu
         }

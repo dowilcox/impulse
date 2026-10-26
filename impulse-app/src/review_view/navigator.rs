@@ -176,7 +176,8 @@ impl ReviewView {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(NAVIGATOR_WIDTH))
+            // Swift's 250 navigator and its 1 pt divider beside it.
+            .w(px(NAVIGATOR_WIDTH + 1.))
             .h_full()
             .bg(hsla(p.panel))
             .border_r_1()

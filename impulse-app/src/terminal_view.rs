@@ -1369,13 +1369,8 @@ impl TerminalView {
         self.focus(window, cx);
         let (_, row) = self.cell_at(event.position, bounds);
         let block = self.block_at_row(row, cx);
-        self.blocks.menu = Some(crate::terminal_blocks::BlockMenu {
-            block,
-            at: event.position,
-            full: true,
-        });
         cx.stop_propagation();
-        cx.notify();
+        self.open_block_menu(block, event.position, true, window, cx);
     }
 
     /// Mouse reporting is on (any of the click, drag and motion modes).
@@ -3488,7 +3483,7 @@ impl TerminalView {
                         .child(crate::workbench_chrome::icon(icon, 12., muted.opacity(0.8)))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |view, e: &MouseDownEvent, _, cx| {
+                            cx.listener(move |view, e: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
                                 match button {
                                     ToolbarButton::CopyOutput => {
@@ -3499,13 +3494,13 @@ impl TerminalView {
                                         view.send_blocks_to_agent(&[id], cx)
                                     }
                                     ToolbarButton::Menu => {
-                                        view.blocks.menu =
-                                            Some(crate::terminal_blocks::BlockMenu {
-                                                block: Some(id),
-                                                at: e.position,
-                                                full: false,
-                                            });
-                                        cx.notify();
+                                        view.open_block_menu(
+                                            Some(id),
+                                            e.position,
+                                            false,
+                                            window,
+                                            cx,
+                                        );
                                     }
                                 }
                             }),

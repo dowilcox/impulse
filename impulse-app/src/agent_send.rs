@@ -12,7 +12,6 @@ use std::rc::Rc;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{App, Context, Entity, EntityId, Window};
 use impulse_kit::agents::state_machine::{AgentEvent, AgentState};
 use impulse_kit::shell::quoting::{is_control, without_control_characters};
@@ -20,6 +19,7 @@ use impulse_terminal::TerminalMode;
 
 use crate::agent_tracker::AgentSignal;
 use crate::agent_views::AgentSummary;
+use crate::context_menu::MenuSpec;
 use crate::tasks::{toast, ToastKind};
 use crate::terminal_view::TerminalView;
 use crate::workbench::Workbench;
@@ -326,16 +326,17 @@ pub(crate) type Prompt = Rc<dyn Fn(&mut Window, &mut App) -> Option<String>>;
 pub(crate) type Sent = Rc<dyn Fn(&mut App)>;
 
 /// "{label} {agent} · {tab}" for each agent in the window, then a
-/// separator (nothing without agents). `sent` runs after a send.
-pub(crate) fn agent_menu_items(
-    mut menu: PopupMenu,
+/// separator (nothing without agents), added to `menu`. `sent` runs after
+/// a send.
+pub(crate) fn agent_menu_spec(
+    mut menu: MenuSpec,
     label: &str,
     enabled: bool,
     prompt: Prompt,
     sent: Option<Sent>,
     window: &Window,
     cx: &App,
-) -> PopupMenu {
+) -> MenuSpec {
     let Some(workbench) = window_workbench(window, cx) else {
         return menu;
     };
@@ -347,23 +348,20 @@ pub(crate) fn agent_menu_items(
         let (prompt, sent, workbench) = (prompt.clone(), sent.clone(), workbench.downgrade());
         let terminal = agent.terminal.clone();
         let name = format!("{} · {}", agent.agent_name, agent.tab_title);
-        menu = menu.item(
-            PopupMenuItem::new(if label.is_empty() {
-                name
-            } else {
-                format!("{label} {name}")
-            })
-            .disabled(!enabled)
-            .on_click(move |_, window, cx| {
-                let Some(text) = prompt(window, cx).filter(|t| !t.is_empty()) else {
-                    return;
-                };
-                let _ = workbench.update(cx, |w, cx| w.send_to_agent(&text, &terminal, window, cx));
-                if let Some(sent) = &sent {
-                    sent(cx);
-                }
-            }),
-        );
+        let title = if label.is_empty() {
+            name
+        } else {
+            format!("{label} {name}")
+        };
+        menu = menu.item_enabled(title, enabled, move |window, cx| {
+            let Some(text) = prompt(window, cx).filter(|t| !t.is_empty()) else {
+                return;
+            };
+            let _ = workbench.update(cx, |w, cx| w.send_to_agent(&text, &terminal, window, cx));
+            if let Some(sent) = &sent {
+                sent(cx);
+            }
+        });
     }
     menu.separator()
 }
@@ -419,14 +417,13 @@ fn conflict_prompt(
 
 /// Ask Agent to Resolve: an item per agent, then Copy as Prompt, for the
 /// conflicts in `paths` (every conflicted file when empty).
-pub(crate) fn conflict_menu_items(
-    menu: PopupMenu,
+pub(crate) fn conflict_menu_spec(
     label: &str,
     repository: Entity<crate::repository_state::RepositoryState>,
     paths: Vec<String>,
     window: &Window,
     cx: &App,
-) -> PopupMenu {
+) -> MenuSpec {
     let prompt: Prompt = {
         let (repository, paths) = (repository.clone(), paths.clone());
         Rc::new(move |window, cx| {
@@ -445,8 +442,9 @@ pub(crate) fn conflict_menu_items(
         })
     };
     let copy = prompt.clone();
-    agent_menu_items(menu, label, true, prompt, None, window, cx).item(
-        PopupMenuItem::new("Copy as Prompt").on_click(move |_, window, cx| {
+    agent_menu_spec(MenuSpec::new(), label, true, prompt, None, window, cx).item(
+        "Copy as Prompt",
+        move |window, cx| {
             if let Some(prompt) = copy(window, cx) {
                 cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(prompt));
                 toast(
@@ -458,7 +456,7 @@ pub(crate) fn conflict_menu_items(
                     None,
                 );
             }
-        }),
+        },
     )
 }
 

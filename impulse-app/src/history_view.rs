@@ -19,9 +19,9 @@ mod menu;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _};
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{
@@ -782,9 +782,9 @@ impl HistoryView {
                     .text_ellipsis()
                     .child(label),
             )
-            .context_menu(move |menu, _, cx| {
+            .right_click_menu(move |_, cx| {
                 let context = view.read(cx).context.clone();
-                menu::ref_items(menu, &view, &decoration, &entry, &context)
+                menu::ref_items(&view, &decoration, &entry, &context)
             })
             .into_any_element()
     }
@@ -922,9 +922,7 @@ impl HistoryView {
                     .border_color(hsla(p.focus_ring)),
             )
         })
-        .context_menu(move |menu, window, cx| {
-            menu::commit_items(menu, &view, &menu_entry, window, cx)
-        })
+        .right_click_menu(move |_, cx| menu::commit_items(&view, &menu_entry, cx))
     }
 
     fn header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -934,7 +932,8 @@ impl HistoryView {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .h(px(36.))
+            // Swift's 36 header and the 1 pt hairline under it.
+            .h(px(37.))
             .px(px(10.))
             .bg(hsla(p.panel))
             .border_b_1()
@@ -965,9 +964,13 @@ impl HistoryView {
                     .flex_shrink(1.),
             )
             .child(
+                // Swift's `ChromeMenuButton`: 4 either side, at least 22 square.
                 gpui_kit::component::button::Button::new("history-presets")
                     .ghost()
                     .compact()
+                    .px(px(4.))
+                    .h(px(22.))
+                    .min_w(px(22.))
                     .tooltip("Filter presets")
                     .child(icon(
                         "list-filter",
@@ -978,49 +981,43 @@ impl HistoryView {
                             p.text_secondary
                         },
                     ))
-                    .dropdown_menu(move |menu, _, _| {
-                        let preset =
-                            |label: &'static str, key: &'static str, value: &'static str| {
-                                let view = view.clone();
-                                PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                                    view.update(cx, |view, cx| {
-                                        let text = view.filter.read(cx).value().to_string();
-                                        let next = HistoryQuery::setting(key, Some(value), &text);
-                                        view.set_filter_text(next, window, cx)
-                                    })
-                                })
-                            };
-                        let mine = {
+                    .dropdown(move |_, _| {
+                        let preset = |menu: MenuSpec,
+                                      label: &'static str,
+                                      key: &'static str,
+                                      value: &'static str| {
                             let view = view.clone();
-                            PopupMenuItem::new("My Commits").on_click(move |_, window, cx| {
-                                let root = view.read(cx).root.clone();
+                            menu.item(label, move |window, cx| {
+                                view.update(cx, |view, cx| {
+                                    let text = view.filter.read(cx).value().to_string();
+                                    let next = HistoryQuery::setting(key, Some(value), &text);
+                                    view.set_filter_text(next, window, cx)
+                                })
+                            })
+                        };
+                        let (mine, clear) = (view.clone(), view.clone());
+                        let menu = MenuSpec::new()
+                            .item("My Commits", move |window, cx| {
+                                let root = mine.read(cx).root.clone();
                                 let Some(name) = impulse_git::log::user_name(&root) else {
                                     return;
                                 };
-                                view.update(cx, |view, cx| {
+                                mine.update(cx, |view, cx| {
                                     let text = view.filter.read(cx).value().to_string();
                                     let next = HistoryQuery::setting("author", Some(&name), &text);
                                     view.set_filter_text(next, window, cx)
                                 })
                             })
-                        };
-                        let clear = {
-                            let view = view.clone();
-                            PopupMenuItem::new("Clear Filter").disabled(empty).on_click(
-                                move |_, window, cx| {
-                                    view.update(cx, |view, cx| {
-                                        view.set_filter_text(String::new(), window, cx)
-                                    })
-                                },
-                            )
-                        };
-                        menu.item(mine)
+                            .separator();
+                        let menu = preset(menu, "Last 7 Days", "since", "1w");
+                        let menu = preset(menu, "Last 30 Days", "since", "30d");
+                        preset(menu, "Last Year", "since", "1y")
                             .separator()
-                            .item(preset("Last 7 Days", "since", "1w"))
-                            .item(preset("Last 30 Days", "since", "30d"))
-                            .item(preset("Last Year", "since", "1y"))
-                            .separator()
-                            .item(clear)
+                            .item_enabled("Clear Filter", !empty, move |window, cx| {
+                                clear.update(cx, |view, cx| {
+                                    view.set_filter_text(String::new(), window, cx)
+                                })
+                            })
                     }),
             )
     }

@@ -6,8 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::context_menu::MenuSpec;
 use crate::toasts::Toast;
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{ClipboardItem, Context, Window};
 use impulse_git::{ChangeStatus, FileChange};
 use impulse_kit::layout_tree::SplitAxis;
@@ -38,7 +38,7 @@ impl Workbench {
         path: PathBuf,
         is_dir: bool,
         cx: &Context<Self>,
-    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    ) -> impl Fn(&mut Window, &mut gpui_kit::App) -> MenuSpec + 'static {
         let workbench = cx.entity().downgrade();
         let root = self.tree_root(cx);
         let status = self
@@ -47,7 +47,8 @@ impl Workbench {
             .as_ref()
             .and_then(|r| r.read(cx).status_of(&path).map(str::to_string));
         let repo_root = self.git.active.as_ref().map(|r| r.read(cx).root.clone());
-        move |mut menu, _, _| {
+        move |_, _| {
+            let mut menu = MenuSpec::new();
             let mut items: Vec<Option<(&'static str, Act)>> = Vec::new();
             let p = path.clone();
             fn push(items: &mut Vec<Option<(&'static str, Act)>>, title: &'static str, act: Act) {
@@ -220,10 +221,10 @@ impl Workbench {
                     None => menu.separator(),
                     Some((title, act)) => {
                         let workbench = workbench.clone();
-                        menu.item(PopupMenuItem::new(title).on_click(move |_, window, cx| {
+                        menu.item(title, move |window, cx| {
                             let act = act.clone();
                             let _ = workbench.update(cx, |w, cx| act(w, window, cx));
-                        }))
+                        })
                     }
                 };
             }

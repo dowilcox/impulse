@@ -8,13 +8,13 @@ use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Local};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, MouseButton, Window};
 use impulse_kit::agents::state_machine::AgentState;
 use impulse_kit::chrome::Rgba as KitRgba;
 
 use crate::agent_tracker::AgentSignal;
+use crate::context_menu::{DropdownMenuButton as _, MenuSpec};
 use crate::terminal_view::TerminalView;
 use crate::workbench_chrome::{hsla, icon};
 
@@ -219,30 +219,25 @@ impl TerminalView {
             .icon(gpui_kit::component::Icon::empty().path("icons/history.svg"))
             .label("Turns")
             .tooltip("Turns this agent took: review one, or restore the files to before it")
-            .dropdown_menu(move |mut menu, _, _| {
+            .dropdown(move |_, _| {
                 if listed.is_empty() {
-                    return menu.item(PopupMenuItem::new("No turns yet").disabled(true));
+                    return MenuSpec::new().item_enabled("No turns yet", false, |_, _| {});
                 }
-                for (n, (index, label)) in listed.iter().enumerate() {
-                    if n > 0 {
-                        menu = menu.separator();
-                    }
+                let mut menu = MenuSpec::new();
+                for (index, label) in &listed {
                     let (index, review, restore) = (*index, view.clone(), view.clone());
                     menu = menu
-                        .item(PopupMenuItem::new(format!("Review {label}")).on_click(
-                            move |_, _, cx| {
-                                let _ = review.update(cx, |_, cx| {
-                                    cx.emit(AgentSignal::ReviewTurn(Some(index)))
-                                });
-                            },
-                        ))
+                        .separator()
+                        .item(format!("Review {label}"), move |_, cx| {
+                            let _ = review
+                                .update(cx, |_, cx| cx.emit(AgentSignal::ReviewTurn(Some(index))));
+                        })
                         .item(
-                            PopupMenuItem::new(format!("Restore Files to Before {label}…"))
-                                .on_click(move |_, _, cx| {
-                                    let _ = restore.update(cx, |_, cx| {
-                                        cx.emit(AgentSignal::RestoreTurn(index))
-                                    });
-                                }),
+                            format!("Restore Files to Before {label}…"),
+                            move |_, cx| {
+                                let _ = restore
+                                    .update(cx, |_, cx| cx.emit(AgentSignal::RestoreTurn(index)));
+                            },
                         );
                 }
                 menu
