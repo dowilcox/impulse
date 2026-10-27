@@ -537,7 +537,7 @@ cargo fmt && cargo clippy
 
 A debug build (debug assertions on) keeps its own settings, session, socket and data under `impulse-dev`, so it runs beside an installed release.
 
-`.github/workflows/tests.yml` runs `cargo fmt --all --check` and `cargo test --workspace --locked` on Linux and macOS for pushes to main and rust and for pull requests: keep the workspace formatted with `cargo fmt`, not `rustfmt` by hand (it takes each crate's edition from Cargo.toml).
+`.github/workflows/tests.yml` runs `cargo fmt --all --check` and `cargo test --workspace --locked` on Linux and macOS for pushes to main and for pull requests: keep the workspace formatted with `cargo fmt`, not `rustfmt` by hand (it takes each crate's edition from Cargo.toml).
 
 ## Key patterns
 

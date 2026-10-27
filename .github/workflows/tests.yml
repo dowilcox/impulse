@@ -1,12 +1,12 @@
 # Runs the workspace's tests, and checks its formatting, on every push to
-# main or rust and on pull requests, on Linux and macOS. The shell
+# main and on pull requests, on Linux and macOS. The shell
 # integration tests run each shell that's installed (bash, zsh and fish
 # here) and skip the rest; the rust-analyzer test skips without it.
 name: Tests
 
 on:
   push:
-    branches: [main, rust]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

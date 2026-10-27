@@ -1,6 +1,7 @@
 # Rust app: what's left
 
-What's left before the Rust app (`impulse-app`, on GPUI + GPUI Kit) ships.
+What's left of the Rust app (`impulse-app`, on GPUI + GPUI Kit), which
+shipped as Impulse 1.0.0 on 27 Oct 2026.
 It replaced the Swift app, which was removed in October 2026 once parity was
 signed off; the migration plan is in [rust-migration.md](rust-migration.md).
 The code review of October 2026, with the bugs, security and performance
@@ -188,14 +189,21 @@ Left of the editor work done here:
 - [x] **Install it over the Swift app** (27 Oct 2026, 0.36.0 from the
   disk image over the Swift 0.36.0): settings, the session, trust lists
   and command history carried over.
-- [ ] **First run of `.github/workflows/release-linux.yml`**, which can only
-  be started by hand once it's on `main`: with no tag first, which builds
-  the branch and keeps the packages as the run's artifacts without
-  publishing (a tag must match `VERSION`, so a throwaway one can't). Its `arch`
-  job (makepkg in `archlinux:latest`) hasn't run on GitHub either; tried
-  in a container, under Rosetta, pacman's sandbox couldn't use seccomp
-  and needed `DisableSandboxSyscalls`, which a native x86_64 runner
-  shouldn't.
+- [x] **First run of `.github/workflows/release-linux.yml`** (27 Oct 2026):
+  by hand on `main` with no tag, which builds the branch and keeps the
+  packages as the run's artifacts without publishing, then for real on
+  v1.0.0's release. Every job passed both times, the `arch` job's makepkg
+  included: on a native x86_64 runner pacman's sandbox works, where under
+  Rosetta it needed `DisableSandboxSyscalls`. The `.deb` depends on
+  `libc6 (>= 2.35)`, the Arch package on `glibc>=2.35`.
+- [x] **The first release, 1.0.0** (27 Oct 2026), by `scripts/release.sh
+  1.0.0 --push`: the disk image, `.deb`s and tarballs for x86_64 and
+  arm64, the Arch package and `SHA256SUMS` are on the GitHub release, and
+  the website says 1.0.0. A build from a clean `target/` failed first: with
+  a deployment target set, the Command Line Tools 27.0 linker (ld-27037)
+  writes proc-macro dylibs macOS 27's dyld won't load ("mis-aligned
+  LINKEDIT string pool"), so `package-macos.sh` links with
+  `-no_fixup_chains`. Drop that once a fixed linker ships.
 - [x] **The packages, tried in containers** (27 Oct 2026, OrbStack on a
   Mac: arm64 natively, x86_64 under Rosetta). Built in Ubuntu 22.04, the
   `.deb` installs with `apt install ./…deb` and the app starts (20 s on
@@ -215,8 +223,7 @@ Left of the editor work done here:
 - [x] **CI for the tests**: `.github/workflows/tests.yml` runs
   `cargo fmt --all --check` and `cargo test --workspace --locked` on Linux
   (Ubuntu 24.04, with zsh and fish for the shell-integration tests) and
-  macOS 26 on pushes to main and rust and on pull requests. Not run yet:
-  the first push starts it.
+  macOS 26 on pushes to main and on pull requests. It passes on both.
 - [x] **The user docs** (`docs/`) describe the Rust app on macOS and Linux
   (27 Oct 2026: Monaco, inline blame and the Swift-only features are gone
   from them; keyboard-shortcuts.md has an "On Linux" section the other
