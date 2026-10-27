@@ -2,12 +2,16 @@
 
 All notable changes to Impulse are documented in this file.
 
-## Unreleased
+## 1.0.0
+
+**Impulse 1.0.** Impulse is now one app for macOS and Linux, written in Rust.
+Install it over 0.36: your settings, sessions, trusted folders, command
+history and agent integrations carry over.
 
 ### One Impulse for macOS and Linux
 
 - Impulse is rewritten in Rust and runs on Linux again, as well as macOS: the same app on both, drawn on the GPU (Metal on macOS, Vulkan on Linux). It keeps your settings, sessions, trusted folders, command history and agent integrations, and the `impulse` command-line tool works as before.
-- Linux releases come as a `.deb` for Debian and Ubuntu and a tarball for other distributions, for x86_64 and arm64. Building from source on Arch and its derivatives also makes a package for `pacman -U`.
+- Linux releases come as a `.deb` for Debian and Ubuntu, a package for Arch and its derivatives (x86_64) and a tarball for other distributions, for x86_64 and arm64. They need glibc 2.35 or later: Ubuntu 22.04, Debian 12, Fedora 36 or newer.
 - The editor is Impulse's own instead of Monaco, keeping Monaco's keys and behavior. Inline blame is gone; Show Commit for This Line still blames the cursor's line.
 
 ### Images in the terminal
