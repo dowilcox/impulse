@@ -95,9 +95,10 @@ Download from [GitHub Releases](https://github.com/dowilcox/impulse/releases):
 
 - **macOS:** `Impulse-X.Y.Z.dmg`. Open it and drag **Impulse.app** to your **Applications** folder. Requires **macOS 26 (Tahoe)** or later on an **Apple silicon** Mac.
 - **Debian and Ubuntu:** `impulse_X.Y.Z_amd64.deb` (or `_arm64`): `sudo apt install ./impulse_X.Y.Z_amd64.deb`.
-- **Other Linux:** `impulse-X.Y.Z-linux-x86_64.tar.gz` (or `-aarch64`): unpack it and run `bin/impulse-app`. On Arch and its derivatives, `./scripts/build.sh` also makes a package for `pacman -U` (see [Building from Source](#building-from-source)).
+- **Arch and its derivatives:** `impulse-X.Y.Z-1-x86_64.pkg.tar.zst`: `sudo pacman -U impulse-X.Y.Z-1-x86_64.pkg.tar.zst`.
+- **Other Linux:** `impulse-X.Y.Z-linux-x86_64.tar.gz` (or `-aarch64`): unpack it and run `bin/impulse-app`.
 
-Linux needs a Vulkan driver (Mesa's on most systems) and runs on Wayland or X11. Impulse checks GitHub for new releases on launch; you can turn that off in Settings.
+Linux needs glibc 2.35 or later (Ubuntu 22.04, Debian 12, Fedora 36 or newer, or a current Arch), a Vulkan driver (Mesa's on most systems) and runs on Wayland or X11. Impulse checks GitHub for new releases on launch; you can turn that off in Settings.
 
 **Language servers.** Rust, Python and C/C++ use the `rust-analyzer`, `pyright` and `clangd` on your `PATH`. For TypeScript/JavaScript, PHP, HTML, CSS, JSON, Tailwind, Vue, Svelte, GraphQL, YAML, Dockerfile and Bash, run **Install Web LSP Servers** from the command palette (or **Install All** in Settings → Language Servers). That needs Node.js and npm.
 

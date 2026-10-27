@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <script>document.documentElement.classList.add("js")</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Impulse · The terminal IDE for the Mac</title>
-<meta name="description" content="Impulse is a terminal IDE for the Mac: a fast terminal with command blocks, a code editor, deep git tools and first-class support for the coding agents you run in it. Native Swift, free and open source.">
+<title>Impulse · The terminal IDE for macOS and Linux</title>
+<meta name="description" content="Impulse is a terminal IDE for macOS and Linux: a fast terminal with command blocks, a code editor, deep git tools and first-class support for the coding agents you run in it. Native, GPU-drawn, free and open source.">
 <link rel="canonical" href="{{site_url}}/">
-<meta property="og:title" content="Impulse · The terminal IDE for the Mac">
-<meta property="og:description" content="A terminal with command blocks, a code editor, git review and history, and the coding agents you already run, in one native Mac window.">
+<meta property="og:title" content="Impulse · The terminal IDE for macOS and Linux">
+<meta property="og:description" content="A terminal with command blocks, a code editor, git review and history, and the coding agents you already run, in one native window, on macOS and Linux.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="{{site_url}}/">
 <meta property="og:image" content="{{site_url}}/docs/images/getting-started-window-tour.png">
@@ -29,16 +29,16 @@
     <canvas class="pulses" aria-hidden="true"></canvas>
     <div class="hero-inner">
       <a class="hero-badge reveal" href="changelog/"><span class="dot"></span>What’s new in {{version}}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
-      <h1 class="hero-title"><span class="reveal">The terminal IDE</span> <span class="reveal grad">for the Mac.</span></h1>
+      <h1 class="hero-title"><span class="reveal">The terminal IDE</span> <span class="reveal grad">for macOS and Linux.</span></h1>
       <p class="hero-sub reveal">A fast terminal with command blocks, a code editor, git review and history, and first-class support for the coding agents you already run, side by side on branches of their own. One native window.</p>
       <div class="hero-cta reveal">
         <a class="btn btn-primary btn-lg" href="{{repo}}/releases/latest">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 11l6 6 6-6M5 21h14"/></svg>
-          Download for macOS
+          Download
         </a>
         <a class="btn btn-lg" href="docs/">Read the docs</a>
       </div>
-      <p class="hero-meta reveal">Version {{version}} · macOS 26 Tahoe or later · Apple silicon · Free and open source</p>
+      <p class="hero-meta reveal">Version {{version}} · macOS 26 or later on Apple silicon · Linux on x86_64 and arm64 · Free and open source</p>
     </div>
 
     <div class="demo-stage" data-demo-stage>
@@ -197,7 +197,7 @@
       <ul class="checks">
         <li>A Changes panel with a commit composer you can drive from the keyboard</li>
         <li>Branches, stashes, merge conflicts, fetch, pull and push from the Git menu or the palette</li>
-        <li>Live change marks and inline blame in the editor</li>
+        <li>Live change marks in the editor, and the commit behind any line</li>
       </ul>
       <a class="more" href="docs/history/">History in the docs →</a>
     </div>
@@ -208,7 +208,7 @@
     <div class="feature-text reveal">
       <div class="eyebrow">Editor</div>
       <h2>A real editor, right next to your shell.</h2>
-      <p>The Monaco editor with language servers for TypeScript, Rust, Python, C and a dozen more, project-wide find and replace, Problems, Markdown preview and an editable side-by-side diff. Vim mode is a setting away.</p>
+      <p>An editor with VS Code’s keys and commands, language servers for TypeScript, Rust, Python, C and a dozen more, project-wide find and replace, Problems, Markdown and SVG previews and an editable diff. Vim mode is a setting away.</p>
       <a class="more" href="docs/editor/">The editor in the docs →</a>
     </div>
     <figure class="feature-shot reveal"><img src="docs/images/editor-overview.png" alt="The editor with a TypeScript file open beside the file tree" loading="lazy" width="2784" height="1824"></figure>
@@ -245,15 +245,15 @@
   </section>
 
   <section class="native">
-    <div class="native-item reveal"><div class="big">Swift</div><p>AppKit and SwiftUI, built for macOS Tahoe. No Electron, no web view for the terminal.</p></div>
-    <div class="native-item reveal"><div class="big">Rust</div><p>Terminal emulation on <code>alacritty_terminal</code>, drawn with Core Text.</p></div>
+    <div class="native-item reveal"><div class="big">Rust</div><p>One app for macOS and Linux, written in Rust. No Electron, no web views.</p></div>
+    <div class="native-item reveal"><div class="big">GPU</div><p>Drawn with GPUI, on Metal and Vulkan. Terminal emulation on <code>alacritty_terminal</code>.</p></div>
     <div class="native-item reveal"><div class="big">Yours</div><p>No account, no telemetry. Impulse never calls an AI service itself. GPL-3.0.</p></div>
   </section>
 
   <section class="final reveal">
     <img src="assets/impulse-logo.svg" alt="" width="88" height="88" class="final-logo">
     <h2>Get Impulse.</h2>
-    <p>Download the disk image, drag Impulse to Applications, and open a folder.</p>
+    <p>On macOS, drag Impulse from the disk image to Applications. On Linux, install the <code>.deb</code> or the Arch package, or unpack the tarball. Then open a folder.</p>
     <div class="hero-cta">
       <a class="btn btn-primary btn-lg" href="{{repo}}/releases/latest">Download Impulse {{version}}</a>
       <a class="btn btn-lg" href="docs/getting-started/">Getting started</a>
