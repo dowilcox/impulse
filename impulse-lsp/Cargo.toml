@@ -1,6 +1,6 @@
 [package]
 name = "impulse-lsp"
-version = "0.36.0"
+version = "1.0.0"
 edition = "2021"
 description = "Impulse's language-server client (the Rust port of ImpulseLSP): no UI, any executor"
 license = "GPL-3.0-only"

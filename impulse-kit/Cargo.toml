@@ -1,6 +1,6 @@
 [package]
 name = "impulse-kit"
-version = "0.36.0"
+version = "1.0.0"
 edition = "2021"
 description = "Impulse's pure logic (the Rust port of ImpulseKit), for the full-Rust migration"
 license = "GPL-3.0-only"

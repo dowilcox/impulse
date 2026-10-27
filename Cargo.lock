@@ -3491,7 +3491,7 @@ checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 
 [[package]]
 name = "impulse-app"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3525,7 +3525,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-cli"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "impulse-protocol",
  "serde_json",
@@ -3534,7 +3534,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-git"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "git2",
  "libc",
@@ -3547,7 +3547,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-kit"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "chrono",
@@ -3570,7 +3570,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-lsp"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "async-channel",
  "futures",
@@ -3584,7 +3584,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-protocol"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "base64",
  "serde",
@@ -3594,7 +3594,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-terminal"
-version = "0.36.0"
+version = "1.0.0"
 dependencies = [
  "alacritty_terminal",
  "base64",
