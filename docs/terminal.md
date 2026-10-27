@@ -420,6 +420,8 @@ To turn links off, turn off **Clickable links** (`terminal_allow_hyperlink`) in 
 
 Programs can show pictures in the terminal: a plot from a script, `kitten icat photo.png`, yazi's file previews, images in Neovim with image.nvim or snacks.nvim, or a coding agent's preview of a pasted screenshot. Impulse supports the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/), which these programs use, including its Unicode placeholders, so images also show inside tmux and over ssh. Programs that ask whether the terminal can show images get an answer, so they pick it themselves.
 
+![kitten icat showing a trail's elevation chart as an image under its command](images/terminal-images.png)
+
 - An image belongs to the output it was printed with: it scrolls with it, and goes when the screen is cleared (`clear`, ⌘K) or when a full-screen program that showed it exits.
 - Copying text, a block's output and what agents read from a terminal leave images out.
 - Restored scrollback comes back without its images.
