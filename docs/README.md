@@ -53,7 +53,7 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 The screenshots are generated, not taken by hand. `scripts/docs/make_demo.py` builds the `trailhead` example (a repository with history, branches, task worktrees and uncommitted work, plus a stand-in home folder and stand-in agent commands), and `scripts/docs/capture.py` runs the dev build in its headless snapshot mode for each shot in `scripts/docs/shots.py`, then frames the result into `docs/images/`. Nothing appears on screen while it runs.
 
 ```sh
-./impulse-macos/build.sh --dev
+./scripts/build.sh --dev
 python3 scripts/docs/capture.py                  # every shot
 python3 scripts/docs/capture.py review- tasks-   # shots whose names start with these
 ```

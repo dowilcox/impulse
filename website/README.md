@@ -26,7 +26,7 @@ python3 scripts/build-site.py --check    # one build; fails on a broken link, an
 
 The build adds the rest: the fonts and highlight.js from `vendor/`, the logo, the
 docs screenshots, `assets/themes.js` (every built-in theme, read from
-`impulse-macos/Sources/ImpulseKit/Resources/Themes/`, so the demo's theme picker
+`impulse-kit/resources/themes/`, so the demo's theme picker
 always matches the app), `assets/demo-icons.js`, `assets/search-index.js`,
 `sitemap.xml` and `CNAME`.
 
@@ -36,7 +36,7 @@ The demo starts in Nord, the app's default theme. For each theme, `themes.js`
 carries what the app works out from the theme file: the resolved colors
 (`ThemeStore.resolveTheme`) and the Monaco theme (`themeToMonaco`), both ported
 to Python in `build-site.py`. The build fails if that port stops matching the
-app's golden fixtures in `impulse-macos/Tests/ImpulseKitTests/Fixtures/themes/`.
+app's golden fixtures in `impulse-kit/tests/fixtures/themes/`.
 `demo.js` derives the chrome colors the way `ChromePalette` does, tokenizes code
 with Monaco's own TypeScript, JSON and Markdown rules (Review uses highlight.js,
 as the app does), and colors brackets and their guides as Monaco does.

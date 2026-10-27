@@ -1,6 +1,6 @@
-//! Parity with the golden fixtures shared with the Swift port. The fixtures
-//! are read in place from the Swift test tree so both ports answer to one
-//! spec; never regenerate them from either port's output.
+//! Parity with the golden fixtures (`tests/fixtures/`), generated from the
+//! original Rust at tag `v0.29.0` and the spec the Swift port answered to;
+//! never regenerate them from this code's output.
 
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ use serde_json::Value;
 
 fn fixture(name: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../impulse-macos/Tests/ImpulseKitTests/Fixtures")
+        .join("tests/fixtures")
         .join(name);
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }

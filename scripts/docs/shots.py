@@ -3,20 +3,21 @@
 Each shot:
   name      docs/images/<name>.png
   session   make_demo.session(...): the window's workspaces and tabs
-  actions   named debug actions (MainWindowController+Debug.swift), run in
+  actions   named debug actions (impulse-app/src/debug_snapshot.rs), run in
             order 0.6 s apart from about delay/2; "wait" is a no-op spacer
   delay     seconds (default 8); the capture happens at delay + 0.6/action
   size      window size in points (default 1280x800)
   crop      (x, y, w, h) in points from the window's top-left, or "overlay"
-            (the first floating window: palette, sheet, popover, menu panel,
-            plus `pad` points of the window around it)
-  panel     points the Swift app's floating window leaves around what it
-            draws (the toast panel's margin): the Rust app draws overlays
-            in its window, so its "overlay" crops add this to `pad`
+            (the first floating window, else the dialog, palette, popover or
+            toast the app drew in its window, plus `pad` points of the
+            window around it)
   style     "window" (rounded, shadowed; the default without a crop) or
             "crop" (rounded edge only; the default with one)
   overlays  class names of floating windows to composite (default: all)
   base      class name of the window to use instead of the main one
+            ("Window": any but the main one)
+  recent_workspaces
+            the palette's recent folders (~ is the demo home; default none)
   variant   make_demo variant ("conflict")
   settings  keys merged into the demo's settings.json; settings_text
             replaces the file
@@ -47,7 +48,7 @@ GRID_BOTTOM = 700
 CLI_H = 960
 CLI_HELP_H = 754
 # The Nord card in the Component Gallery's dark themes.
-NORD_CARD = (10, 376, 574, 280)
+NORD_CARD = (10, 348, 574, 280)
 
 
 def wait(n: int = 1) -> list[str]:
@@ -148,8 +149,8 @@ SHOTS = [
      "crop": (0, 80, SIDEBAR_W, 420)},
     {"name": "workspaces-and-tabs-undo-close-toast",
      "session": session([trailhead(("terminal", "trailhead"), ("file", "trailhead/src/forecast.ts"), active_tab=1)]),
-     "actions": [*THREE_BLOCKS, "close-pane"], "delay": 8, "overlays": ["ToastPanel"], "crop": "overlay",
-     "pad": 40, "panel": 10},
+     "actions": [*THREE_BLOCKS, "close-pane"], "delay": 8, "overlays": [], "crop": "overlay",
+     "pad": 50},
     {"name": "workspaces-and-tabs-status-bar", "session": ONE, "actions": [DEV_SERVER_BG], "delay": 12,
      "crop": STATUSBAR},
 
@@ -157,7 +158,7 @@ SHOTS = [
     {"name": "command-palette-commands", "session": ONE, "actions": ["palette=>split"], "crop": "overlay"},
     {"name": "command-palette-files", "session": ONE, "actions": ["palette=fcst"], "crop": "overlay"},
     {"name": "command-palette-workspaces", "session": session([trailhead(), FIX_ELEVATION, SCRATCH]),
-     "defaults": {"recentWorkspaceFolders": ["~/Code/trail-ui", "~/Code/trailhead-infra", "~/Code/trailhead"]},
+     "recent_workspaces": ["~/Code/trail-ui", "~/Code/trailhead-infra", "~/Code/trailhead"],
      "actions": ["palette=w:"], "crop": "overlay"},
     {"name": "command-palette-branches", "session": ONE, "actions": ["palette=b:"], "crop": "overlay"},
     {"name": "command-palette-history", "session": ONE,
@@ -318,7 +319,7 @@ SHOTS = [
      "actions": ["no-sidebar", "settings-category=Language Servers", *wait(2)], "crop": CONTENT_NO_SIDEBAR},
     # The developer Component Gallery's theme cards (without its header).
     {"name": "settings-and-themes-theme-gallery", "session": ONE, "actions": ["gallery=dark", *wait(2)],
-     "base": "NSWindow", "overlays": [], "crop": (8, 90, 1164, 750)},
+     "base": "Window", "overlays": [], "crop": (8, 62, 1164, 750)},
     {"name": "settings-and-themes-harbor", "session": session([trailhead(("file", "trailhead/src/forecast.ts"))]),
      "settings": {"color_scheme": "harbor"}, "delay": 10},
     {"name": "settings-and-themes-keyboard-shortcuts", "session": ONE,
@@ -329,9 +330,9 @@ SHOTS = [
     {"name": "keyboard-shortcuts-palette", "session": ONE, "actions": ["palette=>"], "crop": "overlay"},
     # The same theme card with Increase Contrast off and on, side by side.
     {"name": "_contrast-off", "session": ONE, "actions": ["gallery=dark", *wait(2)],
-     "base": "NSWindow", "overlays": [], "crop": NORD_CARD},
+     "base": "Window", "overlays": [], "crop": NORD_CARD},
     {"name": "_contrast-on", "session": ONE, "actions": ["gallery=dark+contrast", *wait(2)],
-     "base": "NSWindow", "overlays": [], "crop": NORD_CARD},
+     "base": "Window", "overlays": [], "crop": NORD_CARD},
     {"name": "accessibility-increase-contrast", "combine": ["_contrast-off", "_contrast-on"], "gap": 24},
 ]
 

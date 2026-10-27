@@ -317,7 +317,7 @@
       bracketCounting: [[/\{/, "delimiter.bracket", "@bracketCounting"], [/\}/, "delimiter.bracket", "@pop"], { include: "common" }],
     },
   });
-  // The app registers its own JSON tokenizer (impulse-macos/web/editor.js).
+  // The Monaco-based app (through 0.36) registered its own JSON tokenizer.
   const JSON_LANG = monarch({
     postfix: ".json", defaultToken: "",
     states: {

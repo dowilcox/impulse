@@ -291,16 +291,22 @@ pub const OPENCODE_LEGACY_PLUGIN_NAME: &str = "impulse.js";
 /// that isn't Impulse's.
 pub const OPENCODE_PLUGIN_MARKER: &str = "// Impulse's opencode plugin";
 
-/// The plugin's files by name, from the Swift app's resources (each
-/// replaced or removed as a whole).
+/// The plugin's files by name, from `resources/agents/opencode-plugin/`
+/// (each replaced or removed as a whole).
 pub fn opencode_plugin_files() -> BTreeMap<String, String> {
     [
-        ("rpc.js", include_str!("../../../impulse-macos/Sources/ImpulseKit/Resources/Agents/opencode-plugin/rpc.js")),
+        (
+            "rpc.js",
+            include_str!("../../resources/agents/opencode-plugin/rpc.js"),
+        ),
         (
             "server.js",
-            include_str!("../../../impulse-macos/Sources/ImpulseKit/Resources/Agents/opencode-plugin/server.js"),
+            include_str!("../../resources/agents/opencode-plugin/server.js"),
         ),
-        ("tui.js", include_str!("../../../impulse-macos/Sources/ImpulseKit/Resources/Agents/opencode-plugin/tui.js")),
+        (
+            "tui.js",
+            include_str!("../../resources/agents/opencode-plugin/tui.js"),
+        ),
     ]
     .into_iter()
     .map(|(name, text)| (name.to_string(), text.to_string()))

@@ -2,9 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- The Rust app's (scripts/package-macos.sh). The Swift app's are in
-         impulse-macos/Impulse.entitlements, with JIT for JavaScriptCore,
-         which the Rust app doesn't run. -->
+    <!-- The app's, signed in by scripts/package-macos.sh. -->
     <!-- Programs run in Impulse's terminals are attributed to Impulse by
          privacy controls (TCC), so under the hardened runtime it has to be
          allowed to ask for what they use: Apple Events (osascript), the

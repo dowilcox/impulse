@@ -5,26 +5,24 @@ trust and language servers, tasks, session restore) and check the results
 on disk, in git and in the app's own state.
 
 Each scenario rebuilds the screenshots' demo world (scripts/docs/make_demo.py)
-plus files of its own, launches Impulse Dev headless the way
-scripts/docs/capture.py does (invisible windows, a stand-in home, events
-delivered inside the app, so it runs while you work), runs its actions
-(MainWindowController+Debug.swift, "Smoke Checks") and checks the JSON state
-they dump. Nothing it runs talks to the network except the language server
-install.
+plus files of its own, launches the dev build (target/debug/impulse-app, or
+IMPULSE_SNAPSHOT_APP) headless the way scripts/docs/capture.py does
+(invisible windows, a stand-in home, events delivered inside the app, so it
+runs while you work), runs its actions (impulse-app/src/debug_snapshot.rs)
+and checks the JSON state they dump. Nothing it runs talks to the network
+except the language server install.
 
 usage: run.py [--list] [NAME_OR_PREFIX ...]
 
-Build the app first: ./impulse-macos/build.sh --dev
+Build the app first: `cargo build -p impulse-app -p impulse-cli` (what
+scripts/build.sh --dev runs), on the Mac with `--features
+impulse-app/snapshot` added for the window images.
 Each scenario's actions, dumps and final window images are left in
 target/smoke/<name>/.
 
-For the Rust app, set IMPULSE_SNAPSHOT_APP to its binary (the default on
-Linux: target/debug/impulse-app, after `cargo build -p impulse-app -p
-impulse-cli`, on the Mac with `--features impulse-app/snapshot` added for
-the window images); on the Mac its windows stay transparent and are
-rendered off screen, on Linux it runs on the X server in DISPLAY (Xvfb), and
-the scenarios' shells are found on PATH when they aren't where a Mac has
-them.
+On the Mac the app's windows stay transparent and are rendered off screen;
+on Linux it runs on the X server in DISPLAY (Xvfb), and the scenarios'
+shells are found on PATH when they aren't where a Mac has them.
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 sys.path.insert(0, str(REPO / "scripts" / "docs"))
-import capture  # noqa: E402  (launch environment and preference pinning)
+import capture  # noqa: E402  (the app and its launch environment)
 import make_demo  # noqa: E402
 
 from scenarios import SCENARIOS  # noqa: E402
@@ -111,7 +109,6 @@ def launch(scenario: dict, out: Path, actions: list[str], session_file: Path) ->
     out.mkdir(parents=True)
     # Always end with the state, so waits that timed out are reported.
     (out / "actions.json").write_text(json.dumps([*actions, "dump=final"], indent=1, ensure_ascii=False))
-    pinned = [part for key, value in capture.PINNED.items() for part in ("-" + key, capture.argument(value))]
     shell = scenario.get("shell", "/bin/zsh")
     if not Path(shell).exists():
         # Where this system has it (Linux has no /opt/homebrew).
@@ -129,7 +126,7 @@ def launch(scenario: dict, out: Path, actions: list[str], session_file: Path) ->
         args.append("--impulse-snapshot-no-lsp")
     if scenario.get("persist"):
         args.append("--impulse-snapshot-persist")
-    return capture.run_app(args, env, pinned, scenario.get("timeout", 240))
+    return capture.run_app(args, env, scenario.get("timeout", 240))
 
 
 def prepare(scenario: dict) -> None:
@@ -178,26 +175,20 @@ def main() -> None:
             print(f"{scenario['name']:<16} {scenario['about']}")
         return
     if not capture.APP.exists():
-        sys.exit(f"{capture.APP} is missing: run " + (capture.RUST_BUILD if capture.RUST
-                                                        else "./impulse-macos/build.sh --dev") + " first")
+        sys.exit(f"{capture.APP} is missing: run {capture.BUILD} first")
     selected = [s for s in SCENARIOS if not args or any(s["name"].startswith(a) for a in args)]
     if not selected:
         sys.exit("no scenarios match")
-    capture.WORK.mkdir(parents=True, exist_ok=True)
-    saved = capture.read_preferences()
     results = []
-    try:
-        for scenario in selected:
-            started = time.time()
-            print(f"{scenario['name']} …", flush=True)
-            run = run_scenario(scenario)
-            results.append(run)
-            status = "ok" if not run.failed else f"{len(run.failed)} FAILED"
-            print(f"  {len(run.passed)} passed, {status}  ({time.time() - started:.0f}s)", flush=True)
-            for failure in run.failed:
-                print(f"  ✗ {failure}", flush=True)
-    finally:
-        capture.restore_preferences(saved)
+    for scenario in selected:
+        started = time.time()
+        print(f"{scenario['name']} …", flush=True)
+        run = run_scenario(scenario)
+        results.append(run)
+        status = "ok" if not run.failed else f"{len(run.failed)} FAILED"
+        print(f"  {len(run.passed)} passed, {status}  ({time.time() - started:.0f}s)", flush=True)
+        for failure in run.failed:
+            print(f"  ✗ {failure}", flush=True)
     failed = [run for run in results if run.failed]
     total = sum(len(run.passed) for run in results)
     print(f"\n{total} checks passed; " + (f"{len(failed)} scenario(s) failed: {', '.join(r.name for r in failed)}"

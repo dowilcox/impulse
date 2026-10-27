@@ -3,30 +3,83 @@
 #
 # Builds impulse-app and the impulse CLI in release mode and bundles them
 # into dist/Impulse.app: the app in Contents/MacOS, the CLI in
-# Contents/Resources/bin (the Swift bundle's layout, which `impulse` reads
-# the app's version from and control_server::cli_path finds), and the icons
+# Contents/Resources/bin (where `impulse` reads the app's version from and
+# control_server::cli_path finds it), and the icons
 # and fonts the app reads at run time in Contents/Resources
 # (impulse-app/src/resources.rs finds them there). The Info.plist is
-# assets/macos/Info.plist.in, as the Swift app's.
+# assets/macos/Info.plist.in.
 #
 # Usage:
 #   ./scripts/package-macos.sh                          # dist/Impulse.app, unsigned
 #   ./scripts/package-macos.sh --sign --notarize --dmg  # what release.sh runs
 #   ./scripts/package-macos.sh --no-build ...           # bundle the last release build
 #
-# --dmg writes dist/Impulse-<version>.dmg. Signing and notarizing take the
-# same environment variables as impulse-macos/build.sh:
+# --dmg writes dist/Impulse-<version>.dmg. Signing and notarizing take:
 #   IMPULSE_SIGN_IDENTITY  — "Developer ID Application: Name (TEAM_ID)";
-#                            auto-detected if not set
+#                            auto-detected from the keychain if not set
 #   IMPULSE_NOTARY_KEY     — path to the App Store Connect API key (.p8)
 #   IMPULSE_NOTARY_KEY_ID  — its key ID
 #   IMPULSE_NOTARY_ISSUER  — its issuer ID
+#
+# Setting up signing: download the Developer ID Application certificate from
+# developer.apple.com and double-click it to install it in the keychain (or
+# `security import DeveloperIDApplication.p12 -k login.keychain`).
+# Notarizing: in App Store Connect, Users and Access > Integrations > App
+# Store Connect API, generate a key with Developer access, download its .p8
+# (offered once) and note its key ID and issuer ID.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-# shellcheck source=lib/macos-bundle.sh
-source "$ROOT/scripts/lib/macos-bundle.sh"
+# render_info_plist <out> <app name> <bundle id> <version>
+# Writes assets/macos/Info.plist.in with its @TOKENS@ filled in.
+render_info_plist() {
+    local out="$1" name="$2" id="$3" version="$4"
+    local plist
+    plist="$(<"${ROOT}/assets/macos/Info.plist.in")"
+    # bash 5.2 reads & in a replacement as the match; these are literal.
+    shopt -u patsub_replacement 2>/dev/null || true
+    plist="${plist//@APP_NAME@/${name}}"
+    plist="${plist//@BUNDLE_ID@/${id}}"
+    plist="${plist//@VERSION@/${version}}"
+    printf '%s\n' "${plist}" > "${out}"
+}
+
+# make_icns <svg> <out.icns>
+# An .icns from an SVG, through rsvg-convert and iconutil. Says so and
+# returns 1 when it can't (the bundle then has no icon).
+make_icns() {
+    local svg="$1" out="$2"
+    local tmp
+    tmp="$(mktemp -d)"
+    local iconset="${tmp}/$(basename "${out}" .icns).iconset"
+    mkdir -p "${iconset}"
+    if command -v rsvg-convert >/dev/null 2>&1; then
+        local size
+        for size in 16 32 64 128 256 512 1024; do
+            rsvg-convert -w ${size} -h ${size} "${svg}" \
+                -o "${iconset}/icon_${size}x${size}.png" 2>/dev/null || true
+        done
+        # @2x variants
+        for size in 16 32 128 256 512; do
+            local double=$((size * 2))
+            if [[ -f "${iconset}/icon_${double}x${double}.png" ]]; then
+                cp "${iconset}/icon_${double}x${double}.png" \
+                   "${iconset}/icon_${size}x${size}@2x.png"
+            fi
+        done
+        if command -v iconutil >/dev/null 2>&1; then
+            iconutil -c icns "${iconset}" -o "${out}" 2>/dev/null || true
+        fi
+    fi
+    rm -rf "${tmp}"
+    if [[ ! -f "${out}" ]]; then
+        echo "    Note: Could not generate $(basename "${out}") (install rsvg-convert for the icon)"
+        return 1
+    fi
+    echo "    OK: $(basename "${out}")"
+}
+
 
 BUILD=true
 SIGN=false
@@ -62,7 +115,7 @@ if [[ "$SIGN" == true && -z "${IMPULSE_SIGN_IDENTITY:-}" ]]; then
     IMPULSE_SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/' || true)
     if [[ -z "$IMPULSE_SIGN_IDENTITY" ]]; then
         echo "Error: no Developer ID Application certificate in the keychain." >&2
-        echo "Install one, or set IMPULSE_SIGN_IDENTITY (see impulse-macos/build.sh)." >&2
+        echo "Install one, or set IMPULSE_SIGN_IDENTITY (see this script's header)." >&2
         exit 1
     fi
     echo "Auto-detected signing identity: $IMPULSE_SIGN_IDENTITY"
@@ -70,7 +123,7 @@ fi
 if [[ "$NOTARIZE" == true ]]; then
     if [[ -z "${IMPULSE_NOTARY_KEY:-}" || -z "${IMPULSE_NOTARY_KEY_ID:-}" || -z "${IMPULSE_NOTARY_ISSUER:-}" ]]; then
         echo "Error: notarizing needs IMPULSE_NOTARY_KEY, IMPULSE_NOTARY_KEY_ID and IMPULSE_NOTARY_ISSUER" >&2
-        echo "(see impulse-macos/build.sh)." >&2
+        echo "(see this script's header)." >&2
         exit 1
     fi
     if [[ ! -f "$IMPULSE_NOTARY_KEY" ]]; then

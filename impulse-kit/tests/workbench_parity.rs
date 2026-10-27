@@ -1,7 +1,6 @@
 //! Parity of the workbench modules (command palette, file tree, Monaco and
-//! Markdown themes) with the golden fixtures shared with the Swift port,
-//! read in place from the Swift test tree. Never regenerate the fixtures
-//! from either port's output.
+//! Markdown themes) with the golden fixtures (`tests/fixtures/`). Never
+//! regenerate the fixtures from this code's output.
 
 use std::collections::HashMap;
 use std::fs;
@@ -21,8 +20,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 fn fixtures_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../impulse-macos/Tests/ImpulseKitTests/Fixtures")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
 fn fixture(name: &str) -> String {

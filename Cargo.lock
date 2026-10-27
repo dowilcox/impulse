@@ -3532,15 +3532,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "impulse-ffi"
-version = "0.36.0"
-dependencies = [
- "impulse-terminal",
- "log",
- "serde_json",
-]
-
-[[package]]
 name = "impulse-git"
 version = "0.36.0"
 dependencies = [

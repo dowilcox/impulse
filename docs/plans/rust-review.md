@@ -17,7 +17,6 @@ another crate is named.
 
 Every finding has been worked through. Still open, each noted in place
 below:
-- W2's edge resizing needs a check on a real Linux desktop.
 - Keyboard folding waits on GPUI Kit (E15).
 - A Services menu item needs the bundle's Info.plist (W10).
 - On macOS, `osascript` notifications can't be withdrawn (A4).
@@ -135,8 +134,8 @@ columns; and linked editing of HTML and XML tag names, as Swift's Monaco
 has it on, `impulse_kit::linked_tags`).
 
 Windows: W1 (closing the last window saves the session and quits) and W2
-(the Linux frame's edges and corners resize the window; to check on a
-real desktop, since Xvfb's windows are decorated by the server), W4
+(the Linux frame's edges and corners resize the window, checked by hand
+on KDE Plasma under Wayland), W4
 (Scratch's tree keeps the folder it lists with the workspace's others,
 so its folders expand; see P5), W5 (restored editors go back to their
 cursor's line and column), W6 (closing the active tab goes back to the

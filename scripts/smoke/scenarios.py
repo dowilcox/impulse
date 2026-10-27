@@ -8,7 +8,7 @@ Each scenario:
   shell         the terminals' shell (default /bin/zsh)
   lsp           start language servers (off by default)
   persist       save settings and the session as a normal launch does
-  actions       debug actions, run in order (MainWindowController+Debug.swift)
+  actions       debug actions, run in order (impulse-app/src/debug_snapshot.rs)
   relaunch      actions for a second launch that restores the saved session
   timeout       seconds before the app is stopped (default 240)
   check(run)    reads the dumps and files and calls run.expect(...)
@@ -41,60 +41,19 @@ def write(path: Path, content: str | bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Editor: Impulse's copy of each buffer follows Monaco's edits exactly, saves
-# write what's on screen, reloads from disk are in place and undoable, a
-# change on disk never silently loses typing, and files the editor can't
-# show are refused with a toast.
+# Editor: saves write exactly what's on screen (emoji, CJK, combining
+# characters, CRLF), reloads from disk are in place and undoable, a change
+# on disk never silently loses typing, and files the editor can't show are
+# refused with a toast.
 
 UNICODE_TEXT = "Trail notes 🥾\n日本語の道\ncafé ñ — naïve\nend\n"
 CRLF_TEXT = "first\r\nsecond\r\nthird\r\n"
 BIG_NAME = "big log (copy).log"
 
-# Typing, multi-cursor typing, a paste, one edit made of several changes,
-# deleting across an emoji, a new line, then undo/undo/redo.
+# `edit=` commands (EditorTab::debug_edit), columns in characters: typing,
+# typing at the start of three lines, a paste, a replacement, deleting across
+# an emoji, a new line, then undo/undo/redo.
 EDIT_UNICODE = r"""
-const m = editor.getModel();
-const end = (n) => ({ lineNumber: n, column: m.getLineMaxColumn(n) });
-editor.setPosition(end(1));
-editor.trigger("keyboard", "type", { text: " ⛰️ day 1" });
-editor.setSelections([1, 2, 3].map((i) => new monaco.Selection(i + 1, 1, i + 1, 1)));
-editor.trigger("keyboard", "type", { text: "» " });
-editor.setPosition(end(4));
-editor.trigger("keyboard", "paste", { text: "\npasted 🧭 line\nand another" });
-editor.executeEdits("smoke", [
-  { range: new monaco.Range(2, 3, 2, 4), text: "道🌲" },
-  { range: new monaco.Range(3, 1, 3, 1), text: "👣" },
-  { range: new monaco.Range(5, 1, 5, 7), text: "" },
-]);
-const boot = m.getLineContent(1).indexOf("🥾");
-editor.executeEdits("smoke", [{ range: new monaco.Range(1, boot - 1, 1, boot + 3), text: "" }]);
-editor.setPosition({ lineNumber: 2, column: 4 });
-editor.trigger("keyboard", "type", { text: "\n" });
-editor.trigger("smoke", "undo");
-editor.trigger("smoke", "undo");
-editor.trigger("smoke", "redo");
-return editor.getValue();
-"""
-
-EDIT_CRLF = r"""
-const m = editor.getModel();
-editor.setPosition({ lineNumber: 2, column: 4 });
-editor.trigger("keyboard", "type", { text: "\ninserted" });
-editor.setPosition({ lineNumber: m.getLineCount(), column: 1 });
-editor.trigger("keyboard", "paste", { text: "pasted one\npasted two\n" });
-return JSON.stringify({ eol: m.getEOL() === "\r\n" ? "crlf" : "lf", value: editor.getValue() });
-"""
-
-TYPE_AT_START = r"""
-editor.setPosition({ lineNumber: 1, column: 1 });
-editor.trigger("keyboard", "type", { text: "edited " });
-return editor.getValue();
-"""
-
-
-# The Rust app has no Monaco to script: the same steps as `edit=` commands
-# (EditorTab::debug_edit), columns in characters.
-EDIT_UNICODE_RUST = r"""
 cursor 1:15
 type  ✓
 cursor 2:1
@@ -117,7 +76,7 @@ undo
 redo
 """
 
-EDIT_CRLF_RUST = r"""
+EDIT_CRLF = r"""
 cursor 2:7
 type \ninserted
 cursor 5:1
@@ -125,9 +84,10 @@ paste pasted one\npasted two\n
 """
 
 
-def edit_action(label: str, js: str, rust: str) -> str:
-    """Monaco's JavaScript for the Swift app, `edit=` for the Rust one."""
-    return f"edit={label}:{rust}" if capture.RUST else f"js={label}:{js}"
+def text(found: dict) -> str:
+    """An open editor's text in a dump (the key is the one the Swift app's
+    dumps used)."""
+    return found["monaco"]
 
 
 def setup_editor() -> None:
@@ -144,24 +104,23 @@ EDITOR_ACTIONS = [
     "until=prompt",
     # Edits in a file with emoji, CJK and combining characters.
     "open=smoke/unicode.txt", "until=editor",
-    edit_action("unicode", EDIT_UNICODE, EDIT_UNICODE_RUST),
+    "edit=unicode:" + EDIT_UNICODE,
     "sleep=1", "dump=unicode-edited",
     "save", "until=result:save:unicode.txt", "sleep=1", "dump=unicode-saved",
     # CRLF line endings stay CRLF.
     "open=smoke/crlf.txt", "until=editor",
-    edit_action("crlf", EDIT_CRLF, EDIT_CRLF_RUST),
+    "edit=crlf:" + EDIT_CRLF,
     "sleep=1", "save", "until=result:save:crlf.txt", "sleep=1", "dump=crlf-saved",
     # A clean buffer follows the file on disk, and the reload can be undone.
     "open=smoke/reload.txt", "until=editor",
     "write-file=smoke/reload.txt|version two\nfrom disk\n",
-    ("until=15:text:version two\\nfrom disk\\n" if capture.RUST
-     else "until=15:js:editor.getValue() === 'version two\\nfrom disk\\n'"),
+    "until=15:text:version two\\nfrom disk\\n",
     "sleep=1", "dump=reloaded",
-    edit_action("undo-reload", "editor.trigger('smoke', 'undo'); return editor.getValue();", "undo"),
+    "edit=undo-reload:undo",
     "sleep=1", "dump=reload-undone",
     # A dirty buffer isn't replaced by a change on disk; saving then asks.
     "open=smoke/dirty.txt", "until=editor",
-    edit_action("dirty", TYPE_AT_START, "cursor 1:1\ntype edited "),
+    "edit=dirty:cursor 1:1\ntype edited ",
     "write-file=smoke/dirty.txt|changed elsewhere\n",
     "sleep=3", "dump=dirty-after-disk",
     "save", "until=10:sheet", "dump=conflict-sheet",
@@ -178,51 +137,47 @@ EDITOR_ACTIONS = [
 
 
 def check_editor(run) -> None:
-    def same_copy(dump: dict, name: str, when: str) -> dict | None:
+    def opened(dump: dict, name: str, when: str) -> dict | None:
         found = editor(dump, name)
-        if not run.expect(found is not None, f"{name} is open ({when})"):
-            return None
-        run.expect(found["swift"] == found["monaco"], f"{name}: Impulse's copy matches Monaco ({when})",
-                   {"swift": found["swift"], "monaco": found["monaco"]})
-        return found
+        return found if run.expect(found is not None, f"{name} is open ({when})") else None
 
     # Unicode edits, then save.
-    edited = same_copy(run.dump("unicode-edited"), "unicode.txt", "after edits")
+    edited = opened(run.dump("unicode-edited"), "unicode.txt", "after edits")
     if edited:
         run.expect(edited["modified"], "unicode.txt is marked modified after edits")
-        run.expect(edited["monaco"] != UNICODE_TEXT, "the edits changed unicode.txt's text")
-    saved = same_copy(run.dump("unicode-saved"), "unicode.txt", "after save")
+        run.expect(text(edited) != UNICODE_TEXT, "the edits changed unicode.txt's text")
+    saved = opened(run.dump("unicode-saved"), "unicode.txt", "after save")
     if saved:
         disk = (SMOKE / "unicode.txt").read_text()
-        run.expect(disk == saved["monaco"], "unicode.txt on disk is exactly what Monaco shows",
-                   {"disk": disk, "monaco": saved["monaco"]})
+        run.expect(disk == text(saved), "unicode.txt on disk is exactly what the editor shows",
+                   {"disk": disk, "editor": text(saved)})
         run.expect(not saved["modified"], "unicode.txt isn't modified after saving")
 
     # CRLF.
-    crlf = same_copy(run.dump("crlf-saved"), "crlf.txt", "after save")
+    crlf = opened(run.dump("crlf-saved"), "crlf.txt", "after save")
     if crlf:
         disk = (SMOKE / "crlf.txt").read_bytes().decode()
-        run.expect(disk == crlf["monaco"], "crlf.txt on disk is exactly what Monaco shows",
-                   {"disk": disk, "monaco": crlf["monaco"]})
+        run.expect(disk == text(crlf), "crlf.txt on disk is exactly what the editor shows",
+                   {"disk": disk, "editor": text(crlf)})
         run.expect(re.search(r"(?<!\r)\n", disk) is None, "crlf.txt keeps CRLF on every line", repr(disk))
         run.expect("inserted" in disk and "pasted two" in disk, "crlf.txt has the typed and pasted lines", repr(disk))
 
     # Reload from disk.
-    reloaded = same_copy(run.dump("reloaded"), "reload.txt", "after reload")
+    reloaded = opened(run.dump("reloaded"), "reload.txt", "after reload")
     if reloaded:
-        run.expect(reloaded["monaco"] == "version two\nfrom disk\n", "reload.txt shows the new file on disk",
-                   reloaded["monaco"])
+        run.expect(text(reloaded) == "version two\nfrom disk\n", "reload.txt shows the new file on disk",
+                   text(reloaded))
         run.expect(not reloaded["modified"], "reload.txt isn't modified after a reload")
-    undone = same_copy(run.dump("reload-undone"), "reload.txt", "after undoing the reload")
+    undone = opened(run.dump("reload-undone"), "reload.txt", "after undoing the reload")
     if undone:
-        run.expect(undone["monaco"] == "version one\n", "undo brings back the text from before the reload",
-                   undone["monaco"])
+        run.expect(text(undone) == "version one\n", "undo brings back the text from before the reload",
+                   text(undone))
 
     # Dirty buffer and a change on disk.
-    dirty = same_copy(run.dump("dirty-after-disk"), "dirty.txt", "after the disk changed")
+    dirty = opened(run.dump("dirty-after-disk"), "dirty.txt", "after the disk changed")
     if dirty:
-        run.expect(dirty["monaco"] == "edited keep me\n", "typing isn't replaced by a change on disk",
-                   dirty["monaco"])
+        run.expect(text(dirty) == "edited keep me\n", "typing isn't replaced by a change on disk",
+                   text(dirty))
     sheets = run.dump("conflict-sheet")["sheets"]
     texts = " ".join(t for sheet in sheets for t in sheet["texts"])
     run.expect("changed on disk" in texts, "saving over a changed file asks first", sheets)
@@ -230,9 +185,9 @@ def check_editor(run) -> None:
     run.expect(cancelled.get("save:dirty.txt") is False, "Cancel doesn't save", cancelled.get("save:dirty.txt"))
     run.expect(cancelled.get("after-cancel") == "changed elsewhere\n", "Cancel leaves the file on disk alone",
                cancelled.get("after-cancel"))
-    final = same_copy(run.dump("conflict-saved"), "dirty.txt", "after Save Anyway")
+    final = opened(run.dump("conflict-saved"), "dirty.txt", "after Save Anyway")
     if final:
-        run.expect((SMOKE / "dirty.txt").read_text() == final["monaco"] == "edited keep me\n",
+        run.expect((SMOKE / "dirty.txt").read_text() == text(final) == "edited keep me\n",
                    "Save Anyway writes the editor's text", (SMOKE / "dirty.txt").read_text())
 
     # Refused files.
@@ -441,34 +396,6 @@ const lat = start.lat;
 console.log(distanceKm(start, end), lat);
 """
 MANAGED = make_demo.data_dir("impulse") / "lsp"
-PENDING = {"Hover": "pendingHovers", "Completion": "pendingCompletions", "Definition": "pendingDefinitions",
-           "Rename": "pendingRename"}
-SHAPES = {
-    "Hover": "answer && answer.contents.map((c) => c.value)",
-    "Completion": "answer && answer.suggestions.map((s) => (typeof s.label === 'string' ? s.label : s.label.label))",
-    "Definition": "answer && { uri: String(answer.uri), line: answer.range.startLineNumber }",
-    "Rename": "answer",
-}
-
-
-def lsp_request(kind: str, line: int, character: int, extra: dict | None = None) -> str:
-    """What Monaco's provider for `kind` sends Impulse, answered the same way."""
-    pending = PENDING[kind]
-    store = "{ resolve: settle, reject: (e) => settle({ error: String(e) }) }" if kind == "Rename" else "settle"
-    message = {"type": f"{kind}Requested", "line": line, "character": character, **(extra or {})}
-    return f"""
-const id = ++requestSeq;
-const answer = await new Promise((resolve) => {{
-  const settle = (value) => resolve(value === undefined ? null : value);
-  {pending}.set(id, {store});
-  sendToHost(Object.assign({json.dumps(message)}, {{ request_id: id }}));
-  setTimeout(() => {{ if ({pending}.has(id)) {{ {pending}.delete(id); settle(null); }} }}, 15000);
-}});
-return JSON.stringify({SHAPES[kind]});
-"""
-
-
-HOVER = lsp_request("Hover", 5, 14)
 
 
 def setup_lsp() -> None:
@@ -487,10 +414,8 @@ def setup_lsp() -> None:
         shutil.copytree(cache, MANAGED, symlinks=True)
         (HOME / "lsp-install.log").write_text("(from target/smoke/lsp-cache)\n")
     else:
-        env = dict(os.environ, HOME=str(HOME), CFFIXED_USER_HOME=str(HOME),
-                   XDG_DATA_HOME=str(HOME / ".local" / "share"))
-        app = capture.APP if capture.RUST else Path(capture.APP) / "Contents" / "MacOS" / "Impulse Dev"
-        result = subprocess.run([str(app), "--install-lsp-servers"], env=env, capture_output=True, text=True,
+        env = dict(os.environ, HOME=str(HOME), XDG_DATA_HOME=str(HOME / ".local" / "share"))
+        result = subprocess.run([str(capture.APP), "--install-lsp-servers"], env=env, capture_output=True, text=True,
                                 timeout=900)
         (HOME / "lsp-install.log").write_text(result.stdout + result.stderr)
         if cache.exists():
@@ -507,27 +432,14 @@ def setup_lsp() -> None:
     }, indent=2))
 
 
-LSP_STEPS_SWIFT = [
-    # The server needs a moment to load the project.
-    "until=120:js:JSON.parse(await (async () => {" + HOVER + "})()) !== null",
-    "js=hover:" + HOVER,
-    "js=completion:" + lsp_request("Completion", 4, 18),
-    "js=definition:" + lsp_request("Definition", 5, 14),
-    # Go to Definition as the editor runs it: geo.ts opens.
-    # Opening the definition in another file, through the editor opener
-    # Monaco calls for ⌘-click and Go to Definition.
-    "js=open-definition:await editor._codeEditorService.openCodeEditor({ resource: monaco.Uri.file("
-    + json.dumps(str(TS_TRUSTED / "src" / "geo.ts"))
-    + "), options: { selection: { startLineNumber: 6, startColumn: 17, endLineNumber: 6, endColumn: 17 } } },"
-    " editor); return true;",
-    "until=15:js:currentFilePath.endsWith('/smoke-ts/src/geo.ts')", "until=editor",
-    # Renaming the declaration reaches main.ts too (applied by Impulse, not Monaco).
-    "js=rename:" + lsp_request("Rename", 5, 16, {"new_name": "distanceInKm"}),
-    "until=20:js:editor.getValue().includes('distanceInKm')", "sleep=2", "dump=lsp",
-]
-# The same for the Rust app: `lsp=` asks the editor's server directly
-# (EditorTab::debug_lsp); a rename is applied as Rename Symbol applies it.
-LSP_STEPS_RUST = [
+LSP_ACTIONS = [
+    "trust-on",
+    f"workspace={TS_TRUSTED}", "until=10:sheet", "dump=trust-sheet",
+    "sheet-button=Trust Folder", "until=no-sheet",
+    f"open={TS_TRUSTED}/src/main.ts", "until=editor",
+    # `lsp=` asks the editor's server directly (EditorTab::debug_lsp), once
+    # it has had a moment to load the project; a rename is applied as Rename
+    # Symbol applies it, reaching main.ts too.
     "lsp-wait=ready:hover:5:14",
     "lsp=hover:hover:5:14",
     "lsp=completion:completion:4:18",
@@ -535,17 +447,9 @@ LSP_STEPS_RUST = [
     f"open={TS_TRUSTED}/src/geo.ts", "until=editor",
     "lsp=rename:rename:5:16:distanceInKm",
     "until=20:has:distanceInKm", "sleep=2", "dump=lsp",
-]
-
-LSP_ACTIONS = [
-    "trust-on",
-    f"workspace={TS_TRUSTED}", "until=10:sheet", "dump=trust-sheet",
-    "sheet-button=Trust Folder", "until=no-sheet",
-    f"open={TS_TRUSTED}/src/main.ts", "until=editor",
-    *(LSP_STEPS_RUST if capture.RUST else LSP_STEPS_SWIFT),
     f"workspace={TS_RESTRICTED}", "until=10:sheet", "sheet-button=Stay Restricted", "until=no-sheet",
     f"open={TS_RESTRICTED}/src/main.ts", "until=editor", "sleep=8",
-    "lsp=hover-restricted:hover:5:14" if capture.RUST else "js=hover-restricted:" + HOVER,
+    "lsp=hover-restricted:hover:5:14",
     "sleep=1", "dump=restricted",
     # A file from a folder nobody was asked about (from a trusted workspace:
     # after Stay Restricted the notice keeps quiet): a notice says why.
@@ -588,10 +492,9 @@ def check_lsp(run) -> None:
     run.expect(editor(dump, "smoke-ts/src/geo.ts") is not None, "go to definition opens geo.ts")
     main = editor(dump, "smoke-ts/src/main.ts")
     if run.expect(main is not None, "main.ts is open"):
-        run.expect(main["monaco"].count("distanceInKm") == 2, "rename changes both uses in main.ts", main["monaco"])
-        run.expect(main["swift"] == main["monaco"], "Impulse's copy of main.ts matches Monaco after the rename")
+        run.expect(text(main).count("distanceInKm") == 2, "rename changes both uses in main.ts", text(main))
     geo = editor(dump, "smoke-ts/src/geo.ts")
-    geo_text = geo["monaco"] if geo else (TS_TRUSTED / "src" / "geo.ts").read_text()
+    geo_text = text(geo) if geo else (TS_TRUSTED / "src" / "geo.ts").read_text()
     run.expect("function distanceInKm" in geo_text, "rename reaches geo.ts, the other file", geo_text)
 
     restricted = run.dump("restricted")
@@ -733,8 +636,7 @@ def check_agent_integration(run) -> None:
                config)
     run.expect('env_vars = ["IMPULSE_SOCKET", "IMPULSE_PANE_TOKEN", "IMPULSE_CLI"]' in config,
                "it forwards the pane's variables (Codex clears the environment)", config)
-    own = str(capture.CLI) if capture.RUST else "/Contents/Resources/bin/impulse"
-    run.expect(own in config, "it falls back to the app's own impulse", config)
+    run.expect(str(capture.CLI) in config, "it falls back to the app's own impulse", config)
     installed = run.dump("codex-installed").get("agentSheet") or {}
     run.expect(installed.get("installed") is True, "reopened, the sheet says it's installed", installed)
 
@@ -781,8 +683,8 @@ OPENCODE_OLD_ENTRY = """    "impulse": {
     },
 """
 OPENCODE_OLD_PLUGIN = "// Impulse's opencode plugin, installed by Impulse's Agent Integration.\nexport const ImpulsePlugin = async () => ({})\n"
-OPENCODE_PLUGIN_SOURCE = (Path(__file__).resolve().parents[2] / "impulse-macos" / "Sources" / "ImpulseKit"
-                          / "Resources" / "Agents" / "opencode-plugin")
+OPENCODE_PLUGIN_SOURCE = (Path(__file__).resolve().parents[2] / "impulse-kit" / "resources" / "agents"
+                          / "opencode-plugin")
 
 
 def setup_opencode() -> None:

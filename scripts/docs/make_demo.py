@@ -4,8 +4,8 @@
 Creates, under <repo>/target/docs-demo:
 
   home/                       a stand-in home directory (the app runs with
-                              CFFIXED_USER_HOME/HOME pointing here, so it
-                              shows ~/Code/trailhead and starts with default
+                              HOME pointing here, so it shows
+                              ~/Code/trailhead and starts with default
                               settings and an empty command history)
     .zshrc, .gitconfig        a plain zsh and git setup
     bin/claude, codex, gemini stand-in agent CLIs (see agent.sh)

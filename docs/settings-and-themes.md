@@ -499,7 +499,7 @@ keyword = "#c58fc4"
 string = "#9cc27a"
 ```
 
-The built-in themes are good starting points; their files are in Impulse's source at `impulse-macos/Sources/ImpulseKit/Resources/Themes/`.
+The built-in themes are good starting points; their files are in Impulse's source at `impulse-kit/resources/themes/`.
 
 ### Theme file reference
 

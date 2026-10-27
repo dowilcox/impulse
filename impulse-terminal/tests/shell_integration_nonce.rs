@@ -9,7 +9,7 @@ use impulse_terminal::{TerminalBackend, TerminalConfig, TerminalEvent};
 
 fn script(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../impulse-macos/Sources/ImpulseKit/Resources/ShellIntegration")
+        .join("../impulse-kit/resources/shell-integration")
         .join(name)
 }
 

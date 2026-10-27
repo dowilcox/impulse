@@ -12,12 +12,9 @@ use std::collections::BTreeMap;
 
 use super::ShellType;
 
-const BASH: &str =
-    include_str!("../../../impulse-macos/Sources/ImpulseKit/Resources/ShellIntegration/bash.sh");
-const ZSH: &str =
-    include_str!("../../../impulse-macos/Sources/ImpulseKit/Resources/ShellIntegration/zsh.sh");
-const FISH: &str =
-    include_str!("../../../impulse-macos/Sources/ImpulseKit/Resources/ShellIntegration/fish.sh");
+const BASH: &str = include_str!("../../resources/shell-integration/bash.sh");
+const ZSH: &str = include_str!("../../resources/shell-integration/zsh.sh");
+const FISH: &str = include_str!("../../resources/shell-integration/fish.sh");
 
 /// The integration script for a shell type.
 pub fn script(shell: ShellType) -> &'static str {

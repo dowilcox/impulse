@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use impulse_git::{cli, process};
 use serde_json::Value;
 
-/// The golden fixtures, read in place from the Swift test tree so both
-/// ports answer to one spec; never regenerate them from either port.
+/// The golden fixtures (`tests/fixtures/`); never regenerate them from this
+/// code's output.
 pub fn fixture(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../impulse-macos/Tests/ImpulseGitTests/Fixtures")
+        .join("tests/fixtures")
         .join(name);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     serde_json::from_str(&text).unwrap()

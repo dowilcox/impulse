@@ -4,62 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Impulse?
 
-Impulse is a Mac-first terminal IDE: a terminal emulator with Warp-style command blocks combined with a Monaco-powered code editor in a tabbed interface. The app is Swift (AppKit + SwiftUI); the only remaining Rust is the terminal emulation core, reached through a small C FFI.
+Impulse is a terminal IDE for macOS and Linux: a terminal emulator with Warp-style command blocks combined with a code editor, git review and history, and coding-agent support in a tabbed interface. It is all Rust: the app is built on GPUI and GPUI Kit (Metal on macOS, Vulkan on Linux) from one codebase that works the same on both platforms; terminal emulation is `alacritty_terminal`.
 
 ## Keeping this file current
 
-Every feature change checks this file in the same commit. When you add, remove, rename or move a feature, target, directory, script, file format, setting mechanism, FFI function or key type, re-read the sections it touches (the architecture tree, Key patterns, Scripts, build commands) and fix whatever is now wrong or missing. Every type, file, function and flag named here must exist in the code, so grep this file for anything you rename or delete. Update `AGENTS.md` (the short version for other agents) when its facts change, and `docs/` when user-facing behavior changes.
+Every feature change checks this file in the same commit. When you add, remove, rename or move a feature, target, directory, script, file format, setting mechanism, crate or key type, re-read the sections it touches (the architecture tree, Key patterns, Scripts, build commands) and fix whatever is now wrong or missing. Every type, file, function and flag named here must exist in the code, so grep this file for anything you rename or delete. Update `AGENTS.md` (the short version for other agents) when its facts change, and `docs/` when user-facing behavior changes.
 
 ## Architecture
 
 ```
-impulse-macos/            Swift package (the app) — macOS 26+ (Tahoe)
-  Sources/ImpulseApp      executable: AppKit/SwiftUI UI, terminal renderer,
-                          Monaco WebViews, LSP/git/search wiring
-  Sources/ImpulseKit      pure logic (Foundation-only): themes, previews,
-                          palette, completion + shell parser + shell
-                          quoting, editor buffer edits, file tree,
-                          search results, close risk, glob, update checker,
-                          pane LayoutTree, sidebar order + drag
-                          reordering, agents (known agents, state
-                          machine, hook events + installer, opencode
-                          plugin, JSONC removal), command history DB,
-                          worktree tasks + task registry, commit graph,
-                          push server messages, terminal paths/hints/find
-                          queries, project config, workspace trust, LSP
-                          workspace edits + completion items, agents'
-                          tool answers (TaskDetail, CommentList, ProblemList,
-                          BlockList…), agent task policy + briefs, MCP
-                          server registration
-  Sources/ImpulseGit      git layer: libgit2 for reads (status, diff, blame,
-                          log) + the git CLI for writes; safety snapshots;
-                          gitignore-aware search
-  Sources/ImpulseLSP      LSP client: server processes, JSON-RPC framing,
-                          registry, document cache, managed npm installs
-  Sources/ImpulseProtocol control-socket messages shared by app and CLI,
-                          the socket client, and the MCP server (MCP/:
-                          JSON-RPC over stdio, the tool catalog)
-  Sources/ImpulseCLI      the `impulse` command-line tool (bundled in
-                          Contents/Resources/bin): open, edit (waits for the
-                          tab to close), review, split, tab, notify, status,
-                          checkpoint, tasks (show/new/finish/archive/wait),
-                          turns, comments, problems, blocks, unsaved,
-                          project, hook, mcp
-  Clibgit2/               module map for the vendored static libgit2
-  CImpulseFFI/            C header for the Rust terminal FFI
-  web/                    editor.html/js (Monaco glue)
-impulse-terminal/         Rust: terminal emulation (alacritty_terminal),
+impulse-terminal/         terminal emulation (alacritty_terminal),
                           OSC scanning (133 marks, 7 cwd, 6973 command
                           metadata, 9/777/99 notifications, 9;4 progress,
                           1337 attention, 21337 status), command blocks,
                           history
-impulse-ffi/              Rust: C FFI over impulse-terminal (staticlib)
-impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
-                          full-Rust migration (docs/plans/rust-migration.md):
-                          glob, close risk, shell parser, themes, file URIs
+impulse-kit/              pure logic (no UI, testable on any OS), its
+                          built-in files in resources/ (themes/,
+                          shell-integration/, agents/opencode-plugin/),
+                          compiled in: glob, close risk, shell parser, themes, file URIs
                           and language ids revived from v0.29.0;
                           ChromePalette, TextFile, WorkspaceTrust, AppPaths,
-                          Settings + SettingsCatalog (settings.json, its
+                          Settings + the settings catalog (settings.json,
+                          settings::catalog's SettingItems; its
                           schema checked by settings_schema),
                           keybindings (Mac and Linux defaults), KeyEncoder
                           (key_encoder), Monaco's line commands, LayoutTree,
@@ -86,32 +52,37 @@ impulse-kit/              Rust (rust branch): ImpulseKit's logic for the
                           counts, motions, operators, text objects,
                           registers, `.`, search as you type, marks,
                           macros, `:` commands); tested
-                          against the shared
-                          golden fixtures
-impulse-git/              Rust (rust branch): ImpulseGit: libgit2 (git2,
+                          against the golden fixtures in tests/fixtures/
+impulse-git/              git: libgit2 (git2,
                           vendored 1.9.7, no network transports) for reads,
                           the git CLI for writes, safety snapshots, task
                           landing, change moves, operation abort, search,
-                          watcher; checked against the Swift git fixtures
-impulse-protocol/         Rust (rust branch): ImpulseProtocol: control-socket
-                          messages (byte-compatible with the Swift app), the
+                          watcher; checked against the golden fixtures in
+                          tests/fixtures/
+impulse-protocol/         control-socket messages (the same bytes the
+                          Swift app spoke, so `impulse` tools and agents'
+                          configs from before keep working), the
                           socket client, the MCP server and tool catalog,
                           and the agents' tool answers (TaskListing, …)
-impulse-cli/              Rust (rust branch): the `impulse` command-line tool
-impulse-lsp/              Rust (rust branch): the language-server client
+impulse-cli/              the `impulse` command-line tool (in the Mac
+                          bundle's Contents/Resources/bin, beside the app in
+                          the Linux packages): open, edit (waits for the
+                          tab to close), review, split, tab, notify, status,
+                          checkpoint, tasks, turns, comments, problems,
+                          blocks, unsaved, project, hook, mcp
+impulse-lsp/              the language-server client
                           (no UI, any executor), LSPConfig (lsp.json, root
                           detection), TextEditApplier and WorkspaceEdit,
-                          managed (npm-installed servers, the Swift
-                          ManagedServers); its
+                          managed (npm-installed servers); its
                           e2e test runs rust-analyzer when installed
-impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
+impulse-app/              the app on GPUI + GPUI Kit for
                           macOS and Linux: workspaces (folder + Scratch)
                           with tabs of split panes (LayoutTree, draggable
                           dividers, zoom; preview tabs from a single click
                           in the file tree, pinned tabs, tabs dragged to
                           reorder, the tab context menu), commands as one RunCommand
                           action bound from impulse_kit::keybindings,
-                          workbench chrome (Swift's titlebar, workspace rows
+                          workbench chrome (the titlebar, workspace rows
                           with their chips, the status bar's items:
                           status_item, the sidebar's edge dragged:
                           SidebarDrag, the Workspaces section's handle:
@@ -122,7 +93,7 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           files, and the fallback control socket, in a
                           fresh 0700 folder of the run's own),
                           its own painted grid (each glyph painted at its
-                          cell, as Swift's CoreText drawing, from one
+                          cell, from one
                           shaped row: ShapedRow; underlines per cell
                           span; box-drawing and block
                           characters drawn as shapes, terminal_glyphs.rs;
@@ -198,12 +169,11 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           on macOS, Ctrl-click opening a right-click menu
                           and a button's dropdown below it; PopupMenu
                           elsewhere), command palette and quick open
-                          (palette.rs: the Swift PaletteModel/PaletteView
-                          modes by prefix, recents in
+                          (palette.rs: modes by prefix, recents in
                           palette-recent-commands.json in the data
                           directory), Markdown preview (markdown_view.rs:
-                          impulse_kit::markdown_blocks drawn with the Swift
-                          preview page's styles, its text selectable as one
+                          impulse_kit::markdown_blocks drawn with the
+                          preview's styles, its text selectable as one
                           document through GPUI Kit's SelectableText, Run on shell blocks as
                           Workbench::run_from_preview) and SVG preview
                           (sanitized by impulse_kit::svg_preview) in or
@@ -224,14 +194,13 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           first row selected) and Move to New Task for one
                           file (TaskSheet::move_paths);
                           git_actions.rs: GitActions/GitPrompts and the git
-                          commands (Switch Branch is the palette's b:,
-                          as in Swift); branch_manager.rs:
+                          commands (Switch Branch is the palette's b:); branch_manager.rs:
                           Manage Branches, with merge, rebase, delete
                           (Undo), rename and publish; file_icons.rs:
                           material icons from icon-mapping.json, served as
                           material/<file>.svg), the terminal input bar
                           (terminal_input_bar.rs over command_editor.rs:
-                          SF Mono on macOS, as Swift's bar; chips, shell
+                          SF Mono on macOS; chips, shell
                           colors, ghost suggestions, Tab menu,
                           history from command_history.rs, which shares
                           history.sqlite3 and backs the palette's h:
@@ -310,8 +279,8 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           and zooming the window, minimize, maximize and
                           close at its right end, its edges and corners
                           resizing it: window_frame::resize_edges),
-                          alert.rs (the Swift app's NSAlert sheets: 260
-                          wide, stacked pill buttons, an accessory, fields
+                          alert.rs (alert sheets in AppKit's NSAlert
+                          layout: 260 wide, stacked pill buttons, an accessory, fields
                           and checkboxes; trust prompts, confirmations,
                           unsaved changes, git errors, name and tag
                           prompts), overlays.rs (every dialog opens there:
@@ -320,8 +289,7 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           where it is; the palette,
                           the agents inbox and toasts carry the same probe,
                           and overlays::frame_start forgets one closed
-                          since the last frame), toasts.rs (the Swift
-                          ToastCenter: bottom-center over the status bar,
+                          since the last frame), toasts.rs (bottom-center over the status bar,
                           up to three, ChromeButton actions),
                           workbench_workspaces.rs (recent folders in
                           recent-workspaces.json via
@@ -395,7 +363,7 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           with its guides and the matching-bracket box
                           (editor_brackets.rs),
                           tree-sitter grammars for Monaco's languages, with
-                          the vs-dark/vs rules Swift's themes inherit for
+                          the vs-dark/vs rules the themes inherit for
                           JSON and HTML, Monaco's TypeScript keywords and
                           capitalized types, and its shell builtins in the
                           type color, in .sh files and sh/shell Markdown
@@ -471,11 +439,10 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           Monaco's inline box (EditorTab's RenameBox) and
                           references with edits across files), the
                           headless snapshot mode of debug builds
-                          (debug_snapshot.rs: the Swift DebugSnapshot's
-                          --impulse-snapshot flags, actions and dump=
-                          format, plus edit= and lsp= in place of
-                          Monaco's js= (EditorTab::debug_edit and
-                          debug_lsp); window images by ImageMagick's
+                          (debug_snapshot.rs: the --impulse-snapshot
+                          flags, actions and dump= format, edit= and
+                          lsp= driving the editor (EditorTab::debug_edit
+                          and debug_lsp); window images by ImageMagick's
                           import on X11, and on macOS rendered off screen
                           by GPUI's Window::render_to_image, which needs
                           impulse-app's `snapshot` feature (GPUI's
@@ -495,138 +462,113 @@ impulse-app/              Rust (rust branch): the app on GPUI + GPUI Kit for
                           chrome in a window of its own),
                           --install-lsp-servers;
                           scripts/spike/linux-shot.sh screenshots it on Linux
-vendor/                   Monaco, monaco-vim, fonts, highlight.js, lucide
+vendor/                   fonts, lucide, highlight.js (the website's)
                           (committed; refreshed by scripts/vendor-*.sh);
-                          rust branch: gpui-kit/ (GPUI Kit's gpui-base and
+                          gpui-kit/ (GPUI Kit's gpui-base and
                           gpui-component, patched in place through
                           [patch.crates-io]; its README lists the patches)
-assets/                   file icons + icon-mapping.json (copied into the
-                          app by build.sh), logo, DMG background;
-                          rust branch: icons/impulse/, icons Impulse draws
+assets/                   file icons + icon-mapping.json (read at run time,
+                          copied into the packages), logo, DMG background;
+                          icons/impulse/, icons Impulse draws
                           in Lucide's style where Lucide has none
                           (flag-checkered, symbol-variable), compiled into the app
                           (resources.rs OWN_ICONS) and loaded as icons/<name>.svg;
                           sounds/{ack,two-tone,chime}.wav, the notification sounds
                           (made by scripts/sounds/make-notification-sound.py,
                           compiled in by notification_sound.rs);
-                          macos/: Info.plist.in (both apps' Info.plist,
-                          filled in by scripts/lib/macos-bundle.sh) and the
-                          Rust app's Impulse.entitlements
+                          macos/: Info.plist.in (the Mac bundle's
+                          Info.plist, filled in by package-macos.sh) and
+                          Impulse.entitlements
 docs/                     user documentation, one Markdown page per area;
                           docs/images/ is generated by scripts/docs/capture.py;
                           docs/plans/ holds plans (not published)
 website/                  impulse-terminal.app: homepage + demo, docs page
                           template (built by scripts/build-site.py)
-scripts/                  build-libgit2.sh, vendor-*.sh, release.sh,
+scripts/                  build.sh, release.sh, package-linux.sh and
+                          package-macos.sh (the packages), vendor-*.sh,
                           build-site.py, docs/ (screenshot capture),
                           smoke/ (release smoke checks), check-macos.sh
-                          (rust branch: type-check the app for macOS),
-                          package-linux.sh and package-macos.sh (rust
-                          branch: the Rust app's packages), lib/
-                          (macos-bundle.sh: Info.plist and icons for
-                          build.sh and package-macos.sh),
-                          sounds/ (rust branch: the notification sounds)
+                          (type-check the app for macOS from Linux),
+                          sounds/ (the notification sounds), spike/
 CHANGELOG.md              user-facing changes per release
 ```
 
-Dependency direction: ImpulseApp → {ImpulseKit, ImpulseGit, ImpulseLSP, ImpulseProtocol, CImpulseFFI}; ImpulseGit/ImpulseLSP → ImpulseKit; `impulse` (CLI) → ImpulseProtocol. The Rust workspace is `impulse-terminal` + `impulse-ffi` (plus, on the `rust` branch, `impulse-kit`, `impulse-git`, `impulse-lsp`, `impulse-protocol`, `impulse-cli` and `impulse-app`, which pins `gpui-kit` exactly and gets GPUI through it, with GPUI Kit's `gpui-base` and `gpui-component` from `vendor/gpui-kit/`; the Swift app links neither), and the FFI surface is terminal-only (~38 functions; JSON strings for complex data, a binary buffer for grid snapshots, plain integers on hot paths — mode bits, the block-overlay cache key, the display offset, search stats — and `impulse_free_string` for cleanup). Command blocks are listed without their output; fetch one block by id when you need it.
+Dependency direction: `impulse-app` → {`impulse-kit`, `impulse-git`, `impulse-lsp`, `impulse-protocol`, `impulse-terminal`}; `impulse-git`/`impulse-lsp` → `impulse-kit`; `impulse-cli` → `impulse-protocol`. `impulse-app` pins `gpui-kit` exactly and gets GPUI through it, with GPUI Kit's `gpui-base` and `gpui-component` from `vendor/gpui-kit/` (`[patch.crates-io]`). Command blocks are listed without their output; fetch one block by id when you need it.
 
-### Why the split
+### Why the crates
 
-- **ImpulseKit** is Foundation-only so its logic is headless-testable. No AppKit/WebKit imports there.
-- **ImpulseGit** wraps a vendored static libgit2 1.9.7 built WITHOUT network transports for reads (status, diff/hunks with word-level spans, blame, log, ignore checks). Writes (stage, commit, push/pull, stash, branches, worktrees, conflict resolution) run the `git` CLI, and destructive ones take a safety snapshot under `refs/impulse/` first so they can be undone. Aborting a merge, cherry-pick or revert goes through `OperationAbort`, which falls back to a hard reset plus the work recorded when the operation started (`<git dir>/impulse-operation.json`) when git's own `--abort` refuses. No OpenSSL anywhere. New git APIs use the real `git` CLI as the test oracle.
-- **ImpulseLSP** owns language-server processes with hand-rolled Content-Length framing and a poll-shaped facade (`pollEvent()` returns the same JSON envelopes the app has always decoded).
-- **impulse-terminal (Rust)** stays because alacritty_terminal is a complete, battle-tested VT emulator. It owns the PTY, grid/scrollback, damage tracking, selection, scrollback search, and OSC 133/7/6973 command-block tracking. Swift owns all rendering (CoreText in `TerminalRenderer.swift`) and input encoding.
-- `Bridge/ImpulseCore.swift` is the single seam: terminal calls go through the C FFI; everything else delegates to the Swift libraries. Keep new backend logic OUT of the bridge — put it in the right library target.
+- **impulse-kit** has no UI and no platform frameworks, so its logic is headless-testable on any OS. No GPUI there.
+- **impulse-git** uses libgit2 (`git2`, vendored 1.9.7, built WITHOUT network transports) for reads (status, diff/hunks with word-level spans, blame, log, ignore checks). Writes (stage, commit, push/pull, stash, branches, worktrees, conflict resolution) run the `git` CLI, and destructive ones take a safety snapshot under `refs/impulse/` first so they can be undone. Aborting a merge, cherry-pick or revert falls back to a hard reset plus the work recorded when the operation started (`<git dir>/impulse-operation.json`) when git's own `--abort` refuses. No OpenSSL anywhere. New git APIs use the real `git` CLI as the test oracle.
+- **impulse-lsp** owns language-server processes with hand-rolled Content-Length framing, no UI and any executor.
+- **impulse-terminal** wraps alacritty_terminal, a complete, battle-tested VT emulator: the PTY, grid/scrollback, damage tracking, selection, scrollback search, and OSC 133/7/6973 command-block tracking. `impulse-app` owns all rendering and input encoding.
+- **impulse-protocol** is shared by the app and the CLI, so the control socket's messages have one definition.
 
 ### Golden-fixture parity (important)
 
-The Swift ports were verified against fixtures generated from the original Rust implementation, committed under `impulse-macos/Tests/ImpulseKitTests/Fixtures/` and `Tests/ImpulseGitTests/Fixtures/` (themes → Monaco JSON, git hunks/word-diff/blame/status, shell-parser tokenizations, file-tree patches, palette filtering, glob, close risk). Treat fixtures as the spec: never regenerate them from Swift output. If behavior changes intentionally, update the affected fixture explicitly in the same commit and say why.
+Behavior is checked against fixtures generated from the original Rust implementation (tag `v0.29.0`), the spec the Swift app was also held to: `impulse-kit/tests/fixtures/` and `impulse-git/tests/fixtures/` (themes → Monaco JSON, git hunks/word-diff/blame/status, shell-parser tokenizations, file-tree patches, palette filtering, glob, close risk). Treat fixtures as the spec: never regenerate them from the code's output. If behavior changes intentionally, update the affected fixture explicitly in the same commit and say why.
 
 ## Build & Development Commands
 
 ```bash
-# macOS app (canonical build — produces dist/Impulse.app)
-./impulse-macos/build.sh             # release .app bundle
-./impulse-macos/build.sh --dev       # "Impulse Dev.app" (separate bundle ID, runs side-by-side)
-./impulse-macos/build.sh --dmg       # + disk image
-./impulse-macos/build.sh --sign --notarize --dmg   # signed Swift build (releases ship the Rust app: scripts/release.sh)
-#   On Linux (rust branch) build.sh builds the Rust app instead: --dev is
-#   `cargo build -p impulse-app -p impulse-cli` (target/debug/impulse-app),
-#   no flags runs scripts/package-linux.sh; --dmg/--sign/--notarize refuse.
+./scripts/build.sh --dev             # debug build: target/debug/impulse-app (+ the CLI); on the Mac with the snapshot feature
+./scripts/build.sh                   # release packages in dist/ (package-linux.sh or package-macos.sh)
+./scripts/build.sh --sign --notarize --dmg   # macOS: signed, notarized dist/Impulse.app + .dmg
 
-# Swift package directly — use the wrapper, which adds the flags the active
-# toolchain needs (CLT Swift 6.4 lacks the SwiftUI macro plugin and puts
-# Testing.framework off the default search path; swiftw borrows Xcode's macOS
-# macro plugins and points tests at the CLT framework).
-impulse-macos/swiftw build [-c release]
-impulse-macos/swiftw test [--filter Name]
-#   Tests are guarded with #if canImport(Testing); a run that prints no
-#   "Test run with N tests" line means the Testing module wasn't found.
+cargo run -p impulse-app -- --cwd <folder> --open <file>   # the app
+cargo build --profile dev-app -p impulse-app -p impulse-cli   # optimized, still the dev data folder (target/dev-app/): the app to try out
+cargo build -p impulse-app -p impulse-cli --features impulse-app/snapshot   # Mac: the build capture.py/run.py snapshot (window images)
 
-# Rust terminal core
-cargo build -p impulse-ffi           # staticlib the Swift app links
+cargo test --workspace
 cargo test -p impulse-terminal       # block/OSC/history tests
-cargo test -p impulse-kit            # rust branch: ported logic vs the golden fixtures
-cargo test -p impulse-git            # rust branch: git layer vs the Swift git fixtures
-cargo test -p impulse-lsp            # rust branch: LSP client (+ rust-analyzer e2e)
-cargo test -p impulse-protocol -p impulse-cli   # rust branch: control protocol, MCP, CLI
-cargo run -p impulse-app -- --cwd <folder> --open <file>   # rust branch: the GPUI app
-cargo build --profile dev-app -p impulse-app -p impulse-cli   # rust branch: optimized, still the dev data folder (target/dev-app/), the app to try out
-cargo build -p impulse-app -p impulse-cli --features impulse-app/snapshot   # rust branch, Mac: the build capture.py/run.py snapshot (window images)
-scripts/check-macos.sh               # rust branch: cargo check for macOS from Linux
-scripts/package-linux.sh             # rust branch: dist/ tarball + .deb of the Rust app
-scripts/package-macos.sh [--sign --notarize --dmg]   # rust branch: dist/Impulse.app (+ .dmg) of the Rust app
+cargo test -p impulse-kit            # logic vs the golden fixtures
+cargo test -p impulse-git            # git layer vs the golden fixtures and real git
+cargo test -p impulse-lsp            # LSP client (+ rust-analyzer e2e)
+cargo test -p impulse-protocol -p impulse-cli   # control protocol, MCP, CLI
+scripts/check-macos.sh               # cargo check for macOS from Linux
 cargo fmt && cargo clippy
-
-# One-time / occasional
-./scripts/build-libgit2.sh           # vendored libgit2 (cached; build.sh runs it)
-./scripts/vendor-monaco.sh           # refresh vendor/monaco
 ```
 
-Note: `swift build` links `../target/release/libimpulse_ffi.a` — run `cargo build --release -p impulse-ffi` first on a fresh checkout (build.sh does all of this in order). SwiftPM does not track `.a` mtimes; build.sh has a relink hack for that.
+A debug build (debug assertions on) keeps its own settings, session, socket and data under `impulse-dev`, so it runs beside an installed release.
 
 ## Key patterns
 
-- **SwiftUI/AppKit bridge:** `@Observable WindowModel` is the single source of truth for UI state. AppKit (MainWindowController, TabManager) mutates it; SwiftUI observes it. Its tab snapshots (`TabDisplayInfo`, `WorkspaceInfo`, `AgentSummary`) are Equatable and assigned only when they change (`WindowModel.update`); frequent changes (titles, dirty marks) go through `TabManager.refreshSegmentLabels()`, which coalesces syncs; tab actions resolve a tab by its stable id when they run (`WindowModel.withTab`). SwiftUI→AppKit communication uses callback closures on WindowModel. The window chrome is drawn by `WorkbenchView` under a transparent titlebar; the window's `NSToolbar` is empty and only sizes the titlebar band (SwiftUI `.toolbar {}` does not work inside `NSHostingView`).
-- **Window controller:** `MainWindowController` keeps its stored state and setup in `MainWindow.swift`; everything else is in `MainWindowController+<Area>.swift` extensions (Layout, Observers, Save, FindBar, TabClose, Session, Workspaces, WorkbenchActions, Preview, Palette, GitHost, LSP, Trust, ProjectSetup, Debug). Add code to the matching extension, not to `MainWindow.swift`.
-- **Commands, settings, keys:** user-facing commands are `AppCommand`s in `App/CommandRegistry.swift` (palette and menus); every setting is described once in `Settings/SettingsCatalog.swift` (the Settings tab and the `settings.json` schema come from it); `SettingsStore` watches the resolved `settings.json` and merges edits made outside Impulse with its own (`Settings.merged`); shortcuts live in `Keybindings`. Debug-only UI actions for headless snapshots (the docs screenshots and the smoke checks) are in `MainWindowController+Debug.swift`; `DebugSnapshot` runs them one after another, and its invisible windows let clicks through and never stay the active app, so a run can't take keystrokes meant for another app.
-- **Workbench:** a window has workspaces (folder or scratch; task worktrees live beside the repo at `<repo>.worktrees/<branch>`, and `ImpulseKit.TaskRegistry` lists the ones Impulse made, with base and slot, in `.git/impulse/tasks.json`; `TaskRegistryStore` reaches it from the app; `OverlapMonitor` works out where a repository's workspaces change the same files with `ImpulseKit.TaskOverlap`, shown as a chip on their sidebar rows, with `git merge-tree` conflict checks on demand, and which tasks are merged into their base, squash merges included (`GitOperations.isMerged`); archiving and its Undo, one task or all merged ones, are `Git/TaskCleanup.swift` (it refuses a task holding a nested repository, `GitOperations.nestedRepositories`, and revokes the task folder's trust); Finish Task, a tab per task that checks it's committed, syncs it, runs the check script in a terminal, lands and cleans up, is `Git/TaskFinish.swift`, landing through `ImpulseGit.TaskLanding`: a `--no-ff` merge in a throwaway worktree pushed as the base, never touching the main checkout, and deleting the landed branch only if it hasn't moved (`TaskLanding.deleteLandedBranch`: compare-and-swap locally, a lease on the remote); New Task can take the main checkout's uncommitted files along with `ImpulseGit.ChangeMove`: snapshot, files written into the task unstaged, then back to HEAD in the main checkout, with Undo), each with tabs; a tab is one surface or a split (`ImpulseKit.LayoutTree` of panes, laid out by `PaneLayoutView`). `TabManager` owns them; session restore v2 (`SessionState.swift`) saves workspaces, layouts and terminal scrollback, on quit, on window close and, so a crash loses little, from `AppDelegate`'s 15-second autosave whenever `SessionState.autosaveKey` changes (never while any window `isRestoringSession`). `SessionState.persist` writes off the main thread; scrollback files are named by content hash, and stale ones go only after the session JSON is written.
-- **Agents:** `TerminalTab+Agent` detects CLI agents (Claude Code, Codex, opencode, …) from the foreground process and hook events (`ImpulseKit.AgentHookEvents` says what each agent's events mean: Claude Code's hook events, Codex's notify, and the opencode events Impulse's plugin sends); `AgentStateMachine` drives the inbox, tab dots and notifications. Each window listens on a control socket (`ControlServer`; every terminal gets `IMPULSE_SOCKET` / `IMPULSE_PANE_TOKEN`) for the `impulse` CLI. Commands that start processes or write files (split, tab, checkpoint, creating a file to edit, tasks new/finish/archive, comments resolve), and reading other terminals' output (blocks), also require the caller (`LOCAL_PEERPID`, `ControlCaller.descends(from:)`) to be the pane's shell or one of its descendants; the rest need only the token, and those that read the caller's workspace need it to name a pane. Agent turns are checkpointed under `refs/impulse/checkpoints/` for "review last turn". `impulse mcp` (`ImpulseProtocol.MCPServer`, tools in `MCPTools`) is a stdio MCP server agents start themselves: each tool call is one control request, the same as the CLI command it names, answered with text plus `ControlResponse.data` JSON (the types in ImpulseKit's `AgentToolResults.swift`; tools declare no `outputSchema`, since some answers are text only); it answers `initialize` (2025-11-25 and before) and the stateless 2026-07-28 revision (`server/discover`, and requests naming it in `_meta` get `resultType` and cache hints); outside Impulse it offers no tools, and the settings can turn tools off (`mcp-tools`). `App/AgentWorkspaceCommands.swift` answers turns, review comments (an agent marks one addressed, `ReviewComment.resolution`, which Review shows with Accept and Reopen), problems, command blocks (`agent_tool_terminal_output`), unsaved files and trusted project settings. `Git/AgentTaskRequests.swift` handles agents' `tasks new|finish|archive`: New Task prefilled with the requester and brief (`AgentTaskRequest`, provenance in `TaskRecord.createdBy`/`requestedBy`, the brief in `.git/impulse/tasks/<task>/brief.md`, `ImpulseKit.TaskBrief`), unless `ImpulseKit.AgentTaskPolicy` says to create it straight away (`agent_task_creation`, `agent_task_limit`); Finish runs up to landing and waits (`TaskFinishModel.stopsBeforeLanding`). The Agent Integration sheet (`App/AgentHooksSheet.swift`) installs hooks and the server (`ImpulseKit.AgentMCPInstaller`: `claude mcp add-json`, never editing `~/.claude.json`; a table in Codex's `config.toml`; for opencode only taking out the `mcp` entry older Impulses added, in place by `JSONCEdit` so comments and formatting stay, since the plugin brings the tools). opencode 2 runs one background service for every terminal, started with the environment of whichever terminal ran it first, so its plugin is a folder of Impulse's own with two halves (`ImpulseKit/Resources/Agents/opencode-plugin/`, installed as `<opencode config>/plugins/impulse/`, compared byte for byte for its status; installing removes opencode 1's `plugins/impulse.js`): `tui.js` runs in each terminal, as the pane, sending `$IMPULSE_CLI hook opencode <event>` with JSON on stdin (nothing outside Impulse) and running Impulse's tools through its own `impulse mcp`; `server.js` runs in the service, never reads `IMPULSE_*` from its own environment, and asks the terminal a session belongs to (the last to show it) over opencode's plugin RPC (`rpc.js`) for the summary, notes, merge question and tool calls; it registers Impulse's tools as opencode tools (MCP servers would run in the service) and gives each agent shell command its own pane's `IMPULSE_*`. Agents see each other through `App/TaskAwareness.swift`: `impulse tasks` (an `ImpulseKit.TaskListing`) and hook replies (`AgentHookReply`) for Claude Code and the opencode plugin: a session summary (opencode: added to the session's system prompt), notes after edits and shell commands about shared files and changed dependencies, and before a merge of a branch a task is still working on (`GitCommandInspector` reads the command) a PreToolUse "ask" for Claude Code, or for opencode a permission the plugin raises (`permission.assert`) with Impulse's reason. Impulse never calls an AI model itself.
-- **Terminal:** event-driven. The Rust core calls a wake callback when output arrives; `TerminalRenderer` then runs `pollEvents()` → `takeDamage()` → invalidate rows → `draw` pulls a binary grid snapshot (16-byte header + 12-byte cells) parsed zero-copy by `GridBufferReader`. Command-block decorations come from `impulse_terminal_block_overlay`, cached by `impulse_terminal_block_overlay_key`. Input is the `CommandEditor` (an NSTextView with shell highlighting); completion is Swift (`ImpulseKit.InputCompletion`) fed by persistent history (`CommandHistoryDatabase`) and `impulse_terminal_recent_commands`. Text Impulse types into a terminal is quoted for that terminal's shell (`ImpulseKit.ShellQuoting`, `String.shellEscaped(for: TerminalTab.shellType)`; fish quotes differently), completions escape only the completed part (`CompletionCandidate.keptPrefix`: Impulse's own candidates are literal names, fish's are shell text), and input-bar commands go through `TerminalTab.commandText` (control characters stripped, a leading space kept). The Rust core drops OSC sequences over their size limit before vte sees them, and keeps alacritty's scrollback at the user's limit plus `SCROLLBACK_HEADROOM`, trimming it itself so block rows stay exact.
-- **Shell integration:** `ImpulseKit/Resources/ShellIntegration/{bash,zsh,fish}.sh` emit OSC 133 (prompt/command marks), OSC 7 (cwd) and OSC 6973 (`Command=` the command text, `Names=` aliases/functions/builtins and `Path=` PATH, sent only on change). Every mark carries the terminal's nonce (`IMPULSE_SHELL_NONCE`); once one has arrived, marks without it are ignored, so printed output can't fake them. Keys: `KeyEncoder` encodes legacy sequences; when a program pushes kitty keyboard flags (mode bits 11–15) `ImpulseKit.KittyKeyboard` takes over. Option is Meta (Esc + key) only on the side(s) `terminal_option_as_meta` names (`KeyEncoder.OptionAsMeta`); otherwise it types what the layout composes.
-- **Editor:** Monaco in WKWebView, loaded from the app bundle (`EditorAssets.monacoDirectory`; build.sh copies vendor/ + impulse-macos/web/ into `Sources/ImpulseApp/Resources/monaco` — copy again and rebuild after editing `web/`). `EditorWebViewPool` pre-warms one WebView. Swift keeps a copy of each buffer, applying Monaco's UTF-16 changes with `ImpulseKit.BufferEdits`; reloading the same file from disk is applied in place as one undoable edit, and files over `TabManager.maxEditorFileSize` don't open. Markdown preview renders with cmark-gfm in safe mode (raw HTML is elided by design — do not re-enable `CMARK_OPT_UNSAFE`).
-- **Language servers:** LSP requests go through `enqueueLspRequest` (sent after queued didOpen/didChange, answered off the queue, never blocking a thread); it returns an `LSPRequestTicket` whose cancel sends `$/cancelRequest`. Notifications reach every server for the language; only documents a configured server serves are opened and mirrored. A server's project root never goes above the trusted folder (`LSPRegistry.trustedFolder`). Each editor tab is its own WebView, so Monaco can only edit its own file: workspace edits that reach further (rename, code actions, `workspace/applyEdit`) are applied in Swift by `Editor/LSPWorkspaceEdits.swift` on top of `ImpulseKit.WorkspaceEdit`; edits that create, move or delete files, or reach outside the server's root, ask first.
-- **Review:** native, not web. `ReviewSurface` (header + `ReviewNavigatorView` + `ReviewDiffController`) builds flat rows with `ReviewRowBuilder` into one NSTableView: line rows are custom-drawn (`DiffLineCellView`, character-wrapped, heights from `ReviewMetrics`), headers/comments/composer are hosted SwiftUI (`ReviewRowViews.swift`), file headers float as group rows. Syntax colors come from highlight.js in JavaScriptCore (`SyntaxHighlighter`, old/new sides tokenized separately) mapped to the theme's syntax colors. History's lower half is the same surface. `ReviewDiffController` caches each file's rows and heights (`ReviewRowKey`) and replaces only the changed range; a Review refreshes only while it's in a window, and a fixed commit never does.
-- **Git only:** Impulse talks to git (the `git` CLI and libgit2) and nothing else: no hosting platform's CLI or API (`gh`, `glab`, REST), so every feature works the same on any host. Host-facing bits stay generic: `RemoteWebURL` only rewrites a remote into `https://host/owner/repo`, and after a push the server's own `remote:` lines (`ImpulseKit.GitServerMessage`) are shown, links included. Anything new must work from git alone.
-- **Workspace trust:** `ImpulseKit.WorkspaceTrust` (app instance `Trust.shared`, extension `MainWindowController+Trust`) lists the folders whose code Impulse may run on its own, and folders kept restricted inside a trusted one (`restrict`; tasks made from a remote branch, `TaskRecord.fromRemote`). Language servers (the registry's `isAllowed`), formatters/commands on save and background fetch check it; anything new that runs project code unprompted must too. Git reads in folders that aren't trusted run with `GitCLI.restrictedEnvironment` (no fsmonitor, hooks, filters or merge drivers, and on the rust branch, `impulse_git::cli::restricted_environment`, no external diff or textconv either; `GitOperations.isMerged` takes `trusted:`). Every git command runs with `-c log.showSignature=false` (`GitCLI.alwaysArguments`): showing signatures would run a repository's own `gpg.program` from `log`, `show` and `reflog`, and print among the output Impulse parses. Opening a folder asks (`TabManager.onFolderOpened`); restored workspaces don't.
-- **Project config:** `ImpulseKit.ProjectConfig` reads a repository's `.impulse/project.toml` (palette actions, task setup/archive scripts, files to copy into new task worktrees; `.worktreeinclude` lists more), always the main checkout's, committed or not (`loadProjectConfig` goes through `mainCheckoutRoot`), so every task gets what was saved, and the local, never-committed `.git/impulse/project.toml`, which wins key by key (actions by name). Each file's commands run (and per-task values apply) only after the user trusts that exact file, and changing it asks again. Per-task values (`[worktrees.ports]` offset by the task's slot, `[worktrees.env]` with placeholders) are worked out by `ImpulseKit.TaskEnvironment` and written into the new task's env file; task terminals and scripts also get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT` and `IMPULSE_REPO_ROOT` (`TaskRegistryStore.identity`). The Project Setup tab (`Settings/ProjectSetupSurface.swift`, `MainWindowController+ProjectSetup`) proposes settings from `ImpulseKit.ProjectDetector` (and `ComposeFile`, which also writes each task's Compose override) and saves them into `.impulse/project.toml` with `ProjectSettingsFile` (only its managed sections), trusting what it wrote; a local file Impulse wrote (`ProjectSettingsFile.isWrittenByImpulse`) is folded in and removed on save, one edited by hand is left alone. `[finish] land` (merge or review) is Finish Task's remembered answer, saved into the local file with `ProjectSettingsFile.setting`. When a workspace's HEAD moves (`GitRepositoryState` posts `.gitHeadMoved`), `Git/DependencyPrompts.swift` offers the `[on_change]` commands for the files that changed (`ImpulseKit.DependencyChanges`, which tells own commits from pulls and checkouts by the reflog) and, after a merge, the `check` script. Language servers are configured by `~/.config/impulse/lsp.json` plus per-project `.impulse/lsp.json`, which can only choose among servers that already exist (its `servers` are ignored).
-- **Themes:** TOML files in `Sources/ImpulseKit/Resources/Themes/` (user themes in `~/Library/Application Support/impulse/themes`). `ThemeStore` resolves them; `themeToMonaco` / `themeToMarkdownColors` derive editor/preview themes. New built-in themes: add the TOML resource and its name to `ThemeStore.builtinThemeNames()`.
-- **File tree:** `FileTreeDataController` (headless) owns watchers and data (diffed per batch, with an FSEvents fallback past 64 folders; expanded folders load off main; patches apply in one pass, `FileTreeDataController.applying`); patches computed by `ImpulseKit.FileTreePatcher` with git-status enrichment composed from `ImpulseGit.GitClient`; rendered by `FileTreeListView` (ScrollView + LazyVStack, NOT List/DisclosureGroup).
-- **Version:** the top-level `VERSION` file is the single source of truth. build.sh and package-macos.sh stamp it into Info.plist, and `release.sh` keeps every workspace crate's version equal to it (the Rust app and CLI report `CARGO_PKG_VERSION`); the app reads `CFBundleShortVersionString` (`AppVersion.current`). Never version-bump by hand — `scripts/release.sh` does it.
-- **Error handling:** library targets return optionals/Results with descriptive messages; NSLog/os_log for non-fatal issues.
+- **Window, workspaces, tabs, panes:** each window is one `Workbench` entity, opened by `open_main_window` (every window goes through `crate::open_window`, so snapshots can keep it off screen). It holds `Vec<Workspace>` (`workspace::Kind::Folder` or `Scratch`), each with its own `Vec<Tab>`; a `Tab` is a `LayoutTree<PaneId>` plus `panes: HashMap<PaneId, Surface>`, with `focused`, `zoomed`, `preview` and `pinned`. `Surface` is the closed list of what a pane shows; a new kind of pane is a new variant. Drawing is in `workbench_chrome.rs` (sizes from `impulse_kit::chrome::metrics`, colors from `ChromePalette`) and `workbench_panes.rs`. Views are GPUI entities that `cx.notify()` themselves and report up through events the workbench subscribes to (`TerminalViewEvent`, `EditorTabChanged`, `ReviewEvent`, `RepositoryEvent`); app-wide state is a GPUI `Global` (`SettingsStore`, `RepositoryStore`, `CommandHistory`, `Toasts`, `IncreaseContrast`). Git, disk and process work runs in `cx.background_spawn`, and its result comes back through `update` on the main thread. Closing goes through `close_flow.rs` (pinned tabs, unsaved editors, then running work from `impulse_kit::close_risk`); what closed is kept as a `SessionTab`/`SessionWorkspace` for `Workbench::reopen` and the Undo toast. Every dialog opens through `overlays::open_dialog` (alerts through `alert::Alert::show`), never GPUI Kit's directly, so debug builds can report where it is.
+- **Commands, keys, settings:** there is one action, `commands::RunCommand { id }`; the palette, the menus (`menus.rs` over `impulse_kit::menus`) and shortcuts all send it, and `Workbench::run_command` matches on the id. `commands::catalog` lists them (`impulse_kit::command_palette::builtin_items` plus the `WORKBENCH`/`PANES`/`BLOCKS` tables). Shortcuts come from `impulse_kit::keybindings::bindings(overrides, Platform::current())`: `commands::bind_keys` binds them tagged `COMMAND_KEYS`, and `commands::rebind_on_change` swaps them in place when `keybinding_overrides` or `custom_keybindings` change. Key contexts are `Terminal`, `CommandEditor` and `ImpulseEditor`; on Linux plain Ctrl+letter chords go to the shell in a terminal (`keybindings::is_shell_chord`), reaching their commands with Shift added (`keybindings::terminal_aliases`); the editor keeps its editing keys (`editor_keeps`) and Vim outranks both (`editor_vim::command_overrides`). Every setting is one line in `impulse_kit::settings`'s `settings!` list (field, settings.json key, default) plus a `settings::catalog()` `SettingItem`, which feeds the Settings tab and `settings::json_schema()` (checked in the editor by `settings_json.rs`). `SettingsStore` (`get`, `update`) watches `settings.json` and merges edits made outside Impulse with its own (`Settings::merged`). Impulse's files live in `impulse_kit::paths::data_dir` (`~/Library/Application Support/impulse` on macOS, `$XDG_DATA_HOME/impulse` on Linux; debug builds use `impulse-dev`), and `IMPULSE_NO_PERSISTENCE` turns saving off.
+- **Session restore:** `session.rs` over `impulse_kit::session` (`SessionState` → `SessionWindow` → `SessionWorkspace` → `SessionTab` → `SessionSurface`) writes `session-state.json` at quit and, so a crash loses little, from `session::init`'s 15-second autosave whenever `SessionState::autosave_key` changes (structure only, not titles or frames). `SessionState::persist` writes the scrollback files, named by content (`scrollback_file_name`), and removes stale ones only after the JSON is written. Window frames are stored in AppKit's coordinates (`frame_string`, `session::saved_bounds`) so the file means the same on both platforms. Nothing is restored when `restore_session` is off or the launch named a folder, command or file (`--cwd`, `--run`, `--open`).
+- **Terminal:** `impulse_terminal::TerminalBackend` owns the PTY, grid, scrollback, damage, selection, search and OSC 133/7/6973 block tracking; `TerminalView` owns painting and input. Output is event-driven: `set_wakeup_callback` pings a channel, and `TerminalView::drain` on the main thread runs `poll_events` → `take_damage` → `cx.notify()`. Painting is one `canvas` building a `Frame` from `TerminalView::snapshot`: `write_grid_to_buffer` fills a binary grid (`FIXED_HEADER_SIZE` header, `CELL_STRIDE` cells) parsed by `Grid::read`, re-read only after damage or a scroll/resize; the block overlay is cached by `block_overlay_key`. Rows are shaped once and each glyph placed at its own cell (`Frame::paint_text`); box-drawing characters are shapes (`terminal_glyphs::paint`), and `RowLayout` collapses blank padding between blocks. The input bar stands in for the prompt, which isn't drawn. The core drops any OSC over its limit (`osc_scanner`'s `MAX_OSC_LEN`) before vte sees it, and keeps alacritty's scrollback at the user's limit plus `SCROLLBACK_HEADROOM`, trimming it itself so block rows stay exact. Keys go through `impulse_kit::key_encoder::encode`, or `impulse_kit::kitty_keyboard` once a program pushes kitty flags (`TerminalMode::KITTY_*`, bits 11–15). Alt is Meta per `terminal_option_as_meta` on macOS (`key_encoder::alt_is_meta_held`) and always Meta on Linux. Text Impulse types into a terminal is quoted for that terminal's shell (`impulse_kit::shell::quoting::quoted`/`escaped` with `TerminalView::shell`; fish quotes differently) and has its control characters stripped (`quoting::without_control_characters`). Completions escape only the completed part (`CompletionCandidate::kept_prefix`). The input bar is a `CommandEditor` (`command_editor.rs`) fed by `impulse_kit::completion` and `command_history::CommandHistory` (`history.sqlite3`).
+- **Shell integration:** `impulse-kit/resources/shell-integration/{bash,zsh,fish}.sh` (compiled in, `impulse_kit::shell::integration::script`) are loaded by `shell_launch.rs` (bash `--rcfile`, zsh a `ZDOTDIR`, fish `--init-command`). They emit OSC 133 marks, OSC 7 (cwd) and OSC 6973 (`Command=`; `Names=` and `Path=` only on change). Every mark carries the terminal's nonce (`IMPULSE_SHELL_NONCE`, `OscScanner::with_nonce`); once one has arrived, marks without it are ignored, so printed output can't fake them.
+- **Editor:** GPUI Kit's `Editor`/`EditorState`. Its `gpui-base` and `gpui-component` crates are vendored in `vendor/gpui-kit/` and swapped in with `[patch.crates-io]`; gaps that can only be fixed inside GPUI Kit are patched there, each marked `// Impulse:` and listed in `vendor/gpui-kit/README.md`. One `EditorTab` per file, loaded and saved by `impulse_kit::text_file` (UTF-8 only, BOM kept, writes through symlinks; over `LARGE_FILE_SIZE` read-only, over `MAX_EDITOR_FILE_SIZE` not opened, and `Workbench::offer_pager` pages it in a terminal instead). Saving is `save_pipeline.rs`: it asks if the file changed on disk, and runs formatters and commands on save only in trusted folders. `editor_watch.rs` reloads clean editors with `EditorTab::reload_from_disk`, one undoable edit. Monaco, as the Swift app shipped it, is the reference: its keys (`editor_keys.rs`, bound in `ImpulseEditor > Input`), its token colors (`kit_theme.rs`, `base_rules.rs`), Vim mode (`editor_vim.rs` over `impulse_kit::vim`, in the `VimNormal` context). Language features plug into GPUI Kit's providers: `lsp_hub::DocumentLink` implements `CompletionProvider`, `HoverProvider`, `DefinitionProvider` and `CodeActionProvider`, and editors with no server get `WordCompletions`.
+- **Language servers:** a workspace's `LspHub` exists only once its folder is trusted (`Workbench::enable_lsp`). The servers themselves are app-wide (a thread-local registry keyed by server id and project root), shared by every workspace and window that needs them, and stopped once none does. `LspHub::servers_for` starts only servers that `lsp.json` names and that are installed, in the file's project root (`impulse_lsp::config::detect_project_root`), never above the trusted folder (`WorkspaceTrust::trusting_folder`). The global `lsp.json` (`$XDG_CONFIG_HOME/impulse/lsp.json`, else `~/.config/impulse/lsp.json`) may define servers; a project's `.impulse/lsp.json` may only choose among existing ones. `LspClient::request` is a future with a per-method timeout (`timeout_for`); a timed-out request fails and the server gets `$/cancelRequest`. Each open document has one `DocumentLink` per server, shared by every editor of the file in any window, and `DocumentLink::sync` runs before each request so it's never answered against old text. Edits reaching other files (rename, code actions, `workspace/applyEdit`) are applied by `workspace_edits.rs` (`PendingEdit` over `impulse_lsp::workspace_edit::WorkspaceEdit`): open editors take their part as one undo step, other files are rewritten on disk, and creating, moving or deleting files, or editing outside `user_edit_boundary`, asks first. Crashed servers come back after `RESTART_DELAYS`; `LspHub::reconfigure` restarts those whose `lsp.json` entry changed.
+- **Review and History:** native GPUI. `ReviewView` is one GPUI `list` (`ListState`) of `Row`s. `rebuild_rows` splices only the changed range, so the list stays where it was scrolled. Diffs are read in the background with `impulse_git::scoped_diff` (`changed_files_in_scope`, `file_diff`), and syntax colors come from GPUI Kit's tree-sitter `SyntaxHighlighter`, old and new sides separately (`review_view/syntax.rs`). Live scopes are re-read only when the repository's watcher has fired and the view is drawn again (`refresh_if_stale`); a fixed commit never is. Comments are `impulse_kit::review_comments::CommentStore` files in the data directory (`review/<digest>.json`), never in the repository. `HistoryView` shows the selected commit's diff in an embedded `ReviewView`. Markdown preview (`markdown_view.rs`) draws `impulse_kit::markdown_blocks`, parsed by comrak with raw HTML left out; don't turn it back on (`markdown_preview` sets `render.r#unsafe = false`).
+- **Git only:** Impulse talks to git (libgit2 through `git2` for reads, the `git` CLI through `impulse_git::cli` for writes) and nothing else: no hosting platform's CLI or API (`gh`, `glab`, REST), so every feature works the same on any host. Host-facing bits stay generic: `impulse_kit::git::refs::RemoteWebUrl` only rewrites a remote into `https://host/owner/repo`, and after a push the server's own `remote:` lines are shown (`GitServerMessage::parse`), links included. Anything new must work from git alone. Each repository root has one `RepositoryState` (`RepositoryStore::state`), refreshed by `impulse_git::RepoWatcher` and after every action; writes go through `RepositoryState::run`, one at a time per repository, destructive ones after a safety snapshot under `refs/impulse/` (`impulse_git::safety`; with `require_snapshot`, not at all if it fails). Aborting a merge, cherry-pick or revert is `impulse_git::operation_abort::abort`, which falls back to the work recorded at the start (`<git dir>/impulse-operation.json`) when git's own `--abort` refuses. New git APIs use the real `git` as the test oracle.
+- **Workspace trust:** `impulse_kit::trust::WorkspaceTrust` (one `Arc` shared by every window, `Workbench::trust`, saved in `trusted-folders.json`) lists the folders whose code Impulse may run on its own, plus folders kept restricted inside a trusted one (`restrict`: tasks made from someone else's branch, `TaskRecord::from_remote`). Language servers, formatters and commands on save, background fetch (`start_auto_fetch`) and project-config commands check it; anything new that runs project code unprompted must too. libgit2 reads never run repository-configured programs. Git CLI reads in untrusted folders go through `RepositoryState::read_git` with `cli::restricted_environment` (no fsmonitor, hooks, filters or merge drivers), and `operations::is_merged` and `ignored::nested_repositories` take `trusted`. Every git command starts with `cli::ALWAYS_ARGUMENTS` (`-c log.showSignature=false`): showing signatures would run a repository's own `gpg.program` and mix its output into what Impulse parses. `Workbench::request_trust` runs whenever a workspace is shown: servers start if it's trusted, otherwise `present_trust_prompt` asks once (`Workspace::declined`). The `workspace_trust` setting off, or `--trust`, skips asking.
+- **Tasks:** a branch checked out at `<repo>.worktrees/<branch>` (`impulse_kit::git::worktree_tasks`), opened as a workspace; `.git/impulse/tasks.json` (`task_registry::TaskRecord`) lists the ones Impulse made. Overlaps come from `impulse_kit::git::task_overlap`, with `operations::predict_conflicts` (`git merge-tree`) on demand; `operations::is_merged` counts squash merges. Archiving (`task_cleanup.rs`) refuses a task holding a nested repository and revokes the task folder's trust. Finish Task (`task_finish.rs`) lands with `impulse_git::landing::merge_and_push`: a `--no-ff` merge in a throwaway worktree, pushed as the base, never touching the main checkout (`merge_locally` without a remote). `landing::delete_landed_branch` deletes the branch only if it hasn't moved. New Task can carry the main checkout's uncommitted files along (`impulse_git::change_move::move_changes`, with `change_move::undo`). Task terminals and scripts get `IMPULSE_TASK`, `IMPULSE_TASK_SLOT` and `IMPULSE_REPO_ROOT` (`tasks::identity`).
+- **Project config:** `impulse_kit::project::config::ProjectConfig::load` reads the main checkout's `.impulse/project.toml`, committed or not (`tasks::load_project_config` goes through `main_checkout_root`, so every task gets what was saved). The local, never-committed `.git/impulse/project.toml` is layered on top and wins key by key (actions by name). A file's commands run only after the user trusts that exact content (`ProjectTrust`, by digest, in `project-trust.json`), and editing it asks again. Per-task values (`[worktrees.ports]` offset by the slot, `[worktrees.env]` placeholders) come from `project::task_environment`. Project Setup (`project_setup.rs`) proposes settings from `project::detector::suggest` and `project::compose_file::ComposeFile` and saves only its managed sections (`project::settings_file`); a local file Impulse wrote (`settings_file::is_written_by_impulse`) is folded in and removed, one edited by hand is left alone. On `RepositoryEvent::HeadMoved`, `dependency_prompts.rs` offers the `[on_change]` commands for the changed files (`project::dependency_changes`, which reads the reflog) and, after a merge, the check script.
+- **Agents and the control socket:** each `TerminalView`'s `AgentTracker` finds a CLI agent from the foreground process (`agent_process.rs`) and `impulse hook` events (`impulse_kit::agents::hook_events`), driving `AgentStateMachine` (inbox, tab dots, notifications, badge). The app has one control socket (`control_server.rs`: the data directory on macOS, `$XDG_RUNTIME_DIR` on Linux; 0600, peer uid checked); every terminal gets `IMPULSE_SOCKET`, `IMPULSE_PANE_TOKEN` and `IMPULSE_CLI` (`control_server::terminal_env`), and the pane's window answers (`Workbench::handle_control`). Requests that start processes or write files (split, tab, checkpoint, tasks new/finish/archive, creating a file for `impulse edit`, comments resolve) and `blocks` also require the caller to be the pane's shell or a descendant (`control_server::descends`, the peer pid from `SO_PEERCRED` on Linux or `LOCAL_PEERPID` on macOS); otherwise work runs in the pane's folder, not the caller's. Turns are checkpointed under `refs/impulse/checkpoints/`. `impulse mcp` is `impulse_protocol::mcp::McpServer`: each tool call is one control request, answered with text plus `ControlResponse` data typed in `impulse_protocol::agent_tools`, with no `outputSchema`; it answers `initialize` (`PROTOCOL_VERSIONS`) and the stateless 2026-07-28 revision (`server/discover`), offers no tools outside Impulse, and settings can turn tools off (`agent_hooks::disabled_mcp_tools`). The Agent Integration dialog (`agent_integration.rs`) installs through `impulse_kit::agents::{hook_installer, mcp_installer}`: `claude mcp add-json` (never editing `~/.claude.json`), a table in Codex's `config.toml`, and for opencode the plugin folder from `impulse-kit/resources/agents/opencode-plugin/`. Agents' `tasks new|finish|archive` go through the user's own flows (`agent_tasks.rs`, `task_requests::decide` with `agent_task_creation`/`agent_task_limit`, the brief at `task_requests::brief_path`). Agents see each other through hook replies (`agent_hooks.rs`, `impulse_protocol::agent_tools::hook_reply`): a session summary, notes about shared files and changed dependencies, and a question before merging a branch a task is still on (`impulse_kit::git::command_inspector::merged_refs`). Impulse never calls an AI model itself.
+- **Platforms:** one codebase. Platform code sits behind `cfg(target_os = …)` and must still type-check for macOS from Linux (`scripts/check-macos.sh`). macOS vs Linux: window frame (AppKit's, with `app_owns_titlebar_drag`, vs client-side decorations in `window_frame.rs`), menus (menu bar vs the titlebar's menu button, `menus.rs`), notifications (`agent_notify::post`: Notification Center, `osascript` outside a bundle, vs `notify-send`), badge (`badge::update`: Dock tile vs Unity's LauncherEntry by `gdbus`), display options (`display_options.rs`: accessibility settings vs GNOME's via `gsettings`). On Linux a second launch hands its request to the running app (`instance.rs`). Bundled icons and fonts are found by `resources.rs` (`$IMPULSE_RESOURCES`, `../share/impulse`, a bundle's `../Resources`, else the source tree) and served to GPUI as `icons/<name>.svg` (lucide) and `material/<file>.svg`.
+- **Headless snapshots:** debug builds take `--impulse-snapshot <dir>` (`debug_snapshot.rs`): they open the window, run actions one after another (`dump=` writes state for the smoke checks; views add their own, such as `ReviewView::debug_action`, `EditorTab::debug_edit` and `debug_lsp`), write `window-<n>.png` and `snapshot.log` (with `overlay` lines from the dialogs' probes), and quit without saving the session or settings. Images come from ImageMagick's `import -window` on X11, and on macOS from GPUI's `Window::render_to_image` (the `snapshot` feature), with windows kept hidden. A new UI feature that the docs or smoke checks should reach needs an action there.
+- **Themes:** TOML files in `impulse-kit/resources/themes/`, compiled in by `BUILTIN_THEMES` in `impulse_kit::theme` (a new built-in theme is the TOML plus its entry there). User themes live in `~/Library/Application Support/impulse/themes` on macOS and `$XDG_CONFIG_HOME/impulse/themes` on Linux. `theme::get_theme` resolves one into a `ResolvedTheme`; the chrome draws from `ChromePalette::new(theme, increase_contrast)`, GPUI Kit's own components from `kit_theme::apply`, and syntax colors map as `impulse_kit::monaco_theme::theme_to_monaco` (checked against the fixtures) does.
+- **Version:** the top-level `VERSION` file is the single source of truth. `scripts/release.sh` writes it into every workspace crate's version, and the binaries report `env!("CARGO_PKG_VERSION")`. Never version-bump by hand.
+- **Error handling:** library crates return `Result`s with descriptive messages (`impulse_git::GitResult`/`OperationError`, `Result<_, String>` elsewhere) and never show UI. The app logs non-fatal issues with `log` (`env_logger`) and shows failures the user must see as toasts (`toasts::show`) or alerts.
 
 ## Scripts
 
 **Always use the existing scripts for their intended tasks — do not replicate their steps manually.**
 
-- **scripts/release.sh <version> [--push]** — the ONLY way to release, and it ships the Rust app. Without `--push` it builds, on any branch and from a clean tree, exactly what a release would ship at `<version>`, then puts the version files back: on macOS the signed, notarized `.dmg` (`scripts/package-macos.sh --sign --notarize --dmg`), on Linux the tarball and `.deb` (`scripts/package-linux.sh`), plus `dist/SHA256SUMS`. `--push` runs only on macOS, on `main` in step with `origin/main`: after the build it commits the bump of `VERSION`, `Cargo.lock` and every workspace crate's version (the binaries report `CARGO_PKG_VERSION`), tags, pushes, and creates the GitHub release with the disk image; publishing it runs `.github/workflows/release-linux.yml`, which builds the Linux packages on x86_64 and arm64, attaches them and adds their lines to `SHA256SUMS` (run it by hand with a tag to rebuild them). Never run `gh release create`, `git tag`, or manual version edits.
-- **scripts/build-libgit2.sh** — pinned libgit2 static build into `impulse-macos/.libgit2/` (checksum-verified; idempotent).
-- **scripts/vendor-monaco.sh** — refreshes `vendor/monaco`.
-- **scripts/vendor-monaco-vim.sh** — refreshes `vendor/monaco-vim` (the editor's optional Vim mode; pinned version and checksum).
-- **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for Markdown preview and review/history syntax colors; pinned version and checksum).
-- **scripts/vendor-lucide.sh** — regenerates `LucideIcons.swift` from the pinned lucide-static icons (add a name to its list for a new icon). An icon Lucide doesn't have goes in `assets/icons/impulse/` instead (rust branch: listed in `OWN_ICONS` in `impulse-app/src/resources.rs`), out of this script's way.
-- **scripts/sounds/make-notification-sound.py [output folder]** — (rust branch) synthesizes the notification sounds into `assets/sounds/`: `ack.wav` (the default: two upward chirps and a settled blip), `two-tone.wav` (a chirp up answered by one down) and `chime.wav` (two soft notes rising a fifth); 16-bit mono, peak -3 dBFS at most and no louder than the chime; standard library only, the same bytes every run. `impulse-app/src/notification_sound.rs` compiles them in (`Sound`) and sets the playback volume (`VOLUME`); rebuild the app after regenerating.
-- **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `FileIcons.swift`) from upstream material-icon-theme.
-- **impulse-macos/build.sh** — builds the Swift .app (libgit2 → impulse-ffi → asset copy → SwiftPM → bundle → optional sign/notarize/dmg); no longer what a release ships. On Linux (rust branch) it builds the Rust app instead: `--dev` the debug `impulse-app` and `impulse` CLI that capture.py and the smoke checks run, no flags `scripts/package-linux.sh`.
-- **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from the theme TOMLs with the Monaco colors `themeToMonaco` gives them (ported to Python and checked against the `themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `FileIcons.swift` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
-- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the dev build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `build.sh --dev` first. With `IMPULSE_SNAPSHOT_APP` set to the Rust app's binary (the default on Linux: `target/debug/impulse-app`, after `cargo build -p impulse-app -p impulse-cli`, on the Mac with `--features impulse-app/snapshot` added, and on Linux with `DISPLAY` on an X server such as Xvfb) it shoots the Rust app instead, composing with `scripts/docs/imagetool.py` (Pillow) where there's no `imagetool.swift`, and cropping to dialogs, the palette, the agents inbox and toasts from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the Rust app draws them inside its window; on the Mac its main window gets the inactive window buttons GPUI's off-screen images lack, from `scripts/docs/traffic-lights@2x.png` (cropped from a Swift shot).
-- **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** (rust branch) — screenshots the GPUI spike under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
-- **scripts/package-linux.sh [--no-build]**: (rust branch) builds `impulse-app` and the `impulse` CLI in release mode and packages them for Linux into `dist/`: a tarball (`bin/`, and `share/impulse/` with the lucide and material icons and the bundled fonts the app reads at run time, plus a desktop entry and icon) and, with `dpkg-deb`, a `.deb` of the same tree under `/usr`, and with `makepkg` (Arch and its derivatives) a `.pkg.tar.zst` of it for `pacman -U`. The app finds those files through `impulse-app/src/resources.rs` (`$IMPULSE_RESOURCES`, `../share/impulse` or a bundle's `../Resources` beside the executable, else the source tree).
-- **scripts/package-macos.sh [--sign] [--notarize] [--dmg] [--no-build]** (rust branch) — builds `impulse-app` and the `impulse` CLI in release mode and bundles them into `dist/Impulse.app` (bundle ID `dev.impulse.Impulse`, as the Swift app's): the app in `Contents/MacOS/Impulse`, the CLI in `Contents/Resources/bin/impulse` (found by `control_server::cli_path`, and where `impulse` reads the bundle's version), the icons and fonts in `Contents/Resources/` as `package-linux.sh` lays out `share/impulse/`, the Info.plist from `assets/macos/Info.plist.in` (without the Swift app's Finder service, which the Rust app doesn't offer), signed with `assets/macos/Impulse.entitlements`, notarized and stapled, and with `--dmg` `dist/Impulse-<version>.dmg`. Signing takes `impulse-macos/build.sh`'s environment variables. `release.sh` runs it; it's for trying a release bundle by hand.
-- **scripts/check-macos.sh [cargo check args…]** — (rust branch) type-checks `impulse-app` for `aarch64-apple-darwin` from Linux, so code behind `cfg(target_os = "macos")` compiles before anyone builds on a Mac: stand-in `cc`/`ar` make the files C build scripts expect (nothing is linked) and an empty shader file stands in for GPUI's Mac-only shader step. Needs `rustup target add aarch64-apple-darwin`.
-- **scripts/smoke/run.py [name-prefix…]** — smoke checks for a release, in the same headless mode and demo home: each scenario in `scripts/smoke/scenarios.py` drives the dev build through real use (edits and saves, commands in zsh, bash and fish, the `impulse` CLI, agent hooks, a fresh managed language-server install with trust, tasks from creation to Finish, Agent Integration installing the MCP server, opencode's plugin replacing opencode 1's plugin and MCP entry, its two halves driven by a stand-in opencode (`scripts/smoke/opencode-agent.mjs`, which needs `node`), the MCP server asking for a task and an agent finishing its own, session restore) and checks the state its actions dump (`dump=`) plus the files and git repositories they changed. Build with `build.sh --dev` first; results and window images are left in `target/smoke/<scenario>/`. `IMPULSE_SNAPSHOT_APP` runs the scenarios against the Rust app, as for `capture.py`; the editor and lsp scenarios then drive its editor with `edit=` and `lsp=` instead of `js=` (`edit_action`, `LSP_STEPS_RUST`).
+- **scripts/release.sh <version> [--push]** — the ONLY way to release. Without `--push` it builds, on any branch and from a clean tree, exactly what a release would ship at `<version>`, then puts the version files back: on macOS the signed, notarized `.dmg` (`scripts/package-macos.sh --sign --notarize --dmg`), on Linux the tarball and `.deb` (`scripts/package-linux.sh`), plus `dist/SHA256SUMS`. `--push` runs only on macOS, on `main` in step with `origin/main`: after the build it commits the bump of `VERSION`, `Cargo.lock` and every workspace crate's version (the binaries report `CARGO_PKG_VERSION`), tags, pushes, and creates the GitHub release with the disk image; publishing it runs `.github/workflows/release-linux.yml`, which builds the Linux packages on x86_64 and arm64, attaches them and adds their lines to `SHA256SUMS` (run it by hand with a tag to rebuild them). Never run `gh release create`, `git tag`, or manual version edits.
+- **scripts/vendor-highlight.sh** — refreshes `vendor/highlight` (highlight.js for the website's code blocks and the demo's Review colors; pinned version and checksum).
+- **scripts/vendor-lucide.sh** — downloads the pinned lucide-static icons into `vendor/lucide/` (add a name to its list for a new icon). An icon Lucide doesn't have goes in `assets/icons/impulse/` instead (listed in `OWN_ICONS` in `impulse-app/src/resources.rs`), out of this script's way.
+- **scripts/sounds/make-notification-sound.py [output folder]** — synthesizes the notification sounds into `assets/sounds/`: `ack.wav` (the default: two upward chirps and a settled blip), `two-tone.wav` (a chirp up answered by one down) and `chime.wav` (two soft notes rising a fifth); 16-bit mono, peak -3 dBFS at most and no louder than the chime; standard library only, the same bytes every run. `impulse-app/src/notification_sound.rs` compiles them in (`Sound`) and sets the playback volume (`VOLUME`); rebuild the app after regenerating.
+- **scripts/generate-icon-mapping.py <upstream-json> <output-json>** — regenerates `assets/icons/material/icon-mapping.json` (the file tree's icons, read by `impulse-app/src/file_icons.rs`) from upstream material-icon-theme.
+- **scripts/build.sh [--dev] [--sign] [--notarize] [--dmg]** — builds Impulse for this platform: `--dev` the debug `impulse-app` and `impulse` CLI that capture.py and the smoke checks run (`cargo build -p impulse-app -p impulse-cli`, on the Mac with `--features impulse-app/snapshot`); no flags the release packages, `scripts/package-linux.sh` on Linux and `scripts/package-macos.sh` (with `--sign`, `--notarize` and `--dmg` passed on) on macOS.
+- **scripts/build-site.py [--serve] [--check]** — builds impulse-terminal.app into `website/_site/` (homepage from `website/`, docs pages from `docs/*.md` with the sidebar following `docs/README.md`, changelog, the demo's themes from `impulse-kit/resources/themes/` with the Monaco colors `impulse_kit::monaco_theme::theme_to_monaco` gives them (ported to Python and checked against the `impulse-kit/tests/fixtures/themes/*.monaco.json` fixtures), and the demo's icons from `vendor/lucide` and `assets/icons/material`, picked the way `file_icons.rs` picks them) and checks every docs link, anchor and image. `.github/workflows/website.yml` runs it and deploys to GitHub Pages on pushes to main; `--serve` rebuilds on every change. Needs `pip install -r website/requirements.txt`. See `website/README.md`.
+- **scripts/docs/capture.py [name-prefix…]** — regenerates the user docs' screenshots (`docs/images/`) from the debug build's headless snapshot mode, inside a mock project and home built by `scripts/docs/make_demo.py`; shots are defined in `scripts/docs/shots.py`. Build with `scripts/build.sh --dev` first (`target/debug/impulse-app`, or the binary in `IMPULSE_SNAPSHOT_APP`); on Linux it needs `DISPLAY` on an X server such as Xvfb. Shots are composed by `scripts/docs/imagetool.swift` on the Mac and its Pillow port `scripts/docs/imagetool.py` elsewhere, cropping to dialogs, the palette, the agents inbox and toasts from the rectangle the app reports (`overlay` lines in `snapshot.log`), as the app draws them inside its window; on the Mac the main window gets the inactive window buttons GPUI's off-screen images lack, from `scripts/docs/traffic-lights@2x.png`.
+- **scripts/spike/linux-shot.sh <out.png> [impulse-app args…]** — screenshots the app under Xvfb with software Vulkan (needs Xvfb, xdotool, ImageMagick, mesa-vulkan-drivers); `cargo build -p impulse-app` first.
+- **scripts/package-linux.sh [--no-build]** — builds `impulse-app` and the `impulse` CLI in release mode and packages them for Linux into `dist/`: a tarball (`bin/`, and `share/impulse/` with the lucide and material icons and the bundled fonts the app reads at run time, plus a desktop entry and icon) and, with `dpkg-deb`, a `.deb` of the same tree under `/usr`, and with `makepkg` (Arch and its derivatives) a `.pkg.tar.zst` of it for `pacman -U`. The app finds those files through `impulse-app/src/resources.rs` (`$IMPULSE_RESOURCES`, `../share/impulse` or a bundle's `../Resources` beside the executable, else the source tree).
+- **scripts/package-macos.sh [--sign] [--notarize] [--dmg] [--no-build]** — builds `impulse-app` and the `impulse` CLI in release mode and bundles them into `dist/Impulse.app` (bundle ID `dev.impulse.Impulse`, the Swift app's, so it installs over it and keeps its settings): the app in `Contents/MacOS/Impulse`, the CLI in `Contents/Resources/bin/impulse` (found by `control_server::cli_path`, and where `impulse` reads the bundle's version), the icons and fonts in `Contents/Resources/` as `package-linux.sh` lays out `share/impulse/`, the Info.plist from `assets/macos/Info.plist.in`, signed with `assets/macos/Impulse.entitlements`, notarized and stapled, and with `--dmg` `dist/Impulse-<version>.dmg`. Signing and notarizing take the environment variables its header lists. `release.sh` runs it (through `build.sh` or directly); by hand it's for trying a release bundle.
+- **scripts/check-macos.sh [cargo check args…]** — type-checks `impulse-app` for `aarch64-apple-darwin` from Linux, so code behind `cfg(target_os = "macos")` compiles before anyone builds on a Mac: stand-in `cc`/`ar` make the files C build scripts expect (nothing is linked) and an empty shader file stands in for GPUI's Mac-only shader step. Needs `rustup target add aarch64-apple-darwin`.
+- **scripts/smoke/run.py [name-prefix…]** — smoke checks for a release, in the same headless mode and demo home: each scenario in `scripts/smoke/scenarios.py` drives the debug build through real use (edits and saves, commands in zsh, bash and fish, the `impulse` CLI, agent hooks, a fresh managed language-server install with trust, tasks from creation to Finish, Agent Integration installing the MCP server, opencode's plugin replacing opencode 1's plugin and MCP entry, its two halves driven by a stand-in opencode (`scripts/smoke/opencode-agent.mjs`, which needs `node`), the MCP server asking for a task and an agent finishing its own, session restore) and checks the state its actions dump (`dump=`) plus the files and git repositories they changed; the editor and lsp scenarios drive the editor with `edit=` and `lsp=`. Build with `scripts/build.sh --dev` first; results and window images are left in `target/smoke/<scenario>/`.
 
 ## History
 
-Impulse was originally a Rust workspace with a GTK4 Linux frontend and most backend logic in Rust crates (`impulse-core`, `impulse-editor`) behind an 88-function FFI. It was rewritten Mac-first in Swift in 2026; the last Rust-era release (including the Linux app) is tag `v0.29.0`. If you need old behavior for reference, read the Rust sources at that tag — the fixtures under Tests/\*/Fixtures were generated from it.
+Impulse was originally a Rust workspace with a GTK4 Linux frontend and most backend logic in Rust crates (`impulse-core`, `impulse-editor`) behind an 88-function FFI; the last release of that app (including the Linux app) is tag `v0.29.0`, and the golden fixtures were generated from it. It was then rewritten Mac-first in Swift (AppKit + SwiftUI, Monaco in WKWebView, a Rust terminal core behind a C FFI) through 0.36, and rewritten again in Rust on GPUI for macOS and Linux on the `rust` branch, which replaced the Swift app in October 2026. For the Swift app's behavior, read `impulse-macos/` at the commit before its removal (`git log --diff-filter=D -- impulse-macos/Package.swift`).

@@ -1,10 +1,9 @@
-//! Impulse's pure logic, ported to Rust for the full-Rust migration
-//! (docs/plans/rust-migration.md). Mirrors the Swift `ImpulseKit` target:
-//! no UI, no platform frameworks, so everything here is testable on any OS.
+//! Impulse's pure logic: no UI, no platform frameworks, so everything here
+//! is testable on any OS. Its built-in files (themes, shell integration,
+//! the opencode plugin) are in `resources/`, compiled in.
 //!
 //! The first modules are the Rust originals from tag `v0.29.0`, checked
-//! against the golden fixtures the Swift port is checked against
-//! (`impulse-macos/Tests/ImpulseKitTests/Fixtures/`).
+//! against the golden fixtures (`tests/fixtures/`).
 
 pub mod accessible_text;
 pub mod agents;

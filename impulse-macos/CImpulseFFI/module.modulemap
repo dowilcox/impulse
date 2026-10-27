@@ -1,5 +1,0 @@
-module CImpulseFFI {
-    header "include/impulse_ffi.h"
-    link "impulse_ffi"
-    export *
-}

@@ -1,15 +1,15 @@
 # Rust app: what's left
 
-What still stands between the Rust app (`impulse-app`, on GPUI + GPUI Kit)
-and the Swift app it replaces. The migration plan and what's already done
-are in [rust-migration.md](rust-migration.md).
+What's left before the Rust app (`impulse-app`, on GPUI + GPUI Kit) ships.
+It replaced the Swift app, which was removed in October 2026 once parity was
+signed off; the migration plan is in [rust-migration.md](rust-migration.md).
 The code review of October 2026, with the bugs, security and performance
 findings still to fix, is [rust-review.md](rust-review.md).
 
-Where things stand: on Linux every docs shot matches the Swift app, except
-where the Swift shots are older than the code or the platforms differ, and
-every smoke scenario passes (`scripts/smoke/run.py` with
-`IMPULSE_SNAPSHOT_APP` on the Rust app, under Xvfb).
+Where things stand: parity with the Swift app is signed off. Before the
+Swift app went, every docs shot on Linux matched it (except where the Swift
+shots were older than the code or the platforms differ), and every smoke
+scenario passed (`scripts/smoke/run.py`, under Xvfb).
 
 ## 1. The Mac
 
@@ -36,12 +36,15 @@ The largest unknown, so it goes first.
   (`session.rs`: `frame_string`, `saved_bounds`), the Quick Terminal's
   global shortcut, notifications through `osascript`, `NSBeep` for the
   terminal bell, and ⌘Z bringing back a closed tab (`UndoClose`).
-- [ ] **Run the snapshot mode there.** Window images go through
+- [x] **Run the snapshot mode there** (parity signed off without it; the
+  smoke checks and docs shots on the Mac are still worth a run before the
+  release). Window images go through
   `screencapture -l` on macOS, which hasn't been tried. Then run
   `scripts/smoke/run.py` and `scripts/docs/capture.py` against the Rust
   binary and compare the shots with the Swift app's, side by side on the
   same OS.
-- [ ] **Compare against the Swift app in a key window.** The Swift docs
+- [x] **Compare against the Swift app in a key window** (moot: parity
+  signed off, and the Swift app is gone). The Swift docs
   shots come from inactive windows, where macOS draws native switches and
   checkboxes without the accent color, so they read grey there and accent
   in the Rust shots. Settle which one the Rust app should copy once both
@@ -126,11 +129,11 @@ snippets, smooth scrolling, Home for every cursor and more).
 
 | What | Why it waits | Setting |
 |---|---|---|
-| Announcing agent state to screen readers | GPUI has no live regions | |
+| Announcing agent state to screen readers (not needed for the release) | GPUI has no live regions | |
 
 Left of the editor work done here:
 
-- [ ] **Inlay hints' extras.** No tooltip on a hint, no ⌘-click on a label
+- [x] **Inlay hints' extras** (not needed for the release). No tooltip on a hint, no ⌘-click on a label
   part's location or command, and no `workspace/inlayHint/refresh`
   (advertising it needs a `ServerEvent` the workbench handles), so a
   server's hints that change without an edit (rust-analyzer after
@@ -138,7 +141,7 @@ Left of the editor work done here:
   with Impulse's settings, in either app: its `includeInlay…`
   preferences are off unless `lsp.json` turns them on
   (`initialization_options.preferences`).
-- [ ] **Nested snippet sessions.** A snippet inserted inside another's
+- [x] **Nested snippet sessions** (not needed for the release). A snippet inserted inside another's
   placeholder replaces the session, where Monaco merges them; choices
   with mirrors update only the first place.
 
@@ -147,17 +150,18 @@ Left of the editor work done here:
 - [x] **Find (Ctrl+F) in an editor said "Find isn't in the Rust app
   yet."** `Workbench::run_command` only handled Find for a terminal; an
   editor fell through to the catch-all for commands with no handler.
-  Fixed: Find opens GPUI Kit's search panel (`open_search`) in an editor,
+  Fixed: Find opens the editor's find bar (`editor_find.rs`, the same
+  `FindBar` the terminal uses) in an editor,
   and does nothing in Review, History, images and tool tabs, as in Swift.
   Every command id in the catalog (palette, menus, keybindings) has a
   handler; this was the only one that reached the catch-all from a
   surface it should work on. Nothing scripted it: the smoke scenarios and
   docs shots drive the editor through `edit=`, not the command.
-- [ ] **First keystroke lost in the editor's search field** under Xvfb.
-  Focus moves there at once in GPUI Kit's code, so this looks like X11
-  key input without a window manager. Check on a real Linux desktop and on
-  the Mac.
-- [ ] **Hover popover overlap.** GPUI Kit's hover popover draws a code
+- [x] **First keystroke lost in the editor's search field** under Xvfb.
+  Not on a real desktop: checked by hand on KDE Plasma under Wayland, with
+  the find bar that replaced GPUI Kit's search panel. It was X11 key input
+  without a window manager.
+- [x] **Hover popover overlap** (no longer an issue). GPUI Kit's hover popover draws a code
   block's language label on top of the code
   ([screenshot](images/rust-editor-hover.png)). The cause, in GPUI Kit
   0.8.0: a code block puts its language label 7 px from the top and pads
@@ -168,6 +172,24 @@ Left of the editor work done here:
   popovers, as Monaco shows none, or keep the top padding). Working
   around it here would mean dropping the fence's language, and with it
   the hover's syntax colors.
+
+## 5. The release
+
+- [ ] **First run of `scripts/package-macos.sh --sign --notarize --dmg`** on
+  a Mac: signing, notarizing and Gatekeeper on the Rust binary, and
+  installing over the Swift app (the same bundle ID and data folder:
+  settings, the session, trust lists and command history carry over).
+- [ ] **First run of `.github/workflows/release-linux.yml`**, which can only
+  run once it's on `main`: by hand with a throwaway tag first.
+- [ ] **The `.deb`**, untested (built where `dpkg-deb` is installed).
+- [ ] **The glibc floor**: the workflow builds on Ubuntu 24.04, so the
+  Linux packages need glibc 2.39 (no Debian 12, Ubuntu 22.04 or RHEL 9);
+  building on `ubuntu-22.04` would lower it to 2.35.
+- [ ] **CI for the tests**: only the website has a workflow; nothing runs
+  `cargo test --workspace` on a push.
+- [ ] **The user docs** (`docs/`) still describe the Swift app in places
+  (inline blame, which the Rust app dropped; Monaco), and their screenshots
+  are the Swift app's: `scripts/docs/capture.py` regenerates them.
 
 ## Not differences
 

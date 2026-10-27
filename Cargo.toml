@@ -2,7 +2,6 @@
 members = [
     "impulse-app",
     "impulse-cli",
-    "impulse-ffi",
     "impulse-git",
     "impulse-kit",
     "impulse-lsp",

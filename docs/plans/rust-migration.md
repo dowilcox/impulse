@@ -1,7 +1,11 @@
 # Full Rust migration: one Impulse for macOS and Linux
 
-Status: exploring, on the `rust` branch. Nothing here ships until the Rust
-app passes the parity gate at the end.
+Status: done. The parity gate was signed off and the Swift app, `impulse-ffi`
+and the Monaco glue were removed in October 2026 (phase 6); the Rust app is
+the only Impulse. What's still open is in
+[rust-remaining.md](rust-remaining.md). The rest of this plan is kept as the
+record of how it was done; paths under `impulse-macos/` in it refer to the
+tree before its removal.
 
 ## Goal
 
@@ -234,14 +238,18 @@ The shipped Swift app keeps working through every phase.
    with its `dump=` format.
 5. **Surfaces.** File tree, palette, search, Review and History, git panels,
    tasks, agents, settings, project setup, notifications.
-6. **Parity gate and cut-over.** `scripts/smoke/run.py` against the Swift app
+6. **Parity gate and cut-over** (done: the gate signed off by hand, the
+   Swift targets removed, the built-in files and golden fixtures moved to
+   `impulse-kit/resources/`, `impulse-kit/tests/fixtures/` and
+   `impulse-git/tests/fixtures/`, `scripts/build.sh` in place of
+   `impulse-macos/build.sh`). As planned: `scripts/smoke/run.py` against the Swift app
    and the Rust app on both platforms (dumps must match);
    `scripts/docs/capture.py` from the Rust app on both platforms (Mac against
    Linux within a small pixel threshold); manual IME, VoiceOver and Orca,
    HiDPI and fractional scaling, gestures. Then `build.sh` builds the Rust
-   app and the Swift targets go. (`scripts/release.sh` already ships the
-   Rust app: the Mac's through `scripts/package-macos.sh`, Linux's from
-   `.github/workflows/release-linux.yml` once the release is published.)
+   app and the Swift targets go. `scripts/release.sh` ships the Rust app:
+   the Mac's through `scripts/package-macos.sh`, Linux's from
+   `.github/workflows/release-linux.yml` once the release is published.
 
 ## Done so far
 

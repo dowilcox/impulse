@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The app's Info.plist, filled in by render_info_plist (scripts/lib/macos-bundle.sh)
-     for impulse-macos/build.sh and scripts/package-macos.sh. -->
+<!-- The app's Info.plist, filled in by render_info_plist in
+     scripts/package-macos.sh. -->
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
@@ -367,6 +367,5 @@
             </dict>
         </dict>
     </array>
-@EXTRA_KEYS@
 </dict>
 </plist>

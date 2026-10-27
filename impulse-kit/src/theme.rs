@@ -545,90 +545,68 @@ pub fn resolve_theme(id: &str, tf: &ThemeFile) -> ResolvedTheme {
 const BUILTIN_THEMES: &[(&str, &str)] = &[
     (
         "kanagawa",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/kanagawa.toml"),
+        include_str!("../resources/themes/kanagawa.toml"),
     ),
     (
         "rose-pine",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/rose-pine.toml"),
+        include_str!("../resources/themes/rose-pine.toml"),
     ),
-    (
-        "nord",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/nord.toml"),
-    ),
-    (
-        "gruvbox",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/gruvbox.toml"),
-    ),
+    ("nord", include_str!("../resources/themes/nord.toml")),
+    ("gruvbox", include_str!("../resources/themes/gruvbox.toml")),
     (
         "tokyo-night",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/tokyo-night.toml"),
+        include_str!("../resources/themes/tokyo-night.toml"),
     ),
     (
         "tokyo-night-storm",
-        include_str!(
-            "../../impulse-macos/Sources/ImpulseKit/Resources/Themes/tokyo-night-storm.toml"
-        ),
+        include_str!("../resources/themes/tokyo-night-storm.toml"),
     ),
     (
         "catppuccin-mocha",
-        include_str!(
-            "../../impulse-macos/Sources/ImpulseKit/Resources/Themes/catppuccin-mocha.toml"
-        ),
+        include_str!("../resources/themes/catppuccin-mocha.toml"),
     ),
-    (
-        "dracula",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/dracula.toml"),
-    ),
+    ("dracula", include_str!("../resources/themes/dracula.toml")),
     (
         "solarized-dark",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/solarized-dark.toml"),
+        include_str!("../resources/themes/solarized-dark.toml"),
     ),
     (
         "one-dark",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/one-dark.toml"),
+        include_str!("../resources/themes/one-dark.toml"),
     ),
     (
         "ayu-dark",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/ayu-dark.toml"),
+        include_str!("../resources/themes/ayu-dark.toml"),
     ),
     (
         "everforest-dark",
-        include_str!(
-            "../../impulse-macos/Sources/ImpulseKit/Resources/Themes/everforest-dark.toml"
-        ),
+        include_str!("../resources/themes/everforest-dark.toml"),
     ),
     (
         "github-dark",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/github-dark.toml"),
+        include_str!("../resources/themes/github-dark.toml"),
     ),
     (
         "monokai-pro",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/monokai-pro.toml"),
+        include_str!("../resources/themes/monokai-pro.toml"),
     ),
     (
         "palenight",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/palenight.toml"),
+        include_str!("../resources/themes/palenight.toml"),
     ),
     (
         "solarized-light",
-        include_str!(
-            "../../impulse-macos/Sources/ImpulseKit/Resources/Themes/solarized-light.toml"
-        ),
+        include_str!("../resources/themes/solarized-light.toml"),
     ),
     (
         "catppuccin-latte",
-        include_str!(
-            "../../impulse-macos/Sources/ImpulseKit/Resources/Themes/catppuccin-latte.toml"
-        ),
+        include_str!("../resources/themes/catppuccin-latte.toml"),
     ),
     (
         "github-light",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/github-light.toml"),
+        include_str!("../resources/themes/github-light.toml"),
     ),
-    (
-        "harbor",
-        include_str!("../../impulse-macos/Sources/ImpulseKit/Resources/Themes/harbor.toml"),
-    ),
+    ("harbor", include_str!("../resources/themes/harbor.toml")),
 ];
 
 /// Return the list of built-in theme IDs in display order.

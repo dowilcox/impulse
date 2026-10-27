@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # vendor-highlight.sh — Download and vendor highlight.js (BSD-3-Clause), the
-# common-languages browser build used for Markdown preview code blocks and
-# review/history syntax colors.
+# common-languages browser build the website uses for its docs' code blocks
+# and the demo's Review colors (scripts/build-site.py; the app itself colors
+# code with tree-sitter).
 # Output: vendor/highlight/ (highlight.min.js and its license)
 # Run once, or when upgrading highlight.js.
 set -euo pipefail

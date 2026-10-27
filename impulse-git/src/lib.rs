@@ -10,10 +10,10 @@
 //! Destructive writes take a safety snapshot under `refs/impulse/` first so
 //! they can be undone (`safety`).
 //!
-//! Behavior is checked against the golden fixtures the Swift port is checked
-//! against (`impulse-macos/Tests/ImpulseGitTests/Fixtures/`, generated from
-//! the original Rust at tag `v0.29.0`), and against the real `git` as the
-//! oracle for everything newer.
+//! Behavior is checked against the golden fixtures (`tests/fixtures/`,
+//! generated from the original Rust at tag `v0.29.0`, which the Swift port
+//! answered to as well), and against the real `git` as the oracle for
+//! everything newer.
 
 pub mod blame;
 pub mod branches;

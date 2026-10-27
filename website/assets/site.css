@@ -1,6 +1,6 @@
 /* Impulse website: shared tokens, the top bar, search, and the docs pages.
    Colors are the app's default theme, Tokyo Night
-   (impulse-macos/Sources/ImpulseKit/Resources/Themes/tokyo-night.toml). */
+   (impulse-kit/resources/themes/tokyo-night.toml). */
 
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("fonts/Inter-Medium.ttf") format("truetype"); font-weight: 500; font-display: swap; }

@@ -4,6 +4,12 @@ All notable changes to Impulse are documented in this file.
 
 ## Unreleased
 
+### One Impulse for macOS and Linux
+
+- Impulse is rewritten in Rust and runs on Linux again, as well as macOS: the same app on both, drawn on the GPU (Metal on macOS, Vulkan on Linux). It keeps your settings, sessions, trusted folders, command history and agent integrations, and the `impulse` command-line tool works as before.
+- Linux releases come as a `.deb` for Debian and Ubuntu and a tarball for other distributions, for x86_64 and arm64. Building from source on Arch and its derivatives also makes a package for `pacman -U`.
+- The editor is Impulse's own instead of Monaco, keeping Monaco's keys and behavior. Inline blame is gone; Show Commit for This Line still blames the cursor's line.
+
 ### Fixes
 
 - In bash, command history, block headers and the palette's history now show the command as you typed it: a whole pipeline (`ls | wc -l`, not just `ls`), with aliases as written instead of expanded.

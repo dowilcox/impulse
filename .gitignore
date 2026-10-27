@@ -5,13 +5,6 @@
 *.DS_Store
 .env*
 
-# macOS Swift Package Manager build artifacts
-impulse-macos/.build/
-impulse-macos/Sources/ImpulseApp/Resources/
-
-# Vendored libgit2 build output (built by scripts/build-libgit2.sh)
-impulse-macos/.libgit2/
-
 # The user docs page for agents (a global AGENTS.md ignore would hide it)
 !docs/agents.md
 

@@ -16,8 +16,8 @@ on:
       - "vendor/highlight/**"
       - "vendor/lucide/**"
       - "assets/icons/material/**"
-      - "impulse-macos/Sources/ImpulseKit/Resources/Themes/**"
-      - "impulse-macos/Tests/ImpulseKitTests/Fixtures/themes/**"
+      - "impulse-kit/resources/themes/**"
+      - "impulse-kit/tests/fixtures/themes/**"
       - "scripts/build-site.py"
       - ".github/workflows/website.yml"
   pull_request:
@@ -25,8 +25,8 @@ on:
       - "docs/**"
       - "website/**"
       - "CHANGELOG.md"
-      - "impulse-macos/Sources/ImpulseKit/Resources/Themes/**"
-      - "impulse-macos/Tests/ImpulseKitTests/Fixtures/themes/**"
+      - "impulse-kit/resources/themes/**"
+      - "impulse-kit/tests/fixtures/themes/**"
       - "scripts/build-site.py"
       - ".github/workflows/website.yml"
   workflow_dispatch:
