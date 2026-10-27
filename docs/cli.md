@@ -4,23 +4,25 @@
 
 ## Where it lives
 
-The tool is inside the app bundle:
+On macOS the tool is inside the app bundle:
 
 ```
 /Applications/Impulse.app/Contents/Resources/bin/impulse
 ```
 
-Every terminal Impulse starts gets that `bin` folder at the front of its `PATH`, so `impulse` works without any setup. Impulse terminals also get these environment variables:
+On Linux it sits beside the app: `/usr/bin/impulse` from the `.deb`, or `bin/impulse` in the folder you unpacked the tarball into.
 
-| Variable             | Value                                                                                                                 |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `IMPULSE_SOCKET`     | The Unix socket the tool talks to: `~/Library/Application Support/impulse/impulse.sock`.                              |
-| `IMPULSE_PANE_TOKEN` | A token naming this terminal pane, so commands can act on "this pane" (split it, flag it, report its agent's status). |
-| `IMPULSE_CLI`        | The full path of the `impulse` tool. Agent hooks call it through this variable.                                       |
-| `TERM_PROGRAM`       | `Impulse`                                                                                                             |
-| `EDITOR`, `VISUAL`   | Set only when [Impulse is your `$EDITOR`](#use-impulse-as-your-editor).                                               |
+Every terminal Impulse starts gets that folder at the front of its `PATH`, so `impulse` works without any setup. Impulse terminals also get these environment variables:
 
-The socket belongs to the running app and serves all its windows. Only your user account can connect to it. The development build ("Impulse Dev") uses `~/Library/Application Support/impulse-dev/impulse.sock` instead. If another copy of Impulse is already listening there, a second copy leaves that socket alone and gives its own terminals one in the temporary folder; `IMPULSE_SOCKET` always names the right one.
+| Variable             | Value                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IMPULSE_SOCKET`     | The Unix socket the tool talks to: `~/Library/Application Support/impulse/impulse.sock` on macOS, `$XDG_RUNTIME_DIR/impulse.sock` on Linux. |
+| `IMPULSE_PANE_TOKEN` | A token naming this terminal pane, so commands can act on "this pane" (split it, flag it, report its agent's status).                       |
+| `IMPULSE_CLI`        | The full path of the `impulse` tool. Agent hooks call it through this variable.                                                             |
+| `TERM_PROGRAM`       | `Impulse`                                                                                                                                   |
+| `EDITOR`, `VISUAL`   | Set only when [Impulse is your `$EDITOR`](#use-impulse-as-your-editor).                                                                     |
+
+The socket belongs to the running app and serves all its windows. Only your user account can connect to it. A debug build (from `scripts/build.sh --dev`) uses `~/Library/Application Support/impulse-dev/impulse.sock` on macOS and `$XDG_RUNTIME_DIR/impulse-dev.sock` on Linux instead. If another copy of Impulse is already listening there, a second copy leaves that socket alone and gives its own terminals one in a private folder of its own; `IMPULSE_SOCKET` always names the right one.
 
 The [quick terminal](workspaces-and-tabs.md#quick-terminal) gets the same variables. Its requests go to the frontmost window: `impulse tab` opens the tab there, and `impulse split` says "This terminal can't be split." With no window open, `notify`, `status` and agent hooks still work there.
 
@@ -147,7 +149,7 @@ impulse tab npm run dev
 impulse notify <title> [message…]
 ```
 
-Flags this pane as needing attention (its tab and workspace row are marked and the Dock badge counts it) and, when Impulse is in the background, bounces the Dock icon and posts a desktop notification with the title and message. Clicking the notification brings you to the pane. Useful at the end of anything long:
+Flags this pane as needing attention (its tab and workspace row are marked and the Dock badge counts it) and, when Impulse is in the background, bounces the Dock icon and posts a desktop notification with the title and message. Clicking the notification brings you to the pane. On Linux the notification goes through `notify-send`, the count shows on docks and task managers that read launcher badges, and a click brings you to the pane where `notify-send` supports actions. Useful at the end of anything long:
 
 ```sh
 npm run build; impulse notify "Build finished" "trailhead"
@@ -412,17 +414,24 @@ end
 
 ## Use it outside Impulse terminals
 
-In a terminal that Impulse didn't start (Terminal.app, an SSH session, an IDE's terminal), `IMPULSE_SOCKET` isn't set, and `impulse` prints:
+In a terminal that Impulse didn't start (Terminal.app or your desktop's terminal, an SSH session, an IDE's terminal), `IMPULSE_SOCKET` isn't set, and `impulse` prints:
 
 ```
 impulse: not running inside an Impulse terminal (IMPULSE_SOCKET isn't set)
 ```
 
-You can set the variable yourself to reach a running Impulse from your own Mac:
+You can set the variable yourself to reach a running Impulse on the same computer. On macOS:
 
 ```sh
 export IMPULSE_SOCKET="$HOME/Library/Application Support/impulse/impulse.sock"
 alias impulse=/Applications/Impulse.app/Contents/Resources/bin/impulse
+impulse open ~/Code/trailhead/src/server.ts:12
+```
+
+On Linux the socket is `$XDG_RUNTIME_DIR/impulse.sock`, and `impulse` is already on your `PATH` if you installed the `.deb`:
+
+```sh
+export IMPULSE_SOCKET="$XDG_RUNTIME_DIR/impulse.sock"
 impulse open ~/Code/trailhead/src/server.ts:12
 ```
 

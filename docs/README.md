@@ -1,6 +1,6 @@
 # Impulse documentation
 
-Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code editor, git tools and support for the coding agents you run in its terminals, in one window. These pages explain every part of it, with screenshots of a small example project, `trailhead`.
+Impulse is a terminal IDE for macOS and Linux: a terminal with command blocks, a code editor, git tools and support for the coding agents you run in its terminals, in one window. These pages explain every part of it, with screenshots of a small example project, `trailhead`.
 
 ![An Impulse window: the workspaces sidebar with trailhead and a task, the Files panel, and a terminal with command blocks for git status, a failing npm test and npm run lint](images/getting-started-window-tour.png)
 
@@ -32,21 +32,21 @@ Impulse is a terminal IDE for the Mac: a terminal with command blocks, a code ed
 - [Command-line tool](cli.md): the `impulse` command, and Impulse as your `$EDITOR`.
 - [Settings and themes](settings-and-themes.md): every setting, `settings.json`, themes and custom shortcuts.
 - [Keyboard shortcuts](keyboard-shortcuts.md): every shortcut, in the menus and inside panels.
-- [Accessibility](accessibility.md): VoiceOver, Reduce Motion, Increase Contrast and keyboard-only use.
+- [Accessibility](accessibility.md): screen readers, Reduce Motion, Increase Contrast and keyboard-only use.
 
 ## Common workflows
 
-| To…                                                            | See                                                                                    |
-| -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Work on a second thing without stashing or switching branches  | [Tasks](tasks.md)                                                                      |
-| Run two agents side by side and see which one needs you        | [Tasks](tasks.md#example-two-agents-in-parallel), [Agents](agents.md)                  |
-| See exactly what an agent changed in its last turn, or undo it | [Agents › Checkpoints and turns](agents.md#checkpoints-and-turns), [Review](review.md) |
-| Commit part of a file                                          | [Review › Staging, unstaging and reverting](review.md#staging-unstaging-and-reverting) |
-| Send review comments back to an agent                          | [Review › Comments](review.md#comments)                                                |
-| Let an agent start tasks, or read your comments and problems   | [Agents › Impulse's MCP server](agents.md#impulses-mcp-server)                         |
-| Find when a line changed, and who changed it                   | [History](history.md), [Editor › Inline blame](editor.md#inline-blame)                 |
-| Run your project's dev server or tests from the palette        | [Project configuration › Project actions](project-config.md#project-actions)           |
-| Make `git commit` open its message in Impulse                  | [Command-line tool](cli.md#use-impulse-as-your-editor)                                 |
+| To…                                                            | See                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Work on a second thing without stashing or switching branches  | [Tasks](tasks.md)                                                                                |
+| Run two agents side by side and see which one needs you        | [Tasks](tasks.md#example-two-agents-in-parallel), [Agents](agents.md)                            |
+| See exactly what an agent changed in its last turn, or undo it | [Agents › Checkpoints and turns](agents.md#checkpoints-and-turns), [Review](review.md)           |
+| Commit part of a file                                          | [Review › Staging, unstaging and reverting](review.md#staging-unstaging-and-reverting)           |
+| Send review comments back to an agent                          | [Review › Comments](review.md#comments)                                                          |
+| Let an agent start tasks, or read your comments and problems   | [Agents › Impulse's MCP server](agents.md#impulses-mcp-server)                                   |
+| Find when a line changed, and who changed it                   | [History](history.md), [Editor › Show Commit for This Line](editor.md#show-commit-for-this-line) |
+| Run your project's dev server or tests from the palette        | [Project configuration › Project actions](project-config.md#project-actions)                     |
+| Make `git commit` open its message in Impulse                  | [Command-line tool](cli.md#use-impulse-as-your-editor)                                           |
 
 ## Updating the screenshots
 

@@ -1,6 +1,6 @@
 # Keyboard shortcuts
 
-This page lists every keyboard shortcut in Impulse: the commands in the menu bar, and the keys that work inside a particular panel or field, such as the terminal's input bar, the Changes panel and Review. Shortcuts with an ID in the last column can be changed in the Keyboard Shortcuts tab; see [Customize keyboard shortcuts](settings-and-themes.md#customize-keyboard-shortcuts).
+This page lists every keyboard shortcut in Impulse: the commands in the menus, and the keys that work inside a particular panel or field, such as the terminal's input bar, the Changes panel and Review. Shortcuts with an ID in the last column can be changed in the Keyboard Shortcuts tab; see [Customize keyboard shortcuts](settings-and-themes.md#customize-keyboard-shortcuts).
 
 ## How to read this page
 
@@ -13,6 +13,39 @@ Shortcuts are written the way macOS menus show them: ⌃ Control, ⌥ Option, �
 You don't need to memorize this page. Every command in the command palette (⇧⌘P) shows its current shortcut on the right, and so do the menus.
 
 ![The command palette listing commands with their shortcuts on the right](images/keyboard-shortcuts-palette.png)
+
+### On Linux
+
+On Linux, the menus and the palette write shortcuts out, such as Ctrl+Shift+P. The menus open from the menu button at the left of the titlebar; the **Impulse** menu's items are in **File** (**Settings…**, **Keyboard Shortcuts…** and **Quit Impulse**) and **Help** (**About Impulse**).
+
+The defaults are the Mac's with ⌘ as Ctrl, and ⌥ is Alt. Keys this page gives with ⌘ inside a panel (such as ⌘↩ to commit, ⌘↑ to select blocks and ⌘-click on a link) use Ctrl too. These commands have other defaults, so they don't take keys a shell, the desktop or an input method needs:
+
+| Command                                 | Mac      | Linux                                               |
+| --------------------------------------- | -------- | --------------------------------------------------- |
+| Copy, Paste                             | ⌘C, ⌘V   | Ctrl+Shift+C, Ctrl+Shift+V                          |
+| Toggle Sidebar                          | ⌘B       | Ctrl+Shift+B                                        |
+| Toggle Full Screen                      | ⌃⌘F      | F11                                                 |
+| Split Right, Split Down                 | ⌘D, ⇧⌘D  | Ctrl+Shift+D, Ctrl+Alt+Shift+D                      |
+| Focus Pane Left, Right, Above and Below | ⌥⌘ arrow | Unbound (the desktop uses Ctrl+Alt with the arrows) |
+| Grow Pane Left, Right, Up and Down      | ⌃⌘ arrow | Unbound                                             |
+| Even Out Panes                          | ⌃⌘=      | Ctrl+Alt+=                                          |
+| Compose Message to Agent                | ⌘I       | Ctrl+Alt+I                                          |
+| Next Agent Needing You                  | ⇧⌘U      | Ctrl+Alt+U (Ctrl+Shift+U is the input method's)     |
+| Switch Workspace…                       | ⌃⌘O      | Ctrl+Alt+O                                          |
+| Switch Branch…                          | ⌃⌘B      | Ctrl+Alt+B                                          |
+| Show History of This File               | ⌃⇧⌘H     | Ctrl+Alt+Shift+H                                    |
+| Show Problems                           | ⌃⌘M      | Ctrl+Alt+M                                          |
+| Run Project Action…                     | ⌃⌘R      | Ctrl+Alt+R                                          |
+| Go to Symbol in Project…                | ⌥⌘O      | Ctrl+Alt+Shift+O                                    |
+| Show Changes                            | ⌃⇧G      | Ctrl+Alt+Shift+G (Ctrl+Shift+G is Review Changes)   |
+| Tab 1 … Tab 9                           | ⌘1 … ⌘9  | Alt+1 … Alt+9                                       |
+| Quit Impulse                            | ⌘Q       | Ctrl+Shift+Q                                        |
+| Close Window                            | ⇧⌘W      | Alt+F4                                              |
+| Open…, Impulse Help                     | ⌘O, ⌘?   | None                                                |
+
+In a terminal, Ctrl and a letter go to the shell (Ctrl+C, Ctrl+D, Ctrl+R and the rest). A command whose shortcut is Ctrl and a letter is reached there with Shift added, when that's free: Close Tab is Ctrl+W elsewhere and Ctrl+Shift+W in a terminal. Find and New Tab take Ctrl+Shift+F and Ctrl+Shift+T in a terminal, which are Find in Project and Reopen Closed Tab everywhere else. Undo after closing a tab is the **Undo** button in the notice; Ctrl+Z doesn't bring it back.
+
+In the editor, Ctrl+Shift+↩ inserts a line above (not Zoom Pane), and the editor keeps the keys of terminal-only commands, as on the Mac: Ctrl+Shift+K deletes the line and Ctrl+Shift+Space shows parameter hints. The Mac's Hide, Minimize and Paste and Match Style items aren't in the Linux menus.
 
 ## General
 
@@ -198,7 +231,7 @@ After ⇧⌘Space, letters appear over the URLs, file paths, commit SHAs and por
 | -------- | --------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------- |
 | ⌘N       | New File                                                                                                              | File | `new_file`                |
 | ⌘S       | Save                                                                                                                  | File | `save`                    |
-| ⌘F       | Find…: opens the editor's find widget                                                                                 | Edit | `find`                    |
+| ⌘F       | Find…: opens the editor's find bar                                                                                    | Edit | `find`                    |
 | ⌘G       | Go to Line… (the palette in `:` mode)                                                                                 | Edit | `go_to_line`              |
 | ⇧⌘O      | Go to Symbol in File… (the palette in `@` mode)                                                                       | View | `go_to_symbol`            |
 | ⌥⌘O      | Go to Symbol in Project… (the palette in `#` mode)                                                                    | View | `go_to_project_symbol`    |
@@ -207,7 +240,7 @@ After ⇧⌘Space, letters appear over the URLs, file paths, commit SHAs and por
 | ⌥⌘G      | Toggle Diff View                                                                                                      | Git  | `diff_view`               |
 | Hold ⌃⌥  | Show or hide inlay hints, when **Settings › Editor › Inlay hints** is "While holding ⌃⌥" or "Hidden while holding ⌃⌥" | —    | —                         |
 
-The editor is Monaco, and Monaco's own keybindings work in it too. Its editing keys stay Monaco's while you edit, whatever you bind to them: ⌘D adds the next occurrence, ⌥⌘↑ and ⌥⌘↓ add a cursor above or below, and ⇧⌘↩ inserts a line above (instead of Split Right, Focus Pane Above and Below, and Zoom Pane). Where else Impulse uses Monaco's keys, Impulse's command runs, so ⌘G, ⇧⌘G and ⇧⌘O do what this page lists while you edit (Monaco binds them to find next and previous and quick outline). Monaco keeps ⌘F, ⌘S, ⌘C and ⌘V, which do the same thing either way, and the keys of terminal-only commands: ⌘I shows suggestions, ⇧⌘K deletes the line and ⇧⌘Space shows parameter hints. Removing or changing an Impulse shortcut gives its keys back to Monaco. With **Vim keybindings** on, the editor also has Vim's modes and keys. See [Editor](editor.md).
+The editor's own keys are the ones VS Code's editor uses, and they work in it too. Its editing keys stay the editor's while you edit, whatever you bind to them: ⌘D adds the next occurrence, ⌥⌘↑ and ⌥⌘↓ add a cursor above or below, and ⇧⌘↩ inserts a line above (instead of Split Right, Focus Pane Above and Below, and Zoom Pane). Where else Impulse uses the same keys as VS Code's editor, Impulse's command runs, so ⌘G, ⇧⌘G and ⇧⌘O do what this page lists while you edit (VS Code binds them to find next and previous and quick outline). The editor keeps ⌘F, ⌘S, ⌘C and ⌘V, which do the same thing either way, and the keys of terminal-only commands: ⌘I shows suggestions, ⇧⌘K deletes the line and ⇧⌘Space shows parameter hints. Removing or changing an Impulse shortcut gives its keys back to the editor. With **Vim keybindings** on, the editor also has Vim's modes and keys. See [Editor](editor.md).
 
 ## Git
 
@@ -367,7 +400,7 @@ In sheets such as **New Task…** and in confirmation dialogs, ↩ presses the d
 
 ## Standard macOS shortcuts
 
-These work as in other Mac apps and can't be changed in Impulse.
+These work as in other Mac apps and can't be changed in Impulse. On Linux, Undo is Ctrl+Z, Redo Ctrl+Shift+Z, Cut Ctrl+X, Select All Ctrl+A, Quit Ctrl+Shift+Q and Close Window Alt+F4 (see [On Linux](#on-linux)).
 
 | Shortcut | Command                                 | Menu    |
 | -------- | --------------------------------------- | ------- |

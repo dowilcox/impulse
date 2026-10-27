@@ -1,6 +1,6 @@
 # Editor
 
-Impulse's editor is [Monaco](https://microsoft.github.io/monaco-editor/), the editing component from VS Code, running in a tab beside your terminals. Impulse adds language servers, a Problems tab, project-wide find and replace, Markdown and SVG previews, and git awareness: live change marks, inline blame, an editable diff view and merge-conflict buttons.
+Impulse's editor runs in a tab beside your terminals and works like the editor in VS Code: the same keys, commands and context menu. Impulse adds language servers, a Problems tab, project-wide find and replace, Markdown and SVG previews, and git awareness: live change marks, the commit behind any line, an editable diff view and merge-conflict buttons.
 
 ![The trailhead workspace with src/forecast.ts open in the editor, change marks in the gutter and the status bar showing the cursor position](images/editor-overview.png)
 
@@ -14,24 +14,22 @@ Every file opens in its own editor tab. A file that's already open in the window
 | Quick open                        | Press ⌘P (View ▸ Go to File…), type part of the path, and press Return. With nothing typed, the list starts with the files you have open. See [Command palette](command-palette.md).                        |
 | Terminal output                   | ⌘-click a path such as `src/forecast.ts:42:7`. It opens at that line and column. See [Terminal](terminal.md).                                                                                               |
 | The command line                  | In an Impulse terminal, `impulse open src/forecast.ts:42` opens the file; `impulse edit <file>` opens it and waits until you close the tab, which is what `$EDITOR` needs. See [Command-line tool](cli.md). |
-| The menu bar                      | File ▸ Open… (⌘O) opens a file in a tab, or a folder as a workspace.                                                                                                                                        |
-| Finder                            | Choose **Open With ▸ Impulse** on a source file.                                                                                                                                                            |
+| The menus                         | File ▸ Open… (⌘O) opens a file in a tab, or a folder as a workspace. On Linux the menus open from the button at the left of the titlebar.                                                                   |
+| Finder or `impulse-app`           | On macOS, choose **Open With ▸ Impulse** on a source file. On Linux, run `impulse-app` with the file; an Impulse that's already running opens it.                                                           |
 | Search results, Problems, symbols | Click a result to open the file at that spot.                                                                                                                                                               |
-| An open editor                    | Drop files on it from the file tree or Finder. Each opens in its own tab.                                                                                                                                   |
+| An open editor                    | Drop files on it from the file tree, or from Finder or your file manager. Each opens in its own tab.                                                                                                        |
 
-**New File** (⌘N) opens an empty, untitled editor. The first time you save it, a Save panel asks where to put it (starting in the current folder), and the editor then picks the language from the file name.
+**New File** (⌘N) opens an empty, untitled editor. The first time you save it, the system's save dialog asks where to put it (starting in the current folder; on Linux without a desktop portal, Impulse asks for the path instead), and the editor then picks the language from the file name.
 
 Some files don't open as text:
 
 - **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.tiff`, `.tif`) open in an image tab. See [Image tabs](#image-tabs).
-- **Binary files** (anything with a NUL byte in its first 8 KB) don't open. A message offers **Open in Default App**, or **Reveal in Finder** for a file that would run when opened (a program, a script, an app, a `.command` or an installer).
+- **Binary files** (anything with a NUL byte in its first 8 KB) don't open. A message offers **Open in Default App**, or **Reveal in Finder** (**Show in File Manager** on Linux) for a file that would run when opened (a program, a script, an app, a `.command` or an installer).
 - **Files that aren't UTF-8** don't open either, so a save can't overwrite them with the wrong encoding. The same **Open in Default App** button appears.
 - **Files over 10 MB** don't open: a message says the file is too large for the editor and offers **View in Terminal**, which pages through it with `less` in a new terminal tab.
 - **Files over 5 MB** open read-only, so the editor stays responsive. They aren't reloaded on every write either: when one changes on disk, "_file_ changed on disk." appears with a **Reload** button.
 
 The same limits apply when an open file grows: past 5 MB it turns read-only (unless it has unsaved changes) and stops reloading on its own, and past 10 MB the editor keeps what it shows and offers **View in Terminal** instead.
-
-If an editor's page crashes, it reloads with your text, unsaved changes included. If it keeps crashing, it stops trying and says "This editor stopped working. Your text is kept." with a **Reload Editor** button; it also tries again when you come back to the tab. Saving still works meanwhile.
 
 Text files that start with a UTF-8 byte-order mark keep it when you save.
 
@@ -47,15 +45,15 @@ Each workspace has at most one preview tab. To always open files in normal tabs,
 
 ## Working in the editor
 
-The editor behaves like Monaco in VS Code, with a few changes so it fits with the rest of the window:
+The editor behaves like the one in VS Code, with a few changes so it fits with the rest of the window:
 
 - **⌘-click** a symbol to go to its definition (the symbol underlines while you hold ⌘). **⌥-click** adds another cursor.
-- **⌘F** (Edit ▸ Find…) opens Monaco's find widget for the current file. Its arrow on the left shows the replace field.
+- **⌘F** (Edit ▸ Find…) opens the find bar at the top of the editor, with toggles for matching case, whole words and regular expressions. The arrow at its left (or ⌥⌘F) shows the replace field.
 - **⌘G** (Edit ▸ Go to Line…) opens the palette's line mode: type `42` or `42:7` and press Return.
-- **⇧⌘O** is Impulse's Go to Symbol in File (see [Go to symbol](#go-to-symbol)), not Monaco's outline.
-- Monaco's editing keys work as in VS Code, though Impulse uses the same keys elsewhere: **⌘D** adds the next occurrence of the selection (not Split Right), **⌥⌘↑** and **⌥⌘↓** add a cursor above or below (not Focus Pane Above and Below), and **⇧⌘↩** inserts a line above (not Zoom Pane). They stay Monaco's while you edit whatever you bind to them; the pane commands are in **View ▸ Panes** and the palette.
-- Where else Monaco and Impulse use the same keys, Impulse's command runs: **⌘G** is Go to Line (in the find widget, Return and ⇧Return or F3 and ⇧F3 step through matches) and **⇧⌘G** opens Review. Monaco keeps the keys of Impulse's terminal-only commands: **⌘I** shows suggestions, **⇧⌘K** deletes the line and **⇧⌘Space** shows parameter hints. Removing or changing an Impulse shortcut in Keyboard Shortcuts gives its keys back to Monaco.
-- Right-click for Monaco's context menu (Go to Definition, Go to References, Rename Symbol, Format Document, Command Palette and so on). Impulse adds **Show Commit for This Line**.
+- **⇧⌘O** is Impulse's Go to Symbol in File (see [Go to symbol](#go-to-symbol)), not VS Code's outline.
+- The editing keys work as in VS Code, though Impulse uses the same keys elsewhere: **⌘D** adds the next occurrence of the selection (not Split Right), **⌥⌘↑** and **⌥⌘↓** add a cursor above or below (not Focus Pane Above and Below), and **⇧⌘↩** inserts a line above (not Zoom Pane). They stay the editor's while you edit whatever you bind to them; the pane commands are in **View ▸ Panes** and the palette.
+- Where else VS Code's editor and Impulse use the same keys, Impulse's command runs: **⌘G** is Go to Line (in the find bar, Return and ⇧Return or F3 and ⇧F3 step through matches) and **⇧⌘G** opens Review. The editor keeps the keys of Impulse's terminal-only commands: **⌘I** shows suggestions, **⇧⌘K** deletes the line and **⇧⌘Space** shows parameter hints. Removing or changing an Impulse shortcut in Keyboard Shortcuts gives its keys back to the editor.
+- Right-click for the editor's context menu (Go to Definition, Go to References, Peek Definition, Rename Symbol, Format Document, Show Code Actions, Command Palette and so on). Impulse adds **Show Commit for This Line**.
 - **⌘=**, **⌘-** and **⌘0** make the editor and terminal text bigger, smaller, or back to 14 pt.
 
 When an editor tab is focused, the status bar shows the cursor position (`Ln 42, Col 7`; click it to go to a line), the indentation (`Spaces: 4` or `Tab Size: 4`), the encoding, and the language. For Markdown and SVG files it also has a **Preview** button.
@@ -164,7 +162,7 @@ How these commands run:
 - **Patterns** are `*` (every file), `*.ext` (an extension, any case) or an exact file name such as `Makefile`. The first file-type entry with a formatter that matches wins.
 - The command runs **in the saved file's folder**, with the arguments you gave. `{file}` in an argument is replaced with the saved file's full path (also inside a longer argument, such as `--stdin-filepath={file}`); without it, Impulse doesn't add the path, so use arguments that tell your tool what to work on (`.` for the folder, for instance).
 - There's no shell: no pipes, `&&`, globbing or `~`. The command must be a plain program name or an absolute path. A relative path such as `./node_modules/.bin/prettier` isn't run.
-- A plain program name is looked up in your login shell's `PATH`, the same one language servers get, so Homebrew, npm and other tools you can run in a terminal are found even when you open Impulse from the Dock.
+- A plain program name is looked up in your login shell's `PATH`, the same one language servers get, so Homebrew, npm and other tools you can run in a terminal are found even when you open Impulse from the Dock or your desktop's app launcher.
 - Output isn't shown while a command works. If a command fails (exits with an error, or can't be started), a notification names it and the file, with the first line of its error output, for example "Formatter “prettier” failed on forecast.ts." and "[error] src/forecast.ts: SyntaxError: Unexpected token (12:3)".
 - The editor shows a formatter's result (or a command's, with **Reload** ticked) as one edit that ⌘Z takes back. When the command fails, is stopped, or leaves the file empty, the editor doesn't show what it left in the file: it keeps the text you saved, marked unsaved. Since the file may now hold the command's leftovers, or another program's change made while it ran, saving again asks before replacing it.
 - A formatter, or a command on save with **Reload** ticked, that runs for more than a minute is stopped. Closing a tab with **Save & Close** and quitting wait for the formatter to finish. Quitting also waits, up to 10 seconds, for commands on save that are still running.
@@ -179,33 +177,33 @@ Completions, hover information, go to definition, rename, code actions, formatti
 
 ### Languages and servers
 
-| Language               | File types                                            | Servers                                                                                                  | Where they come from            |
-| ---------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| TypeScript, JavaScript | `.ts` `.mts` `.cts` `.tsx` `.js` `.mjs` `.cjs` `.jsx` | `typescript-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `emmet-ls` | Managed by Impulse              |
-| HTML                   | `.html` `.htm`                                        | `vscode-html-language-server`, `tailwindcss-language-server`, `emmet-ls`                                 | Managed by Impulse              |
-| CSS, SCSS, Less        | `.css` `.scss` `.less`                                | `vscode-css-language-server`, `tailwindcss-language-server`, `emmet-ls`                                  | Managed by Impulse              |
-| Vue                    | `.vue`                                                | `vue-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `emmet-ls`        | Managed by Impulse              |
-| Svelte                 | `.svelte`                                             | `svelteserver`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `emmet-ls`               | Managed by Impulse              |
-| JSON                   | `.json` `.jsonc`                                      | `vscode-json-language-server`                                                                            | Managed by Impulse              |
-| YAML                   | `.yaml` `.yml`                                        | `yaml-language-server`                                                                                   | Managed by Impulse              |
-| PHP                    | `.php`                                                | `intelephense`                                                                                           | Managed by Impulse              |
-| GraphQL                | `.graphql` `.gql`                                     | `graphql-lsp`                                                                                            | Managed by Impulse              |
-| Dockerfile             | `Dockerfile`, `Containerfile`, `Dockerfile.*`         | `docker-langserver`                                                                                      | Managed by Impulse              |
-| Shell                  | `.sh` `.bash` `.zsh`                                  | `bash-language-server`                                                                                   | Managed by Impulse              |
-| Rust                   | `.rs`                                                 | `rust-analyzer`                                                                                          | Your `PATH`                     |
-| Python                 | `.py` `.pyi`                                          | `pyright-langserver` (from pyright)                                                                      | Your `PATH`                     |
-| C, C++                 | `.c` `.cpp` `.cc` `.cxx` `.h` `.hpp` `.hh` `.hxx`     | `clangd`                                                                                                 | Your `PATH`                     |
-| Swift                  | `.swift`                                              | `sourcekit-lsp`                                                                                          | Xcode or the Command Line Tools |
+| Language               | File types                                            | Servers                                                                                                  | Where they come from                                           |
+| ---------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| TypeScript, JavaScript | `.ts` `.mts` `.cts` `.tsx` `.js` `.mjs` `.cjs` `.jsx` | `typescript-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `emmet-ls` | Managed by Impulse                                             |
+| HTML                   | `.html` `.htm`                                        | `vscode-html-language-server`, `tailwindcss-language-server`, `emmet-ls`                                 | Managed by Impulse                                             |
+| CSS, SCSS, Less        | `.css` `.scss` `.less`                                | `vscode-css-language-server`, `tailwindcss-language-server`, `emmet-ls`                                  | Managed by Impulse                                             |
+| Vue                    | `.vue`                                                | `vue-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `emmet-ls`        | Managed by Impulse                                             |
+| Svelte                 | `.svelte`                                             | `svelteserver`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `emmet-ls`               | Managed by Impulse                                             |
+| JSON                   | `.json` `.jsonc`                                      | `vscode-json-language-server`                                                                            | Managed by Impulse                                             |
+| YAML                   | `.yaml` `.yml`                                        | `yaml-language-server`                                                                                   | Managed by Impulse                                             |
+| PHP                    | `.php`                                                | `intelephense`                                                                                           | Managed by Impulse                                             |
+| GraphQL                | `.graphql` `.gql`                                     | `graphql-lsp`                                                                                            | Managed by Impulse                                             |
+| Dockerfile             | `Dockerfile`, `Containerfile`, `Dockerfile.*`         | `docker-langserver`                                                                                      | Managed by Impulse                                             |
+| Shell                  | `.sh` `.bash` `.zsh`                                  | `bash-language-server`                                                                                   | Managed by Impulse                                             |
+| Rust                   | `.rs`                                                 | `rust-analyzer`                                                                                          | Your `PATH`                                                    |
+| Python                 | `.py` `.pyi`                                          | `pyright-langserver` (from pyright)                                                                      | Your `PATH`                                                    |
+| C, C++                 | `.c` `.cpp` `.cc` `.cxx` `.h` `.hpp` `.hh` `.hxx`     | `clangd`                                                                                                 | Your `PATH`                                                    |
+| Swift                  | `.swift`                                              | `sourcekit-lsp`                                                                                          | Xcode or the Command Line Tools (the Swift toolchain on Linux) |
 
 When a language has several servers, they all run: in `trailhead`, TypeScript files get type checking from `typescript-language-server`, lint results from ESLint, and Tailwind and Emmet completions where they apply. Each request goes to the first server that supports it.
 
-Monaco has no Vue or Svelte highlighting of its own, so `.vue` and `.svelte` files are highlighted as HTML; their servers still treat them as Vue and Svelte.
+The editor has no Vue or Svelte highlighting of its own, so `.vue` and `.svelte` files are highlighted as HTML; their servers still treat them as Vue and Svelte.
 
-Other languages (Go, Ruby, Java and so on) get Monaco's syntax highlighting but no server unless you add one; see [Adding or replacing servers](#adding-or-replacing-servers). Fish scripts (`.fish`) are highlighted as shell, but `bash-language-server` doesn't run for them, since it can't read fish.
+Other languages (Go, Ruby, Java and so on) get syntax highlighting but no server unless you add one; see [Adding or replacing servers](#adding-or-replacing-servers). Fish scripts (`.fish`) are highlighted as shell, but `bash-language-server` doesn't run for them, since it can't read fish.
 
 ### Installing servers
 
-**Servers on your `PATH`.** Install `rust-analyzer`, `pyright` and `clangd` with your usual tools (rustup, Homebrew, npm, …). Impulse looks them up in your login shell's `PATH`, so it finds them even when you start it from the Dock. `sourcekit-lsp` comes with Xcode and the Command Line Tools.
+**Servers on your `PATH`.** Install `rust-analyzer`, `pyright` and `clangd` with your usual tools (rustup, Homebrew, your distribution's packages, npm, …). Impulse looks them up in your login shell's `PATH`, so it finds them even when you start it from the Dock or your desktop's app launcher. `sourcekit-lsp` comes with Xcode and the Command Line Tools, and on Linux with the Swift toolchain.
 
 **Managed web servers.** The TypeScript, web, PHP, YAML, Dockerfile, GraphQL and shell servers are npm packages that Impulse installs into its own folder, separate from your projects:
 
@@ -213,7 +211,7 @@ Other languages (Go, Ruby, Java and so on) get Monaco's syntax highlighting but 
 2. Run **Install Web LSP Servers** from the command palette (⇧⌘P), or open Settings ▸ Language Servers and click **Install All**.
 3. Wait for the "Language servers installed" message. Files you open afterwards get their servers.
 
-The packages go into `~/Library/Application Support/impulse/lsp`. Run the command again to update them. Updates stay within each package's current major version, so a reinstall never brings a version that works differently (TypeScript stays on 6: TypeScript 7 no longer includes the `tsserver` that `typescript-language-server` runs). The packages' install scripts don't run: none of these servers needs one. A server found on your `PATH` is used before the managed copy.
+The packages go into `~/Library/Application Support/impulse/lsp` on macOS and `~/.local/share/impulse/lsp` on Linux. Run the command again to update them. Updates stay within each package's current major version, so a reinstall never brings a version that works differently (TypeScript stays on 6: TypeScript 7 no longer includes the `tsserver` that `typescript-language-server` runs). The packages' install scripts don't run: none of these servers needs one. A server found on your `PATH` is used before the managed copy.
 
 Settings ▸ Language Servers lists the managed servers, then `rust-analyzer`, `pyright`, `clangd` and `sourcekit-lsp` under "From your system", each with a check mark and the path where it was found, or "Not installed".
 
@@ -256,7 +254,7 @@ For example, to use `gopls` for Go files:
 }
 ```
 
-Language ids are Monaco's (`go`, `ruby`, `java`, …), except `typescriptreact` and `javascriptreact` for `.tsx` and `.jsx`, `shellscript` for shell scripts, `fish` for fish scripts, and `jsonc`, `vue` and `svelte`. If the file has a mistake, Impulse ignores all of it.
+Language ids are the usual ones, as in VS Code (`go`, `ruby`, `java`, …), including `typescriptreact` and `javascriptreact` for `.tsx` and `.jsx`, `shellscript` for shell scripts, `fish` for fish scripts, and `jsonc`, `vue` and `svelte`. If the file has a mistake, Impulse ignores all of it.
 
 A project can have its own settings in `.impulse/lsp.json` (or `.impulse-lsp.json`) in its folder. They apply to files in that folder and below, within its repository; a folder deeper down with its own file uses that one instead. Because a project file comes with the code you open, it can only use `language_servers` to choose among servers that already exist (built in, or defined in your own `lsp.json`) and set `root_markers`; any `servers` in it are ignored. For example, to skip ESLint and Tailwind for TypeScript in one project:
 
@@ -275,7 +273,7 @@ Impulse notices when either file changes, within a couple of seconds, without a 
 
 | Feature                                             | How to use it                                                                                                                                                                                                  |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Completions                                         | Appear as you type (after `.`, `:`, `<`, `"`, `/`, `@`, `\` or a space), or press ⌃Space. **Word-based suggestions** adds words from your files to the list.                                                   |
+| Completions                                         | Appear as you type, and after the characters the server asks for (such as `.`), or press ⌃Space. **Word-based suggestions** adds words from your files to the list.                                            |
 | Hover                                               | Rest the pointer on a symbol to see its type and documentation.                                                                                                                                                |
 | Signature help                                      | Typing `(` or `,` in a call shows the function's parameters, with the current one highlighted.                                                                                                                 |
 | Go to Definition                                    | ⌘-click, or F12. A definition in another file opens in its own tab at that line.                                                                                                                               |
@@ -284,11 +282,11 @@ Impulse notices when either file changes, within a couple of seconds, without a 
 | Highlight occurrences                               | Put the cursor on a symbol to highlight its other uses in the file, as the server finds them (without a server, other occurrences of the same word). Turn it off with **Highlight occurrences of the symbol**. |
 | Inlay hints                                         | Inferred types and parameter names shown inline, if the server provides them. The **Inlay hints** setting turns them off or shows them only while you hold ⌃⌥ (or hides them while you hold ⌃⌥).               |
 | Rename Symbol                                       | F2, type the new name, press Return. Renames across files; see below.                                                                                                                                          |
-| Code actions                                        | Click the light bulb that appears when the cursor is on something with actions, or press ⌘. (Quick Fix): imports, fixes, refactorings and source actions from the server.                                      |
+| Code actions                                        | Press ⌘. (Quick Fix), or right-click ▸ Show Code Actions: imports, fixes, refactorings and source actions from the server.                                                                                     |
 | Format Document                                     | ⌥⇧F or right-click ▸ Format Document.                                                                                                                                                                          |
 | Diagnostics                                         | Errors and warnings are underlined as the server finds them; hover for the message. All of them collect in the [Problems tab](#problems).                                                                      |
 
-TypeScript and JavaScript errors come only from the language server, which reads your `tsconfig.json`. Monaco's own built-in checker is turned off because it doesn't know your project's settings.
+TypeScript and JavaScript errors come only from the language server, which reads your `tsconfig.json`.
 
 ### Rename and other edits across files
 
@@ -298,7 +296,7 @@ Each editor tab only edits its own file, so when a rename or code action changes
 - Files that aren't open are rewritten on disk.
 - Files the change creates, moves or deletes are handled too; deleted files go to the Trash. A folder is only deleted with what's in it when the server asks for that.
 
-When more than one file changed, a notification such as "Renamed in 6 files" appears with an **Undo** button that reverts the whole change: open editors undo their step (if it's still their latest change) and files on disk go back to what they were (if nothing has changed them since). A change limited to the current file undoes with ⌘Z like any edit.
+When more than one file changed, a notification such as "Rename to fetchForecast: changed 6 files" appears with an **Undo** button that reverts the whole change: open editors undo their step (if it's still their latest change) and files on disk go back to what they were (if nothing has changed them since). A change limited to the current file undoes with ⌘Z like any edit.
 
 Before a change creates, moves or deletes files, or changes files outside where it's expected to, Impulse asks: "Apply “_change_”?" lists what it would do, and nothing happens unless you click **Apply**. A rename or code action you pick may change any file in the file's repository without asking (or in the trusted folder it's in, when only part of the repository is trusted or there's no repository), so renaming something another package or crate uses doesn't ask. A change a server makes on its own stays within the server's project root (see [How servers run](#how-servers-run)). If the window closes before you answer, the change isn't made.
 
@@ -385,16 +383,16 @@ Opening an image (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`, `.ico`, `.ti
 
 ## Vim mode
 
-Turn on **Vim keybindings** (Settings ▸ Editor ▸ Behavior, `editor_vim_mode`) to edit with Vim's normal, insert and visual modes. Impulse uses [monaco-vim](https://github.com/brijeshb42/monaco-vim), which provides Vim's common motions, operators, registers, search and `:` commands such as `:s`. The current mode, and the command line while you type a `:` command, show in the bottom-right corner of the editor.
+Turn on **Vim keybindings** (Settings ▸ Editor ▸ Behavior, `editor_vim_mode`) to edit with Vim's normal, insert, replace and visual modes (Visual Block included). Impulse has Vim's common motions, operators, text objects, counts, registers, marks, macros, `.`, search and `:` commands such as `:s`. The current mode, and the command line while you type a `:` command, show at the right of the status bar.
 
 - `:w` saves (like ⌘S), `:q` closes the tab, `:wq` saves and closes, and `:x` saves if there are unsaved changes, then closes. `:q` (and `:q!`) with unsaved changes asks first, like closing the tab any other way.
-- ⌘ shortcuts keep working as usual.
-- Vim keybindings apply to the normal editor, not to the [diff view](#diff-view).
+- ⌘ shortcuts keep working as usual. On Linux, Vim's own Ctrl keys (such as Ctrl-F, Ctrl-D and Ctrl-V) come before Impulse's commands outside insert mode, and Ctrl-C leaves insert and visual mode.
+- In the [diff view](#diff-view), Vim keybindings work on the editable side.
 - The setting applies to every editor tab as soon as you change it.
 
 ## Git in the editor
 
-For files in a git repository, the editor shows what has changed since the last `git add`, who last changed each line, and buttons for resolving merge conflicts. For committing, branches and the Changes panel, see [Git](git.md).
+For files in a git repository, the editor shows what has changed since the last `git add`, finds the commit that last changed a line, and has buttons for resolving merge conflicts. For committing, branches and the Changes panel, see [Git](git.md).
 
 ### Change marks
 
@@ -411,11 +409,11 @@ Click a mark to open a _peek_ under the change:
 - **Review** opens the Review tab on its Unstaged scope, at this file. See [Review](review.md).
 - **✕**, or clicking the mark again, closes the peek.
 
-### Inline blame
+### Show Commit for This Line
 
-When the cursor rests on a line for about half a second, faded text at the end of the line says who last changed it, when, and the commit's summary, for example "Maya Chen, 3 weeks ago · Cache forecasts per trail". Click that text, or right-click and choose **Show Commit for This Line**, to open History with the commit selected.
+To find out who last changed a line, and when, right-click and choose **Show Commit for This Line**. History opens with the commit that last changed the cursor's line selected, showing its author, date and changes. It works with unsaved edits too; a line that isn't committed yet has no commit, so nothing opens.
 
-Blame describes the saved file, so it isn't shown on lines you've changed, on lines that aren't committed yet, or anywhere in the file once it has unsaved edits (it returns after you save). To see every commit that touched the file, use **Show History of This File** (⌃⇧⌘H). See [History](history.md).
+To see every commit that touched the file, use **Show History of This File** (⌃⇧⌘H). See [History](history.md).
 
 ### Diff view
 
@@ -426,7 +424,7 @@ Blame describes the saved file, so it isn't shown on lines you've changed, on li
 - The left side is the staged version and is read-only. The right side is your live buffer: you can type in it, language features work, ⌘S saves, and the diff updates as you edit.
 - The bar at the top shows the file name, "Index ↔ Working copy", and a summary such as "2 changes +5 −2".
 - **↑** and **↓** jump to the previous and next change.
-- **Inline** shows both versions in one column; the button then reads **Side by Side** to switch back. A narrow pane shows the inline layout on its own.
+- **Inline** shows both versions in one read-only column; the button then reads **Side by Side** to switch back.
 - Long runs of unchanged lines are folded away, leaving three lines of context around each change.
 - **Done**, or ⌥⌘G again, returns to the normal editor with the cursor where you left it.
 
@@ -442,7 +440,7 @@ When a file contains conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`, and opti
 - **Accept Incoming** keeps the other side (the part before `>>>>>>>`, for example `units-precision`).
 - **Accept Both** keeps your side followed by the incoming side.
 
-Each choice replaces the whole block, markers included (a base section is dropped), as one edit you can undo with ⌘Z. The bar names the two sides ("HEAD ⟷ units-precision"); when the file has more than one conflict it also shows "1 of 3" and **↑**/**↓** buttons to move between them. **Go to Next Merge Conflict** and **Go to Previous Merge Conflict** are also in the editor's own command list (right-click ▸ Command Palette, or F1).
+Each choice replaces the whole block, markers included (a base section is dropped), as one edit you can undo with ⌘Z. The bar names the two sides ("HEAD ⟷ units-precision"); when the file has more than one conflict it also shows "1 of 3" and **↑**/**↓** buttons to move between them. **Go to Next Merge Conflict** and **Go to Previous Merge Conflict** are also in the editor's right-click menu while the file has conflicts.
 
 You can also edit the block by hand. When the last conflict in a file git lists as conflicted is gone, a notification says "No conflicts left in units.ts." with **Save & Mark Resolved**, which saves the file and stages it as resolved. Resolving whole merges, rebases and cherry-picks is covered in [Git](git.md).
 
@@ -460,7 +458,7 @@ Any tab can be split into panes, so you can put two files, or a file and a termi
 - [Command palette](command-palette.md): quick open, `@`, `#`, `%` and `:` modes
 - [Git](git.md): the Changes panel, committing, merge conflicts
 - [Review](review.md): reviewing and staging changes hunk by hunk
-- [History](history.md): commits, blame and file history
+- [History](history.md): commits, the commit behind a line, and file history
 - [Agents](agents.md): sending code and problems to coding agents
 - [Command-line tool](cli.md): `impulse open`, `impulse edit` and `$EDITOR`
 - [Settings and themes](settings-and-themes.md): every setting, `settings.json`, keyboard shortcuts

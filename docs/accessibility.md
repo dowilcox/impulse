@@ -1,55 +1,40 @@
 # Accessibility
 
-Impulse works with VoiceOver, follows the Reduce Motion and Increase Contrast settings in macOS, and can be driven from the keyboard. This page explains what each of these does in Impulse, the settings that make text easier to read, and where the current limits are.
+Impulse works with screen readers (VoiceOver on macOS, Orca on Linux), follows your system's Reduce Motion and Increase Contrast settings, and can be driven from the keyboard. This page explains what each of these does in Impulse, the settings that make text easier to read, and where the current limits are.
 
-## VoiceOver
+## Screen readers
 
 ### Terminal output
 
-VoiceOver sees each terminal as a read-only text area, described as "terminal". It contains the text that's on screen in that terminal, one line per row, so you can read it with the usual VoiceOver text commands: by line, by word or by character. VoiceOver also knows which line the cursor is on, and reads the text you've selected.
+A screen reader sees each terminal as a terminal labeled "Terminal" with the tab's title. Its text is what's on screen in that terminal, one line per row, and it follows the output as it changes. Impulse works this text out only while a screen reader is running.
 
-- When the output changes, Impulse tells VoiceOver, at most twice a second, so a busy program doesn't flood you with updates. This only happens while VoiceOver is running.
-- Only the visible screen is exposed, not the scrollback. Scroll the terminal to read earlier output, or select command blocks and copy them (see [Terminal](terminal.md)).
-
-You type commands in the input bar below the output, which is a standard macOS text field labeled "Command input". When a program asks for a password, the field becomes a secure field labeled "Password input", and what you type isn't shown or spoken.
-
-### Announcements for agents
-
-When a coding agent in one of your terminals stops to wait for you, or finishes its turn, Impulse asks VoiceOver to announce it, for example "Claude Code needs your input in trailhead" or "Codex finished in fix-elevation". The announcement names the agent and the tab it's in, uses high priority so it isn't dropped, and is made once each time the agent's state changes. Announcements are made only while VoiceOver is running.
-
-To go to the agent that needs you, press ⇧⌘U (**Next Agent Needing You**). See [Agents](agents.md).
+Only the visible screen is exposed, not the scrollback. Scroll the terminal to read earlier output, or select command blocks and copy them (see [Terminal](terminal.md)).
 
 ### Labels
 
-Impulse's controls have labels VoiceOver reads. Some examples:
+Some of Impulse's controls have labels a screen reader reads:
 
 - **Buttons that show only an icon** are labeled with the same text as their tooltip, for example "New Tab (⌘T)".
-- **Buttons that open a menu**, such as a workspace row's **+**, Review's scope menu and the agent toolbelt's turns, are buttons to VoiceOver: its press action opens the menu, and so does Space when they have the keyboard (with **Keyboard navigation** on in System Settings ▸ Keyboard).
-- **Tabs** read as "Terminal: _title_" or "Editor: _title_", followed by "needs attention", the program's status or a progress percentage when there is one. Each tab's close button reads "Close _title_", and the tab strip as a whole is labeled "Tabs".
-- **Workspaces** read as "Workspace _name_", with the branch and how many tabs need attention.
-- **Agents**: the status icon reads "Agent working", "Agent needs input", "Agent finished" or "Agent idle". The inbox button in the titlebar reads, for example, "Agents: 1 working, 2 waiting", and each row in the inbox gives the agent, its tab and its state.
-- **Changes panel** rows read the file's path and its status, for example "src/forecast.ts, modified".
-- **Review** reads each diff line as "Added line 12: …", "Removed line 9: …" or "Unchanged line 4: …". In the split layout, a row reads both sides. File headers say whether you've marked the file viewed, and the progress meter reads "Viewed 40 percent".
-- **History** rows read the commit's subject, author and short SHA.
-- **Settings** rows are labeled with the setting's name. Spinners and progress rings read "In progress" or a percentage.
-- Other named fields include "Palette query", "Commit message" and "Project files" (the file tree).
+- **Tabs** read as their title, followed by "unsaved", "needs attention" or "preview" when that applies. Each tab's close button reads "Close _title_".
+- **Workspaces** in the sidebar read as the workspace's name and its branch.
+- **The Files, Changes and Search buttons** at the top of the sidebar are tabs, and the file tree's rows are tree items with their name, level, and whether a folder is open.
+- **The changes pill** in the titlebar reads, for example, "Review changes: 3 files, 12 added, 4 removed lines".
+- The command palette's field is labeled "Palette query".
 
-### The code editor
-
-The editor is Monaco, the editor from VS Code, running inside a web view. Impulse uses Monaco's default accessibility behavior and doesn't add its own VoiceOver support to the editor.
+The editor, the input bar, Review, History, the Changes panel's rows and the agent inbox don't give a screen reader their text yet, and Impulse doesn't announce agents' state changes. To go to the agent that needs you, press ⇧⌘U (**Next Agent Needing You**). See [Agents](agents.md).
 
 ## Reduce Motion
 
-When **Reduce motion** is on in **System Settings › Accessibility › Display**, Impulse turns off these animations:
+When **Reduce motion** is on in **System Settings › Accessibility › Display** (on Linux, when GNOME's animations are turned off), Impulse turns off these animations:
 
-- The quick terminal appears in place instead of sliding down from the top of the screen.
-- The terminal's find bar appears and disappears without sliding.
-- Tabs, and workspaces in the sidebar, move without animation when you drag to reorder them, and the tab strip doesn't animate when it scrolls to the selected tab.
-- Spinners stop spinning. A spinner still shows that something is in progress, and VoiceOver still reads "In progress".
+- Spinners stop spinning. A spinner still shows that something is in progress.
+- The editor jumps instead of scrolling smoothly, even with **Smooth scrolling** on, and doesn't bounce at the ends.
+
+Impulse follows the setting while it runs; you don't need to restart it.
 
 ## Increase Contrast
 
-When **Increase contrast** is on in **System Settings › Accessibility › Display**, Impulse strengthens the window's own colors, in every theme:
+When **Increase contrast** is on in **System Settings › Accessibility › Display** (on Linux, GNOME's **High Contrast**), Impulse strengthens the window's own colors, in every theme:
 
 - Dividers and borders are firmer.
 - Hover, pressed and selected backgrounds are stronger.
@@ -73,7 +58,7 @@ Impulse's window doesn't use translucent materials, so **Reduce transparency** h
 | Editor and terminal together | ⌘= and ⌘- make both one point larger or smaller (6 to 72 points); ⌘0 sets both back to 14. The new sizes apply in every window and are saved in your settings. |
 | Editor only                  | **Settings › Editor › Font size** (`font_size`) and **Line height** (`editor_line_height`, in points; 0 uses the font's own).                                  |
 | Terminal only                | **Settings › Terminal › Font size** (`terminal_font_size`).                                                                                                    |
-| Fonts                        | **Font family** under **Editor** and under **Terminal** lists the monospaced fonts installed on your Mac.                                                      |
+| Fonts                        | **Font family** under **Editor** and under **Terminal** lists the monospaced fonts installed on your computer.                                                 |
 
 The terminal's input bar and the agent composer follow the terminal's font size (a point smaller) and zoom, and the Review and History diffs follow the editor's font family and size (slightly smaller: 12 points at the default 14). The window's sidebar, tabs and panels use fixed sizes.
 
@@ -93,9 +78,9 @@ Impulse pairs colors with text or shapes in most places:
 
 - Files in the Changes panel show a status letter (such as M, A, D or U) next to the colored name, and deleted files are struck through.
 - The agent inbox spells out each agent's state in words.
-- A command that the shell can't run gets a dashed underline in the input bar, with a tooltip saying "command not found".
+- A command that the shell can't run gets a dashed underline in the input bar.
 
-The badge on an agent's icon differs in shape as well as color: a dot in the theme's orange when the agent needs you, a check mark in its green when the agent has finished. Open the inbox to see the state in words, or use VoiceOver, which reads it with the tab.
+The badge on an agent's icon differs in shape as well as color: a dot in the theme's orange when the agent needs you, a check mark in its green when the agent has finished. Open the inbox to see the state in words. A screen reader reads "needs attention" with the tab of an agent that needs you.
 
 ### Cursors and motion in the editor and terminal
 
@@ -141,13 +126,13 @@ The file tree, the Changes panel, the History commit list, the command palette a
 - The selected row in the Changes panel and in History gets a focus ring while that list has the keyboard, so you can tell which list your arrow keys will move.
 - The commit message box and the filter fields in Review and History draw a focus ring in the theme's accent color while you type in them.
 - The input bar's border turns to the accent color while it has the keyboard.
-- The file tree shows its selection without a ring, like Finder's sidebar.
+- The file tree shows its selection without a ring.
 
 With Increase Contrast on, focus rings are fully opaque.
 
 ### Tooltips
 
-Icon-only buttons show a tooltip with their name, and often their shortcut, after half a second (macOS normally waits longer).
+Icon-only buttons show a tooltip with their name, and often their shortcut, after half a second.
 
 ### Sheets and dialogs
 
@@ -155,19 +140,19 @@ In sheets such as **New Task…** and in confirmation dialogs, ↩ presses the d
 
 ### Changing shortcuts
 
-In the Keyboard Shortcuts tab (⌥⌘,), choose a command's shortcut and press the new keys. A key that can't be a shortcut, such as a letter without ⌘, ⌃ or ⌥, is refused: the shortcut shows why, VoiceOver announces it, and the tab waits for other keys until you press a valid shortcut or Esc. See [Customize keyboard shortcuts](settings-and-themes.md#customize-keyboard-shortcuts).
+In the Keyboard Shortcuts tab (⌥⌘,), choose a command's shortcut and press the new keys. A key that can't be a shortcut, such as a letter without ⌘, ⌃ or ⌥ (on Linux, Ctrl, Alt or Super), is refused: the tab shows why and waits for other keys until you press a valid shortcut or Esc. See [Customize keyboard shortcuts](settings-and-themes.md#customize-keyboard-shortcuts).
 
 ## Sound and notifications
 
 These settings are under **Settings › Terminal › Bell & notifications**:
 
-- **Audible bell** plays the system alert sound when a program rings the terminal bell. Turn it off if you'd rather not hear it.
-- **Request attention on bell** marks the terminal as needing attention, bounces the Dock icon when Impulse is in the background, and posts a notification.
-- **Allow terminal notifications** lets programs and agents post macOS notifications.
+- **Audible bell** plays the system alert sound (on Linux, the desktop's bell sound) when a program rings the terminal bell. Turn it off if you'd rather not hear it.
+- **Request attention on bell** marks the terminal as needing attention, bounces the Dock icon when Impulse is in the background (on Linux, asks the desktop to flag the window), and posts a notification.
+- **Allow terminal notifications** lets programs and agents post desktop notifications.
 - **Notification sound** plays a short sound of Impulse's with each desktop notification: two chirps (Acknowledge, the default, or Two-tone) or a soft chime. Choose **Off** for silent notifications.
 - **Notify when long commands finish** tells you when a command that ran longer than **Long command threshold** (30 seconds by default) finishes.
 
-Impulse's Dock icon shows a badge with the number of terminals that need your attention.
+Impulse's Dock icon shows a badge with the number of terminals that need your attention. On Linux the count shows on Impulse's launcher icon, on docks and task bars that show one.
 
 ## Related
 

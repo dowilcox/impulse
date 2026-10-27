@@ -24,7 +24,7 @@ Shell integration is a small script Impulse loads into bash, zsh and fish. It te
 Impulse runs your login shell, the one recorded for your user account (what `chsh` sets). If it can't read that, it uses `$SHELL`, and then `/bin/bash`. There is no shell setting in Impulse. To use a different shell, change your login shell and open a new terminal:
 
 ```sh
-chsh -s /opt/homebrew/bin/fish
+chsh -s /opt/homebrew/bin/fish   # Homebrew's fish on a Mac; on Linux usually /usr/bin/fish
 ```
 
 The shell must be listed in `/etc/shells` for `chsh` to accept it. Terminals that are already open keep the shell they started with.
@@ -63,19 +63,19 @@ Each of these carries a secret that is unique to each terminal, so text that a p
 
 Impulse terminals inherit Impulse's environment, with these changes:
 
-| Variable                                              | Value                                                                                                            |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `TERM`                                                | `xterm-256color`                                                                                                 |
-| `COLORTERM`                                           | `truecolor`                                                                                                      |
-| `TERM_PROGRAM`                                        | `Impulse` (useful for Impulse-only settings in your shell config)                                                |
-| `LANG`                                                | Your system's UTF-8 locale (for example `en_US.UTF-8`), only when none of `LANG`, `LC_ALL` and `LC_CTYPE` is set |
-| `PATH`                                                | Starts with the folder that holds the bundled [`impulse` command-line tool](cli.md)                              |
-| `IMPULSE_SOCKET`, `IMPULSE_PANE_TOKEN`, `IMPULSE_CLI` | Let the `impulse` tool find this window and this terminal                                                        |
-| `EDITOR`, `VISUAL`                                    | `impulse edit`, only when **Use Impulse as $EDITOR** is on (see [CLI](cli.md))                                   |
+| Variable                                              | Value                                                                                                                 |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `TERM`                                                | `xterm-256color`                                                                                                      |
+| `COLORTERM`                                           | `truecolor`                                                                                                           |
+| `TERM_PROGRAM`                                        | `Impulse` (useful for Impulse-only settings in your shell config)                                                     |
+| `LANG`                                                | A UTF-8 locale (`en_US.UTF-8` on macOS, `C.UTF-8` on Linux), only when none of `LANG`, `LC_ALL` and `LC_CTYPE` is set |
+| `PATH`                                                | Starts with the folder that holds the bundled [`impulse` command-line tool](cli.md)                                   |
+| `IMPULSE_SOCKET`, `IMPULSE_PANE_TOKEN`, `IMPULSE_CLI` | Let the `impulse` tool find this window and this terminal                                                             |
+| `EDITOR`, `VISUAL`                                    | `impulse edit`, only when **Use Impulse as $EDITOR** is on (see [CLI](cli.md))                                        |
 
-Impulse leaves out the dynamic-loader variables (`DYLD_*`, `LD_PRELOAD` and similar) and its own `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `FORCE_COLOR`. Your shell's startup files can still set any of these.
+Impulse leaves out its own `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE` and `FORCE_COLOR`. Your shell's startup files can still set any of these.
 
-At launch, Impulse also runs your shell once in the background (`-i -l -c`) to learn your `PATH`, so it can find `git` and language servers even when started from the Dock. During that run `IMPULSE_RESOLVING_ENVIRONMENT=1` is set; check for it in your startup files to skip slow or interactive setup.
+At launch, Impulse also runs your shell once in the background (`-i -l -c`) to learn your `PATH`, so it can find `git` and language servers even when started from the Dock or a desktop launcher. During that run `IMPULSE_RESOLVING_ENVIRONMENT=1` is set; check for it in your startup files to skip slow or interactive setup.
 
 ### Checking that integration works
 
@@ -237,8 +237,8 @@ The clock button at the right opens [history search](#searching-history) (⌃R).
 Type a command and press Return to run it. The terminal scrolls to the bottom and the command's block appears above the bar.
 
 - **Several lines.** Press ⇧↩ or ⌥↩ to start a new line. The bar grows to 8 lines and then scrolls. When you run a multi-line command, it reaches the shell as a single paste and runs as a whole, rather than line by line.
-- **Pasting.** Pasted text keeps its newlines. Copied files paste as their paths, escaped for the shell. A copied image is saved as a PNG under `~/Library/Caches/Impulse/Pasted Images/` and its path is inserted.
-- **Dropping files.** Drop files from Finder onto the terminal to insert their escaped paths into the input bar.
+- **Pasting.** Pasted text keeps its newlines. Copied files paste as their paths, escaped for the shell. A copied image is saved to a file in the temporary folder and its path is inserted.
+- **Dropping files.** Drop files from Finder (or your file manager, or Impulse's file tree) onto the terminal to insert their escaped paths into the input bar.
 - **Typing or pasting while the grid has focus.** At a prompt, text you type or paste (⌘V) in the grid goes to the input bar, which takes the keyboard back, so it never sits unseen in the shell's own line.
 
 When text is in the bar, a `⏎ run` hint shows at its right end.
@@ -260,7 +260,7 @@ As you type, the rest of a likely command appears in dim text after the cursor:
 
 The suggestion only shows when the cursor is at the end of the text, and not while a command runs.
 
-- Press → at the end of the line to accept the whole suggestion, or ⌥→ to accept its next word (up to the next space or `/`), as in fish.
+- Press → at the end of the line to accept the whole suggestion, or ⌥→ (Ctrl+→ on Linux) to accept its next word (up to the next space or `/`), as in fish.
 - Tab also accepts the whole suggestion when there's nothing else to complete. When several completions match, Tab opens the [completion menu](#completions) instead.
 
 ### Recalling recent commands
@@ -308,7 +308,7 @@ The [quick terminal](workspaces-and-tabs.md) always uses the shell's own prompt.
 | ⇧↩, ⌥↩ | New line                                                                                          |
 | Tab    | Open the completion menu; accept the highlighted completion; or accept the ghost suggestion       |
 | →      | At the end of the line: accept the ghost suggestion                                               |
-| ⌥→     | At the end of the line: accept the next word of the ghost suggestion                              |
+| ⌥→     | At the end of the line: accept the next word of the ghost suggestion (Ctrl+→ on Linux)            |
 | ↑, ↓   | On the first or last line: previous or next command from history; in the menu: move the highlight |
 | Esc    | Close the completion menu; otherwise move the keyboard into the grid                              |
 | ⌃C     | Interrupt the running program                                                                     |
@@ -359,7 +359,7 @@ Impulse keeps one history of the commands you run in all its terminals, with whe
 
 ### What is recorded
 
-Each command recorded by shell integration is stored when it finishes, with its folder, repository, branch, exit status and duration. Commands that start with a space aren't recorded (the shells' usual way to keep a command out of history). The input bar keeps a leading space you type, so your shell leaves the command out of its own history too. The history lives in `~/Library/Application Support/impulse/history.sqlite3` and keeps your most recent 100,000 runs. It's stored only on your Mac.
+Each command recorded by shell integration is stored when it finishes, with its folder, repository, branch, exit status and duration. Commands that start with a space aren't recorded (the shells' usual way to keep a command out of history). The input bar keeps a leading space you type, so your shell leaves the command out of its own history too. The history lives in `history.sqlite3` in Impulse's data folder (`~/Library/Application Support/impulse/` on macOS, `~/.local/share/impulse/` on Linux) and keeps your most recent 100,000 runs. It's stored only on your computer.
 
 To stop recording, turn off **Keep command history** (`terminal_persistent_history`) in Settings ▸ Terminal. While it's off, Impulse doesn't read or search the stored history either: ghost suggestions and ↑/↓ use only each terminal's own session, and history search is empty. Commands already stored stay in the file until you run **Clear Command History** in the command palette, which deletes them all (it asks first). After clearing, ghost suggestions and ↑/↓ also leave out what the open terminals ran before, and commands typed with a leading space never show up there either.
 
@@ -412,7 +412,7 @@ Impulse makes three kinds of text in the output clickable. Hover over one to und
 
 File references include paths with a slash or a file extension, with an optional `:line:column` or `(line,column)`, and Python traceback lines. Relative paths are resolved against the terminal's current folder, and only files that exist are linked. If you've changed folders since the output was printed, an old relative path may no longer resolve.
 
-Links from program output can point anywhere, so Impulse is careful about opening them: `http`, `https` and `mailto` links open directly, `file` links open files in the editor and show folders in Finder (nothing is launched), and any other kind of link asks first, showing the full target.
+Links from program output can point anywhere, so Impulse is careful about opening them: `http`, `https` and `mailto` links open directly, `file` links open files in the editor and show folders in Finder or your file manager (nothing is launched), and any other kind of link asks first, showing the full target.
 
 To turn links off, turn off **Clickable links** (`terminal_allow_hyperlink`) in Settings ▸ Terminal.
 
@@ -445,7 +445,7 @@ Hints mode lets you open, copy or insert anything on screen without the mouse. P
 | File references | Like [file links](#links-and-file-references); only files that exist  | Opens the file in the editor at the line        |
 | Commit SHAs     | 7 to 40 hexadecimal characters with at least one letter and one digit | Opens [History](history.md) at that commit      |
 
-A `file://` address is never launched: a file opens in the editor, and a folder or app is shown in Finder.
+A `file://` address is never launched: a file opens in the editor, and a folder or app is shown in Finder or your file manager.
 
 Type a label to act on its target:
 
@@ -457,13 +457,12 @@ Type a label to act on its target:
 | ⌫                              | Undo the last letter typed                                                               |
 | Esc, or a click                | Leave hints mode                                                                         |
 
-Hints cover only what's visible on screen. When there's nothing to label, Impulse beeps.
+Hints cover only what's visible on screen. When there's nothing to label, a notice says "Nothing to open on screen."
 
 ## Selecting, copying and pasting
 
 - **Select** text by dragging. Double-click selects a word and triple-click a line. **Select All** (⌘A while the grid has the keyboard, or from the right-click menu) selects the visible screen.
 - **Copy on select** (`terminal_copy_on_select`, on by default) copies a selection to the clipboard as soon as you release the mouse. ⌘C copies the selection too.
-- **Services.** With text selected in the grid, the **Impulse ▸ Services** menu can act on it (Look Up, Search With…, Make New Sticky Note and other services you have).
 - **Programs and the clipboard.** Programs can set the clipboard with OSC 52, as tmux, vim and ssh sessions do (**Programs may set the clipboard**, on by default). Reading the clipboard is off by default (**Programs may read the clipboard**); when you turn it on, Impulse answers the program's request with the clipboard's contents. A write of more than about 3 MB is ignored.
 - **Pasting** follows the input bar rules: at a prompt, text goes into the input bar; while a program owns the grid, it's sent to the program, as a bracketed paste when the program asks for one. Trailing newlines are removed, and control characters are stripped from bracketed pastes so pasted text can't end the paste early.
 - **Mouse reporting.** When a program turns on mouse reporting (htop, vim with `mouse=a`), clicks, drags and the scroll wheel go to the program instead of selecting text. Hold Shift or Option while you drag to select text anyway.
@@ -483,7 +482,7 @@ When Impulse restores your session, each terminal starts a fresh shell in its pr
 ## Font, cursor and colors
 
 - **Zoom.** **View ▸ Increase Font Size** (⌘=), **Decrease Font Size** (⌘-) and **Reset Font Size** (⌘0) change the terminal and editor font sizes together, one point at a time between 6 and 72. Reset returns both to 14.
-- **Font family** (`terminal_font_family`) defaults to JetBrains Mono, which comes with Impulse. **Font size** is `terminal_font_size`; the input bar's text follows it (and zoom), one point smaller, in the system's monospaced font.
+- **Font family** (`terminal_font_family`) defaults to JetBrains Mono, which comes with Impulse. **Font size** is `terminal_font_size`; the input bar's text follows it (and zoom), one point smaller, in the system's monospaced font (SF Mono) on macOS and the terminal's font on Linux.
 - **Bold text uses bright colors** (`terminal_bold_is_bright`, on): bold text in one of the 8 basic colors uses its bright variant.
 - **Minimum contrast** (`terminal_minimum_contrast`, 3 by default): Impulse lifts text colors that are too close to their background to at least this contrast ratio. Set it to 1 to turn it off.
 - **Cursor shape** (`terminal_cursor_shape`: block, underline or beam) and **Blinking cursor** (`terminal_cursor_blink`).
@@ -501,12 +500,12 @@ Terminals in other tabs, workspaces and windows keep running, and Impulse tells 
 
 ### What asks for attention
 
-| Event                          | Setting (Settings ▸ Terminal ▸ Bell & notifications)                          | What happens                                                                                                                                |
-| ------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| A command takes a while        | **Notify when long commands finish**, **Long command threshold** (30 seconds) | When a command that ran at least that long finishes: "Command finished" or "Command failed (exit 1)", with the command and how long it took |
-| The terminal bell              | **Audible bell**, **Request attention on bell**                               | The system beep, and a "Bell" notification                                                                                                  |
-| A program sends a notification | **Allow terminal notifications**                                              | The program's title and message (OSC 9, OSC 99 and OSC 777, as used by build tools and agent CLIs)                                          |
-| A program requests attention   | (always)                                                                      | iTerm2's OSC 1337 `RequestAttention`: `once` bounces the Dock once, `yes` keeps bouncing until you come back, `no` cancels                  |
+| Event                          | Setting (Settings ▸ Terminal ▸ Bell & notifications)                          | What happens                                                                                                                                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A command takes a while        | **Notify when long commands finish**, **Long command threshold** (30 seconds) | When a command that ran at least that long finishes: "Command finished" or "Command failed (exit 1)", with the command and how long it took                                                               |
+| The terminal bell              | **Audible bell**, **Request attention on bell**                               | The system beep (on Linux, the desktop's bell sound), and a "Bell" notification                                                                                                                           |
+| A program sends a notification | **Allow terminal notifications**                                              | The program's title and message (OSC 9, OSC 99 and OSC 777, as used by build tools and agent CLIs)                                                                                                        |
+| A program requests attention   | (always)                                                                      | iTerm2's OSC 1337 `RequestAttention`: `once` or `yes` marks the terminal and, while Impulse is in the background, bounces the Dock icon once (on Linux, marks the window as urgent); `no` clears the mark |
 
 A program that sends these in a flood beeps at most four times a second, and until you look at the terminal its bells and notifications reach the desktop at most once every five seconds.
 
@@ -522,10 +521,10 @@ The [`impulse notify`](cli.md) command does the same from any script in an Impul
 ### Where it shows
 
 - **Tab and sidebar.** A terminal you aren't looking at gets an attention dot on its tab, and its workspace row in the sidebar counts terminals that need you.
-- **Dock.** The Dock icon's badge counts terminals that need attention across all windows, and the Dock icon bounces when Impulse is in the background.
-- **Desktop notifications.** When Impulse is in the background, these events also post a macOS notification, with the workspace and tab as its subtitle. Click it to bring that terminal forward. macOS asks for permission the first time. Each one plays Impulse's own sound, chosen with **Notification sound** (`notification_sound`): **Acknowledge** (two quick chirps and a settled blip), **Two-tone** (a chirp up answered by one down), **Chime** (two soft notes) or **Off**. Picking one in Settings plays it. A bell's notification stays quiet when **Audible bell** has already beeped.
+- **Dock.** The Dock icon's badge counts terminals that need attention across all windows, and the Dock icon bounces when Impulse is in the background. On Linux the count shows on docks and task managers that read launcher badges (KDE's, Dash to Dock, Plank), and the window is marked as urgent instead of bouncing.
+- **Desktop notifications.** When Impulse is in the background, these events also post a desktop notification (Notification Center on macOS, `notify-send` on Linux), with the workspace and tab as its subtitle. Click it to bring that terminal forward (on Linux, where `notify-send` supports actions). macOS asks for permission the first time. Each one plays Impulse's own sound, chosen with **Notification sound** (`notification_sound`): **Acknowledge** (two quick chirps and a settled blip), **Two-tone** (a chirp up answered by one down), **Chime** (two soft notes) or **Off**. Picking one in Settings plays it. A bell's notification stays quiet when **Audible bell** has already beeped.
 
-The attention clears when you click into the terminal or its input bar, and its notifications are removed from Notification Center.
+The attention clears when you click into the terminal or its input bar, and its notifications are removed (on Linux, where `notify-send` can report their ids).
 
 A program that rings the bell or sends notifications in a loop beeps at most four times a second, and gets at most one desktop notification every five seconds until you look at the terminal; the latest one held back goes out when the five seconds are up.
 
@@ -557,15 +556,15 @@ Ports printed in output (`localhost:3000`) can also be opened with [hints](#hint
 
 ## The Option key
 
-Out of the box, Option types what macOS gives it, as in other Mac apps: ⌥F types ƒ, and on many keyboard layouts Option is how you type `@`, `[`, `{` or `|`. Shells and editors such as Emacs read Meta keys instead (Meta-f and Meta-b move by word in bash and zsh). Set **Option as Meta** (`terminal_option_as_meta`) to **Left Option**, **Right Option** or **Both Option keys**, and those keys send Esc followed by the key: ⌥F sends `Esc f` whatever your layout, ⌥⌫ `Esc Delete` (delete a word) and ⌥↩ `Esc Return`. Choosing one side leaves the other for typing special characters. ⌥ with the arrow keys sends the usual modified arrows either way.
+On the Mac, out of the box, Option types what macOS gives it, as in other Mac apps: ⌥F types ƒ, and on many keyboard layouts Option is how you type `@`, `[`, `{` or `|`. Shells and editors such as Emacs read Meta keys instead (Meta-f and Meta-b move by word in bash and zsh). Set **Option as Meta** (`terminal_option_as_meta`) to **Left Option**, **Right Option** or **Both Option keys**, and those keys send Esc followed by the key: ⌥F sends `Esc f` whatever your layout, ⌥⌫ `Esc Delete` (delete a word) and ⌥↩ `Esc Return`. Choosing one side leaves the other for typing special characters. ⌥ with the arrow keys sends the usual modified arrows either way. On Linux, Alt is always Meta and the setting has no effect.
 
 ## Keyboard protocol
 
-Impulse supports the kitty keyboard protocol. When a program asks for it (with `CSI > flags u`), Impulse sends keys in that protocol's unambiguous form, so the program can tell apart keys that a classic terminal sends identically (⌃I and Tab, Esc and ⌥), and it reports key releases, alternate keys and associated text when asked. Typing that goes through macOS input methods (dead keys, accented characters, Japanese or Chinese input) still works. Programs that don't ask get the classic encoding, where ⇧↩ is a plain Return.
+Impulse supports the kitty keyboard protocol. When a program asks for it (with `CSI > flags u`), Impulse sends keys in that protocol's unambiguous form, so the program can tell apart keys that a classic terminal sends identically (⌃I and Tab, Esc and ⌥), and it reports key releases, alternate keys and associated text when asked. Typing that goes through input methods (dead keys, accented characters, Japanese or Chinese input) still works. Programs that don't ask get the classic encoding, where ⇧↩ is a plain Return.
 
 ## Accessibility
 
-VoiceOver reads the terminal's visible screen as a text area labeled "Terminal" and is told when the output changes. The input bar is labeled "Command input" and the password field "Password input". See [Accessibility](accessibility.md).
+Screen readers such as VoiceOver read the terminal's visible screen, labeled "Terminal" with the tab's title, and follow it as the output changes. See [Accessibility](accessibility.md).
 
 ## Terminal settings
 

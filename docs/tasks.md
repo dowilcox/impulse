@@ -38,10 +38,10 @@ When you're done, **Finish Task…** lands the work and cleans up: it syncs the 
 
 | Where                          | How                                                                                                           |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Menu bar                       | **File ▸ New Task…**                                                                                          |
+| Menu bar                       | **File ▸ New Task…** (on Linux, in the titlebar's menu)                                                       |
 | Keyboard                       | ⌥⌘N                                                                                                           |
 | Command palette                | ⇧⌘P, then type `new task` and choose **New Task…**                                                            |
-| A workspace row's **+** button | Hover the row in the sidebar, click **+** (tooltip "New workspace"), then choose **New Task from trailhead…** |
+| A workspace row's **+** button | Hover the row in the sidebar, click **+**, then choose **New Task from trailhead…**                           |
 | A workspace row's context menu | Control-click (or right-click) the row and choose **New Task…**                                               |
 
 The menu, shortcut and palette start a task from the repository of the active workspace (in the Scratch workspace, the repository of the active tab's directory). The **+** button and the context menu start it from that row's repository, so you can start a task for `trailhead` while you're looking at another workspace. The **+** and context-menu items only appear on rows that are in a git repository.
@@ -200,7 +200,7 @@ Tasks keep work apart on disk, but two of them (or a task and the main checkout)
 - **A notification, once.** When two workspaces that didn't overlap start to, Impulse says so once: "fix-elevation and trailhead now change the same 3 files" (a toast, or a desktop notification when Impulse is in the background). More files between the same two don't notify again. Turn it off with **Notify when tasks change the same files** (`task_overlap_notify`) in Settings ▸ Terminal ▸ Agents.
 - **What counts.** Every file, lock files included: a lock file changed on both sides is one of the worst conflicts to sort out. The task's own env file never counts. To leave out files that are only noise in a project, list them in **Ignore when tasks overlap** in [Project Setup](project-config.md#project-setup) (`overlap_ignore`).
 
-The row's context menu has **New Task…**, **Move Changes to New Task…** (on the main checkout, when it has uncommitted files), **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder**, **Copy Path**, **Show Tabs** / **Hide Tabs**, **Finish Task…** (on task rows, first in the menu), **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
+The row's context menu has **New Task…**, **Move Changes to New Task…** (on the main checkout, when it has uncommitted files), **Project Setup…**, **Open Folder as Workspace…**, **Rename…**, **Reveal in Finder** (**Show in File Manager** on Linux), **Copy Path**, **Show Tabs** / **Hide Tabs**, **Move Up** / **Move Down**, **Finish Task…** (on task rows, first in the menu), **Archive Task…** (on task rows only; first in the menu once the task is merged), **Archive Merged Tasks…** (when any of the repository's tasks is merged) and **Close Workspace**. The repository's group header has **Archive Merged Tasks…** too.
 
 Impulse treats any workspace that is a linked git worktree as a task, including worktrees you created yourself with `git worktree add`. They get **Archive Task…** too.
 
@@ -285,7 +285,7 @@ Whatever the setting, the sheet always comes up when the request takes the main 
 
 #### Merge and push, or push for review
 
-The first Finish in a repository asks how work lands there, and remembers the answer in the [settings on this Mac](project-config.md#settings-for-this-mac-only). **Finishing tasks** in Project Setup changes it, and saving there moves it into the project's settings:
+The first Finish in a repository asks how work lands there, and remembers the answer in the [settings on this computer](project-config.md#settings-for-this-computer-only). **Finishing tasks** in Project Setup changes it, and saving there moves it into the project's settings:
 
 - **Merge into origin/main and push.** Impulse merges the branch with a merge commit ("Merge branch 'fix-elevation'"), so `main`'s first-parent history has one entry per task, and pushes `main`. The merge is made in a throwaway folder on `origin/main` that's removed afterwards, so your main checkout isn't touched, whatever state it's in. If someone pushed to `main` since the sync, Finish merges their commits too and pushes once more; if the merge conflicts or the push still fails, nothing is pushed and Finish stops. Hooks run as for any merge and push. If the server turns the push down (a protected branch, say), Finish says so and offers **Push for Review Instead**. Without a remote, the merge goes into the main checkout, and only when it's on the base branch with no changes to tracked files (untracked ones are fine unless the merge would overwrite them).
 - **Push for review.** Impulse pushes the branch (setting its upstream) and shows what the server said back, with any link in it as a button: GitLab, for example, sends a link for creating a merge request. Open the merge request on your git host as usual; Finish stops there. When a fetch shows the branch merged (squash merges included), the task's row says "merged" and, while the task's workspace is open, a toast offers **Clean Up…**, which opens Finish to update the main checkout and archive the task.
@@ -370,7 +370,7 @@ Unlike **New Task…**, opening a branch as a task doesn't start an agent. If th
 ## Gotchas
 
 - **"… already exists."** A folder with the task's name is already in `trailhead.worktrees`. Pick a different title, or move the folder away.
-- **Deleting a task folder by hand.** If you remove a task's folder in Finder or with `rm` instead of archiving it, git still considers its branch checked out there, so you can't switch to or delete that branch. Run `git worktree prune` in the repository to clear it.
+- **Deleting a task folder by hand.** If you remove a task's folder in a file manager or with `rm` instead of archiving it, git still considers its branch checked out there, so you can't switch to or delete that branch. Run `git worktree prune` in the repository to clear it.
 - **`node_modules` and build output aren't copied.** Only files matching `.worktreeinclude` (or the defaults) are copied, and folders never are. List folders under `[worktrees] clone` to have them cloned in (see [Cloning folders into tasks](project-config.md#cloning-folders-into-tasks)), or add a setup script such as `npm ci`.
 - **A `.worktreeinclude` replaces the defaults.** Once the file exists, `.env`, `.env.local` and `.claude/settings.local.json` are only copied if a pattern in it matches them. An empty `.worktreeinclude` copies nothing (except `[worktrees] copy` patterns).
 - **Settings come from the main checkout.** Tasks read `.impulse/project.toml` from the main checkout, committed or not, never from their own folder: a task branch that changes the file only changes what tasks get once it's merged and in the main checkout.

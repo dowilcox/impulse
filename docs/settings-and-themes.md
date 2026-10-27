@@ -6,8 +6,8 @@ Impulse keeps its settings in one JSON file and shows them in a searchable Setti
 
 Settings opens as a tab in the current window, next to your terminals and editors. Each window has at most one Settings tab; opening it again brings the existing one forward.
 
-- Press ⌘, or choose **Impulse › Settings…**.
-- From the command palette (⇧⌘P), run **Open Settings**.
+- Press ⌘, or choose **Impulse › Settings…** (**File › Settings…** on Linux).
+- From the command palette (⇧⌘P), run **Settings…**.
 - To jump straight to one setting, run **Find a Setting…** in the palette (or type `set:` in the palette) and pick it. See [Find a setting](#find-a-setting).
 
 ![The Settings tab showing the Editor category, with the Minimap setting changed from its default](images/settings-and-themes-settings-tab.png)
@@ -21,7 +21,7 @@ How the controls work:
 - Switches and menus apply when you click them.
 - Number fields take a typed value when you press Return or move out of the field; the arrows beside them step the value. Values outside the allowed range are clamped to the nearest limit.
 - Text fields (such as **Quick terminal shortcut**) apply when you press Return or move out of the field.
-- Font menus list the monospaced font families installed on your Mac. JetBrains Mono comes with Impulse.
+- Font menus list the monospaced font families installed on your computer. JetBrains Mono comes with Impulse.
 - **Scratch folder** takes a typed path (`~` works) or a folder you pick with **Choose…**.
 
 Impulse saves `settings.json` a moment after each change; you never need to save Settings yourself.
@@ -42,10 +42,11 @@ From the command palette, type `set:` followed by part of a setting's name (for 
 Every setting lives in one file:
 
 ```
-~/Library/Application Support/impulse/settings.json
+~/Library/Application Support/impulse/settings.json     (macOS)
+~/.local/share/impulse/settings.json                    (Linux)
 ```
 
-The development build ("Impulse Dev") uses `~/Library/Application Support/impulse-dev/settings.json` instead, which is copied from the release build's file the first time the dev build runs.
+On Linux the folder follows `$XDG_DATA_HOME` when it's set. A development build (`scripts/build.sh --dev`) uses an `impulse-dev` folder beside it instead, starting from the defaults.
 
 Impulse writes the file as formatted JSON with the keys sorted, and it writes every setting, so the file always shows the current value of each one. The file is readable only by you (permissions `0600`). If `settings.json` is a symbolic link (for example into a dotfiles repository), Impulse writes through the link to the real file instead of replacing the link.
 
@@ -81,7 +82,7 @@ If you also changed a setting in Impulse that wasn't saved yet, Impulse keeps bo
 
 If `settings.json` isn't valid JSON (a missing comma, a stray comment) or can't be read, a banner appears under the window's titlebar: **Settings file could not be loaded**, with **Open Settings File** and a dismiss button. The banner says which settings are in use; hover over it to see the error.
 
-- If this happens when Impulse starts, Impulse uses the default settings ("Using the default settings") and copies the broken file next to the original as `settings.invalid-<timestamp>.json`, so nothing you wrote is lost. The banner shows where the copy is, for example `~/Library/Application Support/impulse/settings.invalid-1759834200.json`.
+- If this happens when Impulse starts, Impulse uses the default settings ("Using the default settings") and copies the broken file next to the original as `settings.invalid-<timestamp>.json`, so nothing you wrote is lost. The banner shows where the copy is, for example `~/Library/Application Support/impulse/settings.invalid-1759834200.json` on macOS.
 - If the file breaks while Impulse is running (you saved it mid-edit), Impulse keeps the settings it already had ("Keeping the settings Impulse already had").
 
 Either way, Impulse stops saving settings until the file is fixed, so it never overwrites your broken file with defaults. Changes you make in the Settings tab meanwhile apply but aren't saved. Fix the file and save it; Impulse reloads it and the banner goes away.
@@ -188,11 +189,11 @@ The tables below list every setting in the order the Settings tab shows them. "K
 | Auto-close brackets                 | `editor_auto_closing_brackets`  | `always`, `languageDefined`, `beforeWhitespace`, `never` (Always, Language defined, Before whitespace, Never)                 | `languageDefined`   | When typing an opening bracket also inserts the closing one.                                                             |
 | Code folding                        | `folding`                       | on / off                                                                                                                      | on                  | Show fold controls in the gutter.                                                                                        |
 | Save when focus leaves the editor   | `auto_save`                     | on / off                                                                                                                      | off                 | Save a file when you move focus out of its editor.                                                                       |
-| Vim keybindings                     | `editor_vim_mode`               | on / off                                                                                                                      | off                 | Normal, insert and visual modes in the editor (monaco-vim); the mode shows at the bottom right. See [Editor](editor.md). |
+| Vim keybindings                     | `editor_vim_mode`               | on / off                                                                                                                      | off                 | Normal, insert and visual modes in the editor; the mode shows at the bottom right. See [Editor](editor.md).              |
 | Preview files from the file tree    | `editor_preview_tabs`           | on / off                                                                                                                      | on                  | A click shows a file in an italic tab the next click reuses; double-click or edit it to keep it.                         |
 | Highlight matches of the selection  | `editor_selection_highlight`    | on / off                                                                                                                      | on                  | Highlight other occurrences of the selected text.                                                                        |
 | Highlight occurrences of the symbol | `editor_occurrences_highlight`  | on / off                                                                                                                      | on                  | Highlight other uses of the symbol under the cursor.                                                                     |
-| Inlay hints                         | `editor_inlay_hints`            | `on`, `off`, `offUnlessPressed`, `onUnlessPressed` (On, Off, While holding ⌃⌥, Hidden while holding ⌃⌥)                       | `on`                | Types and parameter names from the language server, shown inline.                                                        |
+| Inlay hints                         | `editor_inlay_hints`            | `on`, `off`, `offUnlessPressed`, `onUnlessPressed` (On, Off, While holding ⌃⌥, Hidden while holding ⌃⌥)                       | `on`                | Types and parameter names from the language server, shown inline. On Linux the key to hold is Ctrl+Alt.                  |
 | Word-based suggestions              | `editor_word_based_suggestions` | `off`, `currentDocument`, `matchingDocuments`, `allDocuments` (Off, Current file, Files of the same language, All open files) | `matchingDocuments` | Where completion takes plain words from, alongside the language server's suggestions.                                    |
 
 ### Terminal
@@ -231,9 +232,9 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 | --------------------------------------------------------- | ---------------------------- | -------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Open the composer when an agent needs input               | `agent_composer_auto_show`   | on / off                         | off         | In the focused terminal, so you can answer without clicking into the agent. See [Agents](agents.md).                                                                  |
 | Notify when tasks change the same files                   | `task_overlap_notify`        | on / off                         | on          | Once per pair of workspaces, when the main checkout or a task starts changing files another one changes. See [Tasks](tasks.md#when-workspaces-change-the-same-files). |
-| Tell agents about other tasks when they start             | `agent_hook_task_summary`    | on / off                         | on          | A short summary of the repository's other workspaces for Claude Code. See [Agents](agents.md#what-the-hooks-tell-agents).                                             |
+| Tell agents about other tasks when they start             | `agent_hook_task_summary`    | on / off                         | on          | A short summary of the repository's other workspaces for Claude Code and opencode. See [Agents](agents.md#what-the-hooks-tell-agents).                                |
 | Tell agents when they edit a file another task changes    | `agent_hook_shared_files`    | on / off                         | on          | Once per file.                                                                                                                                                        |
-| Ask before an agent merges a branch still being worked on | `agent_hook_merge_guard`     | on / off                         | on          | Claude Code asks you first.                                                                                                                                           |
+| Ask before an agent merges a branch still being worked on | `agent_hook_merge_guard`     | on / off                         | on          | Claude Code and opencode ask you first.                                                                                                                               |
 | Tell agents when dependency files changed                 | `agent_hook_dependencies`    | on / off                         | on          | After an agent's pull, merge or checkout.                                                                                                                             |
 | When an agent asks to start a task                        | `agent_task_creation`        | `ask`, `trusted_projects`, `off` | `ask`       | `impulse tasks new` and the MCP server's `create_task`. See [Tasks agents start](tasks.md#tasks-agents-start).                                                        |
 | Open tasks agents may start                               | `agent_task_limit`           | 0 to 50                          | 4           | Per repository; 0 is no limit.                                                                                                                                        |
@@ -247,7 +248,7 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 | Scroll to bottom on output | `terminal_scroll_on_output` | on / off                                                                          | on      | Jump back to the newest output when a program prints.                                                                                                          |
 | Clickable links            | `terminal_allow_hyperlink`  | on / off                                                                          | on      | Underline links and file paths under the pointer and open them with ⌘-click.                                                                                   |
 | Programs may show images   | `terminal_images`           | on / off                                                                          | on      | Show pictures from programs that use the kitty graphics protocol (plots, yazi and Neovim previews, `kitten icat`). See [Terminal](terminal.md#images).        |
-| Option as Meta             | `terminal_option_as_meta`   | `off`, `left`, `right`, `both` (Off, Left Option, Right Option, Both Option keys) | `off`   | The chosen Option keys send Esc + the key (Meta-f, Meta-b in the shell) instead of typing ƒ, or @ on some layouts. See [Terminal](terminal.md#the-option-key). |
+| Option as Meta             | `terminal_option_as_meta`   | `off`, `left`, `right`, `both` (Off, Left Option, Right Option, Both Option keys) | `off`   | The chosen Option keys send Esc + the key (Meta-f, Meta-b in the shell) instead of typing ƒ, or @ on some layouts. On Linux Alt always sends Esc + the key, whatever this says. See [Terminal](terminal.md#the-option-key). |
 
 #### Clipboard
 
@@ -260,8 +261,8 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 
 | Setting                          | Key                                  | Values   | Default | What it does                                                                                                                  |
 | -------------------------------- | ------------------------------------ | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Audible bell                     | `terminal_bell`                      | on / off | on      | Play the system alert sound when a program rings the bell.                                                                    |
-| Request attention on bell        | `terminal_attention_on_bell`         | on / off | on      | Mark the terminal as needing attention, bounce the Dock icon if Impulse is in the background, and post a "Bell" notification. |
+| Audible bell                     | `terminal_bell`                      | on / off | on      | Play the system alert sound (on Linux, the desktop's bell sound) when a program rings the bell.                               |
+| Request attention on bell        | `terminal_attention_on_bell`         | on / off | on      | Mark the terminal as needing attention, bounce the Dock icon (on Linux, ask the desktop to flag the window) if Impulse is in the background, and post a "Bell" notification. |
 | Allow terminal notifications     | `terminal_allow_notifications`       | on / off | on      | OSC 9 / 99 / 777 notifications from programs and agents.                                                                      |
 | Notification sound               | `notification_sound`                 | `ack`, `two-tone`, `chime`, `off` (Acknowledge, Two-tone, Chime, Off) | `ack`   | Impulse's sound for each desktop notification, instead of the system's. Picking one plays it.                                 |
 | Notify when long commands finish | `terminal_attention_on_long_command` | on / off | on      | Tell you when a command that ran longer than the threshold below finishes.                                                    |
@@ -285,7 +286,7 @@ See [Terminal](terminal.md) for command blocks, the input bar, history and compl
 
 | Setting         | Key                   | Values   | Default | What it does                                                                                                                  |
 | --------------- | --------------------- | -------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Commit and push | `git_commit_and_push` | on / off | off     | The commit button and ⌘↩ push right after committing; ⇧⌘↩ only commits. When off, ⌘↩ only commits and ⇧⌘↩ commits and pushes. |
+| Commit and push | `git_commit_and_push` | on / off | off     | The commit button and ⌘↩ (Ctrl+Enter on Linux) push right after committing; ⇧⌘↩ only commits. When off, ⌘↩ only commits and ⇧⌘↩ commits and pushes. |
 
 #### Remote
 
@@ -321,7 +322,7 @@ Both lists match files by a simple pattern:
 - `*.ts` matches files ending in `.ts` (ignoring case).
 - Anything else must equal the file's name exactly, for example `Makefile` or `package.json`.
 
-Both kinds of command run only for files inside folders you trust. They run in the folder that contains the saved file, with the arguments you give them; write `{file}` in an argument where the saved file's full path should go (Impulse doesn't add it otherwise). The command field is split into words like a shell would (quotes group words), but the command isn't run through a shell, so pipes, `&&` and variables don't work. The command must be a plain program name or an absolute path. A plain name is looked up on your login shell's `PATH`, the same one language servers use, so tools from Homebrew, npm and the like are found even when Impulse starts from the Dock. Output isn't shown, but when a command fails, a notification names it and shows the first line of its error output. A formatter that runs for more than a minute is stopped.
+Both kinds of command run only for files inside folders you trust. They run in the folder that contains the saved file, with the arguments you give them; write `{file}` in an argument where the saved file's full path should go (Impulse doesn't add it otherwise). The command field is split into words like a shell would (quotes group words), but the command isn't run through a shell, so pipes, `&&` and variables don't work. The command must be a plain program name or an absolute path. A plain name is looked up on your login shell's `PATH`, the same one language servers use, so tools from Homebrew, npm and the like are found even when Impulse starts from the Dock or your desktop's app launcher. Output isn't shown, but when a command fails, a notification names it and shows the first line of its error output. A formatter that runs for more than a minute is stopped.
 
 #### Commands on save
 
@@ -383,9 +384,9 @@ The Language Servers page shows the language servers that give the editor comple
 
 ![The Language Servers page, listing the servers Impulse manages and the ones from your system](images/settings-and-themes-language-servers.png)
 
-- **Managed by Impulse** lists the web-language servers Impulse installs with npm into its own folder (`~/Library/Application Support/impulse/lsp`, or `~/.local/share/impulse/lsp` if an earlier install is there): `typescript-language-server`, `intelephense`, `vscode-html-language-server`, `vscode-css-language-server`, `vscode-json-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `vue-language-server`, `svelteserver`, `graphql-lsp`, `emmet-ls`, `yaml-language-server`, `docker-langserver` and `bash-language-server`. Each row shows where the server was found, or "Not installed".
+- **Managed by Impulse** lists the web-language servers Impulse installs with npm into its own folder (`~/Library/Application Support/impulse/lsp` on macOS, `~/.local/share/impulse/lsp` on Linux; a Mac with an earlier install in `~/.local/share/impulse/lsp` keeps using that): `typescript-language-server`, `intelephense`, `vscode-html-language-server`, `vscode-css-language-server`, `vscode-json-language-server`, `vscode-eslint-language-server`, `tailwindcss-language-server`, `vue-language-server`, `svelteserver`, `graphql-lsp`, `emmet-ls`, `yaml-language-server`, `docker-langserver` and `bash-language-server`. Each row shows where the server was found, or "Not installed".
 - **Install All** installs or updates all of them with npm. It needs Node.js and npm; without npm the button is disabled and the page says "Install Node.js (npm) to manage these." When the install finishes, the page shows "Language servers installed." or the error npm reported. The palette command **Install Web LSP Servers** does the same thing.
-- **From your system** lists the servers you install yourself with a package manager such as Homebrew or rustup: `rust-analyzer`, `pyright-langserver`, `clangd` and `sourcekit-lsp` (which comes with Xcode and the Command Line Tools). Impulse looks for them on your login shell's `PATH`.
+- **From your system** lists the servers you install yourself with a package manager such as Homebrew, apt, dnf or rustup: `rust-analyzer`, `pyright-langserver`, `clangd` and `sourcekit-lsp` (which comes with Xcode and the Command Line Tools on the Mac, and with the Swift toolchain on Linux). Impulse looks for them on your login shell's `PATH`.
 
 Language servers only start in folders you trust.
 
@@ -404,7 +405,8 @@ The Advanced page links to the two places where you edit settings that don't fit
 | `custom_keybindings`                                                                                | Shortcuts that run a shell command. See [Shortcuts in settings.json](#shortcuts-in-settingsjson). |
 | `commands_on_save`                                                                                  | See [Commands on save](#commands-on-save).                                                        |
 | `file_type_overrides`                                                                               | See [File types](#file-types).                                                                    |
-| `window_width`, `window_height`, `sidebar_visible`, `sidebar_width`, `last_directory`, `open_files` | Window and session details that Impulse records itself. You don't need to edit them.              |
+| `sidebar_visible`, `sidebar_width`                                                                  | Whether a new window shows the sidebar, and its width in points (default 260). Each window then keeps its own. |
+| `window_width`, `window_height`, `last_directory`, `open_files`                                     | Window and session details that Impulse records itself. You don't need to edit them.              |
 
 ## Themes
 
@@ -457,11 +459,11 @@ In `settings.json`, a few alternate spellings of the ids also work, such as `ros
 
 Themes are TOML files. To add one:
 
-1. Create the folder `~/Library/Application Support/impulse/themes` if it doesn't exist. (The dev build reads the same folder.)
+1. Create the folder `~/Library/Application Support/impulse/themes` on macOS, or `~/.config/impulse/themes` on Linux (`$XDG_CONFIG_HOME/impulse/themes` when that's set), if it doesn't exist. (A development build reads the same folder.)
 2. Save a theme file there, for example `campfire.toml`. The file name without `.toml`, in lowercase, is the theme's id: `Campfire.toml` is the theme `campfire`.
 3. In **Settings › Appearance**, choose it from the **Theme** menu. If the Settings tab was already open, close it and open it again so the menu picks up the new file.
 
-The **Theme** menu lists your theme under the `name` inside the file. Your themes are listed after the built-in ones.
+The **Theme** menu lists your theme by its id, each word capitalized: `campfire.toml` shows as **Campfire**, `night-owl.toml` as **Night Owl**. Your themes are listed after the built-in ones.
 
 A file with the same id as a built-in theme (for example `nord.toml`) replaces that built-in theme.
 
@@ -582,8 +584,8 @@ Every command in the menus and the command palette that has (or can have) a shor
 
 ### Open the Keyboard Shortcuts tab
 
-- Press ⌥⌘, or choose **Impulse › Keyboard Shortcuts…**.
-- Run **Keyboard Shortcuts** from the command palette.
+- Press ⌥⌘, or choose **Impulse › Keyboard Shortcuts…** (**File › Keyboard Shortcuts…** on Linux).
+- Run **Keyboard Shortcuts…** from the command palette.
 - Click **Keyboard shortcuts** in **Settings › Advanced**.
 
 ![The Keyboard Shortcuts tab, with one changed shortcut and a conflict warning](images/settings-and-themes-keyboard-shortcuts.png)
@@ -594,10 +596,10 @@ To find a command, type in **Search commands** (it matches names, ids, categorie
 
 ### Change a shortcut
 
-1. Click the command's shortcut (or **Unbound**). It changes to "Press keys… (⌫ removes, esc cancels)".
+1. Click the command's shortcut (or **Unbound**). It changes to "Press keys… (⌫ removes, esc cancels)" ("Backspace removes, Esc cancels" on Linux).
 2. Press the new shortcut.
 
-The new shortcut works right away, in the menus, the command palette and the terminal. It must include ⌘, ⌃ or ⌥; only the function keys F1–F12 can be used alone. If you press a key without one of those modifiers, Impulse beeps, the chip says why (for example "⇧A needs ⌘, ⌃ or ⌥"), and it waits for another shortcut; press Esc to stop.
+The new shortcut works right away, in the menus, the command palette and the terminal. It must include ⌘, ⌃ or ⌥ (on Linux, Ctrl, Alt or Super); only the function keys F1–F12 can be used alone. If you press a key without one of those modifiers, the chip says why (for example "⇧A needs ⌘, ⌃ or ⌥ (only F1–F12 work alone)") and waits for another shortcut; press Esc to stop.
 
 A changed shortcut gets an accent bar on its left edge and a **Reset to default** button (a circular arrow) on its right.
 
@@ -628,7 +630,7 @@ The **Command** field is a command line for your shell, kept as you type it: quo
 
 ### Shortcuts in settings.json
 
-Your changes are stored in `settings.json`, so you can also edit them there or copy them to another Mac.
+Your changes are stored in `settings.json`, so you can also edit them there or copy them to another computer.
 
 `keybinding_overrides` maps a command id (shown under each command in the Keyboard Shortcuts tab) to a shortcut. Only changed shortcuts are stored; `"none"` removes a command's shortcut.
 
@@ -642,7 +644,7 @@ Your changes are stored in `settings.json`, so you can also edit them there or c
 
 Write a shortcut as modifiers and a key joined by `+`:
 
-- Modifiers: `Cmd` (or `Command`), `Ctrl` (or `Control`), `Alt` (or `Option`, `Opt`) and `Shift`, in any case.
+- Modifiers: `Cmd` (or `Command`; on Linux it's the Super key), `Ctrl` (or `Control`), `Alt` (or `Option`, `Opt`) and `Shift`, in any case.
 - Keys: a single character (`D`, `5`, `,`, `=`), or one of `Tab`, `Left`, `Right`, `Up`, `Down`, `Space`, `Return` (or `Enter`), `Escape` (or `Esc`), `Delete` (or `Backspace`) and `F1`–`F20`.
 - The plus key itself is written `Cmd++`.
 
@@ -665,6 +667,7 @@ Write a shortcut as modifiers and a key joined by `+`:
 
 - The standard macOS items: **About Impulse**, **Hide Impulse** (⌘H), **Hide Others** (⌥⌘H), **Quit Impulse** (⌘Q), **Open…** (⌘O), **Close Window** (⇧⌘W), **Minimize** (⌘M), the Edit menu's **Undo**, **Redo**, **Cut**, **Paste and Match Style** and **Select All**, and **Impulse Help** (⌘?). (**Copy**, **Paste**, **Find…** and **Go to Line…** can be changed.)
 - **Tab 1** through **Tab 9** (⌘1–⌘9) in the Window menu.
+- On Linux: **Undo** (Ctrl+Z), **Redo** (Ctrl+Shift+Z), **Cut** (Ctrl+X), **Select All** (Ctrl+A), **Quit Impulse** (Ctrl+Shift+Q), **Close Window** (Alt+F4), and **Tab 1** through **Tab 9** (Alt+1–Alt+9).
 - Keys inside a panel or field, such as the Review keys, the Changes panel keys, the input bar keys and hints mode. These are listed in [Keyboard shortcuts](keyboard-shortcuts.md).
 - Commands that are only in the command palette (for example **Trust This Folder…** or **Import Shell History**) can't have a shortcut. Run them from the palette.
 

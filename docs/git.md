@@ -10,7 +10,7 @@ Impulse reads repository state (status, diffs, blame, log) with a built-in copy 
 - Commits are signed if your git configuration says so (`commit.gpgsign`).
 - Credential helpers, your SSH agent, LFS and other clean/smudge filters all apply.
 
-Git itself must be installed (Homebrew or the Xcode Command Line Tools). If it isn't, git actions fail with a message saying so.
+Git itself must be installed: on macOS from Homebrew or the Xcode Command Line Tools, on Linux from your distribution's packages. If it isn't, git actions fail with a message saying so.
 
 Impulse doesn't open a password prompt of its own for remote operations, and git can't ask in a terminal from there. If a fetch, pull or push needs credentials that your credential helper or SSH agent can't supply, the action fails with "Git couldn't authenticate with the remote. Run the command in a terminal to sign in." Run the same command once in a terminal and sign in there; once your credential helper or SSH agent holds the credentials, Impulse uses them too.
 
@@ -108,7 +108,7 @@ Note that `U` means untracked here, not "unmerged" as in `git status --short`.
 | Open to Resolve, Keep Current (HEAD), Take Incoming, Mark Resolved, Ask Agent to Resolve | Conflicts. See [Merge conflicts](#merge-conflicts).                                                                                                                                       |
 | Move to New Task…                                                                        | Staged, Changes, Untracked, in a main checkout. Moves the file into a new task. See [Tasks](tasks.md#move-work-into-a-new-task).                                                          |
 | Copy Path                                                                                | Every row. Copies the repository-relative path.                                                                                                                                           |
-| Reveal in Finder                                                                         | Every row.                                                                                                                                                                                |
+| Reveal in Finder (Show in File Manager on Linux)                                         | Every row.                                                                                                                                                                                |
 
 ### Using the panel from the keyboard
 
@@ -131,7 +131,7 @@ Discarding asks first ("Discard changes to “forecast.ts”?") and then:
 
 - Reverts tracked files to their staged version (or to the last commit, for **Discard Staged and Unstaged Changes…**).
 - Moves untracked files to the Trash rather than deleting them.
-- Records a [safety snapshot](#safety-snapshots-and-undo) first, and shows a toast with **Undo** for about 10 seconds. Undo puts the files back exactly as they were.
+- Records a [safety snapshot](#safety-snapshots-and-undo) first, and shows a toast with **Undo** for about 15 seconds. Undo puts the files back exactly as they were.
 
 Open editors reload the files they show, so you never keep editing the discarded version.
 
@@ -242,7 +242,7 @@ When you check out a commit rather than a branch (for example with **Check Out (
 A stash saves your uncommitted changes and cleans the working tree, so you can switch to something else and come back.
 
 - **Stash All Changes** (Git menu, the panel's ⋯ menu, or the palette) stashes everything, untracked files included, and shows "Stashed your changes".
-- **Pop Latest Stash** applies the newest stash and removes it from the list. What was staged when you stashed comes back staged, when that still applies cleanly. A toast offers **Undo** for about 10 seconds, which puts the files back as they were before the pop and stores the stash again. With no stashes, a toast says "There are no stashes."
+- **Pop Latest Stash** applies the newest stash and removes it from the list. What was staged when you stashed comes back staged, when that still applies cleanly. A toast offers **Undo** for about 15 seconds, which puts the files back as they were before the pop and stores the stash again. With no stashes, a toast says "There are no stashes."
 - **The Stashes section** of the Changes panel lists every stash by message, with its `stash@{n}` name. Hover a stash for:
   - **Apply**: apply it and keep it in the list.
   - **Pop**: apply it and remove it (with Undo, as above).
@@ -351,7 +351,7 @@ Before an action that could throw work away, Impulse records your working tree (
 | Undo Last Commit                                          | —                               | Redo                               |
 | Switch branch with Stash & Switch                         | The changes are in the stash    | Pop Stash                          |
 
-Each toast's Undo lasts about 10 to 15 seconds. After that, the snapshots are still in the repository: Impulse keeps the newest 200 for up to two weeks, and deletes older ones whenever it takes a new snapshot. To dig one out by hand:
+Each toast's Undo lasts about 15 seconds. After that, the snapshots are still in the repository: Impulse keeps the newest 200 for up to two weeks, and deletes older ones whenever it takes a new snapshot. To dig one out by hand:
 
 ```bash
 git for-each-ref --sort=-creatordate refs/impulse/oplog
@@ -423,7 +423,7 @@ If no conflict markers are left in the files, a toast says "No conflict markers 
 
 ![The Create Tag sheet on the current commit, with v0.2.1 suggested as the name, an empty message field and the Push to origin checkbox](images/git-create-tag.png)
 
-If the tag isn't pushed, the toast ("Tagged v0.2.1") offers **Undo** for about 10 seconds. If it is pushed, the toast says "Tagged and pushed v0.2.1 to origin"; if the push fails, the tag is still created locally.
+If the tag isn't pushed, the toast ("Tagged v0.2.1") offers **Undo** for about 15 seconds. If it is pushed, the toast says "Tagged and pushed v0.2.1 to origin"; if the push fails, the tag is still created locally.
 
 If a tag with that name already exists, Impulse asks whether to move it to this commit (**Move Tag**). Anyone who already fetched the old tag keeps it.
 
@@ -490,7 +490,7 @@ Background fetch also depends on **Ask before trusting folders** (`workspace_tru
 
 - [Review](review.md): read and stage diffs, comment, and send comments to agents
 - [History](history.md): the commit graph, filters, compare and commit actions
-- [Editor](editor.md): change marks, inline blame and the diff view
+- [Editor](editor.md#git-in-the-editor): change marks, Show Commit for This Line and the diff view
 - [Tasks](tasks.md): parallel work in worktrees
 - [Agents](agents.md): checkpoints, "review last turn" and sending text to agents
 - [Command palette](command-palette.md): the `b:` and `task:` modes

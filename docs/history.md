@@ -11,7 +11,7 @@ History shows a repository's commits as a graph, with the selected commit's mess
 | Git menu       | **Git ▸ Show Git History** (⇧⌘H), or **Show Git History** in the command palette | The repository's history                                                                   |
 | Git menu       | **Git ▸ Show History of This File** (⌃⇧⌘H)                                       | The history of the file in the active editor (the whole repository if no editor is active) |
 | File tree      | Right-click a file or folder ▸ **Show History**                                  | That file's or folder's history                                                            |
-| Editor         | Click a line's inline blame, or right-click ▸ **Show Commit for This Line**      | The commit that last changed that line, selected (see [Editor](editor.md))                 |
+| Editor         | Right-click a line ▸ **Show Commit for This Line**                               | The commit that last changed that line, selected (see [Editor](editor.md))                 |
 | Terminal       | Pick a commit hash with terminal hints (⇧⌘Space)                                 | That commit, selected (see [Terminal](terminal.md))                                        |
 | Branch Manager | **⋯ ▸ Show History**                                                             | That branch's history                                                                      |
 
@@ -46,16 +46,14 @@ Each row shows, from left to right:
 | Column         | What it shows                                                                                                                                                         |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Graph          | One lane per line of development, in colors that repeat after six. A filled dot is a commit; a hollow ring is a merge commit. Up to eight lanes are drawn.            |
-| Sync marker    | ↑ "Not pushed yet": the commit is on your branch but not its upstream. ↓ "On the upstream, not pulled yet" (visible with **All branches**).                           |
+| Sync marker    | ↑: the commit is on your branch but not pushed to its upstream yet. ↓: the commit is on the upstream but not pulled yet (visible with **All branches**).              |
 | Compare marker | Shown on the commit you picked with **Select for Compare**.                                                                                                           |
 | Ref chips      | Branches (branch icon; the checked-out branch in bold), remote branches (globe icon, such as `origin/main`), tags (tag icon, such as `v0.2.0`) and a detached `HEAD`. |
-| Fork point     | A fork icon on the commit where your branch left the default branch ("Fork point: this branch left origin/main here").                                                |
+| Fork point     | A fork icon on the commit where your branch left the default branch (such as `origin/main`).                                                                          |
 | Subject        | The first line of the message, in bold for the commit you have checked out.                                                                                           |
 | Author         | Who wrote the commit.                                                                                                                                                 |
 | Date           | How long ago it was written ("3d ago", "2w ago").                                                                                                                     |
 | SHA            | The short commit ID.                                                                                                                                                  |
-
-Hover a row for the full subject, the author's name and email, and the full commit ID.
 
 The list loads 300 commits at a time and loads more as you scroll toward the end. It updates by itself when refs move, for example when you commit, tag, fetch or switch branches, keeping your selection.
 
@@ -158,7 +156,7 @@ Right-click a ref chip on a commit for its actions (the same ones are in the com
 | Remote branch          | **Check Out trail-search** (creates a local branch tracking it), **Merge into main**, **Rebase main onto origin/trail-search**, **Copy Name** |
 | Tag                    | **Push to origin**, **Merge into main**, **Copy Name**, **Delete Tag**, **Delete from origin…**                                               |
 
-**Push to origin** and **Delete from origin…** appear when the repository has a remote, and name the remote they use: the current branch's remote, else `origin`, else the only one. **Open on GitHub** appears when the remote has a web address. Deleting a branch or a local tag can be undone from the toast; deleting a tag from the remote asks first and can't be undone there. See [Git](git.md#pushing-and-deleting-tags).
+**Push to origin** and **Delete from origin…** appear when the repository has a remote, and name the remote they use: the current branch's remote, else `origin`, else the only one. Deleting a branch or a local tag can be undone from the toast; deleting a tag from the remote asks first and can't be undone there. See [Git](git.md#pushing-and-deleting-tags).
 
 ### Merge and rebase
 
@@ -200,6 +198,6 @@ Click into the changes in the bottom half to use Review's keys there (J and K fo
 
 - [Review](review.md): the diff view History uses, and comparing in depth
 - [Git](git.md): branches, tags, merging, safety snapshots and Undo
-- [Editor](editor.md): inline blame and "Show Commit for This Line"
+- [Editor](editor.md#git-in-the-editor): "Show Commit for This Line"
 - [Terminal](terminal.md): opening commit hashes from terminal output with hints
 - [Keyboard shortcuts](keyboard-shortcuts.md)

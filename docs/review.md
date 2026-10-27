@@ -168,7 +168,7 @@ A selection lives in one hunk at a time; selecting a line in another hunk starts
 
 ### What to expect
 
-- Reverting a hunk or lines doesn't ask first. Impulse records a [safety snapshot](git.md#safety-snapshots-and-undo) before it, and the toast ("Reverted changes in forecast.ts") offers **Undo** for about 10 seconds. Editors showing the file reload it.
+- Reverting a hunk or lines doesn't ask first. Impulse records a [safety snapshot](git.md#safety-snapshots-and-undo) before it, and the toast ("Reverted changes in forecast.ts") offers **Undo** for about 15 seconds. Editors showing the file reload it.
 - If the file changed after the diff was drawn and the hunk you acted on no longer matches, Impulse refuses rather than apply the wrong lines ("Couldn't stage the selection"), and the diff is read again so you can try once more.
 - A file being staged or reverted is dimmed until the change is done.
 - A file whose diff is truncated (one with more than 30,000 lines of diff, which **Whole File** context reaches soonest) can only be staged, unstaged or reverted whole, with the file header's buttons: its hunk headers show "Whole file only" instead of their buttons, and S, U and X explain why instead of acting.

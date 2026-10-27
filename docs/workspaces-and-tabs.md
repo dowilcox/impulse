@@ -19,7 +19,7 @@ Opening a folder makes it a workspace. [Getting started](getting-started.md#open
 - New terminal tabs start in the folder.
 - Opening the same folder again switches to its workspace instead of opening a second copy.
 
-Folders you open are remembered (the last 20) and offered in the palette's workspace list, so you can reopen them by name.
+Folders you open are remembered (until you run **Clear Recent Workspaces**) and offered in the palette's workspace list, so you can reopen them by name.
 
 ### The Scratch workspace
 
@@ -68,7 +68,7 @@ Workspaces that are worktrees of the same repository are grouped under a header 
 
 ### Showing a workspace's tabs
 
-Click a row's chevron, or choose **Show Tabs** from its context menu, to list its tabs under it. Each tab row shows the tab's icon and title, with a dot when it needs attention or has unsaved changes. Click a tab row to go to that tab (and its workspace), or double-click it to keep a [preview tab](#preview-tabs). Hover over a tab row for its close button; Control-click it for the same menu as in the tab strip. While a workspace's tabs are listed, the selected tab is highlighted instead of the workspace row.
+Click a row's chevron, or choose **Show Tabs** from its context menu, to list its tabs under it. Each tab row shows the tab's icon and title, with a dot when it needs attention or has unsaved changes. Click a tab row to go to that tab (and its workspace), or double-click it to keep a [preview tab](#preview-tabs). Hover over a tab row for its close button; right-click it for the same menu as in the tab strip. While a workspace's tabs are listed, the selected tab is highlighted instead of the workspace row.
 
 ![The trailhead workspace expanded in the sidebar, listing a terminal, forecast.ts and Review · trailhead under it](images/workspaces-and-tabs-expanded-tabs.png)
 
@@ -79,15 +79,16 @@ The **+** on a row (shown on hover) offers:
 - **New Task from trailhead…** (only for a repository): a new worktree workspace from this repository. See [Tasks](tasks.md).
 - **Open Folder as Workspace…**
 
-Control-click a row for its context menu:
+Right-click a row for its context menu:
 
 | Item                          | What it does                                                                                                            |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | **New Task…**                 | Start a task worktree from this workspace's repository (repositories only).                                             |
 | **Move Changes to New Task…** | For a main checkout with uncommitted files: move them into a new task. See [Tasks](tasks.md#move-work-into-a-new-task). |
+| **Project Setup…**            | Open [Project Setup](project-config.md#project-setup) for this workspace's repository (repositories only).              |
 | **Open Folder as Workspace…** | Choose another folder to open.                                                                                          |
 | **Rename…**                   | Give the workspace a name of its own.                                                                                   |
-| **Reveal in Finder**          | Show the folder in Finder (not for Scratch).                                                                            |
+| **Reveal in Finder**          | Show the folder in Finder (not for Scratch). On Linux it's **Show in File Manager**.                                    |
 | **Copy Path**                 | Copy the folder's path (not for Scratch).                                                                               |
 | **Show Tabs** / **Hide Tabs** | List or hide the workspace's tabs under its row.                                                                        |
 | **Move Up** / **Move Down**   | Move the workspace one row in the sidebar.                                                                              |
@@ -104,7 +105,7 @@ Choose **Rename…** from the row's context menu, or run **Rename Workspace…**
 
 Choose **Close Workspace** from the row's context menu, or run **Close Workspace** from the palette for the active one. Impulse asks about unsaved files and running commands first, as it does when [closing a tab](#closing-tabs-and-undo). Then every tab in the workspace closes and Impulse shows the workspace you used before it.
 
-A notice then says, for example, "Closed workspace trailhead". For ten seconds its **Undo ⌘Z** button, or ⌘Z, brings the workspace back with its tabs, in its old place in the sidebar; after that, ⇧⌘T (**File ▸ Reopen Closed Tab**) does the same while the workspace is the last thing you closed. See [Getting a tab back](#getting-a-tab-back).
+A notice then says, for example, "Closed workspace trailhead". For ten seconds its **Undo ⌘Z** button, or ⌘Z, brings the workspace back with its tabs, in its old place in the sidebar (on Linux the button reads **Undo**, and Ctrl+Z stays with the shell); after that, ⇧⌘T (**File ▸ Reopen Closed Tab**) does the same while the workspace is the last thing you closed. See [Getting a tab back](#getting-a-tab-back).
 
 Closing a workspace's last tab also closes the workspace, as long as the window has another one. The window's last workspace never goes away: closing its last tab gives you a fresh terminal.
 
@@ -182,7 +183,7 @@ Drag a tab left or right in the strip; the other tabs move aside. Dragging a tab
 
 ### The tab context menu
 
-Control-click a tab:
+Right-click a tab:
 
 | Item                             | What it does                                                                                                     |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -219,14 +220,14 @@ These are in **View ▸ Panes** and in the palette. In an editor, ⌘D adds the 
 ### Moving between panes
 
 - Click anywhere in a pane to focus it.
-- ⌥⌘← ⌥⌘→ ⌥⌘↑ ⌥⌘↓ (**Focus Pane Left**, **Focus Pane Right**, **Focus Pane Above**, **Focus Pane Below**) move to the neighboring pane. Impulse beeps when there's no pane in that direction. In an editor, ⌥⌘↑ and ⌥⌘↓ add a cursor instead, as in VS Code.
+- ⌥⌘← ⌥⌘→ ⌥⌘↑ ⌥⌘↓ (**Focus Pane Left**, **Focus Pane Right**, **Focus Pane Above**, **Focus Pane Below**) move to the neighboring pane. On Linux they have no shortcut by default, since the desktop uses Ctrl+Alt with the arrows; give them one in Keyboard Shortcuts. In an editor, ⌥⌘↑ and ⌥⌘↓ add a cursor instead, as in VS Code.
 - **Next Pane** and **Previous Pane** cycle through the panes in order. They have no shortcut until you give them one in [Keyboard Shortcuts](keyboard-shortcuts.md).
 
 ### Resizing panes
 
 - Drag the line between two panes. Panes can't get smaller than 80 points.
 - Double-click the line to even out the panes in the split it belongs to.
-- ⌃⌘← ⌃⌘→ ⌃⌘↑ ⌃⌘↓ (**View ▸ Panes ▸ Grow Pane Left**, **Grow Pane Right**, **Grow Pane Up**, **Grow Pane Down**) grow the focused pane in steps.
+- ⌃⌘← ⌃⌘→ ⌃⌘↑ ⌃⌘↓ (**View ▸ Panes ▸ Grow Pane Left**, **Grow Pane Right**, **Grow Pane Up**, **Grow Pane Down**) grow the focused pane in steps. On Linux they have no shortcut by default either.
 - ⌃⌘= (**Even Out Panes**) makes every pane in the tab equal.
 
 ### Zooming a pane
@@ -251,7 +252,7 @@ The sidebar (the left dock) has the workspaces at the top and, below them, the *
 
 - ⌘B (**View ▸ Toggle Sidebar**), or the sidebar button at the left of the titlebar, shows and hides it.
 - Drag its right edge to resize it (between 180 and 520 points). Double-click the edge to go back to the default width.
-- Each window remembers whether its sidebar is shown and how wide it is; a new window starts the way the last closed window was.
+- Each window remembers whether its sidebar is shown and how wide it is. A new window starts with the sidebar shown at its default width, unless `sidebar_visible` or `sidebar_width` in `settings.json` says otherwise.
 
 ### Switching panels
 
@@ -322,7 +323,7 @@ Files that git ignores, such as `node_modules` or an ignored `.env`, are shown d
 
 #### Context menu
 
-Control-click an item:
+Right-click an item:
 
 | Item                            | Shown for     | What it does                                                                                                                                                                                            |
 | ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -330,20 +331,20 @@ Control-click an item:
 | **Open to the Side**            | Files         | Open in a pane to the right.                                                                                                                                                                            |
 | **Mention in Agent**            | Files         | Send `@` and the file's path to the coding agent most likely meant. See [Agents](agents.md).                                                                                                            |
 | **Show History**                | Both          | The file's or folder's commits in [History](history.md).                                                                                                                                                |
-| **Reveal in Finder**            | Both          | Show it in Finder.                                                                                                                                                                                      |
+| **Reveal in Finder**            | Both          | Show it in Finder. On Linux it's **Show in File Manager**.                                                                                                                                              |
 | **Copy Path**                   | Both          | Copy the full path.                                                                                                                                                                                     |
 | **Copy Relative Path**          | Both          | Copy the path relative to the top of the tree, such as `src/lib/cache.ts`.                                                                                                                              |
-| **Open with Default App**       | Files         | Open in the app macOS uses for it.                                                                                                                                                                      |
+| **Open with Default App**       | Files         | Open in the app your system uses for it.                                                                                                                                                                |
 | **Open Changes**                | Changed files | Open [Review](review.md) on the file's uncommitted changes.                                                                                                                                             |
 | **Stage**                       | Changed files | Stage the file.                                                                                                                                                                                         |
 | **Discard Changes…**            | Changed files | After you confirm, restore a tracked file to its last commit (staged and unstaged changes) or move an untracked file to the Trash; you can undo it right after. A newly added file is unstaged instead. |
 | **Rename…**                     | Both          | Rename it in place.                                                                                                                                                                                     |
-| **Move to Trash**               | Both          | Move it to the Trash; the notice that follows has **Undo**.                                                                                                                                             |
+| **Move to Trash**               | Both          | Move it to the Trash. On Linux the notice that follows has **Undo**.                                                                                                                                    |
 
 #### Drag and drop
 
 - Drag files or folders onto a folder in the tree to move them there.
-- Drag files from Finder onto a folder (or onto empty space for the top of the tree) to copy them in. Files from inside the project's folder are moved instead; files from anywhere else, a folder beside it included, are copied.
+- Drag files from Finder (or your file manager) onto a folder (or onto empty space for the top of the tree) to copy them in. Files from inside the project's folder are moved instead; files from anywhere else, a folder beside it included, are copied.
 
 If an item with the same name is already there, Impulse asks; **Replace** moves the existing one to the Trash first.
 
@@ -389,11 +390,11 @@ Closing a terminal ends its shell and everything running in it.
 
 ### Getting a tab back
 
-After a tab, pane or workspace closes, a notice at the bottom of the window says what closed and offers **Undo ⌘Z**.
+After a tab, pane or workspace closes, a notice at the bottom of the window says what closed and offers **Undo ⌘Z** (**Undo** on Linux).
 
 ![The notice "Closed forecast.ts" with an Undo ⌘Z button at the bottom of the window](images/workspaces-and-tabs-undo-close-toast.png)
 
-- For ten seconds, ⌘Z (**Edit ▸ Undo**) or the notice's button reopens it. A notice's button always reopens what that notice names, even if you've closed something else since; ⌘Z starts with the most recent.
+- For ten seconds, ⌘Z (**Edit ▸ Undo**) or the notice's button reopens it. On Linux only the button does, since Ctrl+Z belongs to the shell. A notice's button always reopens what that notice names, even if you've closed something else since; ⌘Z starts with the most recent.
 - After that, ⇧⌘T (**File ▸ Reopen Closed Tab**) reopens the most recently closed tab or pane. Press it again for the one before; each window remembers its last 20.
 
 A reopened pane goes back into its old tab when that tab is still open. A tab goes back to its workspace while that workspace is open, even if you've closed and reopened it since; otherwise it opens in the active workspace. A file reopens at the line you were on. A terminal comes back in the same folder with a new shell; its earlier output is shown above the prompt when **Restore terminal scrollback** is on. Untitled files and the Settings, Keyboard Shortcuts and Problems tabs can't be reopened this way, and a file reopens as it is on disk, without edits you didn't save.
@@ -415,13 +416,13 @@ What comes back:
 
 What doesn't come back: untitled files, unsaved edits, the Settings, Keyboard Shortcuts and Problems tabs, and workspaces whose folders no longer exist. Restored folders don't ask about [workspace trust](getting-started.md#workspace-trust); untrusted ones show **Restricted** in the status bar.
 
-The session is saved when you quit, whenever a window closes, and within 15 seconds of a workspace, tab, split or file opening or closing (so a crash doesn't lose them), in `~/Library/Application Support/impulse/session-state.json`, with terminal output in the `scrollback` folder beside it. Files you open from Finder while Impulse is starting open on top of the restored session.
+The session is saved when you quit or close the last window, and within 15 seconds of a window, workspace, tab, split or file opening or closing (so a crash doesn't lose them), in `session-state.json` in Impulse's data folder (`~/Library/Application Support/impulse/` on macOS, `~/.local/share/impulse/` on Linux), with terminal output in the `scrollback` folder beside it. Files you open with Impulse while it's starting (from Finder, a file manager or the command line) open on top of the restored session.
 
 ## Multiple windows
 
 ⇧⌘N (**File ▸ New Window**) opens another window. Each window has its own workspaces, tabs, sidebar and session state, and starts in Scratch. The same folder can be open as a workspace in more than one window.
 
-Windows share your settings, theme, trusted folders, command history and language servers. The `impulse` command in a terminal talks to the window that terminal is in. The Dock icon's badge counts the terminals that need attention across all windows.
+Windows share your settings, theme, trusted folders, command history and language servers. The `impulse` command in a terminal talks to the window that terminal is in. The Dock icon's badge counts the terminals that need attention across all windows. On Linux the count goes on Impulse's launcher icon, on desktops that show one (such as Ubuntu's dock).
 
 Closing a window asks about its unsaved files and running commands. Closing the last window quits Impulse.
 
@@ -435,7 +436,9 @@ To set it up:
 2. Turn on **Quick terminal** (`quick_terminal_enabled`).
 3. Set **Quick terminal shortcut** (`quick_terminal_shortcut`, default `` Ctrl+` ``). It must include Ctrl, Alt or Cmd, plus a letter, digit, punctuation key, Space, Tab or Return; for example `` Ctrl+` `` or `Alt+Space`.
 
-Press the shortcut to show it and again to hide it; clicking anywhere else also hides it. It opens on the screen the mouse is on, across the top part of the screen, and starts in the front window's current folder (else your home folder). It is a plain terminal: no input bar, so you type at the shell's own prompt.
+On Linux the shortcut works under X11. Wayland doesn't let an app take a system-wide key, so there use **Toggle Quick Terminal** from the palette.
+
+Press the shortcut to show it and again to hide it; clicking anywhere else also hides it. It opens on the screen of Impulse's active window (or the main screen when Impulse isn't in front), across the top part of the screen, and starts in the front window's current folder (else your home folder). It is a plain terminal: no input bar, so you type at the shell's own prompt.
 
 The shell keeps running while the quick terminal is hidden, so you come back to where you were. If you exit the shell, the next press starts a new one. **Toggle Quick Terminal** in the palette shows and hides it too, even without the shortcut turned on.
 

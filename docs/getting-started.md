@@ -4,6 +4,10 @@ Impulse is a terminal with an editor, git tools and coding-agent support built a
 
 ## Install
 
+Impulse runs on macOS and Linux.
+
+### macOS
+
 1. Download `Impulse-X.Y.Z.dmg` from [GitHub Releases](https://github.com/dowilcox/impulse/releases).
 2. Open the disk image and drag **Impulse.app** to your **Applications** folder.
 3. Open Impulse from Applications, Launchpad or Spotlight.
@@ -21,7 +25,7 @@ Impulse draws with Vulkan, so it needs a Vulkan driver (Mesa's `mesa-vulkan-driv
 
 ### Updates
 
-At launch Impulse asks GitHub whether a newer release exists. When one does, an **Update X.Y.Z** item appears at the right end of the status bar; click it to open the release page, then install the new disk image the same way. To stop the check, turn off **Check for updates on launch** (`check_for_updates`) in Settings ▸ General ▸ Startup.
+At launch Impulse asks GitHub whether a newer release exists. When one does, an **Update X.Y.Z** item appears at the right end of the status bar; click it to open the release page, then install the new disk image or Linux package the same way. To stop the check, turn off **Check for updates on launch** (`check_for_updates`) in Settings ▸ General ▸ Startup.
 
 ### Language servers
 
@@ -39,7 +43,7 @@ The first time Impulse opens you get one window with one terminal tab. It belong
 There is nothing to configure before you start typing:
 
 - Shell integration for zsh, bash and fish loads automatically in Impulse terminals. It is what gives you [command blocks](terminal.md) and lets Impulse follow each terminal's current folder.
-- The fonts the editor and terminal use (JetBrains Mono and Inter) are copied into `~/Library/Fonts` if they aren't there yet.
+- The fonts the editor and terminal use (JetBrains Mono and Inter) come with Impulse; nothing is installed on your system.
 - The sidebar is open, with your workspaces above the Files panel. Press ⌘B, or click the sidebar button at the left of the titlebar, to hide or show it.
 - Session restore is on: when you quit and open Impulse again, your windows, workspaces, tabs and splits come back. To start fresh each time, turn off **Restore previous session** (`restore_session`) in Settings ▸ General ▸ Startup. See [Session restore](workspaces-and-tabs.md#session-restore).
 
@@ -50,7 +54,7 @@ A few things are off until you turn them on:
 | **Quick terminal** (`quick_terminal_enabled`)              | Settings ▸ General ▸ Quick terminal  | A terminal that drops down over any app on a global shortcut. See [Quick terminal](workspaces-and-tabs.md#quick-terminal). |
 | **Use Impulse as $EDITOR** (`terminal_editor_integration`) | Settings ▸ Terminal ▸ Blocks & input | `git commit` and other tools open files in an Impulse tab. See [Command-line tool](cli.md).                                |
 
-Settings open as a tab with ⌘, (**Impulse ▸ Settings…**). Every setting is described in [Settings and themes](settings-and-themes.md).
+Settings open as a tab with ⌘, (**Impulse ▸ Settings…**; on Linux, **File ▸ Settings…**). Every setting is described in [Settings and themes](settings-and-themes.md).
 
 ## A tour of the window
 
@@ -67,7 +71,9 @@ From top to bottom, left to right:
 - **Search or run a command.** Opens the [command palette](command-palette.md) (⇧⌘P).
 - **Changes pill.** When the repository has uncommitted changes, it shows the number of changed files and the lines added and removed. Click it to open [Review](review.md) (⇧⌘G).
 
-Double-clicking empty space in the titlebar zooms or minimizes the window, following your macOS setting.
+Double-clicking empty space in the titlebar zooms or minimizes the window, following your macOS setting; on Linux it maximizes the window or restores it.
+
+On Linux the titlebar also holds a menu button at its left, which opens Impulse's menus (File, Edit, View, Git, Window and Help). Impulse draws the window's frame itself where the window manager allows it: minimize, maximize and close sit at the titlebar's right end, right-clicking its empty space opens the window menu, and the window's edges and corners resize it. Otherwise the window manager's own frame is used.
 
 ### Sidebar
 
@@ -101,7 +107,7 @@ Impulse works in **workspaces**: a folder you open gets its own tabs, file tree 
 
 ### From Impulse
 
-- **File ▸ Open Folder as Workspace…**, then choose the folder and click **Open Workspace**.
+- **File ▸ Open Folder as Workspace…**, then choose the folder and click **Open**.
 - **File ▸ Open…** (⌘O) accepts a file or a folder: a file opens in an editor tab, a folder opens as a workspace.
 - Press ⌃⌘O (**File ▸ Switch Workspace…**) to open the palette's workspace list. It shows open workspaces, then folders you opened recently (marked `recent`), then **Open Folder as Workspace…**.
 - Hover over a workspace row in the sidebar, click its **+**, and choose **Open Folder as Workspace…**.
@@ -120,11 +126,11 @@ impulse open src/server.ts:42   # open a file at a line
 
 It only works in terminals that Impulse started. See [Command-line tool](cli.md) for every command.
 
-### From Finder
+### From Finder or the command line
 
-Control-click a folder in Finder and choose **Services ▸ New Impulse Workspace Here**. Impulse comes forward and opens the folder as a workspace in its front window. Select several folders to open each one.
+On macOS, Impulse is listed as an editor for source files, so you can choose it in a file's **Open With** menu in Finder; the file opens in an editor tab.
 
-Impulse is also listed as an editor for source files, so you can choose it in a file's **Open With** menu; the file opens in an editor tab.
+On Linux, run `impulse-app` with a folder or files, for example `impulse-app ~/Code/trailhead`. A folder opens as a workspace and files open in editor tabs. If Impulse is already running, its front window takes them and comes forward.
 
 ### What a folder workspace changes
 
@@ -154,7 +160,7 @@ When you open a folder that isn't trusted, Impulse asks:
 
 - **Trust Folder** trusts the folder and everything inside it. Language servers start for its open files right away.
 - **Stay Restricted** keeps it restricted. Impulse doesn't ask again about that folder until you quit.
-- **Trust everything in “~/Code”** (when shown) trusts the parent folder instead, so every project you keep there is trusted at once. It isn't offered when the parent is your home folder, `/`, `/Users` or `/Volumes`.
+- **Trust everything in “~/Code”** (when shown) trusts the parent folder instead, so every project you keep there is trusted at once. It isn't offered when the parent is your home folder, `/`, `/Users`, `/Volumes` or `/home`.
 
 Workspaces brought back by session restore don't ask; they show as restricted until you trust them. A [task worktree](tasks.md) created from a trusted repository is trusted with it.
 
@@ -184,7 +190,7 @@ Project actions and task setup scripts from `.impulse/project.toml` have a separ
 
 ## Where Impulse keeps its files
 
-Impulse keeps its data in `~/Library/Application Support/impulse/`:
+Impulse keeps its data in `~/Library/Application Support/impulse/` on macOS and in `~/.local/share/impulse/` on Linux (`$XDG_DATA_HOME/impulse/` when that's set):
 
 | File or folder         | What it holds                                                                                                                                                                   |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -193,7 +199,7 @@ Impulse keeps its data in `~/Library/Application Support/impulse/`:
 | `scrollback/`          | Each restored terminal's saved output.                                                                                                                                          |
 | `trusted-folders.json` | The folders you trust.                                                                                                                                                          |
 | `history.sqlite3`      | Command history from the input bar.                                                                                                                                             |
-| `themes/`              | Your own themes.                                                                                                                                                                |
+| `themes/`              | Your own themes. On Linux they're in `~/.config/impulse/themes/` instead.                                                                                                       |
 
 ## Next steps
 

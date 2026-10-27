@@ -44,7 +44,7 @@ Impulse stops tracking the agent when its command ends or another program takes 
 | **Idle**             | A dim bot                     | The agent is running and nothing is asked of you (or you've seen its result).     |
 | **Exited**           | A dim bot                     | The agent's command ended. It leaves the agent list.                              |
 
-The dot and the check mark use your theme's attention and success colors. They also differ in shape, so you can tell **Needs your input** from **Finished** without relying on color. VoiceOver reads the state with the tab, for example "Terminal: claude, Claude Code: Needs your input".
+The dot and the check mark use your theme's attention and success colors. They also differ in shape, so you can tell **Needs your input** from **Finished** without relying on color. A screen reader reads "needs attention" with the tab's title while the agent wants you.
 
 ### How the state is worked out
 
@@ -84,9 +84,8 @@ A turn you interrupt (Esc in Claude Code) sends no `Stop`, and neither does a qu
 - **The workspace row.** In the sidebar, a workspace shows a spinner while any of its agents work, and a bot icon with a count when agents are waiting for you (needs input or finished). Rows also show a badge with the number of tabs that need attention.
 - **The Agents button.** While any agent runs in the window, the titlebar shows an Agents button with a spinner and count for working agents, and "N waiting" when some want you. Click it to open the agent list.
 - **The toolbelt.** A bar under the focused agent's terminal shows its state and how long it has been in it. See [The toolbelt](#the-toolbelt).
-- **Desktop notifications.** When Impulse is in the background and an agent needs input or finishes, you get a notification: "Claude Code needs your input" or "Claude Code finished", naming the workspace and tab. Notifications are grouped by workspace. Clicking one brings the window forward and focuses that terminal, and they're removed once you look at the terminal. macOS asks for permission the first time.
-- **The Dock.** The Dock icon bounces once when an agent wants you while Impulse is in the background, and its badge counts the terminals, in all windows, that need attention.
-- **VoiceOver.** With VoiceOver on, Impulse announces "Claude Code needs your input in …" and "Claude Code finished in …". See [Accessibility](accessibility.md).
+- **Desktop notifications.** When Impulse is in the background and an agent needs input or finishes, you get a notification: "Claude Code needs your input" or "Claude Code finished", naming the workspace and tab. Clicking one brings the window forward and focuses that terminal, and they're removed once you look at the terminal. macOS asks for permission the first time. On Linux they're sent with `notify-send`; clicking one and removing it work where your `notify-send` supports that (libnotify 0.7.10 or later).
+- **The Dock.** The Dock icon bounces once when an agent wants you while Impulse is in the background, and its badge counts the terminals, in all windows, that need attention. On Linux the window is marked urgent instead, and docks and task managers that read Unity's launcher count (KDE's, Dash to Dock, Plank) show the badge.
 
 ![The tab strip with three agent tabs: Claude Code working (spinner), Codex needing input (bot with an orange dot) and Gemini CLI finished (bot with a green check mark)](images/agents-tab-states.png)
 
@@ -102,7 +101,7 @@ Click the Agents button in the titlebar to see every agent in the window, most u
 
 ## Attention
 
-When an agent needs input or finishes and you aren't looking at its terminal, Impulse flags the terminal as needing attention: the tab and its workspace row are marked, the Dock badge counts it, and you get the notification described above.
+When an agent needs input or finishes and you aren't looking at its terminal, Impulse flags the terminal as needing attention: the tab and its workspace row are marked, the Dock badge (on Linux, the launcher count) counts it, and you get the notification described above.
 
 "Looking at it" means Impulse is the active app, the window is the key window and the terminal has keyboard focus. If you're looking at an agent when it finishes, Impulse treats the turn as seen: nothing is flagged and the agent goes straight back to **Idle**.
 
@@ -373,7 +372,7 @@ The entry runs the bundled `impulse` through `$IMPULSE_CLI`, and forwards `IMPUL
 }
 ```
 
-The path after `:-` is the app that installed it. If you move Impulse, the sheet says the server is out of date: install it again. Remove it from the same sheet; for Claude Code that runs `claude mcp remove`. An `impulse` server that isn't Impulse's is never replaced or removed.
+The path after `:-` is the `impulse` of the app that installed it (on Linux, the one beside `impulse-app`). If you move Impulse, the sheet says the server is out of date: install it again. Remove it from the same sheet; for Claude Code that runs `claude mcp remove`. An `impulse` server that isn't Impulse's is never replaced or removed.
 
 ### The tools
 
@@ -420,7 +419,7 @@ Several agents in one checkout get in each other's way. Give each one its own ta
 
 - **The agent isn't recognized.** Check that it's one of the [supported agents](#supported-agents) and that your shell is bash, zsh or fish with shell integration working. Agents launched through an unusual wrapper may not be recognized from the process; install [hooks](#agent-hooks) (Claude Code, Codex, opencode) or call `impulse status` from your wrapper.
 - **The state is wrong or late.** Without hooks, Impulse guesses from output. Install hooks for Claude Code, Codex or opencode, then restart the agent.
-- **No desktop notifications.** They're only shown when Impulse is in the background, and macOS must allow notifications for Impulse (System Settings ▸ Notifications).
+- **No desktop notifications.** They're only shown when Impulse is in the background, and macOS must allow notifications for Impulse (System Settings ▸ Notifications). On Linux, Impulse sends them with `notify-send` (from libnotify), which must be installed.
 - **Review Last Agent Turn finds nothing.** Turns are only recorded in a git repository, and after a restart they come back only for terminals restored with the session.
 - **The hooks sheet shows an error.** The settings file isn't the JSON object Impulse expects (for example, a syntax error), Codex already has a `notify` program, Impulse's own `notify` line can't be found to remove, or opencode's `plugins/impulse` folder holds a file that isn't Impulse's. Fix the file, then open the sheet again.
 
