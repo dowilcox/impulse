@@ -34,8 +34,13 @@ The largest unknown, so it goes first.
   Dock badge (`badge.rs`), Increase Contrast and Reduce Motion
   (`display_options.rs`), the window frame saved in AppKit's coordinates
   (`session.rs`: `frame_string`, `saved_bounds`), the Quick Terminal's
-  global shortcut, notifications through `osascript`, `NSBeep` for the
-  terminal bell, and ⌘Z bringing back a closed tab (`UndoClose`).
+  global shortcut, `NSBeep` for the terminal bell, and ⌘Z bringing back a
+  closed tab (`UndoClose`). Notifications (`agent_notify.rs`) were tried:
+  they came from Script Editor through `osascript` and clicking one opened
+  it, and the Dock badge never showed, because a terminal still counted as
+  watched after the app lost focus. Both fixed (Notification Center through
+  GPUI; terminals asked again when their window's focus changes); to try
+  again after the fix.
 - [x] **Run the snapshot mode there** (parity signed off without it; the
   smoke checks and docs shots on the Mac are still worth a run before the
   release). Window images go through
@@ -185,8 +190,11 @@ Left of the editor work done here:
 - [ ] **The glibc floor**: the workflow builds on Ubuntu 24.04, so the
   Linux packages need glibc 2.39 (no Debian 12, Ubuntu 22.04 or RHEL 9);
   building on `ubuntu-22.04` would lower it to 2.35.
-- [ ] **CI for the tests**: only the website has a workflow; nothing runs
-  `cargo test --workspace` on a push.
+- [x] **CI for the tests**: `.github/workflows/tests.yml` runs
+  `cargo fmt --all --check` and `cargo test --workspace --locked` on Linux
+  (Ubuntu 24.04, with zsh and fish for the shell-integration tests) and
+  macOS 26 on pushes to main and rust and on pull requests. Not run yet:
+  the first push starts it.
 - [ ] **The user docs** (`docs/`) still describe the Swift app in places
   (inline blame, which the Rust app dropped; Monaco), and their screenshots
   are the Swift app's: `scripts/docs/capture.py` regenerates them.

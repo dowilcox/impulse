@@ -15,13 +15,14 @@ another crate is named.
 
 ## Progress
 
-Every finding has been worked through. Still open, each noted in place
-below:
-- Keyboard folding waits on GPUI Kit (E15).
-- A Services menu item needs the bundle's Info.plist (W10).
-- On macOS, `osascript` notifications can't be withdrawn (A4).
-- The macOS build is type-checked (`scripts/check-macos.sh`) but not yet
-  run on a Mac.
+Every finding has been worked through. Still open, noted in place below:
+a Services menu item, which needs the bundle's Info.plist (W10).
+
+Since closed: keyboard folding (E15) through the vendored GPUI Kit's
+patch (`fold_at_cursor` and the rest, bound in `editor_keys.rs`); on macOS
+notifications go through Notification Center as Impulse, so a click shows
+the terminal and they're withdrawn when its attention clears (A4); and the
+Mac build runs on a Mac (rust-remaining.md, section 1).
 
 Fixed: E1, E6 (crashes on multibyte text), G1 with G2, G6 and G7
 (Review's stage, unstage and revert go through the workbench's git

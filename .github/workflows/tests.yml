@@ -1,0 +1,65 @@
+# Runs the workspace's tests, and checks its formatting, on every push to
+# main or rust and on pull requests, on Linux and macOS. The shell
+# integration tests run each shell that's installed (bash, zsh and fish
+# here) and skip the rest; the rust-analyzer test skips without it.
+name: Tests
+
+on:
+  push:
+    branches: [main, rust]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # As release-linux.yml, plus the shells the integration tests run.
+      - name: Install build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake clang \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev zlib1g-dev \
+            libfontconfig-dev libfreetype-dev libwayland-dev libvulkan-dev \
+            zsh fish
+
+      - name: Install fish
+        if: runner.os == 'macOS'
+        run: brew install fish
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Some app tests commit in a scratch repository with the global
+      # config, as on a developer's machine.
+      - name: Configure git
+        run: |
+          git config --global user.name "Impulse CI"
+          git config --global user.email "ci@impulse.invalid"
+          git config --global init.defaultBranch main
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Run the tests
+        run: cargo test --workspace --locked
