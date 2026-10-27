@@ -199,9 +199,15 @@ Left of the editor work done here:
   (Ubuntu 24.04, with zsh and fish for the shell-integration tests) and
   macOS 26 on pushes to main and rust and on pull requests. Not run yet:
   the first push starts it.
-- [ ] **The user docs** (`docs/`) still describe the Swift app in places
-  (inline blame, which the Rust app dropped; Monaco), and their screenshots
-  are the Swift app's: `scripts/docs/capture.py` regenerates them.
+- [x] **The user docs** (`docs/`) describe the Rust app on macOS and Linux
+  (27 Oct 2026: Monaco, inline blame and the Swift-only features are gone
+  from them; keyboard-shortcuts.md has an "On Linux" section the other
+  pages point to), and every screenshot was retaken from the Rust app on a
+  Mac by `scripts/docs/capture.py`. Two captions show the Mac's text where
+  Linux differs: the close notice's "Undo ⌘Z" and the language servers'
+  "From your system" hint.
+- [x] **The smoke checks on a Mac** (27 Oct 2026): every scenario passes
+  against the Rust app's snapshot build (474 checks), `images` included.
 
 ## Not differences
 
