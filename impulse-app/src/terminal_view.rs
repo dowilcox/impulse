@@ -4050,7 +4050,9 @@ impl Render for TerminalView {
 
 impl Drop for TerminalView {
     fn drop(&mut self) {
-        self.backend.shutdown();
+        // Not waiting for the shell: closing a tab of splits (or quitting)
+        // would block on each one in turn.
+        self.backend.close();
         for path in &self.temp_paths {
             let _ = if path.is_dir() {
                 std::fs::remove_dir_all(path)

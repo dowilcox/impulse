@@ -1045,8 +1045,13 @@ const CHILD_EXIT_GRACE: Duration = Duration::from_secs(1);
 /// kill it. alacritty's `Pty` waits for the child when dropped, so a shell
 /// ignoring SIGHUP would otherwise hold the reader thread forever. The child
 /// is left for that wait to reap.
+///
+/// The PTY's output is read and thrown away meanwhile: on macOS the last
+/// close of a terminal waits for its output to drain, so a shell that writes
+/// as it exits (fish does) can't finish exiting, even killed, while nobody
+/// reads `master_fd`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn stop_child(pid: u32) {
+fn stop_child(pid: u32, master_fd: i32) {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return;
     };
@@ -1069,23 +1074,46 @@ fn stop_child(pid: u32) {
         let exited_pid = unsafe { info.si_pid() };
         result != 0 || exited_pid == pid
     };
+    // Waits up to `grace` for the child to exit, draining its output.
+    let wait = |grace: Duration| {
+        let mut buf = [0u8; 0x4000];
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            // Non-blocking (alacritty's master is), so this ends at empty.
+            while unsafe { libc::read(master_fd, buf.as_mut_ptr().cast(), buf.len()) } > 0 {}
+            if exited() {
+                return true;
+            }
+            // Until there's more to read, or 10 ms to look again.
+            let mut ready = libc::pollfd {
+                fd: master_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            if unsafe { libc::poll(&mut ready, 1, 10) } != 0 {
+                // Output, or the PTY hung up for good (POLLHUP doesn't
+                // wait): a pause so that doesn't spin.
+                if ready.revents & libc::POLLIN == 0 {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        }
+        exited()
+    };
     if exited() {
         return;
     }
     unsafe { libc::kill(pid, libc::SIGHUP) };
-    let deadline = Instant::now() + CHILD_EXIT_GRACE;
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-        if exited() {
-            return;
-        }
+    if wait(CHILD_EXIT_GRACE) {
+        return;
     }
     log::warn!("shell {pid} ignored SIGHUP; killing it");
     unsafe { libc::kill(pid, libc::SIGKILL) };
+    wait(CHILD_EXIT_GRACE);
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn stop_child(pid: u32) {
+fn stop_child(pid: u32, _master_fd: i32) {
     if let Ok(pid) = libc::pid_t::try_from(pid) {
         unsafe { libc::kill(pid, libc::SIGHUP) };
     }
@@ -1139,6 +1167,67 @@ fn flush_pending_input<W: Write>(writer: &mut W, pending: &mut VecDeque<u8>) -> 
 
 const READ_THREAD_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How many closed terminals' reader threads are still running, for
+/// `wait_for_closed_terminals`.
+static CLOSING: (Mutex<usize>, std::sync::Condvar) = (Mutex::new(0), std::sync::Condvar::new());
+
+/// A reader thread's (closing, done), shared by the backend and the thread.
+/// Each side locks it before `CLOSING`, so a terminal is counted there once
+/// and only from `close` until its thread ends.
+#[derive(Clone, Default)]
+struct ReaderState(Arc<Mutex<(bool, bool)>>);
+
+impl ReaderState {
+    fn lock(&self) -> std::sync::MutexGuard<'_, (bool, bool)> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// From `close`: counted in `CLOSING` until the thread ends.
+    fn closing(&self) {
+        let mut state = self.lock();
+        if !state.0 && !state.1 {
+            state.0 = true;
+            *CLOSING.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        }
+    }
+}
+
+/// Marks its reader thread done when the thread ends (its shell gone and
+/// reaped).
+struct ReaderDone(ReaderState);
+
+impl Drop for ReaderDone {
+    fn drop(&mut self) {
+        let mut state = self.0.lock();
+        state.1 = true;
+        if state.0 {
+            let mut count = CLOSING.0.lock().unwrap_or_else(|e| e.into_inner());
+            *count = count.saturating_sub(1);
+            CLOSING.1.notify_all();
+        }
+    }
+}
+
+/// Wait, at most `READ_THREAD_JOIN_TIMEOUT`, for every terminal closed with
+/// `TerminalBackend::close` to finish: at quit, so their shells all hang up
+/// together and are gone before the app is.
+pub fn wait_for_closed_terminals() {
+    let deadline = Instant::now() + READ_THREAD_JOIN_TIMEOUT;
+    let mut count = CLOSING.0.lock().unwrap_or_else(|e| e.into_inner());
+    while *count > 0 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            log::warn!("{} terminals still closing at quit", *count);
+            return;
+        }
+        count = CLOSING
+            .1
+            .wait_timeout(count, left)
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    }
+}
+
 /// The main terminal backend. One instance per terminal tab/split.
 pub struct TerminalBackend {
     term: Arc<FairMutex<Term<EventProxy>>>,
@@ -1146,6 +1235,7 @@ pub struct TerminalBackend {
     poller: Arc<Poller>,
     event_rx: Receiver<TerminalEvent>,
     read_thread: Mutex<Option<JoinHandle<()>>>,
+    reader_state: ReaderState,
     cols: u16,
     rows: u16,
     cell_width: u16,
@@ -1368,9 +1458,12 @@ impl TerminalBackend {
         let wakeup_pending_clone = Arc::clone(&wakeup_pending);
         let password_input_clone = Arc::clone(&password_input);
         let poller_clone = Arc::clone(&poller);
+        let reader_state = ReaderState::default();
+        let done = ReaderDone(reader_state.clone());
         let read_thread = std::thread::Builder::new()
             .name("impulse-pty-reader".into())
             .spawn(move || {
+                let _done = done;
                 Self::read_loop(
                     master_fd_clone,
                     pty,
@@ -1396,6 +1489,7 @@ impl TerminalBackend {
             poller,
             event_rx,
             read_thread: Mutex::new(Some(read_thread)),
+            reader_state,
             cols,
             rows,
             cell_width,
@@ -1453,13 +1547,16 @@ impl TerminalBackend {
         }
         let _forget_fd = ForgetFd(master_fd);
         // Make sure the child is gone before `pty` waits for it on drop.
-        struct StopChild(u32);
+        struct StopChild(u32, i32);
         impl Drop for StopChild {
             fn drop(&mut self) {
-                stop_child(self.0);
+                stop_child(self.0, self.1);
             }
         }
-        let _stop_child = StopChild(pty.child().id());
+        let _stop_child = {
+            use std::os::unix::io::AsRawFd;
+            StopChild(pty.child().id(), pty.reader().as_raw_fd())
+        };
 
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
         let mut pipeline = OutputPipeline::new(Some(shell_nonce), max_scrollback).with_images(
@@ -2490,6 +2587,17 @@ impl TerminalBackend {
             let _ = self.cmd_tx.send(BackendMsg::Input(seq.to_vec()));
             let _ = self.poller.notify();
         }
+    }
+
+    /// Close the terminal without waiting: the shell is hung up, and the
+    /// reader thread ends on its own once it's gone (up to two seconds for a
+    /// shell ignoring SIGHUP). `wait_for_closed_terminals` waits for it.
+    pub fn close(&self) {
+        self.reader_state.closing();
+        let _ = self.cmd_tx.send(BackendMsg::Shutdown);
+        let _ = self.poller.notify();
+        // Dropping the handle detaches the thread.
+        drop(self.read_thread.lock().ok().and_then(|mut h| h.take()));
     }
 
     /// Shut down the terminal. The reader thread is joined when it exits

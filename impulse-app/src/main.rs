@@ -390,7 +390,16 @@ fn main() {
             #[cfg(target_os = "linux")]
             instance::stop();
             shell_launch::remove_private_dir();
-            workbench_trust::shutdown_servers(cx)
+            let servers = workbench_trust::shutdown_servers(cx);
+            // Polled once the windows are gone, every terminal closed with
+            // them: their shells hang up together, so quitting waits for the
+            // slowest rather than all of them in turn. It blocks past
+            // GPUI's quit timeout on purpose, as a shell ignoring SIGHUP
+            // is killed only then.
+            async move {
+                let terminals = async { impulse_terminal::wait_for_closed_terminals() };
+                futures::future::join(servers, terminals).await;
+            }
         })
         .detach();
         // The saved session comes back even when launched to open

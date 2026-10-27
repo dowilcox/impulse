@@ -16,7 +16,8 @@ mod search;
 mod transcript;
 
 pub use backend::{
-    BlockOverlay, BlockOverlayRegion, CommandBlockFlags, SelectionKind, TerminalBackend,
+    wait_for_closed_terminals, BlockOverlay, BlockOverlayRegion, CommandBlockFlags, SelectionKind,
+    TerminalBackend,
 };
 pub use blocks::{TerminalBlockId, TerminalCommandBlock, TerminalCommandBlockSummary};
 pub use buffer::{
