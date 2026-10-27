@@ -59,6 +59,9 @@ pub enum TerminalEvent {
     /// (termios ECHO off with ICANON on — sudo, ssh, `read -s`). Frontends
     /// should mask the input bar while true so the password isn't shown.
     PasswordInputChanged(bool),
+    /// An image was placed, removed or finished decoding: redraw (fetch
+    /// `TerminalBackend::image_layer` again).
+    ImagesChanged,
     /// Internal: Term sends PtyWrite for device query responses (e.g., DA1).
     /// Filtered out in poll_events() and forwarded back to the PTY as input.
     PtyWrite(String),

@@ -1,6 +1,6 @@
 # Terminal
 
-Impulse terminals run your own shell, with each command and its output kept together as a command block, and an input bar under the output where you type commands with highlighting, completions and history. This page covers everything about terminals: shell integration, blocks, the input bar, completions, history, find, hints, links, notifications, ports and the terminal settings.
+Impulse terminals run your own shell, with each command and its output kept together as a command block, and an input bar under the output where you type commands with highlighting, completions and history. This page covers everything about terminals: shell integration, blocks, the input bar, completions, history, find, links, images, hints, notifications, ports and the terminal settings.
 
 ## The terminal at a glance
 
@@ -416,6 +416,21 @@ Links from program output can point anywhere, so Impulse is careful about openin
 
 To turn links off, turn off **Clickable links** (`terminal_allow_hyperlink`) in Settings ▸ Terminal.
 
+## Images
+
+Programs can show pictures in the terminal: a plot from a script, `kitten icat photo.png`, yazi's file previews, images in Neovim with image.nvim or snacks.nvim, or a coding agent's preview of a pasted screenshot. Impulse supports the [kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/), which these programs use, including its Unicode placeholders, so images also show inside tmux and over ssh. Programs that ask whether the terminal can show images get an answer, so they pick it themselves.
+
+- An image belongs to the output it was printed with: it scrolls with it, and goes when the screen is cleared (`clear`, ⌘K) or when a full-screen program that showed it exits.
+- Copying text, a block's output and what agents read from a terminal leave images out.
+- Restored scrollback comes back without its images.
+- In tmux, turn on passthrough so images reach Impulse: `set -g allow-passthrough on` in `~/.tmux.conf`.
+
+Programs send image data in the escape sequences themselves, in a temporary file made for it, or by naming a PNG file (as `kitten icat` does). Since any output Impulse shows (`cat` of a file, a remote server) could name a file, Impulse reads only PNGs that way, outside system folders, and never answers whether it could, so nothing learns which files you have. Each image can be up to 10,000 pixels a side and 64 MB decoded, and a terminal keeps up to 256 MB of images, letting the oldest unused ones go first. Animated images show their first frame.
+
+To see an image that's only named in the output (by `ls`, a build or a test run), hold ⌘ over its path: a preview appears beside it. PNG, JPEG, GIF, WebP, BMP, ICO and TIFF files are previewed, up to 20 MB. ⌘-click opens the image in a tab, as with any file reference.
+
+To turn images off, turn off **Programs may show images** (`terminal_images`) in Settings ▸ Terminal. Images already shown go, and programs that ask are told the terminal can't show them.
+
 ## Hints mode
 
 Hints mode lets you open, copy or insert anything on screen without the mouse. Press ⇧⌘Space (**View ▸ Command Blocks ▸ Show Hints**, or **Show Hints** in the command palette). Every target on screen is underlined and gets a short label made of home-row letters: single letters (`A`, `S`, `D`, …) when there are nine targets or fewer, otherwise two letters each (`AA`, `AS`, `AD`, …).
@@ -580,6 +595,7 @@ All of these are in Settings ▸ Terminal, and in `settings.json` under the keys
 | Copy on select                                            | `terminal_copy_on_select`            | On                     |
 | Scroll to bottom on output                                | `terminal_scroll_on_output`          | On                     |
 | Clickable links                                           | `terminal_allow_hyperlink`           | On                     |
+| Programs may show images                                  | `terminal_images`                    | On                     |
 | Option as Meta                                            | `terminal_option_as_meta`            | Off                    |
 | Programs may set the clipboard                            | `terminal_allow_osc52_write`         | On                     |
 | Programs may read the clipboard                           | `terminal_allow_osc52_read`          | Off                    |

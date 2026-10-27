@@ -71,6 +71,22 @@ pub enum OscEvent {
     ShellNames(Vec<String>),
     /// OSC 6973;Path={PATH}: the shell's search path.
     ShellPath(String),
+    /// A kitty graphics command: an APC from its `G`. Reported with its
+    /// offsets only (`drain_event_spans`), not by `drain_events`.
+    Graphics(Vec<u8>),
+    /// CSI 2 J or CSI 3 J: the screen, or the scrollback, erased.
+    EraseDisplay(u16),
+    /// CSI ? 1049, 1047 or 47 h or l: the alternate screen entered (true)
+    /// or left.
+    AltScreen(bool),
+    /// ESC c: a full reset.
+    FullReset,
+    /// CSI 16 t: the program asks a cell's size in pixels.
+    CellSizeRequest,
+    /// CSI c: the program asks the terminal what it is (primary device
+    /// attributes). Reported only with a skip over the sequence, so the
+    /// parser doesn't answer it too.
+    DeviceAttributes,
 }
 
 /// OSC event with byte offsets in the most recently scanned chunk.
@@ -100,7 +116,18 @@ enum State {
     OscBody,   // Inside OSC payload, collecting until BEL or ST
     OscEscape, // Saw ESC inside an OSC payload: ST if '\', else a new escape
     OscSkip,   // An OSC over its size limit, dropped until it ends
+    Csi,       // Inside a CSI sequence, watched for the few images care about
+    ApcStart,  // Saw ESC _: a graphics command if `G` follows
+    ApcBody,   // Inside a graphics command, collecting until ST
+    ApcEscape, // Saw ESC inside a graphics command: ST if '\', else a new escape
+    ApcSkip,   // An APC that isn't a graphics command, or is over its limit
 }
+
+/// Longest graphics command (APC) kept; longer ones are dropped. Programs
+/// send images in chunks of 4096 bytes, but needn't.
+const MAX_APC_LEN: usize = 4 * 1024 * 1024;
+/// Parameters kept from one CSI sequence.
+const MAX_CSI_PARAMS: usize = 16;
 
 /// Longest OSC payload, unless one of the limits below applies. Longer ones
 /// are dropped whole.
@@ -132,6 +159,19 @@ pub struct OscScanner {
     skip_start: Option<(usize, bool)>,
     escape_start_offset: Option<usize>,
     osc_start_offset: Option<usize>,
+    csi_start_offset: Option<usize>,
+    /// The CSI sequence so far: its parameters, the one being read, its
+    /// private marker (`?`), and whether it has intermediates or anything
+    /// else that makes it none of the sequences watched for.
+    csi_params: [u16; MAX_CSI_PARAMS],
+    csi_count: usize,
+    csi_current: u16,
+    csi_private: u8,
+    csi_started: bool,
+    csi_ignore: bool,
+    /// The graphics command being collected, from its `G`.
+    apc: Vec<u8>,
+    apc_start_offset: Option<usize>,
     /// OSC 99 notifications still being assembled, by id.
     kitty_pending: Vec<(String, KittyNotification)>,
     /// The terminal's shell-integration secret. When set, command text
@@ -167,6 +207,15 @@ impl OscScanner {
             skip_start: None,
             escape_start_offset: None,
             osc_start_offset: None,
+            csi_start_offset: None,
+            csi_params: [0; MAX_CSI_PARAMS],
+            csi_count: 0,
+            csi_current: 0,
+            csi_private: 0,
+            csi_started: false,
+            csi_ignore: false,
+            apc: Vec::new(),
+            apc_start_offset: None,
             kitty_pending: Vec::new(),
             nonce: None,
             nonce_seen: false,
@@ -188,6 +237,8 @@ impl OscScanner {
         if self.state != State::Normal {
             self.escape_start_offset = None;
             self.osc_start_offset = None;
+            self.csi_start_offset = None;
+            self.apc_start_offset = None;
         }
         if self.state == State::OscSkip {
             // Still dropping an oversized OSC from the last chunk.
@@ -202,7 +253,7 @@ impl OscScanner {
                         self.escape_start_offset = Some(offset);
                     }
                 }
-                State::Escape => self.escape_byte(b),
+                State::Escape => self.escape_byte(b, offset),
                 State::OscBody => match b {
                     // BEL terminates the OSC sequence.
                     0x07 => {
@@ -235,7 +286,7 @@ impl OscScanner {
                         self.dispatch_osc(offset);
                         self.state = State::Escape;
                         self.escape_start_offset = offset.checked_sub(1);
-                        self.escape_byte(b);
+                        self.escape_byte(b, offset);
                     }
                 }
                 State::OscSkip => match b {
@@ -249,6 +300,51 @@ impl OscScanner {
                     0x18 | 0x1A => self.end_skip(offset, State::Normal),
                     _ => {}
                 },
+                State::Csi => self.csi_byte(b, offset),
+                State::ApcStart => {
+                    if b == b'G' {
+                        self.apc.clear();
+                        self.apc.push(b);
+                        self.state = State::ApcBody;
+                    } else {
+                        // vte ignores other APCs (and SOS and PM strings)
+                        // to their end, as this does.
+                        self.apc_start_offset = None;
+                        self.state = State::ApcSkip;
+                        self.apc_skip_byte(b, offset);
+                    }
+                }
+                State::ApcBody => match b {
+                    0x1B => self.state = State::ApcEscape,
+                    0x18 | 0x1A => {
+                        self.apc.clear();
+                        self.apc_start_offset = None;
+                        self.state = State::Normal;
+                    }
+                    _ if self.apc.len() >= MAX_APC_LEN => {
+                        self.apc = Vec::new();
+                        self.apc_start_offset = None;
+                        self.state = State::ApcSkip;
+                    }
+                    _ => self.apc.push(b),
+                },
+                State::ApcEscape => {
+                    if b == b'\\' {
+                        let apc = std::mem::take(&mut self.apc);
+                        let start = self.apc_start_offset.take();
+                        self.emit(OscEvent::Graphics(apc), start, offset + 1);
+                        self.state = State::Normal;
+                    } else {
+                        // Unterminated: dropped, and the ESC starts the
+                        // next sequence, as in vte.
+                        self.apc.clear();
+                        self.apc_start_offset = None;
+                        self.state = State::Escape;
+                        self.escape_start_offset = offset.checked_sub(1);
+                        self.escape_byte(b, offset);
+                    }
+                }
+                State::ApcSkip => self.apc_skip_byte(b, offset),
             }
         }
 
@@ -264,7 +360,7 @@ impl OscScanner {
     /// A byte after ESC, outside an OSC. Like vte, another ESC or a C0
     /// control (other than CAN/SUB) keeps the escape open, so `ESC ESC ]`
     /// still starts an OSC.
-    fn escape_byte(&mut self, b: u8) {
+    fn escape_byte(&mut self, b: u8, offset: usize) {
         match b {
             b']' => {
                 self.state = State::OscBody;
@@ -272,12 +368,147 @@ impl OscScanner {
                 self.osc_len = 0;
                 self.osc_start_offset = self.escape_start_offset.take();
             }
+            b'[' => {
+                self.state = State::Csi;
+                self.csi_count = 0;
+                self.csi_current = 0;
+                self.csi_private = 0;
+                self.csi_started = false;
+                self.csi_ignore = false;
+                self.csi_start_offset = self.escape_start_offset.take();
+            }
+            b'_' => {
+                self.state = State::ApcStart;
+                self.apc_start_offset = self.escape_start_offset.take();
+            }
+            // SOS and PM strings, ignored to their end like other APCs.
+            b'X' | b'^' => {
+                self.state = State::ApcSkip;
+                self.escape_start_offset = None;
+            }
+            b'c' => {
+                let start = self.escape_start_offset.take();
+                self.emit(OscEvent::FullReset, start, offset + 1);
+                self.state = State::Normal;
+            }
             0x18 | 0x1A | 0x20..=0x7E => {
                 self.state = State::Normal;
                 self.escape_start_offset = None;
             }
             _ => {}
         }
+    }
+
+    /// A byte of a string vte ignores (APC, SOS, PM): ESC ends it and starts
+    /// the next sequence, CAN and SUB cancel it.
+    fn apc_skip_byte(&mut self, b: u8, offset: usize) {
+        match b {
+            0x1B => {
+                self.state = State::Escape;
+                self.escape_start_offset = Some(offset);
+            }
+            0x18 | 0x1A => self.state = State::Normal,
+            _ => {}
+        }
+    }
+
+    /// A byte of a CSI sequence, following vte's states: C0 controls run
+    /// inside it, ESC starts the next sequence, CAN and SUB cancel it.
+    fn csi_byte(&mut self, b: u8, offset: usize) {
+        match b {
+            0x18 | 0x1A => {
+                self.state = State::Normal;
+                self.csi_start_offset = None;
+            }
+            0x1B => {
+                self.state = State::Escape;
+                self.escape_start_offset = Some(offset);
+                self.csi_start_offset = None;
+            }
+            0x20..=0x2F | b':' => self.csi_ignore = true,
+            b'0'..=b'9' => {
+                self.csi_started = true;
+                self.csi_current = self
+                    .csi_current
+                    .saturating_mul(10)
+                    .saturating_add(u16::from(b - b'0'));
+            }
+            b';' => {
+                self.csi_started = true;
+                self.csi_param_done();
+            }
+            0x3C..=0x3F => {
+                if !self.csi_started && self.csi_private == 0 {
+                    self.csi_private = b;
+                } else {
+                    self.csi_ignore = true;
+                }
+            }
+            0x40..=0x7E => {
+                self.csi_param_done();
+                self.state = State::Normal;
+                let start = self.csi_start_offset.take();
+                match self.csi_event(b) {
+                    // Answered instead of alacritty, which then mustn't see
+                    // it; one begun in an earlier read it has partly seen,
+                    // so it answers that one.
+                    Some(OscEvent::DeviceAttributes) => {
+                        if let Some(start) = start {
+                            self.skips.push(OscSkip {
+                                start,
+                                end: offset + 1,
+                                abort: false,
+                            });
+                            self.emit(OscEvent::DeviceAttributes, Some(start), offset + 1);
+                        }
+                    }
+                    Some(event) => self.emit(event, start, offset + 1),
+                    None => {}
+                }
+            }
+            // C0 controls run; DEL and bytes past ASCII are ignored.
+            _ => {}
+        }
+    }
+
+    fn csi_param_done(&mut self) {
+        if self.csi_count < MAX_CSI_PARAMS {
+            self.csi_params[self.csi_count] = self.csi_current;
+            self.csi_count += 1;
+        }
+        self.csi_current = 0;
+    }
+
+    /// The event a finished CSI sequence with final byte `b` makes, if any.
+    fn csi_event(&self, b: u8) -> Option<OscEvent> {
+        if self.csi_ignore {
+            return None;
+        }
+        let params = &self.csi_params[..self.csi_count];
+        let first = params.first().copied().unwrap_or(0);
+        match (self.csi_private, b) {
+            (0, b'J') if first == 2 || first == 3 => Some(OscEvent::EraseDisplay(first)),
+            (b'?', b'h' | b'l') if params.iter().any(|p| matches!(p, 47 | 1047 | 1049)) => {
+                Some(OscEvent::AltScreen(b == b'h'))
+            }
+            (0, b't') if first == 16 => Some(OscEvent::CellSizeRequest),
+            (0, b'c') if first == 0 && params.len() <= 1 => Some(OscEvent::DeviceAttributes),
+            _ => None,
+        }
+    }
+
+    /// Record an event with where it starts and ends in this chunk.
+    /// Graphics commands, which can be large, aren't kept for
+    /// `drain_events`.
+    fn emit(&mut self, event: OscEvent, start_offset: Option<usize>, end_offset: usize) {
+        if !matches!(event, OscEvent::Graphics(_)) {
+            self.events.push(event.clone());
+        }
+        self.event_spans.push(OscEventSpan {
+            event,
+            start_offset,
+            end_offset,
+        });
     }
 
     /// The longest the current OSC may be, by its number.
@@ -1345,5 +1576,138 @@ mod tests {
             scanner.drain_events(),
             vec![OscEvent::CommandEnd(130), OscEvent::CommandEnd(0)]
         );
+    }
+
+    fn spans(scanner: &mut OscScanner) -> Vec<(OscEvent, Option<usize>, usize)> {
+        scanner
+            .drain_event_spans()
+            .into_iter()
+            .map(|s| (s.event, s.start_offset, s.end_offset))
+            .collect()
+    }
+
+    #[test]
+    fn graphics_commands_with_their_offsets() {
+        let mut scanner = OscScanner::new();
+        let bytes = b"ab\x1b_Ga=T,f=100;AAAA\x1b\\cd";
+        scanner.scan(bytes);
+        assert_eq!(
+            spans(&mut scanner),
+            vec![(
+                OscEvent::Graphics(b"Ga=T,f=100;AAAA".to_vec()),
+                Some(2),
+                bytes.len() - 2
+            )]
+        );
+        // Not kept for drain_events.
+        scanner.scan(b"\x1b_Gi=1;\x1b\\");
+        assert!(scanner.drain_events().is_empty());
+    }
+
+    #[test]
+    fn graphics_commands_across_reads() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b_Ga=t,");
+        assert!(spans(&mut scanner).is_empty());
+        scanner.scan(b"i=1;QUJD\x1b");
+        assert!(spans(&mut scanner).is_empty());
+        scanner.scan(b"\\x");
+        assert_eq!(
+            spans(&mut scanner),
+            vec![(OscEvent::Graphics(b"Ga=t,i=1;QUJD".to_vec()), None, 1)]
+        );
+    }
+
+    #[test]
+    fn other_strings_and_cancelled_commands_are_ignored() {
+        let mut scanner = OscScanner::new();
+        // Another APC, SOS, PM, a cancelled command and an unterminated
+        // one (whose ESC starts the OSC after it).
+        scanner.scan(b"\x1b_Xyz\x1b\\\x1bXsos\x1b\\\x1b^pm\x1b\\\x1b_Gi=1\x18");
+        scanner.scan(b"\x1b_Gi=2\x1b]133;A\x07");
+        assert_eq!(scanner.drain_events(), vec![OscEvent::PromptStart]);
+        assert!(spans(&mut scanner).is_empty());
+    }
+
+    #[test]
+    fn oversized_graphics_commands_are_dropped() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"\x1b_Gi=1;");
+        scanner.scan(&vec![b'A'; MAX_APC_LEN + 1]);
+        scanner.scan(b"\x1b\\\x1b_Gi=2;\x1b\\");
+        let events: Vec<_> = spans(&mut scanner).into_iter().map(|s| s.0).collect();
+        assert_eq!(events, vec![OscEvent::Graphics(b"Gi=2;".to_vec())]);
+    }
+
+    #[test]
+    fn watched_csi_sequences() {
+        let mut scanner = OscScanner::new();
+        let bytes =
+            b"\x1b[2J\x1b[3J\x1b[J\x1b[1J\x1b[?1049h\x1b[?25;1049l\x1b[?1h\x1b[16t\x1b[14t\x1bc";
+        scanner.scan(bytes);
+        assert_eq!(
+            scanner.drain_events(),
+            vec![
+                OscEvent::EraseDisplay(2),
+                OscEvent::EraseDisplay(3),
+                OscEvent::AltScreen(true),
+                OscEvent::AltScreen(false),
+                OscEvent::CellSizeRequest,
+                OscEvent::FullReset,
+            ]
+        );
+        scanner.scan(b"x\x1b[2J");
+        assert_eq!(
+            spans(&mut scanner),
+            vec![(OscEvent::EraseDisplay(2), Some(1), 5)]
+        );
+    }
+
+    #[test]
+    fn csi_follows_vte() {
+        let mut scanner = OscScanner::new();
+        // Intermediates, a private marker after parameters and a cancel
+        // make none of them; a C0 control inside runs and the CSI goes on;
+        // ESC inside starts a new sequence.
+        scanner.scan(b"\x1b[2 J\x1b[2?J\x1b[2\x18J\x1b[2\nJ\x1b[2\x1b[3J");
+        assert_eq!(
+            scanner.drain_events(),
+            vec![OscEvent::EraseDisplay(2), OscEvent::EraseDisplay(3)]
+        );
+        // Split across reads.
+        scanner.scan(b"\x1b[?10");
+        scanner.scan(b"49h");
+        assert_eq!(
+            spans(&mut scanner),
+            vec![(OscEvent::AltScreen(true), None, 3)]
+        );
+        // An OSC right after still parses.
+        scanner.scan(b"\x1b[0m\x1b]133;A\x07");
+        assert_eq!(scanner.drain_events(), vec![OscEvent::PromptStart]);
+    }
+
+    #[test]
+    fn device_attributes_are_skipped_for_the_parser() {
+        let mut scanner = OscScanner::new();
+        scanner.scan(b"ab\x1b[c\x1b[0c\x1b[>c\x1b[?1;2c");
+        assert_eq!(
+            spans(&mut scanner),
+            vec![
+                (OscEvent::DeviceAttributes, Some(2), 5),
+                (OscEvent::DeviceAttributes, Some(5), 9),
+            ]
+        );
+        // Secondary attributes and replies aren't requests Impulse answers.
+        let skips: Vec<_> = scanner
+            .drain_skips()
+            .iter()
+            .map(|s| (s.start, s.end))
+            .collect();
+        assert_eq!(skips, [(2, 5), (5, 9)]);
+        // Begun in an earlier read, it's left to the parser.
+        scanner.scan(b"\x1b[");
+        scanner.scan(b"c");
+        assert!(spans(&mut scanner).is_empty());
+        assert!(scanner.drain_skips().is_empty());
     }
 }

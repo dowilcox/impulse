@@ -54,6 +54,9 @@ pub struct TerminalConfig {
     /// Programs may read the clipboard (OSC 52 load). Off unless asked for.
     #[serde(default)]
     pub allow_clipboard_read: bool,
+    /// Programs may show images (the kitty graphics protocol).
+    #[serde(default = "default_true")]
+    pub images: bool,
 }
 
 fn default_true() -> bool {
@@ -78,6 +81,7 @@ impl Default for TerminalConfig {
             minimum_contrast: 1.0,
             restored_transcript: None,
             allow_clipboard_write: true,
+            images: true,
             allow_clipboard_read: false,
         }
     }

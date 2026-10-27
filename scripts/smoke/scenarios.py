@@ -16,11 +16,14 @@ Each scenario:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
 import shutil
+import struct
 import subprocess
+import zlib
 from pathlib import Path
 
 import capture
@@ -330,6 +333,59 @@ def terminal_scenario(shell: str, path: str, cli: bool = False) -> dict:
         "session": ONE, "shell": path, "setup": setup_terminal, "actions": terminal_actions(cli),
         "check": lambda run: check_terminal(run, shell, cli),
     }
+
+
+# ---------------------------------------------------------------------------
+# Images: a script prints a PNG by the kitty graphics protocol, once placed
+# directly and once shown by Unicode placeholder cells; `clear` takes the
+# direct placement away.
+
+IMAGES = SMOKE / "images"
+
+
+def tiny_png(width: int, height: int) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    rows = b"".join(b"\0" + bytes([200, 80, 40, 255]) * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def setup_images() -> None:
+    data = base64.b64encode(tiny_png(24, 16)).decode()
+    # Two placeholder cells (U+10EEEE, the first with its row and column
+    # marks, U+0305 twice) in image 2's color, 2 (a 256-color index).
+    placeholders = "\\364\\216\\273\\256\\314\\205\\314\\205\\364\\216\\273\\256"
+    write(IMAGES / "show.sh", (
+        "#!/bin/sh\n"
+        f"printf '\\033_Ga=T,f=100,i=1,q=2;{data}\\033\\\\'\n"
+        f"printf '\\033_Ga=t,f=100,i=2,q=2;{data}\\033\\\\'\n"
+        "printf '\\033_Ga=p,U=1,i=2,c=2,r=1,q=2\\033\\\\'\n"
+        f"printf '\\n\\033[38;5;2m{placeholders}\\033[0m\\n'\n"
+    ))
+
+
+IMAGE_ACTIONS = [
+    "until=prompt",
+    f"run=sh {IMAGES / 'show.sh'}", "until=20:blocks:1", "sleep=1", "dump=shown",
+    "run=clear", "until=20:blocks:2", "sleep=1", "dump=cleared",
+]
+
+
+def check_images(run) -> None:
+    def images(name: str) -> dict:
+        terminals = list(surfaces(run.dump(name), "terminal"))
+        return terminals[0]["images"] if terminals else {}
+
+    shown = images("shown")
+    placements = shown.get("placements", [])
+    run.expect(len(placements) == 1 and placements[0]["image"] == 1, "the PNG is placed in the terminal",
+               placements)
+    run.expect(shown.get("virtual") == 1, "the placeholder image has its virtual placement", shown)
+    run.expect(shown.get("decoded") == 2, "both images decode", shown)
+    cleared = images("cleared")
+    run.expect(cleared.get("placements") == [], "clear takes the placed image away", cleared)
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +960,8 @@ SCENARIOS = [
     terminal_scenario("zsh", "/bin/zsh", cli=True),
     terminal_scenario("bash", "/bin/bash"),
     terminal_scenario("fish", "/opt/homebrew/bin/fish"),
+    {"name": "images", "about": "a PNG by the kitty graphics protocol, placed and by placeholders, then cleared",
+     "session": ONE, "setup": setup_images, "actions": IMAGE_ACTIONS, "check": check_images},
     {"name": "agents", "about": "agent states from hooks, checkpoints, review last turn, impulse tasks",
      "session": ONE, "actions": AGENT_ACTIONS, "check": check_agents},
     {"name": "lsp", "about": "server install, the trust question, TypeScript features, restricted folders",

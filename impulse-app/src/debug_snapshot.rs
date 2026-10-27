@@ -1429,6 +1429,16 @@ fn describe(surface: &Surface, cx: &App) -> Value {
                 })
                 .collect();
             let tracker = &t.agent;
+            let layer = t.backend.image_layer();
+            let images = json!({
+                "placements": layer
+                    .placements
+                    .iter()
+                    .map(|p| json!({"image": p.image_id, "row": p.row, "col": p.col, "z": p.z}))
+                    .collect::<Vec<_>>(),
+                "virtual": layer.virtuals.len(),
+                "decoded": layer.sizes.keys().filter(|id| t.backend.image(**id).is_some()).count(),
+            });
             json!({
                 "kind": "terminal",
                 "shell": t.shell.name(),
@@ -1442,6 +1452,7 @@ fn describe(surface: &Surface, cx: &App) -> Value {
                 "input": t.editor_text(cx),
                 "blocks": blocks,
                 "transcript": t.backend.transcript(400, false),
+                "images": images,
             })
         }
         Surface::Editor(e) => {

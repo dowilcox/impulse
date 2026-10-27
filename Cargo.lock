@@ -3502,6 +3502,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "gpui-pre-macos",
+ "image",
  "impulse-git",
  "impulse-kit",
  "impulse-lsp",
@@ -3596,10 +3597,13 @@ name = "impulse-terminal"
 version = "0.36.0"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "bitflags 2.13.2",
  "crossbeam-channel",
  "libc",
  "log",
+ "miniz_oxide 0.8.9",
+ "png 0.18.1",
  "polling",
  "serde",
  "tempfile",

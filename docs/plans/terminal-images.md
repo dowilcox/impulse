@@ -1,6 +1,29 @@
 # Images in the terminal: plan
 
-Plan, proposed 26 Oct 2026; nothing decided yet. Not user documentation: this folder isn't published to the website (`scripts/build-site.py` only builds `docs/*.md`).
+Plan, proposed 26 Oct 2026. Not user documentation: this folder isn't published to the website (`scripts/build-site.py` only builds `docs/*.md`).
+
+## Status
+
+Proposals 1 to 5 are built (26 Oct 2026): `impulse-terminal/src/graphics/` (command parsing, `ImageStore`, placeholders, decoding), the scanner's APC and CSI events, `OutputPipeline::graphics` and `erase_display` in `backend.rs`, `impulse-app/src/terminal_images.rs` and the hold-⌘ preview in `terminal_view.rs`, the `terminal_images` setting, docs, and the `images` smoke scenario. Where it differs from the plan below:
+
+- Graphics APCs still reach vte, which discards them; leaving them out through `OscSkip` saved nothing worth the bookkeeping.
+- A zlib-compressed PNG is inflated on the reader thread (its size is in its header); raw formats inflate on the decoding thread with the rest.
+- Two limits more: 4096 placements per terminal and 2000 cells a side per placement.
+- Erasing with `CSI 0 J` or `CSI 1 J` leaves images alone; only `CSI 2 J` (the screen) and `CSI 3 J` (the scrollback) remove them.
+- Agents' block output leaves images out entirely (no `[image]` line).
+- Named files (`t=f`) are read after all, PNGs only and never answered (`read_named_png`): `kitten icat` takes a working `t=t` to mean files work and then sends a PNG by its path, which it couldn't show otherwise.
+- Impulse answers primary device attributes (`CSI c`) itself, `ESC [ ? 62 ; 22 c` as Ghostty does, keeping the request from alacritty: kitten never accepts alacritty's `ESC [ ? 6 c` and waited forever (found trying `kitten icat`).
+
+Tried in the app (26 Oct 2026, Linux, XWayland): direct placements, placeholders and `clear` with a script; `kitten icat` detects support (`files`) and shows images, the cursor ending below them.
+
+Still to do:
+
+- [ ] yazi, not tried yet.
+- [ ] `kitten icat --place` (absolute screen position) drew over the next prompt: check how placing by screen row should meet the rows anchored to the input bar.
+- [ ] Run the `images` smoke scenario where there's an X server for it (Xvfb) or on the Mac; it hasn't run yet.
+- [ ] The test matrix by hand (below), and the cursor's place after an image at the right edge and bottom compared with kitty's (`OutputPipeline::graphics` follows kitty's source as remembered: right by the columns, down by the rows less one).
+- [ ] A docs screenshot of an image in a block.
+- [ ] `scripts/check-macos.sh` (it needs `rustup target add aarch64-apple-darwin`).
 
 ## The problem
 

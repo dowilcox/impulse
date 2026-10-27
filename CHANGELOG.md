@@ -10,6 +10,11 @@ All notable changes to Impulse are documented in this file.
 - Linux releases come as a `.deb` for Debian and Ubuntu and a tarball for other distributions, for x86_64 and arm64. Building from source on Arch and its derivatives also makes a package for `pacman -U`.
 - The editor is Impulse's own instead of Monaco, keeping Monaco's keys and behavior. Inline blame is gone; Show Commit for This Line still blames the cursor's line.
 
+### Images in the terminal
+
+- Programs can show pictures in the terminal: plots, `kitten icat`, yazi's previews, images in Neovim, an agent's preview of a pasted screenshot. Impulse speaks the kitty graphics protocol, with its Unicode placeholders, so images also work in tmux and over ssh. Turn it off with **Programs may show images** in Settings ▸ Terminal.
+- Hold ⌘ (Ctrl on Linux) over an image's path in the output to preview it.
+
 ### Fixes
 
 - In bash, command history, block headers and the palette's history now show the command as you typed it: a whole pipeline (`ls | wc -l`, not just `ls`), with aliases as written instead of expanded.

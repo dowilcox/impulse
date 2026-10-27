@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::num::NonZeroUsize;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -29,6 +29,7 @@ use crate::blocks::{
 use crate::buffer::{self, HighlightRange};
 use crate::config::TerminalConfig;
 use crate::event::TerminalEvent;
+use crate::graphics::{self, ImageLayer, ImageStore, TerminalImage};
 use crate::grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
 use crate::history::{
     command_history_rerun_input, CommandHistoryContext, CommandHistoryQuery, CommandHistoryRecord,
@@ -242,6 +243,41 @@ fn trim_scrollback<T>(term: &mut Term<T>, max: usize) -> usize {
     excess
 }
 
+/// Impulse's answer to primary device attributes (CSI c): a VT220 with
+/// ANSI color, as Ghostty answers. alacritty's own answer, a VT102
+/// (`ESC [ ? 6 c`), leaves `kitten icat` waiting forever.
+const DEVICE_ATTRIBUTES: &str = "\x1b[?62;22c";
+
+/// The image store, even if a thread panicked holding it.
+fn lock_images(images: &Mutex<ImageStore>) -> std::sync::MutexGuard<'_, ImageStore> {
+    images.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Where a graphics command lands: the cursor, its screen, and the anchor
+/// row of the screen's first line (see `ImageStore`).
+fn image_cursor<T>(term: &Term<T>, images: &ImageStore, cell: (u32, u32)) -> graphics::Cursor {
+    let grid = term.grid();
+    let alt = term.mode().contains(TermMode::ALT_SCREEN);
+    graphics::Cursor {
+        alt,
+        top: if alt {
+            0
+        } else {
+            images.row_base() + grid.history_size() as i64
+        },
+        line: grid.cursor.point.line.0.max(0) as usize,
+        col: grid.cursor.point.column.0,
+        columns: grid.columns(),
+        lines: grid.screen_lines(),
+        cell,
+    }
+}
+
+/// A cell's size in pixels, packed as `cell_pixels` keeps it.
+fn pack_cell(width: u16, height: u16) -> u32 {
+    u32::from(width) << 16 | u32::from(height)
+}
+
 /// A handler that does nothing: an OSC handed to it is dropped.
 struct IgnoreAll;
 
@@ -258,6 +294,12 @@ struct OutputPipeline {
     max_scrollback: usize,
     /// Newlines a synchronized update has held back from the parser.
     sync_newlines: usize,
+    /// The images programs send (the kitty graphics protocol).
+    images: Arc<Mutex<ImageStore>>,
+    /// Programs may show images (`terminal_images`).
+    images_enabled: Arc<AtomicBool>,
+    /// A cell's size in device pixels (`pack_cell`).
+    cell_pixels: Arc<AtomicU32>,
 }
 
 impl OutputPipeline {
@@ -267,6 +309,111 @@ impl OutputPipeline {
             processor: Processor::new(),
             max_scrollback,
             sync_newlines: 0,
+            images: Arc::new(Mutex::new(ImageStore::new(Arc::new(|| {})))),
+            images_enabled: Arc::new(AtomicBool::new(true)),
+            cell_pixels: Arc::new(AtomicU32::new(pack_cell(8, 16))),
+        }
+    }
+
+    /// Share the backend's images, their setting and the cell size.
+    fn with_images(
+        mut self,
+        images: Arc<Mutex<ImageStore>>,
+        enabled: Arc<AtomicBool>,
+        cell_pixels: Arc<AtomicU32>,
+    ) -> Self {
+        self.images = images;
+        self.images_enabled = enabled;
+        self.cell_pixels = cell_pixels;
+        self
+    }
+
+    fn cell_size(&self) -> (u32, u32) {
+        let packed = self.cell_pixels.load(Ordering::Relaxed);
+        (packed >> 16, packed & 0xFFFF)
+    }
+
+    /// A graphics command, where the cursor is now.
+    fn graphics<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        apc: &[u8],
+        blocks: &Mutex<CommandBlockTracker>,
+        event_tx: &EventSink,
+    ) {
+        let Some((cmd, payload)) = graphics::Command::parse(apc) else {
+            return;
+        };
+        if !self.images_enabled.load(Ordering::Relaxed) {
+            // A program asking finds out, and falls back to text.
+            if cmd.action == b'q' {
+                if let Some(reply) =
+                    graphics::reply(&cmd, cmd.id, Err("EINVAL:images are turned off"))
+                {
+                    let _ = event_tx.send(TerminalEvent::PtyWrite(reply));
+                }
+            }
+            return;
+        }
+        // A synchronized update holds output back from the grid, so the
+        // cursor wouldn't be where the image goes: let it through first.
+        let places = matches!(cmd.action, b'T' | b'p') || cmd.continuation;
+        if places && self.processor.sync_timeout().sync_timeout().is_some() {
+            self.stop_sync(term, blocks);
+        }
+        let outcome = {
+            let mut images = lock_images(&self.images);
+            let at = image_cursor(term, &images, self.cell_size());
+            images.handle(cmd, payload, &at)
+        };
+        if let Some(reply) = outcome.reply {
+            let _ = event_tx.send(TerminalEvent::PtyWrite(reply));
+        }
+        if let Some((down, col)) = outcome.cursor_move {
+            let history_before = term.grid().history_size();
+            for _ in 0..down {
+                term.linefeed();
+            }
+            term.goto_col(col.min(term.columns().saturating_sub(1)));
+            self.trim(term, blocks, history_before, down);
+        }
+        if outcome.changed {
+            let _ = event_tx.send(TerminalEvent::ImagesChanged);
+        }
+    }
+
+    /// Erase in display (`mode` 2, the screen; 3, the scrollback) is about
+    /// to run: the images there go with it.
+    fn erase_display<T: EventListener>(
+        &mut self,
+        term: &mut Term<T>,
+        mode: u16,
+        blocks: &Mutex<CommandBlockTracker>,
+        event_tx: &EventSink,
+    ) {
+        let alt = term.mode().contains(TermMode::ALT_SCREEN);
+        if !lock_images(&self.images).has_placements(alt) {
+            return;
+        }
+        // Held back by a synchronized update, the erase would land after
+        // the images had already gone (or moved).
+        if self.processor.sync_timeout().sync_timeout().is_some() {
+            self.stop_sync(term, blocks);
+        }
+        let mut images = lock_images(&self.images);
+        let grid = term.grid();
+        let top = if alt {
+            0
+        } else {
+            images.row_base() + grid.history_size() as i64
+        };
+        let changed = match mode {
+            2 => images.erase_screen(alt, top, grid.screen_lines()),
+            3 if !alt => images.erase_scrollback(top, grid.history_size()),
+            _ => false,
+        };
+        if changed {
+            let _ = event_tx.send(TerminalEvent::ImagesChanged);
         }
     }
 
@@ -359,6 +506,26 @@ impl OutputPipeline {
                 }
                 OscEvent::ShellPath(path) => {
                     let _ = event_tx.send(TerminalEvent::ShellPath(path));
+                }
+                OscEvent::Graphics(apc) => self.graphics(term, &apc, blocks, event_tx),
+                OscEvent::EraseDisplay(mode) => self.erase_display(term, mode, blocks, event_tx),
+                OscEvent::AltScreen(_) => {
+                    if lock_images(&self.images).clear_alt() {
+                        let _ = event_tx.send(TerminalEvent::ImagesChanged);
+                    }
+                }
+                OscEvent::FullReset => {
+                    if lock_images(&self.images).reset() {
+                        let _ = event_tx.send(TerminalEvent::ImagesChanged);
+                    }
+                }
+                OscEvent::DeviceAttributes => {
+                    let _ = event_tx.send(TerminalEvent::PtyWrite(DEVICE_ATTRIBUTES.into()));
+                }
+                OscEvent::CellSizeRequest => {
+                    let (width, height) = self.cell_size();
+                    let _ =
+                        event_tx.send(TerminalEvent::PtyWrite(format!("\x1b[6;{height};{width}t")));
                 }
             }
 
@@ -471,6 +638,7 @@ impl OutputPipeline {
             if let Ok(mut blocks) = blocks.lock() {
                 blocks.bump_row_base(evicted as u64);
             }
+            lock_images(&self.images).trim(evicted as u64);
         }
     }
 }
@@ -486,6 +654,7 @@ impl OutputPipeline {
 fn resize_term<T: EventListener>(
     term: &mut Term<T>,
     blocks: &Mutex<CommandBlockTracker>,
+    images: &Mutex<ImageStore>,
     size: TermSize,
     max_scrollback: usize,
 ) {
@@ -508,6 +677,13 @@ fn resize_term<T: EventListener>(
         if evicted > 0 {
             blocks.bump_row_base(evicted as u64);
         }
+    }
+    let mut images = lock_images(images);
+    if before != after {
+        images.remap_rows(|row| reflowed_row(row, &before, &after));
+    }
+    if evicted > 0 {
+        images.trim(evicted as u64);
     }
 }
 
@@ -993,6 +1169,11 @@ pub struct TerminalBackend {
     notifier: Arc<WakeNotifier>,
     /// The PTY master, or -1 after the reader thread has closed it.
     master_fd: Arc<AtomicI32>,
+    /// Images programs sent, shared with the reader thread.
+    images: Arc<Mutex<ImageStore>>,
+    images_enabled: Arc<AtomicBool>,
+    /// A cell's size in device pixels (`pack_cell`), for the reader thread.
+    cell_pixels: Arc<AtomicU32>,
 }
 
 /// Most command blocks without command text one poll passes on (the
@@ -1018,6 +1199,7 @@ fn coalesce_events(events: Vec<TerminalEvent>) -> Vec<TerminalEvent> {
     let last_path = last(|e| matches!(e, E::ShellPath(_)));
     let last_progress = last(|e| matches!(e, E::Progress { .. }));
     let last_clipboard = last(|e| matches!(e, E::ClipboardStore(_)));
+    let last_images = last(|e| matches!(e, E::ImagesChanged));
     let count = |kind: fn(&TerminalEvent) -> bool| events.iter().filter(|e| kind(e)).count();
     let mut skip_notifications =
         count(|e| matches!(e, E::Notification { .. })).saturating_sub(MAX_ALERTS_PER_POLL);
@@ -1064,6 +1246,7 @@ fn coalesce_events(events: Vec<TerminalEvent>) -> Vec<TerminalEvent> {
             E::ShellPath(_) => Some(index) == last_path,
             E::Progress { .. } => Some(index) == last_progress,
             E::ClipboardStore(_) => Some(index) == last_clipboard,
+            E::ImagesChanged => Some(index) == last_images,
             E::SessionStatus(fields) => {
                 status.extend(fields.iter().map(|(k, v)| (k.clone(), v.clone())));
                 false
@@ -1167,6 +1350,18 @@ impl TerminalBackend {
 
         let blocks = Arc::new(Mutex::new(CommandBlockTracker::new()));
         let history = Arc::new(Mutex::new(CommandHistoryStore::new()));
+        let images = {
+            // An image done decoding redraws.
+            let event_tx = event_tx.clone();
+            Arc::new(Mutex::new(ImageStore::new(Arc::new(move || {
+                let _ = event_tx.send(TerminalEvent::ImagesChanged);
+            }))))
+        };
+        let images_enabled = Arc::new(AtomicBool::new(config.images));
+        let cell_pixels = Arc::new(AtomicU32::new(pack_cell(cell_width, cell_height)));
+        let images_clone = Arc::clone(&images);
+        let images_enabled_clone = Arc::clone(&images_enabled);
+        let cell_pixels_clone = Arc::clone(&cell_pixels);
         let term_clone = Arc::clone(&term);
         let blocks_clone = Arc::clone(&blocks);
         let history_clone = Arc::clone(&history);
@@ -1190,6 +1385,7 @@ impl TerminalBackend {
                     password_input_clone,
                     max_scrollback,
                     shell_nonce,
+                    (images_clone, images_enabled_clone, cell_pixels_clone),
                 );
             })
             .map_err(|e| format!("Failed to spawn read thread: {e}"))?;
@@ -1215,6 +1411,9 @@ impl TerminalBackend {
             force_full_damage: AtomicBool::new(true),
             notifier,
             master_fd,
+            images,
+            images_enabled,
+            cell_pixels,
         })
     }
 
@@ -1238,6 +1437,11 @@ impl TerminalBackend {
         password_input: Arc<AtomicBool>,
         max_scrollback: usize,
         shell_nonce: String,
+        (images, images_enabled, cell_pixels): (
+            Arc<Mutex<ImageStore>>,
+            Arc<AtomicBool>,
+            Arc<AtomicU32>,
+        ),
     ) {
         // Invalidate the shared master fd before `pty` (a parameter, dropped
         // after every local) closes it, so it's never queried once reused.
@@ -1258,7 +1462,11 @@ impl TerminalBackend {
         let _stop_child = StopChild(pty.child().id());
 
         let mut buf = [0u8; 0x10000]; // 64KB read buffer
-        let mut pipeline = OutputPipeline::new(Some(shell_nonce), max_scrollback);
+        let mut pipeline = OutputPipeline::new(Some(shell_nonce), max_scrollback).with_images(
+            Arc::clone(&images),
+            images_enabled,
+            cell_pixels,
+        );
 
         #[cfg(unix)]
         let master_fd = {
@@ -1294,7 +1502,7 @@ impl TerminalBackend {
                             columns: cols as usize,
                             screen_lines: rows as usize,
                         };
-                        resize_term(&mut term.lock(), &blocks, size, max_scrollback);
+                        resize_term(&mut term.lock(), &blocks, &images, size, max_scrollback);
                         true
                     }
                     BackendMsg::Shutdown => false,
@@ -1484,6 +1692,8 @@ impl TerminalBackend {
         self.rows = rows;
         self.cell_width = cell_width;
         self.cell_height = cell_height;
+        self.cell_pixels
+            .store(pack_cell(cell_width, cell_height), Ordering::Relaxed);
         // The term itself is resized asynchronously on the read thread (which
         // marks full damage); force full here too so a take_damage() in the
         // window before that lands doesn't under-report.
@@ -1917,6 +2127,8 @@ impl TerminalBackend {
         let mut extras: Vec<(u32, u8, Vec<u8>)> = Vec::new();
         // Neighbouring cells mostly share colors: reuse the last contrast fix.
         let mut last_contrast: Option<(RgbColor, RgbColor, RgbColor)> = None;
+        // Image placeholders continue from the cell to their left.
+        let mut placeholders = (i32::MIN, graphics::PlaceholderRow::default());
         for indexed in content.display_iter {
             let row_i32 = indexed.point.line.0 + display_offset;
             let col = indexed.point.column.0;
@@ -1924,6 +2136,32 @@ impl TerminalBackend {
                 let row = row_i32 as usize;
                 let offset = cell_offset + (row * num_cols + col) * buffer::CELL_STRIDE;
                 let bg = self.colors.resolve(indexed.cell.bg, term_colors);
+                if indexed.cell.c == graphics::PLACEHOLDER {
+                    // A blank cell that shows part of an image.
+                    if placeholders.0 != row_i32 {
+                        placeholders = (row_i32, graphics::PlaceholderRow::default());
+                    }
+                    let shows = placeholders.1.cell(
+                        col,
+                        graphics::color_id(Some(indexed.cell.fg)),
+                        graphics::color_id(indexed.cell.underline_color()),
+                        indexed.cell.zerowidth().unwrap_or(&[]),
+                    );
+                    buffer::write_cell(buf, offset, ' ', default_fg, bg, CellFlags::empty());
+                    let mut payload = Vec::with_capacity(12);
+                    payload.extend_from_slice(&shows.image_id.to_le_bytes());
+                    payload.extend_from_slice(&shows.placement_id.to_le_bytes());
+                    payload
+                        .extend_from_slice(&(shows.row.min(u16::MAX as u32) as u16).to_le_bytes());
+                    payload
+                        .extend_from_slice(&(shows.col.min(u16::MAX as u32) as u16).to_le_bytes());
+                    extras.push((
+                        (row * num_cols + col) as u32,
+                        buffer::EXTRA_IMAGE_CELL,
+                        payload,
+                    ));
+                    continue;
+                }
                 let fg = self.colors.resolve(indexed.cell.fg, term_colors);
                 let fg = match last_contrast {
                     Some((from, under, to)) if from == fg && under == bg => to,
@@ -2079,11 +2317,42 @@ impl TerminalBackend {
                 }
             }
         }
-        crate::transcript::transcript_until(&term, last_line, max_rows, with_sgr)
+        let text = crate::transcript::transcript_until(&term, last_line, max_rows, with_sgr);
+        graphics::strip_placeholders(&text).into_owned()
     }
 
     pub fn selected_text(&self) -> Option<String> {
-        self.term.lock().selection_to_string()
+        let text = self.term.lock().selection_to_string()?;
+        Some(graphics::strip_placeholders(&text).into_owned())
+    }
+
+    /// The images in the viewport: the direct placements, and the sizes
+    /// placeholder cells are drawn at.
+    pub fn image_layer(&self) -> ImageLayer {
+        let term = self.term.lock();
+        let grid = term.grid();
+        let alt = term.mode().contains(TermMode::ALT_SCREEN);
+        let images = lock_images(&self.images);
+        let top = if alt {
+            0
+        } else {
+            images.row_base() + grid.history_size() as i64
+        };
+        images.layer(alt, top, grid.display_offset(), grid.screen_lines())
+    }
+
+    /// An image's pixels, once it's decoded.
+    pub fn image(&self, id: u32) -> Option<TerminalImage> {
+        lock_images(&self.images).image(id)
+    }
+
+    /// Let programs show images, or not (`terminal_images`); turning them
+    /// off forgets the ones shown.
+    pub fn set_images_enabled(&self, enabled: bool) {
+        self.images_enabled.store(enabled, Ordering::Relaxed);
+        if !enabled && lock_images(&self.images).reset() {
+            self.mark_force_full_damage();
+        }
     }
 
     /// Scroll the viewport. Positive = up (towards history), negative = down.
@@ -2754,11 +3023,11 @@ mod tests {
         };
 
         // Narrower: the long line takes three rows, pushing the prompt down.
-        resize_term(&mut term, &blocks, size(10), 10_000);
+        resize_term(&mut term, &blocks, &test_images(), size(10), 10_000);
         assert_eq!(rows(&blocks), (Some(0), Some(1), Some(4), Some(4)));
 
         // Wider: it fits on one row, pulling the prompt up.
-        resize_term(&mut term, &blocks, size(40), 10_000);
+        resize_term(&mut term, &blocks, &test_images(), size(40), 10_000);
         assert_eq!(rows(&blocks), (Some(0), Some(1), Some(2), Some(2)));
     }
 
@@ -2791,10 +3060,10 @@ mod tests {
         // most of it scrolled into history on a four-line screen.
         assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(10));
 
-        resize_term(&mut term, &blocks, size(10), 10_000);
+        resize_term(&mut term, &blocks, &test_images(), size(10), 10_000);
         // The long line now takes five rows.
         assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(12));
-        resize_term(&mut term, &blocks, size(80), 10_000);
+        resize_term(&mut term, &blocks, &test_images(), size(80), 10_000);
         assert_eq!(blocks.lock().unwrap().pending_prompt_row(), Some(8));
     }
 
@@ -2845,6 +3114,156 @@ mod tests {
 
     /// The text of a grid line (0 is the top of the screen, negative lines
     /// are scrollback), without trailing blanks.
+    fn test_images() -> std::sync::Mutex<crate::graphics::ImageStore> {
+        std::sync::Mutex::new(crate::graphics::ImageStore::new(Arc::new(|| {})))
+    }
+
+    #[test]
+    fn graphics_commands_place_images_and_answer() {
+        use super::OutputPipeline;
+        use crate::blocks::CommandBlockTracker;
+        use crate::history::{CommandHistoryContext, CommandHistoryStore};
+        use alacritty_terminal::grid::Dimensions;
+        use base64::Engine as _;
+        use std::sync::Mutex;
+
+        let (sink, rx) = test_sink();
+        let proxy = EventProxy {
+            event_tx: sink.clone(),
+            wakeup_pending: Arc::new(AtomicBool::new(false)),
+            query_colors: Arc::new(RwLock::new([RgbColor::new(0, 0, 0); 269])),
+        };
+        let mut term = term_with_scrollback(100, 20, 5, proxy);
+        let blocks = Mutex::new(CommandBlockTracker::new());
+        let history = Mutex::new(CommandHistoryStore::new());
+        let context = CommandHistoryContext::default();
+        let mut pipeline = OutputPipeline::new(None, 100);
+        pipeline
+            .cell_pixels
+            .store(super::pack_cell(10, 20), Ordering::Relaxed);
+        let images = Arc::clone(&pipeline.images);
+        let enabled = Arc::clone(&pipeline.images_enabled);
+        let mut process = |term: &mut _, bytes: &[u8]| {
+            pipeline.process(term, bytes, &blocks, &history, &context, &sink)
+        };
+        let replies = || -> Vec<String> {
+            rx.try_iter()
+                .filter_map(|event| match event {
+                    TerminalEvent::PtyWrite(text) => Some(text),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        // 25×30 pixels in 10×20 cells: 3 columns, 2 rows, placed after
+        // "ab"; the cursor goes to the right of its last row.
+        let data = base64::engine::general_purpose::STANDARD.encode(vec![9u8; 25 * 30 * 3]);
+        let command = format!("ab\x1b_Ga=T,f=24,s=25,v=30,i=1;{data}\x1b\\cd");
+        process(&mut term, command.as_bytes());
+        assert_eq!(replies(), ["\x1b_Gi=1;OK\x1b\\"]);
+        assert_eq!(row_text(&term, 1), "     cd");
+        let layer = |term: &alacritty_terminal::term::Term<_>| {
+            let images = images.lock().unwrap();
+            let top = images.row_base() + term.grid().history_size() as i64;
+            images.layer(false, top, 0, 5)
+        };
+        let placed = layer(&term).placements;
+        assert_eq!((placed.len(), placed[0].row, placed[0].col), (1, 0, 2));
+
+        // Scrolled up a line by output, it moves with its text.
+        process(&mut term, b"\r\n\r\n\r\n\r\n");
+        assert_eq!(layer(&term).placements[0].row, -1);
+
+        // The cell size, for programs that ask.
+        process(&mut term, b"\x1b[16t");
+        assert_eq!(replies(), ["\x1b[6;20;10t"]);
+
+        // Erasing the screen takes the image with it.
+        process(&mut term, b"\x1b[2J");
+        assert!(layer(&term).placements.is_empty());
+
+        // Turned off: a query is refused and nothing is stored.
+        enabled.store(false, Ordering::Relaxed);
+        process(&mut term, b"\x1b_Ga=q,i=5,s=1,v=1,f=24;AAAA\x1b\\");
+        process(&mut term, b"\x1b_Ga=T,i=6,s=1,v=1,f=24;AAAA\x1b\\");
+        assert_eq!(replies(), ["\x1b_Gi=5;EINVAL:images are turned off\x1b\\"]);
+        assert!(images.lock().unwrap().image(6).is_none());
+    }
+
+    #[test]
+    fn device_attributes_are_answered_once() {
+        use super::OutputPipeline;
+        use crate::blocks::CommandBlockTracker;
+        use crate::history::{CommandHistoryContext, CommandHistoryStore};
+        use std::sync::Mutex;
+
+        let (sink, rx) = test_sink();
+        let proxy = EventProxy {
+            event_tx: sink.clone(),
+            wakeup_pending: Arc::new(AtomicBool::new(false)),
+            query_colors: Arc::new(RwLock::new([RgbColor::new(0, 0, 0); 269])),
+        };
+        let mut term = term_with_scrollback(100, 20, 5, proxy);
+        let blocks = Mutex::new(CommandBlockTracker::new());
+        let history = Mutex::new(CommandHistoryStore::new());
+        let context = CommandHistoryContext::default();
+        let mut pipeline = OutputPipeline::new(None, 100);
+        pipeline.process(
+            &mut term,
+            b"x\x1b[cy\x1b[>c",
+            &blocks,
+            &history,
+            &context,
+            &sink,
+        );
+        let replies: Vec<String> = rx
+            .try_iter()
+            .filter_map(|event| match event {
+                TerminalEvent::PtyWrite(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        // Impulse's answer to the primary request; alacritty's own to the
+        // secondary one.
+        assert_eq!(replies.len(), 2, "{replies:?}");
+        assert_eq!(replies[0], super::DEVICE_ATTRIBUTES);
+        assert!(replies[1].starts_with("\x1b[>"), "{replies:?}");
+        assert_eq!(row_text(&term, 0), "xy");
+    }
+
+    #[test]
+    fn images_leave_with_the_alternate_screen() {
+        use super::OutputPipeline;
+        use crate::blocks::CommandBlockTracker;
+        use crate::history::{CommandHistoryContext, CommandHistoryStore};
+        use std::sync::Mutex;
+
+        let (sink, _rx) = test_sink();
+        let proxy = EventProxy {
+            event_tx: sink.clone(),
+            wakeup_pending: Arc::new(AtomicBool::new(false)),
+            query_colors: Arc::new(RwLock::new([RgbColor::new(0, 0, 0); 269])),
+        };
+        let mut term = term_with_scrollback(100, 20, 5, proxy);
+        let blocks = Mutex::new(CommandBlockTracker::new());
+        let history = Mutex::new(CommandHistoryStore::new());
+        let context = CommandHistoryContext::default();
+        let mut pipeline = OutputPipeline::new(None, 100);
+        let images = Arc::clone(&pipeline.images);
+        let mut process = |term: &mut _, bytes: &[u8]| {
+            pipeline.process(term, bytes, &blocks, &history, &context, &sink)
+        };
+        process(
+            &mut term,
+            b"\x1b_Ga=T,f=24,s=1,v=1,i=1,q=2;AAAA\x1b\\\x1b[?1049h\x1b_Ga=p,i=1,q=2\x1b\\",
+        );
+        assert!(images.lock().unwrap().has_placements(true));
+        process(&mut term, b"\x1b[?1049l");
+        let images = images.lock().unwrap();
+        assert!(!images.has_placements(true));
+        assert!(images.has_placements(false));
+    }
+
     fn row_text<T>(term: &alacritty_terminal::term::Term<T>, line: i64) -> String {
         use alacritty_terminal::grid::Dimensions;
         use alacritty_terminal::index::{Column, Line};

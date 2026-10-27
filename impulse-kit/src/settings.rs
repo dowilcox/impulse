@@ -224,6 +224,8 @@ settings! {
     terminal_copy_on_select: bool = "terminal_copy_on_select" => true,
     terminal_scroll_on_output: bool = "terminal_scroll_on_output" => true,
     terminal_allow_hyperlink: bool = "terminal_allow_hyperlink" => true,
+    /// Programs may show images (the kitty graphics protocol).
+    terminal_images: bool = "terminal_images" => true,
     terminal_allow_notifications: bool = "terminal_allow_notifications" => true,
     /// The sound Impulse plays with desktop notifications: ack, two-tone,
     /// chime or off (Rust app; the Swift app plays the system's default
@@ -1029,6 +1031,8 @@ pub fn catalog() -> Vec<SettingItem> {
         toggle("terminal_copy_on_select", "Copy on select", Terminal, "Behavior", none),
         toggle("terminal_scroll_on_output", "Scroll to bottom on output", Terminal, "Behavior", none),
         toggle("terminal_allow_hyperlink", "Clickable links", Terminal, "Behavior", none),
+        toggle("terminal_images", "Programs may show images", Terminal, "Behavior",
+            Some("Pictures from programs that use the kitty graphics protocol: plots, image previews in yazi or Neovim, kitten icat.")),
         choice("terminal_option_as_meta", mac_or("Option as Meta", "Alt as Meta"), Terminal, "Behavior",
             &[("off", "Off"), ("left", mac_or("Left Option", "Left Alt")),
               ("right", mac_or("Right Option", "Right Alt")), ("both", mac_or("Both Option keys", "Both Alt keys"))],

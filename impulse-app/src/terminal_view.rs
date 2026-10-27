@@ -37,8 +37,8 @@ use impulse_kit::terminal_find::TerminalFindQuery;
 use impulse_kit::theme::ResolvedTheme;
 use impulse_terminal::{
     BlockOverlay, CellFlags, RgbColor, SelectionKind, TerminalBackend, TerminalColors,
-    TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, EXTRA_UNDERLINE_COLOR,
-    EXTRA_ZERO_WIDTH, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
+    TerminalConfig, TerminalEvent, TerminalMode, CELL_STRIDE, EXTRA_IMAGE_CELL,
+    EXTRA_UNDERLINE_COLOR, EXTRA_ZERO_WIDTH, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 
 use crate::command_editor::{CommandEditor, EditorColors};
@@ -48,6 +48,7 @@ use crate::settings_store::SettingsStore;
 use crate::terminal_blocks::{
     Blocks, FileChecks, Hints, HoverLink, LinkTarget, RowText, ToolbarButton,
 };
+use crate::terminal_images::{self, FrameImages, ImageCell, Textures};
 use crate::terminal_input_bar::InputBar;
 
 /// Same inset as the Swift renderer's `padding`.
@@ -257,6 +258,29 @@ fn rgb_color(hex: &str) -> RgbColor {
     )
 }
 
+/// The most an image file's preview reads (`image_peek`).
+const MAX_PEEK_BYTES: u64 = 20 * 1024 * 1024;
+/// The largest an image preview shows.
+const PEEK_SIZE: (f32, f32) = (320., 240.);
+
+/// A hovered image path's preview: where the pointer was, the file and
+/// the size it shows at.
+#[derive(Clone)]
+struct ImagePeek {
+    at: Point<Pixels>,
+    path: PathBuf,
+    size: gpui_kit::Size<Pixels>,
+}
+
+/// Cmd on the Mac, Ctrl elsewhere: the modifier that opens links.
+fn secondary(modifiers: &Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control
+    }
+}
+
 /// One visible cell, decoded from the grid snapshot.
 #[derive(Clone, Copy)]
 pub(crate) struct Cell {
@@ -290,6 +314,8 @@ pub(crate) struct Grid {
     /// Combining marks and other zero-width characters after a cell's own
     /// (by cell index), from the snapshot's extras.
     zero_width: std::collections::HashMap<usize, String>,
+    /// Blank cells that show part of an image (by cell index).
+    images: std::collections::HashMap<usize, ImageCell>,
 }
 
 impl Grid {
@@ -333,6 +359,7 @@ impl Grid {
         // The extras after the cells: a count, then (cell, kind, length,
         // bytes) entries.
         let mut zero_width = std::collections::HashMap::new();
+        let mut images = std::collections::HashMap::new();
         let mut at = start + cols * rows * CELL_STRIDE;
         let count = buf
             .get(at..at + 4)
@@ -358,6 +385,11 @@ impl Grid {
                     cells[index].underline =
                         Some(RgbColor::new(payload[0], payload[1], payload[2]));
                 }
+                EXTRA_IMAGE_CELL if index < cells.len() => {
+                    if let Some(cell) = ImageCell::read(payload) {
+                        images.insert(index, cell);
+                    }
+                }
                 _ => {}
             }
         }
@@ -370,7 +402,19 @@ impl Grid {
             matches: (selections..selections + searches).map(span).collect(),
             cells,
             zero_width,
+            images,
         })
+    }
+
+    /// What the cell at `row`, `col` shows of an image, if it's a
+    /// placeholder.
+    fn image_cell(&self, row: usize, col: usize) -> Option<ImageCell> {
+        self.images.get(&(row * self.cols + col)).copied()
+    }
+
+    /// The ids of the images placeholder cells show.
+    fn image_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.images.values().map(|cell| cell.image)
     }
 
     /// The zero-width characters drawn with the cell at `row`, `col`.
@@ -392,7 +436,8 @@ impl Grid {
     fn is_blank_row(&self, row: usize) -> bool {
         (0..self.cols).all(|col| {
             let cell = self.cell(row, col);
-            cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) || cell.ch == ' ' || cell.ch == '\0'
+            (cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) || cell.ch == ' ' || cell.ch == '\0')
+                && (self.images.is_empty() || self.image_cell(row, col).is_none())
         })
     }
 
@@ -411,9 +456,14 @@ impl Grid {
     }
 
     /// The last row at or above `up_to` with a glyph on it.
-    fn last_non_blank_row(&self, up_to: i32) -> i32 {
+    /// The last row up to `up_to` with something on it: text, or an image
+    /// (`covered`, the rows under direct placements).
+    fn last_non_blank_row(&self, up_to: i32, covered: &[bool]) -> i32 {
         let mut row = up_to.min(self.rows as i32 - 1);
-        while row >= 0 && self.is_blank_row(row as usize) {
+        while row >= 0
+            && self.is_blank_row(row as usize)
+            && !covered.get(row as usize).copied().unwrap_or(false)
+        {
             row -= 1;
         }
         row
@@ -494,6 +544,8 @@ pub struct TerminalView {
     /// at; read again only after damage (output, selection, search).
     grid_cache: Option<(Rc<Grid>, GridKey)>,
     grid_dirty: bool,
+    /// The images programs show, as GPU textures.
+    textures: Textures,
     /// Damage a snapshot took before the wake handler saw it.
     damage_seen: bool,
     /// The block overlay by `block_overlay_key`.
@@ -523,6 +575,12 @@ pub struct TerminalView {
     /// The hovered web link's target, shown after `LINK_TIP_DELAY`.
     link_tip: Option<(Point<Pixels>, String)>,
     _link_tip_timer: Option<gpui_kit::Task<()>>,
+    /// The image file the hovered path names: its preview shows while
+    /// Cmd (Ctrl on Linux) is held.
+    image_peek: Option<ImagePeek>,
+    _image_peek_check: Option<gpui_kit::Task<()>>,
+    /// Cmd (Ctrl on Linux) is held.
+    secondary_held: bool,
     /// Its window, to ask the system for attention (`request_attention`).
     pub(crate) window_handle: gpui_kit::AnyWindowHandle,
     /// Text being composed by an input method, shown at the cursor.
@@ -699,6 +757,7 @@ impl TerminalView {
             // comes, so a change applies to open terminals too.
             allow_clipboard_write: true,
             allow_clipboard_read: true,
+            images: settings.terminal_images,
             restored_transcript: transcript
                 .filter(|t| !t.is_empty())
                 .map(|t| format!("{t}\u{1b}[0;2m── {RESTORED_RULE} ──\u{1b}[0m\r\n")),
@@ -826,6 +885,7 @@ impl TerminalView {
             buffer: Vec::new(),
             grid_cache: None,
             grid_dirty: true,
+            textures: Textures::default(),
             damage_seen: false,
             overlay_cache: RefCell::default(),
             title: String::new(),
@@ -843,6 +903,9 @@ impl TerminalView {
             pointer: Point::default(),
             link_tip: None,
             _link_tip_timer: None,
+            image_peek: None,
+            _image_peek_check: None,
+            secondary_held: false,
             window_handle: window.window_handle(),
             marked: None,
             blink_on: true,
@@ -1010,6 +1073,7 @@ impl TerminalView {
         };
         config.scrollback_lines = settings.terminal_scrollback.max(0) as usize;
         self.backend.set_colors(&config);
+        self.backend.set_images_enabled(settings.terminal_images);
         self.font = terminal_font(&settings.terminal_font_family);
         self.metrics = measure(&self.font, settings.terminal_font_size as f32, window);
         let colors = EditorColors::new(&theme);
@@ -1158,8 +1222,9 @@ impl TerminalView {
         }
     }
 
-    /// Fit the grid to the pane.
-    fn fit(&mut self, bounds: Bounds<Pixels>) {
+    /// Fit the grid to the pane. The PTY is told the cell's size in device
+    /// pixels (`scale` to a point), which programs size images by.
+    fn fit(&mut self, bounds: Bounds<Pixels>, scale: f32) {
         let m = self.metrics;
         let cols = ((f32::from(bounds.size.width) - PADDING * 2.0) / f32::from(m.width))
             .floor()
@@ -1169,13 +1234,13 @@ impl TerminalView {
             .max(1.0) as u16;
         if (cols, rows) != self.size {
             self.size = (cols, rows);
-            self.backend.resize(
-                cols,
-                rows,
-                f32::from(m.width) as u16,
-                f32::from(m.height) as u16,
-            );
         }
+        let cell = (
+            (f32::from(m.width) * scale).round().max(1.0) as u16,
+            (f32::from(m.height) * scale).round().max(1.0) as u16,
+        );
+        // Unchanged sizes are ignored there.
+        self.backend.resize(cols, rows, cell.0, cell.1);
     }
 
     /// The grid, the block overlay and the modes, read again only when
@@ -1201,6 +1266,31 @@ impl TerminalView {
             }
         };
         (grid, self.overlay(), self.backend.mode())
+    }
+
+    /// The images this frame shows: the direct placements in view and the
+    /// grid's placeholder cells, with their textures. `None` when there
+    /// are none.
+    fn frame_images(&mut self, grid: Option<&Grid>, scale: f32) -> Option<FrameImages> {
+        let layer = self.backend.image_layer();
+        let placeholders = grid.is_some_and(|grid| !grid.images.is_empty());
+        if layer.placements.is_empty() && !placeholders {
+            // Textures of images no longer shown go.
+            self.textures.update(&self.backend, []);
+            return None;
+        }
+        let ids: Vec<u32> = layer
+            .placements
+            .iter()
+            .map(|p| p.image_id)
+            .chain(grid.into_iter().flat_map(Grid::image_ids))
+            .collect();
+        let textures = self.textures.update(&self.backend, ids);
+        Some(FrameImages {
+            layer,
+            textures,
+            scale,
+        })
     }
 
     /// The block overlay, kept until `block_overlay_key` changes.
@@ -1514,6 +1604,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let (col, row) = self.cell_at(event.position, bounds);
+        self.modifiers_changed(&event.modifiers, cx);
         if event.pressed_button.is_none() {
             self.pointer = event.position;
             self.update_hover(col, row, cx);
@@ -1672,8 +1763,92 @@ impl TerminalView {
                     });
                 }));
             }
+            self.image_peek = None;
+            self._image_peek_check = match link.as_ref().map(|l| &l.target) {
+                Some(LinkTarget::File { path, .. })
+                    if crate::image_view::has_image_extension(path) =>
+                {
+                    Some(self.check_image_peek(path.clone(), cx))
+                }
+                _ => None,
+            };
             self.hover_link = link;
             cx.notify();
+        }
+    }
+
+    /// Look at the hovered image file off the main thread: one that isn't
+    /// too big to read for a glance gets a preview, at its size.
+    fn check_image_peek(&self, path: PathBuf, cx: &mut Context<Self>) -> gpui_kit::Task<()> {
+        let at = self.pointer;
+        cx.spawn(async move |view, cx| {
+            let file = path.clone();
+            let dimensions = cx
+                .background_executor()
+                .spawn(async move {
+                    let small = std::fs::metadata(&file)
+                        .is_ok_and(|m| m.is_file() && m.len() <= MAX_PEEK_BYTES);
+                    small.then(|| image::image_dimensions(&file).ok()).flatten()
+                })
+                .await;
+            let Some((width, height)) = dimensions.filter(|(w, h)| *w > 0 && *h > 0) else {
+                return;
+            };
+            // Scaled down to fit, never up.
+            let fit = (PEEK_SIZE.0 / width as f32)
+                .min(PEEK_SIZE.1 / height as f32)
+                .min(1.0);
+            let _ = view.update(cx, |view, cx| {
+                view.image_peek = Some(ImagePeek {
+                    at,
+                    path,
+                    size: size(px(width as f32 * fit), px(height as f32 * fit)),
+                });
+                cx.notify();
+            });
+        })
+    }
+
+    /// The hovered image path's preview, while Cmd (Ctrl) is held.
+    fn image_peek_view(&self) -> Option<AnyElement> {
+        if !self.secondary_held {
+            return None;
+        }
+        let peek = self.image_peek.as_ref()?;
+        let p = &self.palette;
+        Some(
+            gpui_kit::deferred(
+                gpui_kit::anchored()
+                    .position(peek.at + point(px(12.), px(18.)))
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        div()
+                            .p(px(4.))
+                            .rounded(px(6.))
+                            .bg(crate::workbench_chrome::hsla(p.overlay))
+                            .border_1()
+                            .border_color(crate::workbench_chrome::hsla(p.hairline_strong))
+                            .child(
+                                gpui_kit::img(peek.path.clone())
+                                    .w(peek.size.width)
+                                    .h(peek.size.height)
+                                    .object_fit(gpui_kit::ObjectFit::Contain),
+                            ),
+                    ),
+            )
+            .with_priority(2)
+            .into_any_element(),
+        )
+    }
+
+    /// Cmd (Ctrl on Linux) went down or up: the image preview follows.
+    fn modifiers_changed(&mut self, modifiers: &Modifiers, cx: &mut Context<Self>) {
+        let held = secondary(modifiers);
+        if held != self.secondary_held {
+            self.secondary_held = held;
+            if self.image_peek.is_some() {
+                cx.notify();
+            }
         }
     }
 
@@ -1714,6 +1889,8 @@ impl TerminalView {
 
     fn mouse_left(&mut self, cx: &mut Context<Self>) {
         self.hover_cell = None;
+        self.image_peek = None;
+        self._image_peek_check = None;
         if self.blocks.hovered.take().is_some() | self.hover_link.take().is_some() {
             cx.notify();
         }
@@ -2239,13 +2416,24 @@ impl RowLayout {
     /// up to `last`: the blank rows ending the block above, the rows
     /// between the two and the blank rows starting the block below, when
     /// there are at most `MAX_PADDING_ROWS` of them.
-    fn collapsed_rows(grid: &Grid, overlay: &BlockOverlay, last: i32) -> Vec<bool> {
+    /// Rows under an image (`covered`) aren't blank.
+    fn collapsed_rows(
+        grid: &Grid,
+        overlay: &BlockOverlay,
+        last: i32,
+        covered: &[bool],
+    ) -> Vec<bool> {
         let mut collapsed = vec![false; grid.rows];
         if last < 0 {
             return collapsed;
         }
         let rows = grid.rows as i32;
-        let blank = |row: i32| row >= 0 && row < rows && grid.is_blank_row(row as usize);
+        let blank = |row: i32| {
+            row >= 0
+                && row < rows
+                && grid.is_blank_row(row as usize)
+                && !covered.get(row as usize).copied().unwrap_or(false)
+        };
         for pair in overlay.blocks.windows(2) {
             let (above, below) = (&pair[0], &pair[1]);
             // Each block keeps its first and last row.
@@ -2370,6 +2558,10 @@ struct Frame {
     /// The 16 ANSI colors, when bold text in one of the first 8 takes its
     /// bright twin (`terminal_bold_is_bright`).
     bright_bold: Option<[RgbColor; 16]>,
+    /// Images programs show, when there are any.
+    images: Option<FrameImages>,
+    /// Image textures no longer shown, to give back to the GPU.
+    stale_images: Vec<std::sync::Arc<gpui_kit::RenderImage>>,
 }
 
 impl Frame {
@@ -2554,6 +2746,39 @@ impl Frame {
             }
         }
 
+        // Images under the text (a negative z-index).
+        let cell = (f32::from(m.width), f32::from(m.height));
+        // A viewport row's top, rows above the viewport included.
+        let row_top = |row: i32| {
+            if row < 0 {
+                origin.y + layout.top(0) + m.height * row as f32
+            } else {
+                origin.y + layout.top(row as usize)
+            }
+        };
+        // From the first row drawn to the last: what's scrolled out of
+        // view stays out, even where the rows are anchored to the bar.
+        let image_clip = Bounds::from_corners(
+            point(bounds.origin.x, origin.y),
+            point(
+                bounds.origin.x + bounds.size.width,
+                origin.y + layout.top(rows),
+            ),
+        );
+        let paint_placements = |under: bool, window: &mut Window| {
+            let Some(images) = &self.images else { return };
+            for p in images
+                .layer
+                .placements
+                .iter()
+                .filter(|p| (p.z < 0) == under)
+            {
+                let at = point(origin.x + m.width * p.col as f32, row_top(p.row));
+                terminal_images::paint_placement(p, images, at, cell, image_clip, window);
+            }
+        };
+        paint_placements(true, window);
+
         // Search matches, then the selection.
         let paint_spans = |spans: &[Span], color: Hsla, window: &mut Window| {
             for span in spans
@@ -2653,6 +2878,23 @@ impl Frame {
             self.paint_text(&mut shaped, grid, row, 0..grid.cols, None, origin, window);
             self.paint_decorations(grid, row, origin, bounds, window);
         }
+
+        // Images over the text: placeholder cells' parts of them, then the
+        // direct placements.
+        if let Some(images) = self.images.as_ref().filter(|_| !grid.images.is_empty()) {
+            let mut cells = Vec::with_capacity(grid.cols);
+            for row in (0..rows).filter(|r| !layout.is_collapsed(*r)) {
+                cells.clear();
+                cells.extend((0..grid.cols).map(|col| grid.image_cell(row, col)));
+                for (col, len, first) in terminal_images::placeholder_runs(&cells) {
+                    let at = cell_origin(row, col);
+                    terminal_images::paint_placeholders(
+                        &first, len, images, at, cell, image_clip, window,
+                    );
+                }
+            }
+        }
+        paint_placements(false, window);
 
         // The link under the pointer, underlined in the cursor color.
         if let Some(link) = self.hover_link.as_ref().filter(|l| l.row < rows) {
@@ -3359,6 +3601,7 @@ impl TerminalView {
         overlay: &BlockOverlay,
         suppress: bool,
         decorate: bool,
+        covered: &[bool],
         cx: &mut Context<Self>,
     ) {
         let rows = grid.rows as i32;
@@ -3380,7 +3623,7 @@ impl TerminalView {
                     -1
                 };
                 // Without the blank lines shells print before a prompt.
-                last = grid.last_non_blank_row(last);
+                last = grid.last_non_blank_row(last, covered);
                 anchor = !fills;
                 if fills && self.tuck.armed {
                     let hidden = (rows - 1) - last;
@@ -3414,7 +3657,7 @@ impl TerminalView {
         self.last_content_row = (last < rows - 1).then_some(last.max(0) as usize);
         let draw_rows = (last + 1) as usize;
         let collapsed = if decorate && !overlay.alt_screen && !self.direct {
-            RowLayout::collapsed_rows(grid, overlay, last)
+            RowLayout::collapsed_rows(grid, overlay, last, covered)
         } else {
             vec![false; grid.rows]
         };
@@ -3643,16 +3886,23 @@ impl Render for TerminalView {
                 canvas(
                     {
                         let view = view.clone();
-                        move |bounds, _window, cx| {
+                        move |bounds, window, cx| {
                             bounds_cell.set(bounds);
+                            let scale = window.scale_factor();
                             view.update(cx, |view, cx| {
-                                view.fit(bounds);
+                                view.fit(bounds, scale);
                                 let (grid, overlay, mode) = view.snapshot();
                                 let settings = SettingsStore::get(cx).clone();
                                 let suppress = settings.terminal_context_bar && !view.no_bar;
+                                let images = view.frame_images(grid.as_deref(), scale);
                                 if let Some(grid) = &grid {
                                     let decorate = settings.terminal_blocks && !view.direct;
-                                    view.layout_rows(grid, &overlay, suppress, decorate, cx);
+                                    let covered = images.as_ref().map_or_else(Vec::new, |images| {
+                                        terminal_images::covered_rows(&images.layer, grid.rows)
+                                    });
+                                    view.layout_rows(
+                                        grid, &overlay, suppress, decorate, &covered, cx,
+                                    );
                                 }
                                 let mut emphasized: HashSet<u64> =
                                     view.blocks.selection.iter().copied().collect();
@@ -3702,17 +3952,22 @@ impl Render for TerminalView {
                                                 .collect()
                                         })
                                         .unwrap_or_default(),
+                                    images,
+                                    stale_images: view.textures.take_stale(),
                                 }
                             })
                         }
                     },
-                    move |bounds, frame: Frame, window, cx| {
+                    move |bounds, mut frame: Frame, window, cx| {
                         let focus = view.read(cx).focus.clone();
                         window.handle_input(
                             &focus,
                             ElementInputHandler::new(bounds, view.clone()),
                             cx,
                         );
+                        for texture in std::mem::take(&mut frame.stale_images) {
+                            let _ = window.drop_image(texture);
+                        }
                         frame.paint(bounds, window, cx);
                     },
                 )
@@ -3730,6 +3985,11 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::paste))
             .on_drop(cx.listener(Self::drop_paths))
             .on_drop(cx.listener(Self::drop_tree_path))
+            .on_modifiers_changed(cx.listener(
+                |view, event: &gpui_kit::ModifiersChangedEvent, _, cx| {
+                    view.modifiers_changed(&event.modifiers, cx)
+                },
+            ))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear))
             .on_action(cx.listener(Self::page_up))
@@ -3739,6 +3999,7 @@ impl Render for TerminalView {
             .children(self.find_bar(cx))
             .child(grid)
             .children(self.link_tooltip())
+            .children(self.image_peek_view())
             .children(self.agent_bar(window, cx))
             .children(bottom)
             .children(self.block_menu(cx))
@@ -3937,6 +4198,7 @@ mod text_tests {
                 .iter()
                 .map(|(i, s)| (*i, s.to_string()))
                 .collect(),
+            images: Default::default(),
         }
     }
 

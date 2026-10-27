@@ -401,6 +401,8 @@ pub(crate) struct PlainTextStripper {
     stale_from: usize,
     /// The output reached its limit; nothing more is added.
     full: bool,
+    /// The last character was an image placeholder, whose marks follow.
+    after_placeholder: bool,
 }
 
 impl PlainTextStripper {
@@ -525,6 +527,15 @@ impl PlainTextStripper {
             return;
         }
         for c in String::from_utf8_lossy(text).chars() {
+            // Image placeholders and their marks aren't text.
+            if c == crate::graphics::PLACEHOLDER {
+                self.after_placeholder = true;
+                continue;
+            }
+            if self.after_placeholder && crate::graphics::is_diacritic(c) {
+                continue;
+            }
+            self.after_placeholder = false;
             if self.column >= MAX_LINE_CHARS {
                 // Kept, but out of reach of `\r` from here on.
                 self.end_line(out, false);
@@ -600,6 +611,20 @@ mod tests {
             stripper.push(chunk, &mut text);
         }
         assert_eq!(text, "ok foo 日本\n");
+    }
+
+    #[test]
+    fn plain_text_leaves_out_images() {
+        let mut stripper = PlainTextStripper::default();
+        let mut text = String::new();
+        // A graphics command, then two placeholder cells with marks (one
+        // of them, U+0305, a mark that's also ordinary text after "x").
+        stripper.push(b"a\x1b_Ga=T;AAAA\x1b\\b ", &mut text);
+        stripper.push(
+            "\u{10EEEE}\u{0305}\u{0305}\u{10EEEE}x\u{0305}\n".as_bytes(),
+            &mut text,
+        );
+        assert_eq!(text, "ab x\u{0305}\n");
     }
 
     #[test]

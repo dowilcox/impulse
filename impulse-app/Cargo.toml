@@ -67,6 +67,9 @@ trash = "5"
 # The Quick Terminal's system-wide shortcut (Carbon on macOS, as the Swift
 # app does; XGrabKey on X11).
 global-hotkey = "=0.7.0"
+# GPUI's image type, for the images programs show in terminals
+# (terminal_images.rs), at the version GPUI links.
+image = { version = "0.25", default-features = false }
 # The headless snapshots' windows (`debug_snapshot`): the X11 window id
 # for `import`, and on macOS the NSWindow to keep transparent.
 raw-window-handle = "0.6"

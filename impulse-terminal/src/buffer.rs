@@ -24,6 +24,9 @@
 //!     E entries: cell index (u32 LE) | kind (u8) | length L (u8) | L bytes
 //!       kind 1: zero-width characters drawn with the cell (UTF-8)
 //!       kind 2: underline color (RGB)
+//!       kind 3: an image placeholder (the cell itself is blank): image id
+//!         (u32 LE), placement id (u32 LE), row and column in the image
+//!         (u16 LE each)
 //!     Entries that don't fit the buffer are dropped.
 
 #[cfg(test)]
@@ -42,11 +45,13 @@ pub const RANGE_ENTRY_SIZE: usize = 6;
 /// Extras entry kinds.
 pub const EXTRA_ZERO_WIDTH: u8 = 1;
 pub const EXTRA_UNDERLINE_COLOR: u8 = 2;
+pub const EXTRA_IMAGE_CELL: u8 = 3;
 
-/// Room reserved for extras: the count plus 8 bytes per cell, enough for a
-/// combining mark on every cell; past that, entries are dropped.
+/// Room reserved for extras: the count plus 18 bytes per cell, enough for
+/// an image placeholder (or a combining mark) on every cell; past that,
+/// entries are dropped.
 pub fn extras_capacity(cols: u16, lines: u16) -> usize {
-    4 + cols as usize * lines as usize * 8
+    4 + cols as usize * lines as usize * 18
 }
 
 /// Write the extras after the cells at `offset`. Returns the end offset.

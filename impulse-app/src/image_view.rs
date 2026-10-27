@@ -8,6 +8,11 @@ use gpui_kit::{div, img, prelude::*, px, App, Context, FocusHandle, ObjectFit, W
 
 /// Files that open as images rather than in the editor.
 pub fn is_image_file(path: &std::path::Path) -> bool {
+    has_image_extension(path) && (!path.exists() || path.is_file())
+}
+
+/// Named as an image (without looking at the disk).
+pub fn has_image_extension(path: &std::path::Path) -> bool {
     let ext = path
         .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
@@ -15,7 +20,7 @@ pub fn is_image_file(path: &std::path::Path) -> bool {
     matches!(
         ext.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "tiff" | "tif"
-    ) && (!path.exists() || path.is_file())
+    )
 }
 
 pub struct ImageView {

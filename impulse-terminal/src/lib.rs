@@ -8,6 +8,7 @@ mod blocks;
 mod buffer;
 mod config;
 mod event;
+mod graphics;
 mod grid;
 mod history;
 pub mod osc_scanner;
@@ -19,11 +20,12 @@ pub use backend::{
 };
 pub use blocks::{TerminalBlockId, TerminalCommandBlock, TerminalCommandBlockSummary};
 pub use buffer::{
-    buffer_size, write_cell, write_header, HighlightRange, CELL_STRIDE, EXTRA_UNDERLINE_COLOR,
-    EXTRA_ZERO_WIDTH, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
+    buffer_size, write_cell, write_header, HighlightRange, CELL_STRIDE, EXTRA_IMAGE_CELL,
+    EXTRA_UNDERLINE_COLOR, EXTRA_ZERO_WIDTH, FIXED_HEADER_SIZE, RANGE_ENTRY_SIZE,
 };
 pub use config::{TerminalColors, TerminalConfig};
 pub use event::TerminalEvent;
+pub use graphics::{ImageLayer, ImagePlacement, TerminalImage};
 pub use grid::{CellFlags, CursorShape, CursorState, RgbColor, TerminalMode};
 pub use history::{
     CommandHistoryContext, CommandHistoryMatchKind, CommandHistoryQuery, CommandHistoryRecord,
