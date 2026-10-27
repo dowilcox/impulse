@@ -1,9 +1,15 @@
 # Builds the Linux packages (scripts/package-linux.sh) for a release and
 # attaches them to it. scripts/release.sh --push publishes the release with
 # the macOS disk image; publishing it starts this, on the release's tag.
-# Each architecture's tarball and .deb are uploaded, and their lines added
-# to the release's SHA256SUMS. Run it by hand from the Actions tab, naming a
-# tag, to build (or rebuild) a release's Linux packages.
+# Each architecture's tarball and .deb, and the x86_64 Arch package, are
+# uploaded, and their lines added to the release's SHA256SUMS. Run it by
+# hand from the Actions tab, naming a tag, to build (or rebuild) a
+# release's Linux packages.
+#
+# They're built in Ubuntu 22.04 (glibc 2.35), so they run on it and on
+# anything newer: Debian 12, Fedora 36, current Arch. A newer build host
+# would raise that floor; the packages depend on the glibc the binaries
+# need (scripts/package-linux.sh reads it from them).
 name: Release (Linux)
 
 on:
@@ -37,7 +43,14 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    container: ubuntu:22.04
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
@@ -54,16 +67,15 @@ jobs:
       # xkbcommon and zlib (the .deb's Depends).
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config cmake clang \
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake clang curl \
             libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev zlib1g-dev \
             libfontconfig-dev libfreetype-dev libwayland-dev libvulkan-dev
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Build the packages
         run: scripts/package-linux.sh
@@ -76,9 +88,56 @@ jobs:
             dist/*.deb
           if-no-files-found: error
 
+      # The Arch package is made from these same binaries.
+      - uses: actions/upload-artifact@v4
+        if: matrix.arch == 'x86_64'
+        with:
+          name: binaries-x86_64
+          path: |
+            target/release/impulse-app
+            target/release/impulse
+          if-no-files-found: error
+
+  # The pacman package, from the x86_64 binaries built above, by makepkg in
+  # Arch (which has no official image for ARM).
+  arch:
+    name: Package (Arch)
+    needs: package
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install makepkg
+        run: pacman -Syu --noconfirm --needed base-devel git
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-x86_64
+          path: target/release
+
+      # makepkg won't run as root.
+      - name: Build the package
+        run: |
+          chmod +x target/release/impulse-app target/release/impulse
+          useradd --create-home builder
+          chown -R builder: .
+          su builder -c 'scripts/package-linux.sh --no-build'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arch
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
   publish:
     name: Attach to the release
-    needs: package
+    needs: [package, arch]
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
@@ -87,6 +146,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: linux-*
           merge-multiple: true
 
       # The macOS run wrote SHA256SUMS with the disk image; this keeps its
@@ -95,11 +155,11 @@ jobs:
         working-directory: dist
         run: |
           gh release download "$TAG" --pattern SHA256SUMS --output SHA256SUMS.release || touch SHA256SUMS.release
-          sha256sum *.tar.gz *.deb > SHA256SUMS.linux
-          grep -v -e '-linux-' -e '\.deb$' SHA256SUMS.release > SHA256SUMS || true
+          sha256sum *.tar.gz *.deb *.pkg.tar.zst > SHA256SUMS.linux
+          grep -v -e '-linux-' -e '\.deb$' -e '\.pkg\.tar\.zst$' SHA256SUMS.release > SHA256SUMS || true
           cat SHA256SUMS.linux >> SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload
         working-directory: dist
-        run: gh release upload "$TAG" *.tar.gz *.deb SHA256SUMS --clobber
+        run: gh release upload "$TAG" *.tar.gz *.deb *.pkg.tar.zst SHA256SUMS --clobber

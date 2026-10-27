@@ -47,6 +47,17 @@ for bin in impulse-app impulse; do
     fi
 done
 
+# The newest glibc symbol version the binaries use: the oldest glibc they
+# run on. The packages depend on it, so a system with an older glibc
+# refuses to install them instead of installing an app that won't start.
+GLIBC_MIN="$(objdump -T target/release/impulse-app target/release/impulse \
+    | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -1 || true)"
+if [[ -z "$GLIBC_MIN" ]]; then
+    echo "Error: couldn't read the binaries' glibc version (objdump, from binutils)." >&2
+    exit 1
+fi
+echo "Needs glibc $GLIBC_MIN or later"
+
 STAGE="$ROOT/target/package"
 DIST="$ROOT/dist"
 rm -rf "$STAGE"
@@ -97,7 +108,7 @@ Section: devel
 Priority: optional
 Architecture: $DEB_ARCH
 Installed-Size: $SIZE
-Depends: libc6, libgcc-s1, zlib1g, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libvulkan1, git
+Depends: libc6 (>= $GLIBC_MIN), libgcc-s1, zlib1g, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libvulkan1, git
 Recommends: libwayland-client0, mesa-vulkan-drivers
 Maintainer: Impulse <noreply@impulse-terminal.app>
 Homepage: https://impulse-terminal.app
@@ -125,7 +136,7 @@ pkgdesc='Terminal IDE: a terminal with command blocks and a code editor'
 arch=('$ARCH')
 url='https://impulse-terminal.app'
 license=('GPL-3.0-only')
-depends=('glibc' 'gcc-libs' 'zlib' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'git')
+depends=('glibc>=$GLIBC_MIN' 'gcc-libs' 'zlib' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'git')
 optdepends=('wayland: Wayland sessions'
             'vulkan-driver: drawing on the GPU')
 options=('!strip' '!debug' '!lto')

@@ -189,11 +189,27 @@ Left of the editor work done here:
   folder: settings, the session, trust lists and command history should
   carry over), from the disk image, with the Swift app quit.
 - [ ] **First run of `.github/workflows/release-linux.yml`**, which can only
-  run once it's on `main`: by hand with a throwaway tag first.
-- [ ] **The `.deb`**, untested (built where `dpkg-deb` is installed).
-- [ ] **The glibc floor**: the workflow builds on Ubuntu 24.04, so the
-  Linux packages need glibc 2.39 (no Debian 12, Ubuntu 22.04 or RHEL 9);
-  building on `ubuntu-22.04` would lower it to 2.35.
+  run once it's on `main`: by hand with a throwaway tag first. Its `arch`
+  job (makepkg in `archlinux:latest`) hasn't run on GitHub either; tried
+  in a container, under Rosetta, pacman's sandbox couldn't use seccomp
+  and needed `DisableSandboxSyscalls`, which a native x86_64 runner
+  shouldn't.
+- [x] **The packages, tried in containers** (27 Oct 2026, OrbStack on a
+  Mac: arm64 natively, x86_64 under Rosetta). Built in Ubuntu 22.04, the
+  `.deb` installs with `apt install ./…deb` and the app starts (20 s on
+  Xvfb, writing its session) on Ubuntu 22.04 and 24.04 and Debian 12 and
+  13 (arm64; x86_64 on Ubuntu 22.04 and Debian 12), and Debian 11 refuses
+  it (`libc6 (>= 2.35)`). The Arch package, made by makepkg from the
+  x86_64 binaries, installs with `pacman -U` and starts. Before: built on
+  Ubuntu 24.04, the `.deb` said only `libc6`, so it installed on Debian
+  12 and Ubuntu 22.04 and then wouldn't start (`GLIBC_2.39 not found`).
+- [x] **The glibc floor**: 2.35. The workflow builds in an `ubuntu:22.04`
+  container, and the packages depend on the newest glibc symbol the
+  binaries use (`package-linux.sh` reads it with `objdump`). RHEL 9
+  (2.34) and Debian 11 are below it.
+- [x] **Arch packages in releases**: the workflow's `arch` job makes the
+  x86_64 one from the same binaries (Arch has no official ARM image);
+  before, only a build on an Arch machine made it.
 - [x] **CI for the tests**: `.github/workflows/tests.yml` runs
   `cargo fmt --all --check` and `cargo test --workspace --locked` on Linux
   (Ubuntu 24.04, with zsh and fish for the shell-integration tests) and

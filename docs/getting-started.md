@@ -16,9 +16,10 @@ Impulse needs macOS 26 (Tahoe) or later on an Apple silicon Mac.
 
 ### Linux
 
-Each release also has Linux packages for x86_64 and arm64 (`aarch64`):
+Each release also has Linux packages for x86_64 and arm64 (`aarch64`). They need glibc 2.35 or later: Ubuntu 22.04, Debian 12, Fedora 36 or newer, or a current Arch.
 
 - **Debian and Ubuntu:** download `impulse_X.Y.Z_amd64.deb` (or `_arm64.deb`) and install it with `sudo apt install ./impulse_X.Y.Z_amd64.deb`. Impulse appears among your applications; `impulse-app` starts it from a terminal.
+- **Arch and its derivatives (x86_64):** download `impulse-X.Y.Z-1-x86_64.pkg.tar.zst` and install it with `sudo pacman -U impulse-X.Y.Z-1-x86_64.pkg.tar.zst`.
 - **Other distributions:** download `impulse-X.Y.Z-linux-x86_64.tar.gz` (or `-aarch64`), unpack it anywhere and run `bin/impulse-app` inside it. Keep `bin/` and `share/` together: Impulse reads its icons and fonts from `share/impulse/` beside it.
 
 Impulse draws with Vulkan, so it needs a Vulkan driver (Mesa's `mesa-vulkan-drivers` on most systems), and runs on Wayland or X11. `SHA256SUMS` on the release page lists every file's checksum.
