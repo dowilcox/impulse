@@ -118,7 +118,10 @@ pub fn language_from_uri(uri: &str) -> String {
         "vue" => "vue".to_string(),
         "svelte" => "svelte".to_string(),
         "graphql" | "gql" => "graphql".to_string(),
-        "sh" | "bash" | "zsh" | "fish" => "shellscript".to_string(),
+        "sh" | "bash" | "zsh" => "shellscript".to_string(),
+        // Its own id, as the Swift app sent it: bash-language-server (the
+        // `shellscript` server) can't read fish.
+        "fish" => "fish".to_string(),
         "dockerfile" => "dockerfile".to_string(),
         "go" => "go".to_string(),
         "java" => "java".to_string(),
@@ -238,5 +241,11 @@ mod tests {
         assert_eq!(language_from_uri("file:///foo/Jenkinsfile"), "groovy");
         assert_eq!(language_from_uri("file:///foo/SomeRandomFile"), "");
         assert_eq!(language_for_path(Path::new("/a/Makefile")), "makefile");
+    }
+
+    #[test]
+    fn fish_is_not_a_shellscript() {
+        assert_eq!(language_from_uri("file:///a/config.fish"), "fish");
+        assert_eq!(language_from_uri("file:///a/run.sh"), "shellscript");
     }
 }

@@ -55,8 +55,8 @@ fn syntax(language: &str) -> Syntax {
             line_comment: None,
             ..c_like
         },
-        "python" | "shellscript" | "ruby" | "toml" | "yaml" | "r" | "perl" | "dockerfile"
-        | "makefile" | "elixir" => Syntax {
+        "python" | "shellscript" | "fish" | "ruby" | "toml" | "yaml" | "r" | "perl"
+        | "dockerfile" | "makefile" | "elixir" => Syntax {
             line_comment: Some("#"),
             block_comment: None,
             single_quote: true,

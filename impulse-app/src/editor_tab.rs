@@ -161,7 +161,7 @@ pub(crate) fn grammar_for<'a>(language: &'a str, path: &Path) -> &'a str {
         return "tsx";
     }
     match language {
-        "shell" | "shellscript" => "bash",
+        "shell" | "shellscript" | "fish" => "bash",
         "less" => "css",
         "typescriptreact" => "tsx",
         "javascriptreact" => "javascript",
