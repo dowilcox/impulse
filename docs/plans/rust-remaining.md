@@ -185,11 +185,13 @@ Left of the editor work done here:
   entitlements, the CLI signed inside), and Apple notarizes both the app
   and the disk image; both are stapled and Gatekeeper accepts them
   (`spctl`: "Notarized Developer ID"). 78 MB app, 21 MB disk image.
-- [ ] **Install it over the Swift app** (the same bundle ID and data
-  folder: settings, the session, trust lists and command history should
-  carry over), from the disk image, with the Swift app quit.
+- [x] **Install it over the Swift app** (27 Oct 2026, 0.36.0 from the
+  disk image over the Swift 0.36.0): settings, the session, trust lists
+  and command history carried over.
 - [ ] **First run of `.github/workflows/release-linux.yml`**, which can only
-  run once it's on `main`: by hand with a throwaway tag first. Its `arch`
+  be started by hand once it's on `main`: with no tag first, which builds
+  the branch and keeps the packages as the run's artifacts without
+  publishing (a tag must match `VERSION`, so a throwaway one can't). Its `arch`
   job (makepkg in `archlinux:latest`) hasn't run on GitHub either; tried
   in a container, under Rosetta, pacman's sandbox couldn't use seccomp
   and needed `DisableSandboxSyscalls`, which a native x86_64 runner

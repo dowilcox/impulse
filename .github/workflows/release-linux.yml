@@ -4,7 +4,8 @@
 # Each architecture's tarball and .deb, and the x86_64 Arch package, are
 # uploaded, and their lines added to the release's SHA256SUMS. Run it by
 # hand from the Actions tab, naming a tag, to build (or rebuild) a
-# release's Linux packages.
+# release's Linux packages; with no tag it builds the branch it's run on
+# and keeps the packages as the run's artifacts, publishing nothing.
 #
 # They're built in Ubuntu 22.04 (glibc 2.35), so they run on it and on
 # anything newer: Debian 12, Fedora 36, current Arch. A newer build host
@@ -18,14 +19,15 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag, e.g. v0.37.0"
-        required: true
+        description: "Release tag, e.g. v1.0.0 (empty: build this branch without publishing)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-linux-${{ github.event.release.tag_name || inputs.tag }}
+  group: release-linux-${{ github.event.release.tag_name || inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
@@ -51,11 +53,13 @@ jobs:
       - name: Install git
         run: apt-get update && apt-get install -y --no-install-recommends git ca-certificates
 
+      # With no tag, the branch the run was started from.
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
 
       - name: Check the tag matches VERSION
+        if: env.TAG != ''
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
           if [[ "v$version" != "$TAG" ]]; then
@@ -138,6 +142,7 @@ jobs:
   publish:
     name: Attach to the release
     needs: [package, arch]
+    if: github.event_name == 'release' || inputs.tag != ''
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
