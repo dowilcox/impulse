@@ -27,7 +27,8 @@ Use the scripts; don't replicate their steps by hand.
 - `python3 scripts/smoke/run.py` — smoke checks of the dev build (editor, shells, CLI, agents, language servers, tasks, session restore), headless; run before a release. The opencode scenario needs `node`. `IMPULSE_SNAPSHOT_APP=target/debug/impulse-app` (the default on Linux, under Xvfb; on the Mac build it with `--features impulse-app/snapshot`) runs them, and `scripts/docs/capture.py`, against the Rust app.
 - `scripts/check-macos.sh` (rust branch) — `cargo check` of the Rust app for macOS from Linux, so Mac-only code compiles; nothing is linked or run.
 - `scripts/package-linux.sh` (rust branch): release build of the Rust app and CLI, packaged into `dist/` as a tarball and a `.deb` (icons and fonts in `share/impulse/`, found by `impulse-app/src/resources.rs`).
-- `./scripts/release.sh <version> [--push]` — the only release path.
+- `scripts/package-macos.sh [--sign --notarize --dmg]` (rust branch): release build of the Rust app and CLI, bundled into `dist/Impulse.app` (the CLI in `Contents/Resources/bin`, the Info.plist from `assets/macos/Info.plist.in`), optionally signed, notarized and put in a `.dmg`.
+- `./scripts/release.sh <version> [--push]` — the only release path, shipping the Rust app. Without `--push`: builds this platform's release (macOS `.dmg` via `package-macos.sh`, Linux packages via `package-linux.sh`) on any branch, then restores the version files. `--push`: macOS on `main` only; commits the version bump of every crate, tags, pushes and creates the GitHub release, and `.github/workflows/release-linux.yml` then attaches the Linux packages.
 
 ## Conventions
 

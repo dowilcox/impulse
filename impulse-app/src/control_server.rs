@@ -48,13 +48,21 @@ fn getrandom(bytes: &mut [u8]) -> std::io::Result<()> {
     std::fs::File::open("/dev/urandom")?.read_exact(bytes)
 }
 
-/// The `impulse` tool beside the app's own executable, if it's there.
+/// The `impulse` tool in a macOS app bundle's `Contents/Resources/bin`, or
+/// beside the app's own executable, if it's there. The bundle's comes
+/// first: in `Contents/MacOS`, `impulse` is the app's own `Impulse` on a
+/// case-insensitive disk.
 pub(crate) fn cli_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    [dir.join("impulse"), dir.join("bin").join("impulse")]
-        .into_iter()
-        .find(|p| p.is_file())
+    [
+        dir.join("../Resources/bin/impulse"),
+        dir.join("impulse"),
+        dir.join("bin").join("impulse"),
+    ]
+    .into_iter()
+    .find(|p| p.is_file())
+    .map(|p| p.canonicalize().unwrap_or(p))
 }
 
 /// What a terminal with `token` gets in its environment. With

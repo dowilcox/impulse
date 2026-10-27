@@ -1,0 +1,105 @@
+# Builds the Linux packages (scripts/package-linux.sh) for a release and
+# attaches them to it. scripts/release.sh --push publishes the release with
+# the macOS disk image; publishing it starts this, on the release's tag.
+# Each architecture's tarball and .deb are uploaded, and their lines added
+# to the release's SHA256SUMS. Run it by hand from the Actions tab, naming a
+# tag, to build (or rebuild) a release's Linux packages.
+name: Release (Linux)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.37.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-linux-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  package:
+    name: Package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Check the tag matches VERSION
+        run: |
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "v$version" != "$TAG" ]]; then
+            echo "::error::VERSION is $version but the tag is $TAG"
+            exit 1
+          fi
+
+      # What the -sys crates build against; the app links only xcb,
+      # xkbcommon and zlib (the .deb's Depends).
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config cmake clang \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev zlib1g-dev \
+            libfontconfig-dev libfreetype-dev libwayland-dev libvulkan-dev
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Build the packages
+        run: scripts/package-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: package
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # The macOS run wrote SHA256SUMS with the disk image; this keeps its
+      # lines (and drops any of an earlier run of this workflow).
+      - name: Checksums
+        working-directory: dist
+        run: |
+          gh release download "$TAG" --pattern SHA256SUMS --output SHA256SUMS.release || touch SHA256SUMS.release
+          sha256sum *.tar.gz *.deb > SHA256SUMS.linux
+          grep -v -e '-linux-' -e '\.deb$' SHA256SUMS.release > SHA256SUMS || true
+          cat SHA256SUMS.linux >> SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload
+        working-directory: dist
+        run: gh release upload "$TAG" *.tar.gz *.deb SHA256SUMS --clobber

@@ -10,6 +10,15 @@ Impulse is a terminal with an editor, git tools and coding-agent support built a
 
 Impulse needs macOS 26 (Tahoe) or later on an Apple silicon Mac.
 
+### Linux
+
+Each release also has Linux packages for x86_64 and arm64 (`aarch64`):
+
+- **Debian and Ubuntu:** download `impulse_X.Y.Z_amd64.deb` (or `_arm64.deb`) and install it with `sudo apt install ./impulse_X.Y.Z_amd64.deb`. Impulse appears among your applications; `impulse-app` starts it from a terminal.
+- **Other distributions:** download `impulse-X.Y.Z-linux-x86_64.tar.gz` (or `-aarch64`), unpack it anywhere and run `bin/impulse-app` inside it. Keep `bin/` and `share/` together: Impulse reads its icons and fonts from `share/impulse/` beside it.
+
+Impulse draws with Vulkan, so it needs a Vulkan driver (Mesa's `mesa-vulkan-drivers` on most systems), and runs on Wayland or X11. `SHA256SUMS` on the release page lists every file's checksum.
+
 ### Updates
 
 At launch Impulse asks GitHub whether a newer release exists. When one does, an **Update X.Y.Z** item appears at the right end of the status bar; click it to open the release page, then install the new disk image the same way. To stop the check, turn off **Check for updates on launch** (`check_for_updates`) in Settings ▸ General ▸ Startup.
