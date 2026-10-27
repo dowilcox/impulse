@@ -180,10 +180,14 @@ Left of the editor work done here:
 
 ## 5. The release
 
-- [ ] **First run of `scripts/package-macos.sh --sign --notarize --dmg`** on
-  a Mac: signing, notarizing and Gatekeeper on the Rust binary, and
-  installing over the Swift app (the same bundle ID and data folder:
-  settings, the session, trust lists and command history carry over).
+- [x] **First run of `scripts/package-macos.sh --sign --notarize --dmg`** on
+  a Mac (27 Oct 2026, 0.36.0): it builds, signs (hardened runtime, the
+  entitlements, the CLI signed inside), and Apple notarizes both the app
+  and the disk image; both are stapled and Gatekeeper accepts them
+  (`spctl`: "Notarized Developer ID"). 78 MB app, 21 MB disk image.
+- [ ] **Install it over the Swift app** (the same bundle ID and data
+  folder: settings, the session, trust lists and command history should
+  carry over), from the disk image, with the Swift app quit.
 - [ ] **First run of `.github/workflows/release-linux.yml`**, which can only
   run once it's on `main`: by hand with a throwaway tag first.
 - [ ] **The `.deb`**, untested (built where `dpkg-deb` is installed).
