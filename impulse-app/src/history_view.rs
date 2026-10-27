@@ -20,15 +20,15 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use crate::context_menu::{DropdownMenuButton as _, MenuSpec, RightClickMenu as _};
-use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::ButtonVariants as _;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::spinner::Spinner;
+use gpui_kit::component::Sizable as _;
 use gpui_kit::{
-    AnyElement, App, Bounds, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, FontWeight,
-    Hsla, KeyDownEvent, PathBuilder, Pixels, ScrollStrategy, Subscription, Task,
-    UniformListScrollHandle, Window, canvas, div, point, prelude::*, px, uniform_list,
+    canvas, div, point, prelude::*, px, uniform_list, AnyElement, App, Bounds, ClipboardItem,
+    Context, Entity, EventEmitter, FocusHandle, FontWeight, Hsla, KeyDownEvent, PathBuilder,
+    Pixels, ScrollStrategy, Subscription, Task, UniformListScrollHandle, Window,
 };
 use impulse_git::history_query::HistoryQuery;
 use impulse_git::log::{CommitDetails, ForkPoint, LogEntry, LogScope};

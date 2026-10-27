@@ -33,7 +33,7 @@ static DELIVERED: Mutex<Option<HashMap<u64, Vec<String>>>> = Mutex::new(None);
 pub(crate) fn app_in_front(cx: &gpui_kit::App) -> bool {
     #[cfg(target_os = "macos")]
     {
-        use objc::runtime::{BOOL, Class, NO, Object};
+        use objc::runtime::{Class, Object, BOOL, NO};
         use objc::{msg_send, sel, sel_impl};
         let _ = cx;
         let Some(class) = Class::get("NSApplication") else {
@@ -287,8 +287,8 @@ fn command(
 mod center {
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
-    use std::sync::OnceLock;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
 
     use gpui_kit::{App, SystemNotification};
 
@@ -464,11 +464,9 @@ mod tests {
                 ""
             ]
         );
-        assert!(
-            !linux_arguments("Bell", "", "", Options::default(), false)
-                .iter()
-                .any(|a| a.contains("suppress-sound"))
-        );
+        assert!(!linux_arguments("Bell", "", "", Options::default(), false)
+            .iter()
+            .any(|a| a.contains("suppress-sound")));
     }
 
     #[test]
