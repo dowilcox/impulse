@@ -2,6 +2,12 @@
 
 All notable changes to Impulse are documented in this file.
 
+## Unreleased
+
+### Fixes
+
+- A terminal's branch chip follows a branch switch made anywhere (the command palette, Manage Branches, another terminal or an agent) instead of waiting for your next command.
+
 ## 1.0.0
 
 **Impulse 1.0.** Impulse is now one app for macOS and Linux, written in Rust.

@@ -44,6 +44,7 @@ use impulse_terminal::{
 use crate::command_editor::{CommandEditor, EditorColors};
 use crate::command_history::CommandHistory;
 use crate::find_bar::FindBar;
+use crate::repository_state::RepositoryStore;
 use crate::settings_store::SettingsStore;
 use crate::terminal_blocks::{
     Blocks, FileChecks, Hints, HoverLink, LinkTarget, RowText, ToolbarButton,
@@ -604,6 +605,9 @@ pub struct TerminalView {
     /// What the shell can run, from its integration.
     pub(crate) lookup: CommandLookup,
     pub(crate) branch: Option<String>,
+    /// The repository state `branch` follows, when something holds the
+    /// folder's repository: its id and the observation.
+    followed_repository: Option<(EntityId, gpui_kit::Subscription)>,
     /// Between a command block's start and end (OSC 133).
     pub(crate) command_running: bool,
     /// Commands to run at the shell's first prompt.
@@ -917,6 +921,7 @@ impl TerminalView {
             shell_name: impulse_kit::shell::login::default_shell_name(),
             lookup,
             branch: None,
+            followed_repository: None,
             command_running: false,
             start_commands: commands,
             tracks_prompts: false,
@@ -984,8 +989,38 @@ impl TerminalView {
         self.bar_shown(cx) && !self.command_running && self.tracks_prompts
     }
 
-    /// The git branch of the terminal's folder, looked up in the background.
+    /// The git branch of the terminal's folder: from its repository's state
+    /// when a workspace holds it, followed so a checkout made anywhere else
+    /// (the palette, another terminal, an agent) shows at once; else looked
+    /// up in the background.
     fn refresh_branch(&mut self, cx: &mut Context<Self>) {
+        let state = RepositoryStore::root_for(std::path::Path::new(&self.cwd), cx)
+            .and_then(|root| RepositoryStore::existing(&root, cx));
+        match &state {
+            Some(state)
+                if self.followed_repository.as_ref().map(|(id, _)| *id)
+                    != Some(state.entity_id()) =>
+            {
+                let observing = cx.observe(state, |view, state, cx| {
+                    let state = state.read(cx);
+                    if state.loaded && view.branch != state.branch_label() {
+                        view.branch = state.branch_label();
+                        cx.notify();
+                    }
+                });
+                self.followed_repository = Some((state.entity_id(), observing));
+            }
+            Some(_) => {}
+            None => self.followed_repository = None,
+        }
+        if let Some(state) = state.filter(|state| state.read(cx).loaded) {
+            let branch = state.read(cx).branch_label();
+            if self.branch != branch {
+                self.branch = branch;
+                cx.notify();
+            }
+            return;
+        }
         let dir = self.cwd.clone();
         let task = cx.background_spawn(async move {
             let branch = crate::workspace::git_branch(std::path::Path::new(&dir));
