@@ -72,7 +72,12 @@ impl CliError {
     /// One sentence describing what went wrong and what to do about it.
     pub fn message(&self) -> String {
         match self.kind {
-            ErrorKind::GitNotFound => "Git isn't installed or isn't on your PATH. Install it with Homebrew or the Xcode Command Line Tools.".into(),
+            ErrorKind::GitNotFound => if cfg!(target_os = "macos") {
+                "Git isn't installed or isn't on your PATH. Install it with Homebrew or the Xcode Command Line Tools."
+            } else {
+                "Git isn't installed or isn't on your PATH. Install it with your distribution's package manager."
+            }
+            .into(),
             ErrorKind::CommandLineToolsMissing => "Git needs the Xcode Command Line Tools. Run `xcode-select --install` in a terminal.".into(),
             ErrorKind::NotARepository => "This folder isn't inside a git repository.".into(),
             ErrorKind::IdentityNotConfigured => "Git doesn't know who you are yet. Set `git config --global user.name` and `user.email`.".into(),
