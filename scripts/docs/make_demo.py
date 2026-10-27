@@ -9,6 +9,9 @@ Creates, under <repo>/target/docs-demo:
                               settings and an empty command history)
     .zshrc, .gitconfig        a plain zsh and git setup
     bin/claude, codex, gemini stand-in agent CLIs (see agent.sh)
+    bin/kitten                a stand-in `kitten icat` (see kitten.sh)
+    Pictures/skyline-trail-elevation.png
+                              a chart for it to show
     Code/trailhead            the demo repository (TypeScript trail API)
     Code/trailhead.worktrees/ two task worktrees
   remotes/trailhead.git       its "origin"
@@ -38,10 +41,13 @@ usage: make_demo.py [conflict]
 from __future__ import annotations
 
 import os
+import math
 import shutil
+import struct
 import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -740,6 +746,48 @@ def data_dir(name: str = "impulse-dev") -> Path:
     return HOME / ".local" / "share" / name
 
 
+def png(width: int, height: int, rgba: bytes) -> bytes:
+    """An 8-bit RGBA PNG of `rgba`, rows top to bottom."""
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    stride = width * 4
+    rows = b"".join(b"\0" + rgba[y * stride:(y + 1) * stride] for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
+
+def elevation_chart(width: int, height: int) -> bytes:
+    """A trail's elevation profile, as a plotting script would draw it: a
+    filled line over grid lines, on a dark panel."""
+    def ground(x: float) -> float:  # 0 (bottom) to 1 (top) across 0..1
+        return (0.18 + 0.55 * math.sin(x * math.pi * 0.9) ** 2 + 0.07 * math.sin(x * 23)
+                + 0.04 * math.sin(x * 51 + 1) + 0.12 * x)
+
+    unit = height / 260  # sizes below are for 260 pixels high
+    pad_x, pad_top, pad_bottom = round(24 * unit), round(22 * unit), round(22 * unit)
+    plot_h = height - pad_top - pad_bottom
+    tops = [pad_top + plot_h * (1 - ground((x - pad_x) / (width - 2 * pad_x)))
+            for x in range(width)]
+    panel, grid, line = (30, 34, 42), (52, 58, 70), (94, 226, 196)
+    out = bytearray()
+    for y in range(height):
+        on_grid = y >= pad_top and (y - pad_top) % (plot_h // 4) < round(unit)
+        for x in range(width):
+            r, g, b = grid if on_grid and pad_x <= x < width - pad_x else panel
+            if pad_x <= x < width - pad_x:
+                top = tops[x]
+                if top < y <= height - pad_bottom:  # under the line: a fill fading downward
+                    fade = 0.1 + 0.5 * (height - pad_bottom - y) / plot_h
+                    r, g, b = (round(c + (l - c) * fade) for c, l in zip((r, g, b), line))
+                # The line, 3 units thick, smoothed by its slope.
+                slope = abs(tops[min(x + 1, width - 1)] - tops[max(x - 1, 0)]) / 2
+                coverage = max(0.0, min(1.0, 2.0 * unit + slope / 2 - abs(y - top)))
+                r, g, b = (round(c + (l - c) * coverage) for c, l in zip((r, g, b), line))
+            out += bytes((r, g, b, 255))
+    return png(width, height, bytes(out))
+
+
 def build_home() -> None:
     # Linux has C.UTF-8 everywhere, en_US.UTF-8 only where it was generated.
     write(HOME / ".zshrc", ZSHRC if sys.platform == "darwin" else ZSHRC.replace("en_US.UTF-8", "C.UTF-8"))
@@ -748,6 +796,10 @@ def build_home() -> None:
     agent = (HERE / "agent.sh").read_text()
     for name in ("claude", "codex", "gemini"):
         write(HOME / "bin" / name, agent, mode=0o755)
+    write(HOME / "bin" / "kitten", (HERE / "kitten.sh").read_text(), mode=0o755)
+    chart = HOME / "Pictures" / "skyline-trail-elevation.png"
+    chart.parent.mkdir(parents=True, exist_ok=True)
+    chart.write_bytes(elevation_chart(1520, 520))
     # Other projects, for "recent folders".
     for name, about in (("trail-ui", "The trailhead web app"), ("trailhead-infra", "Deploy config for trailhead")):
         write(HOME / "Code" / name / "README.md", f"# {name}\n\n{about}.\n")

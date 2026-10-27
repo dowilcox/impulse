@@ -3607,6 +3607,13 @@ impl TerminalView {
         let rows = grid.rows as i32;
         let mut last = rows - 1;
         let mut anchor = false;
+        // An image hanging below the last output is content too: one placed
+        // by screen position leaves the cursor above it (`kitten icat
+        // --place`), as kitty does.
+        let below_images = covered
+            .iter()
+            .rposition(|&c| c)
+            .map_or(-1, |row| row as i32);
         if !overlay.alt_screen && !self.direct {
             let fills = overlay.blocks.iter().any(|b| b.start_row < 0);
             let at_prompt = overlay.prompt_row.is_some();
@@ -3623,7 +3630,7 @@ impl TerminalView {
                     -1
                 };
                 // Without the blank lines shells print before a prompt.
-                last = grid.last_non_blank_row(last, covered);
+                last = grid.last_non_blank_row(last, covered).max(below_images);
                 anchor = !fills;
                 if fills && self.tuck.armed {
                     let hidden = (rows - 1) - last;
@@ -3643,7 +3650,7 @@ impl TerminalView {
                     }
                 }
             } else if let Some(cursor) = overlay.cursor_row {
-                last = cursor;
+                last = cursor.max(below_images);
                 anchor = !fills;
                 self.tuck.floor = None;
             }

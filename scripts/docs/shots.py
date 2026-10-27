@@ -188,6 +188,11 @@ SHOTS = [
      "actions": ["run=git log --oneline -4", *wait(2), "run=npm test --silent", *wait(3),
                  "run=echo Dev server: http://localhost:3000", *wait(2), "block=terminal_hints"],
      "crop": (SIDEBAR_W, GRID_BOTTOM - 480, W - SIDEBAR_W, 480)},
+    # The demo home's stand-in kitten (scripts/docs/kitten.sh) and chart.
+    {"name": "terminal-images", "session": ONE,
+     "actions": ["run=git log --oneline -3", *wait(2),
+                 "run=kitten icat ~/Pictures/skyline-trail-elevation.png", *wait(3)],
+     "crop": (SIDEBAR_W, GRID_BOTTOM - 287, W - SIDEBAR_W, 287)},
 
     # ------------------------------------------------------------ tasks
     {"name": "tasks-new-task-sheet", "session": ONE, "actions": ["task-sheet=Add trail difficulty filter|claude|main", *wait(2)],

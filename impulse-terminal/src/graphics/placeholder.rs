@@ -52,10 +52,13 @@ pub fn is_diacritic(mark: char) -> bool {
 }
 
 /// The id a placeholder's color carries: a 256-color index, or a 24-bit
-/// color as one number. The default colors carry none.
+/// color as one number. The default colors carry none. The first 16 set
+/// by `SGR 30`–`37` and `90`–`97` count as their indexes, as in kitty:
+/// tmux redraws a placeholder in image 1's color as `SGR 31`.
 pub(crate) fn color_id(color: Option<AlacColor>) -> u32 {
     match color {
         Some(AlacColor::Indexed(index)) => u32::from(index),
+        Some(AlacColor::Named(named)) if (named as usize) < 16 => named as u32,
         Some(AlacColor::Spec(rgb)) => {
             u32::from(rgb.r) << 16 | u32::from(rgb.g) << 8 | u32::from(rgb.b)
         }
@@ -146,6 +149,18 @@ pub fn strip_placeholders(text: &str) -> std::borrow::Cow<'_, str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alacritty_terminal::vte::ansi::NamedColor;
+
+    #[test]
+    fn named_colors_carry_their_index() {
+        assert_eq!(color_id(Some(AlacColor::Named(NamedColor::Red))), 1);
+        assert_eq!(
+            color_id(Some(AlacColor::Named(NamedColor::BrightWhite))),
+            15
+        );
+        assert_eq!(color_id(Some(AlacColor::Named(NamedColor::Foreground))), 0);
+        assert_eq!(color_id(Some(AlacColor::Indexed(1))), 1);
+    }
 
     fn mark(n: usize) -> char {
         char::from_u32(DIACRITICS[n]).unwrap()

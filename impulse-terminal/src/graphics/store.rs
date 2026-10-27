@@ -164,10 +164,13 @@ pub(crate) struct ImageStore {
     decoder: Decoder,
 }
 
+/// Base64 as kitty reads it: padding optional, and the unused bits of a
+/// last character not checked (chafa leaves them set).
 const BASE64: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
     &base64::alphabet::STANDARD,
     base64::engine::GeneralPurposeConfig::new()
-        .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+        .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true),
 );
 
 impl ImageStore {
@@ -526,7 +529,8 @@ impl ImageStore {
             self.placements.drain(..excess);
         }
         // Past the image, as kitty moves it: right by its columns, down by
-        // its rows less one, wrapping and scrolling as text would.
+        // its rows less one, wrapping and scrolling as text would (kitty's
+        // handle_put_command and screen_handle_graphics_command).
         let cursor_move = (!cmd.keep_cursor).then(|| {
             let mut col = at.col + cols as usize;
             let mut down = rows as usize - 1;
@@ -961,6 +965,34 @@ mod tests {
             Some("\x1b_Gi=99;ENOENT:no such image\x1b\\")
         );
         assert_eq!(run(&mut store, "Ga=p,i=99,q=2", &at(0, 0)).reply, None);
+    }
+
+    #[test]
+    fn chunks_encoded_each_on_their_own() {
+        // As chafa sends them: the command alone, each chunk's bytes
+        // encoded on their own, with the unused bits of the character
+        // before the padding set, then an empty last chunk.
+        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut store = store();
+        let png = png(4, 4, &[200u8; 4 * 4 * 4]);
+        run(&mut store, "Ga=T,f=100,i=4,q=2,m=1", &at(0, 0));
+        for piece in png.chunks(10) {
+            let mut chunk = BASE64.encode(piece).into_bytes();
+            // Ten bytes end in one byte: two characters, four bits unused.
+            if let Some(last) = chunk
+                .iter()
+                .rposition(|&c| c != b'=')
+                .filter(|&i| i + 1 < chunk.len())
+            {
+                let index = ALPHABET.iter().position(|&c| c == chunk[last]).unwrap();
+                chunk[last] = ALPHABET[index | 0x0F];
+            }
+            let chunk = String::from_utf8(chunk).unwrap();
+            run(&mut store, &format!("Gm=1;{chunk}"), &at(0, 0));
+        }
+        let done = run(&mut store, "Gm=0", &at(0, 0));
+        assert!(done.changed);
+        assert_eq!(decoded(&store, 4).width, 4);
     }
 
     #[test]

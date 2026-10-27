@@ -16,14 +16,21 @@ Proposals 1 to 5 are built (26 Oct 2026): `impulse-terminal/src/graphics/` (comm
 
 Tried in the app (26 Oct 2026, Linux, XWayland): direct placements, placeholders and `clear` with a script; `kitten icat` detects support (`files`) and shows images, the cursor ending below them.
 
+Tried again (27 Oct 2026, Linux, Xvfb with software Vulkan, through the smoke runner's headless mode), which found three bugs, now fixed:
+
+- `chafa -f kitty` showed nothing: chafa encodes each chunk on its own and leaves the unused bits of the character before the padding set, which the `base64` crate refuses by default. Kitty decodes each chunk on its own and doesn't check those bits; now neither does Impulse (`BASE64` in `store.rs`).
+- Placeholders through tmux showed nothing: tmux redraws a cell in color 1 as `SGR 31`, which alacritty keeps as a named color, and `color_id` read only indexed and 24-bit ones. The 16 named colors now count as their indexes, as in kitty.
+- `kitten icat --place` cut its image off: icat places it by screen position with `C=1` and leaves the cursor at its top left, so the rows shown at the prompt ended at the last output and the rest of the image wasn't drawn. Rows under an image hanging below the last output now count as content (`layout_rows`), so it shows whole above the input bar. The shell's next prompt still prints over the image's first rows, as in kitty.
+
 Still to do:
 
-- [ ] yazi, not tried yet.
-- [ ] `kitten icat --place` (absolute screen position) drew over the next prompt: check how placing by screen row should meet the rows anchored to the input bar.
-- [ ] Run the `images` smoke scenario where there's an X server for it (Xvfb) or on the Mac; it hasn't run yet.
-- [ ] The test matrix by hand (below), and the cursor's place after an image at the right edge and bottom compared with kitty's (`OutputPipeline::graphics` follows kitty's source as remembered: right by the columns, down by the rows less one).
-- [ ] A docs screenshot of an image in a block.
-- [ ] `scripts/check-macos.sh` (it needs `rustup target add aarch64-apple-darwin`).
+- [ ] yazi, not tried yet: the newest yazi on crates.io doesn't build from its package, and an older one wasn't tried.
+- [x] `kitten icat --place`: see above.
+- [x] The `images` smoke scenario passes under Xvfb (27 Oct), as do `terminal-*` and `session`. Not run on the Mac yet.
+- [ ] The test matrix by hand (below). Done on Linux: chafa 1.14 and timg 1.5.2 draw with `-f kitty` and `-pk`, but pick text by themselves: they choose from known terminals' environment variables and ask nothing (timg asks only the background color). In tmux 3.4 both show images by placeholders once `allow-passthrough` is on, and timg's (a random 32-bit image id, sent as a 24-bit color) only once tmux knows the terminal has RGB (`terminal-features ',xterm-256color:RGB'`); without it tmux rounds the color to the nearest of 256. Both are in `docs/terminal.md`. Not done: yazi, image.nvim, snacks.nvim, matplotlib's kitty backends, Pi, grok, `kitten icat` itself (kitty isn't installable here), ssh, and anything on the Mac.
+- [x] The cursor after a placement, at the right edge and bottom too, checked against kitty's source (0.48.2: `handle_put_command` in `graphics.c`, `screen_handle_graphics_command` in `screen.c`): right by the columns and down by the rows less one, wrapping to the next line at the right edge and scrolling at the bottom margin, as `ImageStore::place` does.
+- [ ] A docs screenshot of an image in a block: the `terminal-images` shot is defined (`scripts/docs/shots.py`, with a stand-in `kitten` in the demo home, `scripts/docs/kitten.sh`, and a chart `make_demo.py` draws). Capture it on the Mac (`scripts/docs/capture.py terminal-images`), as the other shots are, then show it in `docs/terminal.md`'s Images section.
+- [x] `scripts/check-macos.sh` passes.
 
 ## The problem
 

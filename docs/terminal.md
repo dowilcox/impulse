@@ -423,7 +423,8 @@ Programs can show pictures in the terminal: a plot from a script, `kitten icat p
 - An image belongs to the output it was printed with: it scrolls with it, and goes when the screen is cleared (`clear`, ⌘K) or when a full-screen program that showed it exits.
 - Copying text, a block's output and what agents read from a terminal leave images out.
 - Restored scrollback comes back without its images.
-- In tmux, turn on passthrough so images reach Impulse: `set -g allow-passthrough on` in `~/.tmux.conf`.
+- In tmux, turn on passthrough so images reach Impulse, and tell tmux that Impulse shows 24-bit color, which carries the image's number for most programs there: add `set -g allow-passthrough on` and `set -as terminal-features ',xterm-256color:RGB'` to `~/.tmux.conf`.
+- Some programs choose how to draw from the environment variables of terminals they know instead of asking, so in Impulse they draw with text characters. Tell them which protocol to use: `chafa -f kitty`, `timg -pk`.
 
 Programs send image data in the escape sequences themselves, in a temporary file made for it, or by naming a PNG file (as `kitten icat` does). Since any output Impulse shows (`cat` of a file, a remote server) could name a file, Impulse reads only PNGs that way, outside system folders, and never answers whether it could, so nothing learns which files you have. Each image can be up to 10,000 pixels a side and 64 MB decoded, and a terminal keeps up to 256 MB of images, letting the oldest unused ones go first. Animated images show their first frame.
 
