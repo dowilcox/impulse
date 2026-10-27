@@ -10,8 +10,8 @@
 # exactly what a release would ship from this commit, at <version>:
 #   macOS  dist/Impulse-<version>.dmg, signed and notarized
 #          (scripts/package-macos.sh --sign --notarize --dmg)
-#   Linux  dist/impulse-<version>-linux-<arch>.tar.gz and the .deb
-#          (scripts/package-linux.sh)
+#   Linux  dist/impulse-<version>-linux-<arch>.tar.gz, the .deb and, where
+#          makepkg is, the Arch package (scripts/package-linux.sh)
 # plus dist/SHA256SUMS. The version files are put back afterwards; nothing
 # is committed or tagged.
 #
@@ -192,7 +192,8 @@ else
     echo ""
     bash scripts/package-linux.sh
     DIST_FILES=()
-    for f in "$DIST_DIR"/impulse-"${VERSION}"-linux-*.tar.gz "$DIST_DIR"/impulse_"${VERSION}"_*.deb; do
+    for f in "$DIST_DIR"/impulse-"${VERSION}"-linux-*.tar.gz "$DIST_DIR"/impulse_"${VERSION}"_*.deb \
+             "$DIST_DIR"/impulse-"${VERSION}"-1-*.pkg.tar.zst; do
         [[ -f "$f" ]] && DIST_FILES+=("$(basename "$f")")
     done
 fi

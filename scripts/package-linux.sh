@@ -8,6 +8,7 @@
 # Writes into dist/:
 #   impulse-<version>-linux-<arch>.tar.gz   that layout under a folder
 #   impulse_<version>_<debarch>.deb         the same under /usr (dpkg-deb)
+#   impulse-<version>-1-<arch>.pkg.tar.zst  the same for pacman (makepkg)
 #
 # Usage: ./scripts/package-linux.sh [--no-build]
 set -euo pipefail
@@ -108,4 +109,33 @@ CONTROL
     echo "Wrote dist/impulse_${VERSION}_${DEB_ARCH}.deb"
 else
     echo "dpkg-deb not found: skipped the .deb"
+fi
+
+# The Arch package: the same tree under /usr (makepkg, on Arch and its
+# derivatives). The PKGBUILD only copies the staged tree; makepkg leaves the
+# binaries as cargo built them.
+if command -v makepkg >/dev/null 2>&1; then
+    ARCHPKG="$STAGE/arch"
+    lay_out "$ARCHPKG/root/usr"
+    cat > "$ARCHPKG/PKGBUILD" <<PKGBUILD
+pkgname=impulse
+pkgver=$VERSION
+pkgrel=1
+pkgdesc='Terminal IDE: a terminal with command blocks and a code editor'
+arch=('$ARCH')
+url='https://impulse-terminal.app'
+license=('GPL-3.0-only')
+depends=('glibc' 'gcc-libs' 'zlib' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'vulkan-icd-loader' 'git')
+optdepends=('wayland: Wayland sessions'
+            'vulkan-driver: drawing on the GPU')
+options=('!strip' '!debug' '!lto')
+
+package() {
+    cp -a "$ARCHPKG/root/usr" "\$pkgdir/"
+}
+PKGBUILD
+    (cd "$ARCHPKG" && PKGDEST="$DIST" makepkg --force --nodeps --noconfirm >/dev/null)
+    echo "Wrote dist/impulse-${VERSION}-1-${ARCH}.pkg.tar.zst"
+else
+    echo "makepkg not found: skipped the Arch package"
 fi
