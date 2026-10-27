@@ -140,8 +140,13 @@ BUNDLE_ID="dev.impulse.Impulse"
 
 if [[ "$BUILD" == true ]]; then
     echo "==> Building impulse-app and impulse ${VERSION} (release)..."
-    # The Info.plist's LSMinimumSystemVersion.
-    MACOSX_DEPLOYMENT_TARGET=26.0 cargo build --release -p impulse-app -p impulse-cli
+    # The Info.plist's LSMinimumSystemVersion. With any deployment target
+    # set, the Command Line Tools 27.0 linker (ld-27037) writes proc-macro
+    # dylibs whose chained fixups macOS 27's dyld rejects ("mis-aligned
+    # LINKEDIT string pool"), so they're linked with the older fixups.
+    MACOSX_DEPLOYMENT_TARGET=26.0 \
+        RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-no_fixup_chains" \
+        cargo build --release -p impulse-app -p impulse-cli
 fi
 for bin in impulse-app impulse; do
     if [[ ! -x "target/release/$bin" ]]; then
