@@ -140,12 +140,12 @@ Like `@`, it needs an editor in front with a language server for its language: t
 
 `w:` lists, in order:
 
-1. The window's open workspaces, with each folder (or "Follows the active tab" for Scratch) and its number of tabs. The active one is marked `current`.
+1. The window's open workspaces in the sidebar's order, each repository's tasks under it, with each folder ("task of" its repository for a task, "Follows the active tab" for Scratch) and its number of tabs. The active one is marked `current`, and a task whose branch is merged `merged`. A task also matches its repository's name, so `w:trailhead` finds trailhead's tasks too.
 2. Folders you opened recently that aren't open now and still exist, marked `recent`.
 3. **Open Folder as Workspace…**, to choose another folder.
 4. **Clear Recent Workspaces**, when there are recent folders, with how many there are.
 
-![The palette in workspace mode: Scratch, trailhead (current) and fix-elevation, then the recent folders trail-ui and trailhead-infra, and Open Folder as Workspace…](images/command-palette-workspaces.png)
+![The palette in workspace mode: trailhead (current), its task fix-elevation and Scratch, then the recent folders trail-ui and trailhead-infra, and Open Folder as Workspace…](images/command-palette-workspaces.png)
 
 ↩ on an open workspace switches to it; on a recent folder it opens the folder as a workspace again. **Clear Recent Workspaces** (also a palette command) empties the list of recent folders; the notice's **Undo** puts it back. See [Workspaces, tabs and panes](workspaces-and-tabs.md#workspaces).
 

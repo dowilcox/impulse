@@ -314,6 +314,18 @@ struct WorkspaceInfo {
     is_scratch: bool,
     tab_count: usize,
     is_active: bool,
+    /// For a task, its repository's name.
+    task_of: Option<String>,
+    merged: bool,
+    /// What `w:` matches: the name, after the repository's for a task.
+    search: String,
+}
+
+impl WorkspaceInfo {
+    /// Where the name starts in `search`.
+    fn name_offset(&self) -> usize {
+        self.search.len() - self.name.len()
+    }
 }
 
 /// What the window offers the palette, taken when it opens.
@@ -1129,36 +1141,48 @@ impl Palette {
     // MARK: Workspaces
 
     fn refresh_workspaces(&mut self, term: &str) {
-        let mut rows: Vec<Row> =
-            fuzzy::rank(&self.host.workspaces, term, usize::MAX, false, |w| &w.name)
+        let mut rows: Vec<Row> = fuzzy::rank(&self.host.workspaces, term, usize::MAX, false, |w| {
+            &w.search
+        })
+        .into_iter()
+        .map(|(workspace, m)| {
+            let detail = format!(
+                "{} · {} tab{}",
+                match (&workspace.task_of, workspace.is_scratch) {
+                    (Some(repository), _) => format!("task of {repository}"),
+                    (None, true) => "Follows the active tab".to_string(),
+                    (None, false) => workspace.root.clone(),
+                },
+                workspace.tab_count,
+                if workspace.tab_count == 1 { "" } else { "s" }
+            );
+            // Only the matches in the name, not the repository's.
+            let offset = workspace.name_offset();
+            let highlights = m
+                .positions
                 .into_iter()
-                .map(|(workspace, m)| {
-                    let detail = format!(
-                        "{} · {} tab{}",
-                        if workspace.is_scratch {
-                            "Follows the active tab".to_string()
-                        } else {
-                            workspace.root.clone()
-                        },
-                        workspace.tab_count,
-                        if workspace.tab_count == 1 { "" } else { "s" }
-                    );
-                    let id = workspace.id;
-                    Row::new(
-                        format!("workspace:{id}"),
-                        Some(if workspace.is_scratch {
-                            "square-terminal"
-                        } else {
-                            "folder-git-2"
-                        }),
-                        workspace.name.clone(),
-                        move |w, window, cx| w.palette_select_workspace(id, window, cx),
-                    )
-                    .highlights(m.positions)
-                    .subtitle(Some(detail))
-                    .trailing(workspace.is_active.then(|| "current".to_string()))
-                })
+                .filter_map(|p| p.checked_sub(offset))
                 .collect();
+            let id = workspace.id;
+            Row::new(
+                format!("workspace:{id}"),
+                Some(match (&workspace.task_of, workspace.is_scratch) {
+                    (Some(_), _) => "git-branch",
+                    (None, true) => "square-terminal",
+                    (None, false) => "folder-git-2",
+                }),
+                workspace.name.clone(),
+                move |w, window, cx| w.palette_select_workspace(id, window, cx),
+            )
+            .highlights(highlights)
+            .subtitle(Some(detail))
+            .trailing(if workspace.is_active {
+                Some("current".to_string())
+            } else {
+                workspace.merged.then(|| "merged".to_string())
+            })
+        })
+        .collect();
         for (folder, _) in fuzzy::rank(&self.host.recents, term, usize::MAX, true, |f| f) {
             let name = file_name(folder);
             let highlights = fuzzy::fuzzy_match(term, &name, false)
@@ -1875,15 +1899,33 @@ impl Workbench {
             Ok(actions) => host.project_actions = actions,
             Err(error) => host.project_error = Some(error),
         }
+        // In the sidebar's order: a repository's tasks under it.
+        for (_, group) in self.workspace_groups() {
+            for w in group {
+                let workspace = &self.workspaces[w];
+                let task_of = workspace
+                    .task
+                    .is_task
+                    .then(|| workspace.task.repository_name())
+                    .flatten();
+                let name = workspace.name();
+                host.workspaces.push(WorkspaceInfo {
+                    id: workspace.id,
+                    search: match &task_of {
+                        Some(repository) => format!("{repository} {name}"),
+                        None => name.clone(),
+                    },
+                    name,
+                    root: abbreviate_home(&workspace.root.to_string_lossy()),
+                    is_scratch: workspace.kind == Kind::Scratch,
+                    tab_count: workspace.tabs.len(),
+                    is_active: w == self.active,
+                    task_of,
+                    merged: workspace.task.merged,
+                });
+            }
+        }
         for (w, workspace) in self.workspaces.iter().enumerate() {
-            host.workspaces.push(WorkspaceInfo {
-                id: workspace.id,
-                name: workspace.name(),
-                root: abbreviate_home(&workspace.root.to_string_lossy()),
-                is_scratch: workspace.kind == Kind::Scratch,
-                tab_count: workspace.tabs.len(),
-                is_active: w == self.active,
-            });
             for (t, tab) in workspace.tabs.iter().enumerate() {
                 let surface = tab.focused_surface();
                 host.tabs.push(TabInfo {

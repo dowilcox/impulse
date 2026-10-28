@@ -4,6 +4,10 @@ All notable changes to Impulse are documented in this file.
 
 ## Unreleased
 
+### Improvements
+
+- Switch Workspace (`w:` in the command palette) shows tasks as tasks: each one under its repository as in the sidebar, with a branch icon, "task of" its repository instead of the worktree's path, and `merged` once its branch is; typing a repository's name finds its tasks too.
+
 ### Fixes
 
 - A terminal's branch chip follows a branch switch made anywhere (the command palette, Manage Branches, another terminal or an agent) instead of waiting for your next command.
