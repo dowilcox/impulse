@@ -12,6 +12,7 @@ All notable changes to Impulse are documented in this file.
 
 - A terminal's branch chip follows a branch switch made anywhere (the command palette, Manage Branches, another terminal or an agent) instead of waiting for your next command.
 - Quitting no longer beach-balls for a few seconds with several terminals open, most of all with fish: each shell's output is still read while it exits (on macOS fish waited for that before it could finish), the shells close together rather than one after another, and closing a tab no longer waits for its shell.
+- In a tab-indented file, the editor's bracket pair guides and right margin no longer jump to the wrong columns, several times too far right, when you scroll so that a line beginning with a tab is at the top.
 
 ## 1.0.0
 

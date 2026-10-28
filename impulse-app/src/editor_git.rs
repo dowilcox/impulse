@@ -593,16 +593,7 @@ impl EditorTab {
                     // The right margin, at a column measured on a visible
                     // line.
                     if let (Some(column), Some(rows)) = (margin, state.visible_row_range()) {
-                        let measured = rows.clone().find_map(|row| {
-                            if row >= text.lines_len() || text.line_len(row) == 0 {
-                                return None;
-                            }
-                            let start = text.line_start_offset(row);
-                            let first = text.slice(start..start + text.line_len(row)).to_string();
-                            let width = first.chars().next()?.len_utf8();
-                            let at = state.range_to_bounds(&(start..start + width))?;
-                            Some((at.origin.x, at.size.width))
-                        });
+                        let measured = crate::editor_brackets::measure_cell(state, rows.clone());
                         if let Some((left, width)) = measured {
                             let x = left + width * column as f32;
                             if x >= area.text_left && x < bounds.right() {

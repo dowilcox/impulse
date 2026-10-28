@@ -66,18 +66,7 @@ impl Brackets {
                 state.range_to_bounds(&(start..start))
             })?
         };
-        // A character's width, measured on a visible line.
-        let cell = rows.clone().find_map(|row| {
-            if row >= text.lines_len() || text.line_len(row) == 0 {
-                return None;
-            }
-            let start = text.line_start_offset(row);
-            let first = text.slice(start..start + text.line_len(row)).to_string();
-            let width = first.chars().next()?.len_utf8();
-            let at = state.range_to_bounds(&(start..start + width))?;
-            Some(at.size.width)
-        });
-        if let Some(cell) = cell {
+        if let Some((_, cell)) = measure_cell(state, rows.clone()) {
             let active = bracket_pairs::active(&self.pairs, cursor);
             for guide in self.guides.iter() {
                 let first = guide.lines.start.max(rows.start);
@@ -140,6 +129,30 @@ impl Brackets {
             }
         }
     }
+}
+
+/// One column's width, measured on a visible line, with that line's left
+/// edge. The character measured is one column wide: a tab spans up to
+/// `tab_size` columns and a wide character two, so measuring a line that
+/// starts with either would put everything placed by column too far right.
+pub(crate) fn measure_cell(
+    state: &EditorState,
+    rows: std::ops::Range<usize>,
+) -> Option<(Pixels, Pixels)> {
+    let text = state.text();
+    rows.into_iter().find_map(|row| {
+        if row >= text.lines_len() || text.line_len(row) == 0 {
+            return None;
+        }
+        let start = text.line_start_offset(row);
+        let line = text.slice(start..start + text.line_len(row)).to_string();
+        let (offset, _) = line
+            .char_indices()
+            .find(|(_, c)| c.is_ascii() && !c.is_ascii_control())?;
+        let at = state.range_to_bounds(&(start + offset..start + offset + 1))?;
+        let left = state.range_to_bounds(&(start..start))?.origin.x;
+        Some((left, at.size.width))
+    })
 }
 
 /// The bottom of buffer line `row`'s last wrapped row, from the last
