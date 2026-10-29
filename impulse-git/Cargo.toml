@@ -1,6 +1,6 @@
 [package]
 name = "impulse-git"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Impulse's git layer (the Rust port of ImpulseGit): libgit2 reads, git CLI writes, safety snapshots"
 license = "GPL-3.0-only"

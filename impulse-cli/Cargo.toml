@@ -1,6 +1,6 @@
 [package]
 name = "impulse-cli"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "The `impulse` command-line tool (the Rust port of ImpulseCLI)"
 license = "GPL-3.0-only"
