@@ -59,6 +59,9 @@ pub struct Subagent {
     pub background: bool,
     /// That turn began.
     pub reported: bool,
+    /// When its report began to be waited for (`REPORT_WAIT`): the end of
+    /// the agent's turn it finished in, or its finishing after that.
+    pub report_wait_from: Option<Instant>,
 }
 
 impl Subagent {
@@ -232,6 +235,11 @@ impl Subagents {
         self.pending.clear();
         self.forget_early_launches(now);
         self.turn_ended = Some(now);
+        for subagent in &mut self.list {
+            if subagent.awaits_report() && subagent.report_wait_from.is_none() {
+                subagent.report_wait_from = Some(now);
+            }
+        }
     }
 
     /// Calls that returned long ago and whose subagent never started.
@@ -241,13 +249,13 @@ impl Subagents {
     }
 
     /// When the wait for `subagent`'s report ends; `None` while it isn't
-    /// waited for yet (the agent's turn goes on) or there's none to wait
-    /// for.
-    fn report_due(&self, subagent: &Subagent) -> Option<Instant> {
+    /// waited for yet (the agent's turn it finished in goes on) or there's
+    /// none to wait for. A wait that ran out stays so in later turns.
+    fn report_due(subagent: &Subagent) -> Option<Instant> {
         if !subagent.awaits_report() {
             return None;
         }
-        Some(self.turn_ended?.max(subagent.finished?) + REPORT_WAIT)
+        Some(subagent.report_wait_from? + REPORT_WAIT)
     }
 
     /// The agent was told these subagents finished (a turn Claude Code
@@ -266,7 +274,7 @@ impl Subagents {
         self.list
             .iter()
             .filter(|s| s.awaits_report())
-            .filter(|s| self.report_due(s).is_none_or(|due| now < due))
+            .filter(|s| Self::report_due(s).is_none_or(|due| now < due))
             .count()
     }
 
@@ -274,7 +282,7 @@ impl Subagents {
     pub fn report_deadline(&self, now: Instant) -> Option<Instant> {
         self.list
             .iter()
-            .filter_map(|s| self.report_due(s))
+            .filter_map(Self::report_due)
             .filter(|due| *due > now)
             .min()
     }
@@ -320,6 +328,7 @@ impl Subagents {
             existing.finished = None;
             existing.result = None;
             existing.reported = false;
+            existing.report_wait_from = None;
             existing.started = now;
             return;
         }
@@ -334,6 +343,7 @@ impl Subagents {
             last_tool: None,
             background,
             reported: false,
+            report_wait_from: None,
         });
     }
 
@@ -377,8 +387,14 @@ impl Subagents {
 
     /// A subagent stopped (SubagentStop), with its last message.
     pub fn stopped(&mut self, id: &str, result: Option<&str>, now: Instant) {
+        // Finishing while the agent is between turns, its report is waited
+        // for from now.
+        let idle = self.turn_ended.is_some();
         if let Some(subagent) = self.find_mut(id) {
             subagent.finished = Some(now);
+            if idle {
+                subagent.report_wait_from = Some(now);
+            }
             subagent.result = result.map(|r| {
                 let mut text: String = r.trim().chars().take(RESULT_LIMIT).collect();
                 if r.trim().chars().count() > RESULT_LIMIT {
@@ -430,6 +446,7 @@ impl Subagents {
                     last_tool: None,
                     background: true,
                     reported: false,
+                    report_wait_from: None,
                 });
             }
         }
@@ -765,9 +782,13 @@ mod tests {
             list.report_deadline(at(start, 700)),
             Some(at(start, 700) + REPORT_WAIT)
         );
-        // Nothing waited for: the next subagent starts a new batch.
+        // Nothing waited for: a new turn doesn't wait for them again, and
+        // the next subagent starts a new batch.
         let later = at(start, 700) + REPORT_WAIT;
         assert_eq!(list.awaiting_reports(later), 0);
+        list.new_turn();
+        list.turn_ended(later + Duration::from_secs(5));
+        assert_eq!(list.awaiting_reports(later + Duration::from_secs(5)), 0);
         list.launching(Some("next"), None, false);
         list.started("e", "general-purpose", None, later);
         assert_eq!(list.all().len(), 1);

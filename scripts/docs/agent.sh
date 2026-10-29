@@ -25,6 +25,11 @@
 #                    and once ~/mcp/subagent-worktrees-go exists lets them
 #                    finish: the first with a change, the second with none,
 #                    so its worktree is removed as Claude Code removes it
+#   claude unreported
+#                    starts a subagent in the background that finishes
+#                    within the turn, whose result it reads there, so
+#                    Claude Code takes no turn to report it; once
+#                    ~/mcp/unreported-go exists, takes one more turn
 #   claude mcp …     what Agent Integration runs to install Impulse's MCP
 #                    server: recorded in ~/mcp/<agent>-mcp.txt, one call a
 #                    line, as JSON
@@ -184,6 +189,30 @@ case "$mode" in
     hook Stop "{$s,\"background_tasks\":[]}"
     echo "Both finished: the endpoint and its tests are in."
     touch "$HOME/mcp/subagents-finished"
+    ;;
+  unreported)
+    mkdir -p "$HOME/mcp"
+    s='"session_id":"demo-session"'
+    hook UserPromptSubmit "{$s}"
+    prompt_line "How does the elevation API page its results?"
+    input='{"description":"Read the elevation API docs"}'
+    hook PreToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":$input}"
+    hook SubagentStart "{$s,\"agent_id\":\"sub-r\",\"agent_type\":\"general-purpose\",\"cwd\":\"$PWD\"}"
+    hook PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":$input,\"tool_response\":{\"isAsync\":true,\"agentId\":\"sub-r\"}}"
+    step "Agent" "Read the elevation API docs (running in the background)"
+    # It finishes while the turn goes on, and the agent reads its result
+    # there: no turn will report it.
+    hook SubagentStop "{$s,\"agent_id\":\"sub-r\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Pages of 100, with a next cursor\"}"
+    step "TaskOutput" "Read the elevation API docs"
+    hook Stop "{$s,\"background_tasks\":[]}"
+    echo; echo "It pages by cursor, 100 results at a time."
+    touch "$HOME/mcp/unreported-waiting"
+    for _ in $(seq 600); do [ -e "$HOME/mcp/unreported-go" ] && break; sleep 0.2; done
+    hook UserPromptSubmit "{$s}"
+    prompt_line "Is there a rate limit?"
+    hook Stop "{$s,\"background_tasks\":[]}"
+    echo "Yes: 60 requests a minute."
+    touch "$HOME/mcp/unreported-finished"
     ;;
   subagent-worktrees)
     mkdir -p "$HOME/mcp"

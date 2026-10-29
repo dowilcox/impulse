@@ -461,6 +461,25 @@ def check_agents(run) -> None:
         run.expect(text in notes, what, notes[-600:])
     run.expect(notes.count("stopped this edit") == 1 and "also edited by" not in notes,
                "the retry goes through, and isn't told about the first's edit again", notes[-600:])
+    def unreported(name: str) -> dict | None:
+        found = [t for t in surfaces(run.dump(name), "terminal")
+                 if any(s["label"] == "Read the elevation API docs" for s in t.get("subagents") or [])]
+        return found[0] if found else None
+
+    for name, state, what in (
+        ("unreported-waiting", "working", "a turn ended with a background subagent's report to come keeps it working"),
+        ("unreported-still-waiting", "working", "it still waits for the report 25 seconds on"),
+        ("unreported-given-up", "done", "a report that doesn't come within a minute ends the turn"),
+        ("unreported-next-turn", "done", "the next turn isn't kept waiting for that report"),
+    ):
+        found = unreported(name)
+        if run.expect(found is not None, f"the subagent is listed ({name})"):
+            run.expect(found["agentState"] == state, what, found["agentState"])
+    found = unreported("unreported-waiting")
+    if found:
+        run.expect([(s["running"], s["result"]) for s in found["subagents"]]
+                   == [(False, "Pages of 100, with a next cursor")],
+                   "the subagent finished, with its result", found["subagents"])
     tasks = [t for t in surfaces(run.dump("final"), "terminal")
              if any((b["command"] or "").startswith("impulse tasks") for b in t["blocks"])]
     if run.expect(tasks, "impulse tasks ran"):
@@ -482,6 +501,14 @@ AGENT_ACTIONS = [
     "sleep=1", "dump=subagent-worktrees-running",
     "newtab", "until=prompt", "run=touch ~/mcp/subagent-worktrees-go",
     "until=30:file:~/mcp/subagent-worktrees-finished", "sleep=1", "dump=subagent-worktrees-done",
+    # A background subagent's report that never comes (the agent read its
+    # result within the turn): waited for REPORT_WAIT (60 s) after the turn
+    # ended, then the turn ends, and the next one isn't kept waiting.
+    "newtab", "until=prompt", "run=claude unreported", "until=30:file:~/mcp/unreported-waiting", "sleep=1",
+    "dump=unreported-waiting", "sleep=25", "dump=unreported-still-waiting",
+    "until=60:agent:done", "dump=unreported-given-up",
+    "write-file=~/mcp/unreported-go|", "until=30:file:~/mcp/unreported-finished", "sleep=1",
+    "dump=unreported-next-turn",
     "newtab", "until=prompt", "run=impulse tasks", "until=20:blocks:1",
 ]
 
