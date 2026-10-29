@@ -4,8 +4,9 @@
 // waiting for you, finished) by running `impulse hook opencode <event>`,
 // and answers the half in opencode's service (server.js) for the sessions
 // it shows: the summary of the repository's other tasks when a session
-// starts, notes after an edit or a shell command, whether a merge needs
-// asking about, and Impulse's tools, run through its own `impulse mcp`.
+// starts, notes after an edit or a shell command and whether an edit is
+// stopped, whether a merge needs asking about, the subagents its sessions
+// start and stop, and Impulse's tools, run through its own `impulse mcp`.
 // Everything runs here, in the pane, as the pane: Impulse knows which
 // terminal is asking. Anywhere else (no IMPULSE_CLI) it does nothing.
 //
@@ -30,8 +31,9 @@ const paneVariables = [
 let queue = Promise.resolve();
 
 // Impulse's answer to an event ({} when it has none, or can't be reached).
+// `payload` may still be on its way (a promise): the calls keep their order.
 function hook(event, payload) {
-  const call = queue.then(() => run(event, payload));
+  const call = queue.then(async () => run(event, await payload));
   queue = call;
   return call;
 }
@@ -178,26 +180,50 @@ export default {
     };
 
     // The last event sent for each session (no repeats of the same one).
+    // Events about a subagent (`agent_id`, its session) are its agent's,
+    // but don't name that agent's session.
     const last = new Map();
     const send = (event, sessionID, extra = {}) => {
       last.set(sessionID, event);
-      return hook(event, {
-        session_id: isSubagent(sessionID) ? undefined : sessionID,
-        cwd: ctx.location?.directory ?? process.cwd(),
-        ...extra,
-      });
+      return hook(
+        event,
+        Promise.resolve(extra).then((extra) => ({
+          session_id:
+            isSubagent(sessionID) || extra.agent_id ? undefined : sessionID,
+          cwd: ctx.location?.directory ?? process.cwd(),
+          ...extra,
+        })),
+      );
     };
 
     hook("start", { cwd: ctx.location?.directory ?? process.cwd() });
 
-    // What opencode is doing, from its events.
+    // What opencode is doing, from its events. A turn's end says which
+    // subagents it leaves running in the background: they bring the agent
+    // back when they finish, so it isn't done yet.
+    const ends = new Set([
+      "session.execution.succeeded",
+      "session.execution.interrupted",
+    ]);
     const turn = (type) => (event) => {
       const sessionID = event.data?.sessionID;
       if (!sessionID || isSubagent(sessionID) || !mine(sessionID)) return;
       if (last.get(sessionID) === type) return;
-      send(type, sessionID, {
+      const extra = {
         message: event.data?.error?.message ?? event.data?.message,
-      });
+      };
+      if (!ends.has(type)) return send(type, sessionID, extra);
+      const running = rpc
+        .subagents({ sessionID })
+        .then((reply) => ({
+          ...extra,
+          background_tasks: (reply?.running ?? []).map((task) => ({
+            type: "subagent",
+            ...task,
+          })),
+        }))
+        .catch(() => extra);
+      send(type, sessionID, running);
     };
     const needs = (type) => (event) => {
       const sessionID = event.data?.sessionID;
@@ -266,6 +292,11 @@ export default {
           case "tool.execute.after": {
             const reply = await send(name, sessionID, payload);
             return answer(id, true, { ...reply, env });
+          }
+          case "subagent.start":
+          case "subagent.stop": {
+            const reply = await send(name, sessionID, payload);
+            return answer(id, true, reply);
           }
           case "tool.call": {
             const reply = await mcp.call(payload.name, payload.arguments);

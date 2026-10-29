@@ -821,6 +821,10 @@ OPENCODE_ACTIONS = [
     "newtab", "until=prompt", "run=opencode turn", "until=40:agent:done", "sleep=1", "dump=oc-turn",
     "newtab", "until=prompt", "run=opencode merge", "until=30:agent:needsInput", "dump=oc-merge-asked",
     f"until=40:file:{OPENCODE_OUT / 'merge.json'}", "until=20:agent:done", "dump=oc-merge",
+    "newtab", "until=prompt", "run=opencode subagents", f"until=40:file:{OPENCODE_OUT / 'subagents-ready'}",
+    "sleep=1", "dump=oc-subagents-waiting",
+    "newtab", "until=prompt", f"run=touch {OPENCODE_OUT / 'subagents-go'}",
+    f"until=40:file:{OPENCODE_OUT / 'subagents.json'}", "sleep=2", "dump=oc-subagents-done",
 ]
 
 
@@ -878,6 +882,35 @@ def check_opencode(run) -> None:
                "a merge of a busy task's branch is asked about, with Impulse's reason", asked)
     run.expect(merge.get("shellIsThisPane") is True,
                "the command's shell gets its own pane's identity, not the service's", merge)
+
+    def subagents(name: str) -> dict:
+        return stand_in(run.dump(name), "subagents") or {}
+    waiting = subagents("oc-subagents-waiting")
+    run.expect(waiting.get("agentState") == "working",
+               "a turn ended with subagents running in the background keeps opencode working",
+               waiting.get("agentState"))
+    run.expect([(s["label"], s["running"]) for s in waiting.get("subagents") or []]
+               == [("Write the photos endpoint", True), ("Write the photo tests", True)],
+               "opencode's subagents are listed, named by their calls", waiting.get("subagents"))
+    done = subagents("oc-subagents-done")
+    run.expect(done.get("agentState") == "done", "opencode finishes once its subagents' results reached it",
+               done.get("agentState"))
+    run.expect([s["result"] for s in done.get("subagents") or []]
+               == ["Done: Write the photos endpoint", "Done: Write the photo tests"],
+               "each subagent's result is kept", done.get("subagents"))
+    out = output("subagents")
+    launches = out.get("launchOutput") or ["", ""]
+    run.expect("shares the checkout with 1 other subagent still running" in launches[-1]
+               and "shares the checkout" not in launches[0],
+               "the second subagent call's output says it shares the checkout, once", launches)
+    systems = ["\n".join(system) for system in out.get("childSystem") or []]
+    run.expect(len(systems) == 2 and all("other subagents are working in this same checkout" in s for s in systems),
+               "each subagent is told, as it starts, of the other working in its checkout", systems)
+    run.expect((out.get("stopped") or "").startswith(
+                   'Impulse: stopped this edit of src/photos.ts: another subagent ("Write the photos endpoint")'),
+               "the second subagent's edit over the first's is stopped, with why", out.get("stopped"))
+    run.expect("also edited by" not in (out.get("retryOutput") or ""),
+               "its retry goes through, and isn't told about it again", out.get("retryOutput"))
 
 
 # ---------------------------------------------------------------------------

@@ -391,8 +391,9 @@ pub fn request(
                     // ("rate_limit").
                     message = text("last_assistant_message").or_else(|| text("error"));
                 }
-                if event.as_deref() == Some("SubagentStop") {
-                    // What the subagent reported.
+                if matches!(event.as_deref(), Some("SubagentStop" | "subagent.stop")) {
+                    // What the subagent reported (Claude Code's, or opencode's
+                    // through Impulse's plugin).
                     message = text("last_assistant_message");
                 }
                 // Claude Code: the subagent an event comes from (absent for
@@ -436,8 +437,12 @@ pub fn request(
                 if let Some(tool) = text("tool_name") {
                     arguments.insert("tool".into(), tool);
                 }
-                let starts_subagent =
-                    matches!(text("tool_name").as_deref(), Some("Agent" | "Task"));
+                // Claude Code's Agent tool (`Task` before), opencode's
+                // `subagent`.
+                let starts_subagent = matches!(
+                    text("tool_name").as_deref(),
+                    Some("Agent" | "Task" | "subagent")
+                );
                 if let Some(serde_json::Value::Object(input)) = object.get("tool_input") {
                     let field =
                         |key: &str| input.get(key).and_then(|v| v.as_str()).map(String::from);
@@ -479,14 +484,20 @@ pub fn request(
                     arguments.insert("hookCwd".into(), hook_cwd);
                 }
                 // A turn Claude Code starts to tell the agent that subagents
-                // in the background finished: their ids, comma-separated.
-                if event.as_deref() == Some("UserPromptSubmit") {
-                    let notified = text("prompt")
+                // in the background finished, or the results opencode's
+                // plugin saw reach the agent: their ids, comma-separated.
+                let mut notified = if event.as_deref() == Some("UserPromptSubmit") {
+                    text("prompt")
                         .map(|prompt| task_notifications(&prompt))
-                        .unwrap_or_default();
-                    if !notified.is_empty() {
-                        arguments.insert("notified".into(), notified.join(","));
-                    }
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                if let Some(serde_json::Value::Array(ids)) = object.get("subagents_reported") {
+                    notified.extend(ids.iter().filter_map(|id| id.as_str()).map(String::from));
+                }
+                if !notified.is_empty() {
+                    arguments.insert("notified".into(), notified.join(","));
                 }
             }
             let Some(event) = event.filter(|event| !event.is_empty()) else {

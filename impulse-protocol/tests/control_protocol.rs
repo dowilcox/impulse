@@ -187,6 +187,25 @@ fn subagent_hooks_say_which_subagent() {
     )
     .unwrap();
     assert_eq!(typed.argument("notified"), None);
+    // opencode's subagent tool, as Impulse's plugin reports it, and a
+    // background subagent's result reaching the agent.
+    let opencode = parse_stdin(
+        &["hook", "opencode", "tool.execute.after"],
+        r#"{"tool_name":"subagent","tool_input":{"description":"write b","subagent_type":"general"},"tool_response":{"agentId":"ses_b","isAsync":true}}"#,
+    )
+    .unwrap();
+    assert_eq!(opencode.argument("toolDescription"), Some("write b"));
+    assert_eq!(opencode.argument("toolSubagentType"), Some("general"));
+    assert_eq!(opencode.argument("launched"), Some("ses_b"));
+    assert_eq!(opencode.argument("launchedAsync"), Some("1"));
+    let reported = parse_stdin(
+        &["hook", "opencode", "subagent.stop"],
+        r#"{"agent_id":"ses_b","last_assistant_message":"wrote b","subagents_reported":["ses_b"]}"#,
+    )
+    .unwrap();
+    assert_eq!(reported.argument("subagent"), Some("ses_b"));
+    assert_eq!(reported.argument("notified"), Some("ses_b"));
+    assert_eq!(reported.argument("message"), Some("wrote b"));
     // A shell command's description is no Agent call's.
     let bash = parse_stdin(
         &["hook", "claude"],

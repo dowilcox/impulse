@@ -161,9 +161,10 @@ pub struct Subagents {
     /// Agent calls whose subagent hasn't started yet.
     pending: VecDeque<Call>,
     /// Calls that returned before their subagent started (its worktree
-    /// being made): its description and whether it runs in the
-    /// background, by its id.
-    launched_early: HashMap<String, (Option<String>, bool)>,
+    /// being made, or opencode's subagents in the background, which start
+    /// once the call returns): its subagent's id, the call, and whether it
+    /// runs in the background. In the order they returned.
+    launched_early: Vec<(String, Call, bool)>,
     /// Each file's last edit in this batch (absolute paths).
     edits: HashMap<String, (Editor, Instant)>,
     /// Edits stopped before they were made, by file and editor: the time
@@ -252,8 +253,12 @@ impl Subagents {
             self.warned.clear();
             self.told = false;
         }
-        let (description, background) = match self.launched_early.remove(id) {
-            Some(early) => early,
+        let early = self
+            .launched_early
+            .iter()
+            .position(|(early, ..)| early == id);
+        let (description, background) = match early.map(|at| self.launched_early.remove(at)) {
+            Some((_, call, background)) => (call.description, background),
             None => (self.pending.pop_front().and_then(|c| c.description), false),
         };
         if let Some(existing) = self.find_mut(id) {
@@ -290,15 +295,22 @@ impl Subagents {
             return;
         }
         // It hasn't started yet: its description is no other's to take.
-        if let Some(at) = self
+        let call = match self
             .pending
             .iter()
             .position(|c| c.description == description)
         {
-            self.pending.remove(at);
+            Some(at) => self.pending.remove(at),
+            None => None,
         }
-        self.launched_early
-            .insert(id.to_string(), (description, background));
+        .unwrap_or(Call {
+            description,
+            agent_type: String::new(),
+            // Its call went unseen: nothing known of where it works.
+            shares_checkout: false,
+        });
+        self.launched_early.retain(|(early, ..)| early != id);
+        self.launched_early.push((id.to_string(), call, background));
     }
 
     /// A subagent stopped (SubagentStop), with its last message.
@@ -364,14 +376,20 @@ impl Subagents {
 
     /// The running subagents, other than `excluding`, that may change the
     /// agent's checkout, and the Agent calls for more of them whose
-    /// subagents haven't started yet, but the newest `skip_calls`: calls
-    /// made together reach their PreToolUse before any of their subagents
-    /// starts. By label.
+    /// subagents haven't started yet (whether or not the call returned),
+    /// but the newest `skip_calls`: calls made together reach their
+    /// PreToolUse before any of their subagents starts. By label.
     fn shared_checkout_writers(&self, excluding: Option<&str>, skip_calls: usize) -> Vec<String> {
         let calls = self.pending.len().saturating_sub(skip_calls);
         self.running()
             .filter(|s| s.edits_shared_checkout() && Some(s.id.as_str()) != excluding)
             .map(Subagent::label)
+            .chain(
+                self.launched_early
+                    .iter()
+                    .filter(|(id, call, _)| call.shares_checkout && Some(id.as_str()) != excluding)
+                    .map(|(_, call, _)| call.label()),
+            )
             .chain(
                 self.pending
                     .iter()
@@ -723,6 +741,34 @@ mod tests {
         list.started("b", "general-purpose", None, at(start, 2));
         // The batch starts afresh, and the file was changed before b began.
         assert_eq!(list.edited(Some("b"), "/r/app/x.rs", at(start, 3)), None);
+    }
+
+    /// opencode's order: both calls before, both return with their
+    /// subagents in the background, then each subagent starts.
+    #[test]
+    fn subagents_starting_after_their_calls_returned_are_told() {
+        let start = Instant::now();
+        let mut list = Subagents::default();
+        list.launching(Some("write b"), Some("general"), false);
+        list.launching(Some("write c"), Some("general"), false);
+        assert!(list.launch_note(Some("general"), false).is_some());
+        list.launched("b", Some("write b"), true);
+        list.launched("c", Some("write c"), true);
+        list.started("b", "general", Some("/r/app"), start);
+        assert!(list
+            .start_note("b")
+            .is_some_and(|note| note.contains("(\"write c\")")));
+        list.started("c", "general", Some("/r/app"), start);
+        assert!(list
+            .start_note("c")
+            .is_some_and(|note| note.contains("(\"write b\")")));
+        assert_eq!(
+            list.all()
+                .iter()
+                .map(|s| (s.label(), s.background))
+                .collect::<Vec<_>>(),
+            [("write b".to_string(), true), ("write c".to_string(), true)]
+        );
     }
 
     #[test]

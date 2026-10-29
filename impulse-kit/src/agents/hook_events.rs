@@ -80,6 +80,49 @@ pub const CLAUDE_EDIT_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "Noteboo
 /// changes).
 pub const OPENCODE_EDIT_TOOLS: [&str; 3] = ["edit", "write", "patch"];
 
+/// opencode's tool that starts a subagent (a child session).
+pub const OPENCODE_SUBAGENT_TOOL: &str = "subagent";
+
+/// Whether `agent`'s `tool` starts a subagent.
+pub fn starts_subagent(agent: Option<&str>, tool: Option<&str>) -> bool {
+    match (agent, tool) {
+        (Some("claude"), Some(tool)) => CLAUDE_SUBAGENT_TOOLS.contains(&tool),
+        (Some("opencode"), Some(tool)) => tool == OPENCODE_SUBAGENT_TOOL,
+        _ => false,
+    }
+}
+
+/// Whether `agent`'s `tool` edits files.
+pub fn edits_files(agent: Option<&str>, tool: Option<&str>) -> bool {
+    match (agent, tool) {
+        (Some("claude"), Some(tool)) => CLAUDE_EDIT_TOOLS.contains(&tool),
+        (Some("opencode"), Some(tool)) => OPENCODE_EDIT_TOOLS.contains(&tool),
+        _ => false,
+    }
+}
+
+/// The Claude Code hook event an event of `agent`'s stands for, as far as
+/// its subagents go: opencode's plugin reports the same moments under
+/// opencode's names (a turn's end is its session's execution ending, a
+/// subagent's start and stop its child session's).
+pub fn subagent_event<'a>(agent: Option<&str>, event: &'a str) -> &'a str {
+    if agent != Some("opencode") {
+        return event;
+    }
+    match event {
+        "start" => "SessionStart",
+        "session.execution.started" => "UserPromptSubmit",
+        "session.execution.succeeded"
+        | "session.execution.interrupted"
+        | "session.execution.failed" => "Stop",
+        "tool.execute.before" => "PreToolUse",
+        "tool.execute.after" => "PostToolUse",
+        "subagent.start" => "SubagentStart",
+        "subagent.stop" => "SubagentStop",
+        other => other,
+    }
+}
+
 /// Which answer `event` may get; `None` for events, and agents, that don't
 /// read one.
 pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Reply> {
@@ -103,6 +146,13 @@ pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Rep
         }
         ("opencode", "tool.execute.after", Some("shell")) => Some(Reply::RanShell),
         ("opencode", "tool.execute.before", Some("shell")) => Some(Reply::BeforeShell),
+        ("opencode", "tool.execute.before", Some(OPENCODE_SUBAGENT_TOOL)) => {
+            Some(Reply::BeforeSubagent)
+        }
+        ("opencode", "tool.execute.before", Some(tool)) if OPENCODE_EDIT_TOOLS.contains(&tool) => {
+            Some(Reply::BeforeEdit)
+        }
+        ("opencode", "subagent.start", _) => Some(Reply::SubagentStarted),
         _ => None,
     }
 }
@@ -110,6 +160,27 @@ pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Rep
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_events_stand_for_claude_codes() {
+        let opencode = |event| subagent_event(Some("opencode"), event);
+        assert_eq!(opencode("session.execution.succeeded"), "Stop");
+        assert_eq!(opencode("tool.execute.before"), "PreToolUse");
+        assert_eq!(opencode("subagent.stop"), "SubagentStop");
+        assert_eq!(opencode("permission.asked"), "permission.asked");
+        // Claude Code's are its own.
+        assert_eq!(subagent_event(Some("claude"), "Stop"), "Stop");
+        assert_eq!(
+            subagent_event(Some("claude"), "subagent.stop"),
+            "subagent.stop"
+        );
+        assert!(starts_subagent(Some("opencode"), Some("subagent")));
+        assert!(!starts_subagent(Some("opencode"), Some("Agent")));
+        assert!(starts_subagent(Some("claude"), Some("Task")));
+        assert!(edits_files(Some("opencode"), Some("patch")));
+        assert!(!edits_files(Some("claude"), Some("patch")));
+        assert!(!edits_files(Some("codex"), Some("Edit")));
+    }
 
     #[test]
     fn only_claude_code_and_opencode_get_answers() {
@@ -158,6 +229,18 @@ mod tests {
         );
         assert_eq!(
             reply(Some("opencode"), "tool.execute.before", Some("edit")),
+            Some(Reply::BeforeEdit)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "tool.execute.before", Some("subagent")),
+            Some(Reply::BeforeSubagent)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "subagent.start", None),
+            Some(Reply::SubagentStarted)
+        );
+        assert_eq!(
+            reply(Some("opencode"), "tool.execute.before", Some("read")),
             None
         );
         assert_eq!(reply(Some("opencode"), "PreToolUse", Some("Bash")), None);

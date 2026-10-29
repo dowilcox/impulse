@@ -273,6 +273,12 @@ pub mod hook_reply {
         encode(json!({"ask": reason}))
     }
 
+    /// For the opencode plugin: stop the tool call before it runs, telling
+    /// the agent why (the plugin throws it as the tool's error).
+    pub fn opencode_deny(reason: &str) -> String {
+        encode(json!({"deny": reason}))
+    }
+
     fn encode(value: serde_json::Value) -> String {
         json::write(&value, Style::COMPACT)
     }

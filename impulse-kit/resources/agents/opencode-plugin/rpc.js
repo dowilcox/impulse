@@ -63,6 +63,16 @@ export const Impulse = {
       },
       output: { type: "object" },
     },
+    // The subagents a session left running in the background (its turn
+    // just ended): `{running: [{id, agent_type, description}]}`.
+    subagents: {
+      input: {
+        type: "object",
+        properties: { sessionID: { type: "string" } },
+        required: ["sessionID"],
+      },
+      output: { type: "object" },
+    },
   },
   events: {
     // Which terminal a session is in now ("" when none).

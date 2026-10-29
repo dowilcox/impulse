@@ -598,17 +598,36 @@ impl Workbench {
                 let note = terminal.update(cx, |t, _| {
                     t.agent.subagents.launch_note(kind.as_deref(), isolated)
                 });
-                reply_with(note.map(|n| hook_reply::context(&n, "PreToolUse")));
+                // opencode's plugin adds it to the call's output.
+                reply_with(note.map(|n| {
+                    if opencode {
+                        hook_reply::opencode_context(&n)
+                    } else {
+                        hook_reply::context(&n, "PreToolUse")
+                    }
+                }));
             }
             Reply::SubagentStarted if settings.agent_hook_subagents => {
                 let note = args
                     .get("subagent")
                     .and_then(|id| terminal.read(cx).agent.subagents.start_note(id));
-                reply_with(note.map(|n| hook_reply::context(&n, "SubagentStart")));
+                reply_with(note.map(|n| {
+                    if opencode {
+                        hook_reply::opencode_context(&n)
+                    } else {
+                        hook_reply::context(&n, "SubagentStart")
+                    }
+                }));
             }
             Reply::BeforeEdit => {
                 let clash = clash.filter(|_| settings.agent_hook_subagents);
-                reply_with(clash.map(|n| hook_reply::deny(&n)));
+                reply_with(clash.map(|n| {
+                    if opencode {
+                        hook_reply::opencode_deny(&n)
+                    } else {
+                        hook_reply::deny(&n)
+                    }
+                }));
             }
             Reply::EditedFile if !settings.agent_hook_shared_files => {
                 let clash = clash.filter(|_| settings.agent_hook_subagents);
@@ -908,10 +927,11 @@ fn apply_hook(
     let session = args.get("session").filter(|s| !s.is_empty()).cloned();
     terminal.update(cx, |t, cx| {
         let still_running = background.as_ref().is_some_and(|b| !b.is_empty());
-        let clash = (agent.as_deref() == Some("claude"))
+        let clash = matches!(agent.as_deref(), Some("claude" | "opencode"))
             .then(|| {
                 follow_subagents(
                     args,
+                    agent.as_deref(),
                     event,
                     tool,
                     background,
@@ -940,12 +960,14 @@ fn apply_hook(
     })
 }
 
-/// Claude Code's subagents, from one of its hook events; the note for a
-/// clashing edit, or before one, why it's stopped. `pane`: the terminal's
-/// folder, which files are named relative to when the hook doesn't say its
-/// own.
+/// Claude Code's subagents, from one of its hook events, or opencode's,
+/// from its plugin's events (named as Claude Code's,
+/// `hook_events::subagent_event`); the note for a clashing edit, or before
+/// one, why it's stopped. `pane`: the terminal's folder, which files are
+/// named relative to when the hook doesn't say its own.
 fn follow_subagents(
     args: &BTreeMap<String, String>,
+    agent: Option<&str>,
     event: &str,
     tool: Option<&str>,
     background: Option<Vec<(String, String, String)>>,
@@ -955,15 +977,11 @@ fn follow_subagents(
     let now = std::time::Instant::now();
     let arg = |key: &str| args.get(key).map(String::as_str);
     let subagent = arg("subagent");
-    let calls_agent = tool.is_some_and(|t| hook_events::CLAUDE_SUBAGENT_TOOLS.contains(&t));
+    let calls_agent = hook_events::starts_subagent(agent, tool);
+    let event = hook_events::subagent_event(agent, event);
     match event {
         "SessionStart" => subagents.clear(),
-        "UserPromptSubmit" => {
-            subagents.new_turn();
-            if let Some(ids) = arg("notified") {
-                subagents.reported(&ids.split(',').collect::<Vec<_>>());
-            }
-        }
+        "UserPromptSubmit" => subagents.new_turn(),
         "Stop" => {
             subagents.new_turn();
             if let Some(running) = background {
@@ -996,13 +1014,18 @@ fn follow_subagents(
         }
         _ => {}
     }
+    // Claude Code's turn that tells the agent, or opencode's plugin seeing
+    // the result reach it.
+    if let Some(ids) = arg("notified") {
+        subagents.reported(&ids.split(',').collect::<Vec<_>>());
+    }
     if let (Some(id), Some(tool), "PreToolUse" | "PostToolUse") = (subagent, tool, event) {
         subagents.used_tool(id, tool);
     }
     if let (Some(id), Some(cwd)) = (subagent, arg("hookCwd")) {
         subagents.worked_in(id, cwd, pane);
     }
-    if !tool.is_some_and(|t| hook_events::CLAUDE_EDIT_TOOLS.contains(&t)) {
+    if !hook_events::edits_files(agent, tool) {
         return None;
     }
     let file = arg("toolFile")?;

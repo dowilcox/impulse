@@ -1019,7 +1019,7 @@ pub fn catalog() -> Vec<SettingItem> {
         toggle("agent_hook_shared_files", "Tell agents when they edit a file another task changes", Terminal, "Agents",
             Some("Once per file, naming the other workspace and its agent.")),
         toggle("agent_hook_subagents", "Tell agents when subagents share a checkout", Terminal, "Agents",
-            Some("Claude Code, as it starts a subagent beside others that edit the same checkout, and when two of them (or the agent and one) edit the same file at the same time: the edit that would overwrite the other's is stopped once, so it reads the file again.")),
+            Some("Claude Code and opencode, as it starts a subagent beside others that edit the same checkout, and when two of them (or the agent and one) edit the same file at the same time: the edit that would overwrite the other's is stopped once, so it reads the file again.")),
         toggle("agent_hook_merge_guard", "Ask before an agent merges a branch still being worked on", Terminal, "Agents",
             Some("When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files. Claude Code and opencode ask you, with the reason, before running it.")),
         toggle("agent_hook_dependencies", "Tell agents when dependency files changed", Terminal, "Agents",
