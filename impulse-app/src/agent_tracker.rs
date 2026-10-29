@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::{Context, Task, Window};
 use impulse_kit::agents::known_agents::{self, AgentKind};
 use impulse_kit::agents::state_machine::{AgentEvent, AgentHook, AgentState, AgentStateMachine};
+use impulse_kit::agents::subagents::Subagents;
 use impulse_terminal::osc_scanner::ProgressState;
 use impulse_terminal::TerminalEvent;
 
@@ -41,6 +42,9 @@ pub enum AgentSignal {
     RestoreTurn(usize),
     /// The toolbelt's Compose: the window opens the composer.
     Compose,
+    /// The toolbelt's Open Worktree for a subagent: the window shows the
+    /// folder as a workspace.
+    OpenFolder(String),
 }
 
 impl gpui_kit::EventEmitter<AgentSignal> for TerminalView {}
@@ -70,6 +74,8 @@ pub(crate) struct AgentTracker {
     pub needs_attention: bool,
     /// Files a shared-file note was already given for.
     pub shared_file_notes: HashSet<String>,
+    /// The subagents it runs, from its hooks (Claude Code).
+    pub subagents: Subagents,
     /// The user is looking at the terminal (its window is active and it
     /// has the keyboard), as of the last frame.
     watched: bool,
@@ -109,6 +115,7 @@ impl Default for AgentTracker {
             status_message: None,
             needs_attention: false,
             shared_file_notes: HashSet::new(),
+            subagents: Subagents::default(),
             watched: false,
             event_was_notified: false,
             last_bell: None,
@@ -516,6 +523,7 @@ impl TerminalView {
         tracker.reports_by_hook = false;
         tracker.session = None;
         tracker.status_message = None;
+        tracker.subagents.clear();
         tracker.tick = None;
         // Text queued for this agent isn't for whatever runs next.
         tracker.pending_text.clear();

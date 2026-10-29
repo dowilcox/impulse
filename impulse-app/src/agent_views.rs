@@ -200,6 +200,9 @@ impl Workbench {
                 self.reveal_surface(&Surface::Terminal(terminal.clone()), cx);
                 self.toggle_agent_composer(window, cx)
             }
+            AgentSignal::OpenFolder(folder) => {
+                self.open_workspace(std::path::Path::new(folder), window, cx)
+            }
             AgentSignal::Notify { title, body, sound } => {
                 // In front, the tab's dot is enough.
                 if crate::agent_notify::app_in_front(cx) {
@@ -358,7 +361,10 @@ impl Workbench {
                             state: tracker.state()?,
                             since: tracker.machine.since(),
                             has_turns: crate::agent_checkpoints::has_turns(&tracker.id),
-                            message: tracker.status_message.clone(),
+                            message: tracker
+                                .status_message
+                                .clone()
+                                .or_else(|| tracker.subagents.summary()),
                         })
                     })
                     .collect::<Vec<_>>()

@@ -330,11 +330,11 @@ What the hooks installed by **Install Agent Hooks…** run; you don't normally c
 | `UserPromptSubmit`                                  | **Working**                                                                                                   |
 | `PostToolUse`                                       | **Working**, when it's the tool a permission request was waiting on; else no change                           |
 | `Notification`                                      | **Needs your input** if the message asks for permission or input; else **Finished**, if the agent was working |
-| `Stop`, `agent-turn-complete`                       | **Finished**                                                                                                  |
+| `Stop`, `agent-turn-complete`                       | **Finished**; with subagents still running in the background (Claude Code), **Working** until they're done   |
 | `StopFailure`                                       | **Finished**, with the API error in the notification                                                          |
-| Anything else (`PreToolUse`, subagents, compaction) | No change                                                                                                     |
+| Anything else (`PreToolUse`, subagents, compaction) | No change; subagents' events update the toolbelt's Subagents menu                                             |
 
-For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), and a question before a merge (`PreToolUse`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).
+For Claude Code, `impulse hook` also prints what Impulse wants the agent to know, which Claude Code passes on: a summary of the repository's other tasks at `SessionStart`, notes after edits and shell commands (`PostToolUse`), a question before a merge (`PreToolUse`), and notes when subagents share a checkout (`PreToolUse` of the Agent tool, and `SubagentStart`). See [What the hooks tell agents](agents.md#what-the-hooks-tell-agents).
 
 Impulse's opencode plugin runs it from the terminal opencode is in, names opencode's own events, and reads Impulse's answer as JSON: `{"context": "…"}` to add to the agent's context, `{"ask": "…"}` to have opencode ask you before the command, with that reason.
 

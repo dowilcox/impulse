@@ -11,4 +11,5 @@ pub mod jsonc_edit;
 pub mod known_agents;
 pub mod mcp_installer;
 pub mod state_machine;
+pub mod subagents;
 pub mod task_requests;

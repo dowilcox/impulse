@@ -11,6 +11,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::Sizable as _;
 use gpui_kit::{div, prelude::*, px, AnyElement, Context, FontWeight, MouseButton, Window};
 use impulse_kit::agents::state_machine::AgentState;
+use impulse_kit::agents::subagents::Subagent;
 use impulse_kit::chrome::Rgba as KitRgba;
 
 use crate::agent_tracker::AgentSignal;
@@ -38,6 +39,40 @@ pub fn status_text(state: AgentState, elapsed: Duration) -> String {
         AgentState::Idle => "Idle".into(),
         AgentState::Exited => "Exited".into(),
     }
+}
+
+/// "Waiting on 2 subagents · 40s": the toolbelt's status while the agent's
+/// turn ended with subagents still running in the background.
+pub fn waiting_text(running: usize, elapsed: Duration) -> String {
+    let working = status_text(AgentState::Working, elapsed);
+    let elapsed = working.trim_start_matches("Working · ");
+    match running {
+        1 => format!("Waiting on 1 subagent · {elapsed}"),
+        n => format!("Waiting on {n} subagents · {elapsed}"),
+    }
+}
+
+/// The toolbelt's Subagents button: "Subagents · 2 running", or how many
+/// finished once none run.
+pub fn subagents_label(running: usize, total: usize) -> String {
+    if running > 0 {
+        format!("Subagents · {running} running")
+    } else {
+        format!("Subagents · {total} done")
+    }
+}
+
+/// A subagent in the Subagents menu: "Fix the parser — running, Edit".
+pub fn subagent_line(subagent: &Subagent) -> String {
+    let state = if subagent.is_running() {
+        match &subagent.last_tool {
+            Some(tool) => format!("running, {tool}"),
+            None => "running".into(),
+        }
+    } else {
+        "finished".into()
+    };
+    format!("{} — {state}", subagent.label())
 }
 
 /// When a turn started: the time today, else the day too (turns restored
@@ -126,6 +161,12 @@ impl TerminalView {
             .map(|a| a.display_name.clone())
             .unwrap_or_default();
         let elapsed = Instant::now().saturating_duration_since(self.agent.machine.since());
+        let running = self.agent.subagents.running_count();
+        let status = if self.agent.machine.awaiting_subagents() && running > 0 {
+            waiting_text(running, elapsed)
+        } else {
+            status_text(state, elapsed)
+        };
         let id = self.agent.id.clone();
         let turns = crate::agent_checkpoints::turns(&id);
         let has_turns = !turns.is_empty();
@@ -242,6 +283,7 @@ impl TerminalView {
                 }
                 menu
             });
+        let subagents = self.subagents_menu(cx);
         div()
             .id("agent-toolbelt")
             .flex()
@@ -268,7 +310,7 @@ impl TerminalView {
                     .flex_none()
                     .text_size(px(11.))
                     .text_color(hsla(p.text_secondary))
-                    .child(status_text(state, elapsed)),
+                    .child(status),
             )
             .children(self.agent.status_message.clone().map(|message| {
                 div()
@@ -281,10 +323,69 @@ impl TerminalView {
                     .child(message)
             }))
             .child(div().flex_1().min_w(px(8.)))
+            .children(subagents)
             .child(compose)
             .child(review)
             .child(turns_menu)
             .into_any_element()
+    }
+
+    /// The Subagents button, while the agent has run any in this batch:
+    /// each one with what it was asked to do and whether it's done, its
+    /// worktree to open, and its report to copy.
+    fn subagents_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let list = &self.agent.subagents;
+        if list.is_empty() {
+            return None;
+        }
+        let label = subagents_label(list.running_count(), list.all().len());
+        let listed: Vec<(String, Option<String>, Option<String>)> = list
+            .all()
+            .iter()
+            .map(|subagent| {
+                let worktree = subagent
+                    .worktree
+                    .clone()
+                    .filter(|folder| std::path::Path::new(folder).is_dir());
+                (subagent_line(subagent), worktree, subagent.result.clone())
+            })
+            .collect();
+        let view = cx.entity().downgrade();
+        let button = Button::new("toolbelt-subagents")
+            .ghost()
+            .compact()
+            .small()
+            .icon(gpui_kit::component::Icon::empty().path("icons/bot.svg"))
+            .label(label)
+            .tooltip("The subagents this agent started")
+            .dropdown(move |_, _| {
+                let mut menu = MenuSpec::new();
+                for (line, worktree, result) in &listed {
+                    if worktree.is_none() && result.is_none() {
+                        menu = menu.item_enabled(line.clone(), false, |_, _| {});
+                        continue;
+                    }
+                    let mut actions = MenuSpec::new();
+                    if let Some(folder) = worktree.clone() {
+                        let view = view.clone();
+                        actions = actions.item("Open Worktree", move |_, cx| {
+                            let _ = view.update(cx, |_, cx| {
+                                cx.emit(AgentSignal::OpenFolder(folder.clone()))
+                            });
+                        });
+                    }
+                    if let Some(result) = result.clone() {
+                        actions = actions.item("Copy Report", move |_, cx| {
+                            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                result.clone(),
+                            ));
+                        });
+                    }
+                    menu = menu.submenu(line.clone(), actions);
+                }
+                menu
+            });
+        Some(button.into_any_element())
     }
 }
 
@@ -304,6 +405,27 @@ mod tests {
             "Needs your input"
         );
         assert_eq!(status_text(AgentState::Idle, s(5)), "Idle");
+        assert_eq!(waiting_text(1, s(40)), "Waiting on 1 subagent · 40s");
+        assert_eq!(waiting_text(3, s(185)), "Waiting on 3 subagents · 3m");
+    }
+
+    #[test]
+    fn subagents_read_as_what_they_were_asked() {
+        assert_eq!(subagents_label(2, 5), "Subagents · 2 running");
+        assert_eq!(subagents_label(0, 5), "Subagents · 5 done");
+        let mut list = impulse_kit::agents::subagents::Subagents::default();
+        let now = Instant::now();
+        list.launching(Some("Fix the parser"));
+        list.started("a", "general-purpose", None, now);
+        list.used_tool("a", "Edit");
+        list.launching(None);
+        list.started("b", "Explore", None, now);
+        list.stopped("b", Some("Found it"), now);
+        let lines: Vec<String> = list.all().iter().map(subagent_line).collect();
+        assert_eq!(
+            lines,
+            ["Fix the parser — running, Edit", "Explore — finished"]
+        );
     }
 
     #[test]

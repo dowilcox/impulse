@@ -1446,6 +1446,16 @@ fn describe(surface: &Surface, cx: &App) -> Value {
                 "running": t.command_running,
                 "agent": tracker.agent.as_ref().map(|a| a.id.clone()),
                 "agentState": tracker.state().map(state_name),
+                "subagents": tracker
+                    .subagents
+                    .all()
+                    .iter()
+                    .map(|s| json!({
+                        "label": s.label(),
+                        "running": s.is_running(),
+                        "result": s.result,
+                    }))
+                    .collect::<Vec<_>>(),
                 "resume": tracker.session.as_ref().and_then(|(agent, session)| {
                     impulse_kit::agents::known_agents::resume_command(agent, session)
                 }),

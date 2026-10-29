@@ -9,7 +9,7 @@
 //! branch a task is still working on, and dependency files that changed
 //! under it.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -471,7 +471,7 @@ impl Workbench {
                     answer(ControlResponse::ok());
                     return true;
                 };
-                apply_hook(request, terminal, cx);
+                let clash = apply_hook(request, terminal, cx);
                 let agent = args.get("agent").map(String::as_str);
                 let event = args.get("event").map(String::as_str).unwrap_or("");
                 let tool = args.get("tool").map(String::as_str);
@@ -485,7 +485,7 @@ impl Workbench {
                 if !from_shell {
                     request.arguments.remove("hookCwd");
                 }
-                self.agent_hook_reply(reply, request, terminal.clone(), answer, cx);
+                self.agent_hook_reply(reply, request, terminal.clone(), clash, answer, cx);
             }
             "turns" => {
                 let Some(terminal) = terminal else {
@@ -543,12 +543,14 @@ impl Workbench {
     }
 
     /// What Impulse answers a Claude Code hook, or an event from its
-    /// opencode plugin, with (nothing: an empty ok).
+    /// opencode plugin, with (nothing: an empty ok). `clash`: the note for
+    /// an edit made beside a subagent editing the same file.
     fn agent_hook_reply(
         &mut self,
         reply: Reply,
         request: ControlRequest,
         terminal: Entity<TerminalView>,
+        clash: Option<String>,
         answer: Answer,
         cx: &mut Context<Self>,
     ) {
@@ -586,9 +588,28 @@ impl Workbench {
                 })
                 .detach();
             }
-            Reply::EditedFile if settings.agent_hook_shared_files => {
+            Reply::BeforeSubagent if settings.agent_hook_subagents => {
+                let kind = args.get("toolSubagentType").cloned();
+                let isolated = args.contains_key("toolIsolated");
+                let note = terminal.update(cx, |t, _| {
+                    t.agent.subagents.launch_note(kind.as_deref(), isolated)
+                });
+                reply_with(note.map(|n| hook_reply::context(&n, "PreToolUse")));
+            }
+            Reply::SubagentStarted if settings.agent_hook_subagents => {
+                let note = args
+                    .get("subagent")
+                    .and_then(|id| terminal.read(cx).agent.subagents.start_note(id));
+                reply_with(note.map(|n| hook_reply::context(&n, "SubagentStart")));
+            }
+            Reply::EditedFile if !settings.agent_hook_shared_files => {
+                let clash = clash.filter(|_| settings.agent_hook_subagents);
+                reply_with(clash.map(|n| context(&n)));
+            }
+            Reply::EditedFile => {
+                let clash = clash.filter(|_| settings.agent_hook_subagents);
                 let Some(file) = args.get("toolFile").cloned() else {
-                    return reply_with(None);
+                    return reply_with(clash.map(|n| context(&n)));
                 };
                 let pane = terminal.read(cx).cwd.clone();
                 let task = cx.background_spawn(async move {
@@ -621,6 +642,10 @@ impl Workbench {
                             .update(cx, |t, _| t.agent.shared_file_notes.insert(relative))
                             .then_some(note)
                     });
+                    let text = match (clash, text) {
+                        (Some(clash), Some(text)) => Some(format!("{clash}\n{text}")),
+                        (clash, text) => clash.or(text),
+                    };
                     reply_with(text.map(|t| context(&t)));
                 })
                 .detach();
@@ -830,18 +855,68 @@ fn status(
     }
 }
 
-/// What a hook says about the agent's state.
-fn apply_hook(request: &ControlRequest, terminal: &Entity<TerminalView>, cx: &mut App) {
+/// The subagents a Stop says still run in the background (id, type,
+/// description): `None` when it doesn't say.
+fn background_subagents(args: &BTreeMap<String, String>) -> Option<Vec<(String, String, String)>> {
+    let list: Vec<serde_json::Value> = serde_json::from_str(args.get("background")?).ok()?;
+    let field = |task: &serde_json::Value, key: &str| {
+        task.get(key)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+    Some(
+        list.iter()
+            .map(|task| {
+                (
+                    field(task, "id"),
+                    field(task, "agentType"),
+                    field(task, "description"),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// What a hook says about the agent's state and its subagents. Returns the
+/// note for an edit made at the same time as another agent's edit of the
+/// same file in the checkout.
+fn apply_hook(
+    request: &ControlRequest,
+    terminal: &Entity<TerminalView>,
+    cx: &mut App,
+) -> Option<String> {
     let args = &request.arguments;
     let agent = args.get("agent").cloned();
+    let event = args.get("event").map(String::as_str).unwrap_or("");
+    let tool = args.get("tool").map(String::as_str);
+    let background = background_subagents(args);
     let hook = hook_events::hook(
         agent.as_deref(),
-        args.get("event").map(String::as_str).unwrap_or(""),
-        args.get("tool").map(String::as_str),
+        event,
+        tool,
         args.get("message").map(String::as_str),
-    );
+    )
+    .map(|hook| match hook {
+        AgentHook::Stopped if background.as_ref().is_some_and(|b| !b.is_empty()) => {
+            AgentHook::AwaitingSubagents
+        }
+        hook => hook,
+    });
     let session = args.get("session").filter(|s| !s.is_empty()).cloned();
     terminal.update(cx, |t, cx| {
+        let clash = (agent.as_deref() == Some("claude"))
+            .then(|| {
+                follow_subagents(
+                    args,
+                    event,
+                    tool,
+                    background,
+                    &t.cwd,
+                    &mut t.agent.subagents,
+                )
+            })
+            .flatten();
         if let Some(hook) = hook {
             t.agent_hook(hook, agent.as_deref(), cx);
         }
@@ -849,7 +924,67 @@ fn apply_hook(request: &ControlRequest, terminal: &Entity<TerminalView>, cx: &mu
         if let (Some(agent), Some(session)) = (agent, session) {
             t.agent.session = Some((agent, session));
         }
-    });
+        cx.notify();
+        clash
+    })
+}
+
+/// Claude Code's subagents, from one of its hook events; the note for a
+/// clashing edit. `pane`: the terminal's folder, which files are named
+/// relative to when the hook doesn't say its own.
+fn follow_subagents(
+    args: &BTreeMap<String, String>,
+    event: &str,
+    tool: Option<&str>,
+    background: Option<Vec<(String, String, String)>>,
+    pane: &str,
+    subagents: &mut impulse_kit::agents::subagents::Subagents,
+) -> Option<String> {
+    let now = std::time::Instant::now();
+    let arg = |key: &str| args.get(key).map(String::as_str);
+    let subagent = arg("subagent");
+    let calls_agent = tool.is_some_and(|t| hook_events::CLAUDE_SUBAGENT_TOOLS.contains(&t));
+    match event {
+        "SessionStart" => subagents.clear(),
+        "UserPromptSubmit" => subagents.new_turn(),
+        "Stop" => {
+            subagents.new_turn();
+            if let Some(running) = background {
+                subagents.still_running(&running, now);
+            }
+        }
+        "PreToolUse" if calls_agent => subagents.launching(arg("toolDescription")),
+        "PostToolUse" if calls_agent => {
+            if let Some(id) = arg("launched") {
+                subagents.launched(id, arg("toolDescription"));
+            }
+        }
+        "SubagentStart" => {
+            if let Some(id) = subagent {
+                subagents.started(id, arg("subagentType").unwrap_or(""), arg("hookCwd"), now);
+            }
+        }
+        "SubagentStop" => {
+            if let Some(id) = subagent {
+                subagents.stopped(id, arg("message"), now);
+            }
+        }
+        _ => {}
+    }
+    if let (Some(id), Some(tool), "PreToolUse" | "PostToolUse") = (subagent, tool, event) {
+        subagents.used_tool(id, tool);
+    }
+    if event != "PostToolUse" || !tool.is_some_and(|t| hook_events::CLAUDE_EDIT_TOOLS.contains(&t))
+    {
+        return None;
+    }
+    let file = arg("toolFile")?;
+    let clash = subagents.edited(subagent, file, now)?;
+    let folder = arg("hookCwd").unwrap_or(pane);
+    let relative = file
+        .strip_prefix(&format!("{}/", folder.trim_end_matches('/')))
+        .unwrap_or(file);
+    Some(clash.note(relative))
 }
 
 /// A task branch a command would merge.

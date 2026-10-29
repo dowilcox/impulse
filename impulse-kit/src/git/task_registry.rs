@@ -2,7 +2,9 @@
 //! (`.git/impulse/tasks.json`) so every worktree, window and launch sees the
 //! same list: each task's folder, branch, the base it was made from, and its
 //! slot (a small number that per-task ports are worked out from). Worktrees
-//! made any other way aren't listed, and task features leave them alone.
+//! made any other way aren't listed, and task features leave them alone,
+//! except the ones Claude Code makes for itself and its subagents
+//! (`<repo>/.claude/worktrees/<name>`), which are adopted.
 //!
 //! The file is the Swift app's: the same keys, dates as ISO 8601 in whole
 //! seconds, written byte for byte as Swift's `JSONEncoder` writes it
@@ -185,9 +187,12 @@ impl TaskRegistry {
 
     /// Bring the list in line with the repository's worktrees (each a folder
     /// and the branch checked out there): drop tasks whose worktree is gone
-    /// (removed by hand), and adopt worktrees in `<repo>.worktrees/` that
-    /// aren't listed, which Impulse made before it kept this list. Adopted
-    /// tasks have no base or slot. True when anything changed.
+    /// (removed by hand), and adopt worktrees that aren't listed: in
+    /// `<repo>.worktrees/`, which Impulse made before it kept this list, and
+    /// in `<repo>/.claude/worktrees/`, which Claude Code made (`claude
+    /// --worktree`, a subagent with `isolation: "worktree"`) and which are
+    /// marked as started for it. Adopted tasks have no base or slot. True
+    /// when anything changed.
     pub fn reconcile(
         &mut self,
         worktrees: &[(String, Option<String>)],
@@ -198,14 +203,17 @@ impl TaskRegistry {
         let present: Vec<String> = worktrees.iter().map(|(path, _)| canonical(path)).collect();
         self.tasks.retain(|t| present.contains(&canonical(&t.path)));
         let folder = canonical(&parent(&worktree_tasks::worktree_path(repo_root, "x")));
+        let claude_folder = canonical(&join(repo_root, crate::agents::subagents::CLAUDE_WORKTREES));
         for (path, branch) in worktrees {
             let path = canonical(path);
             let Some(branch) = branch else { continue };
-            if parent(&path) != folder || self.record_for_path(&path).is_some() {
+            let by_claude = parent(&path) == claude_folder;
+            if (parent(&path) != folder && !by_claude) || self.record_for_path(&path).is_some() {
                 continue;
             }
             self.tasks.push(TaskRecord {
                 created: now,
+                requested_by: by_claude.then(|| "Claude Code".to_string()),
                 ..TaskRecord::new(path, branch.clone())
             });
         }
@@ -521,13 +529,30 @@ mod tests {
                 tree("/code/app.worktrees/detached", None),
                 tree("/code/app/.worktrees/nested", Some("nested")),
                 tree("/elsewhere/manual", Some("manual")),
+                tree(
+                    "/code/app/.claude/worktrees/agent-a1",
+                    Some("worktree-agent-a1"),
+                ),
+                tree("/code/app/.claude/worktrees/x/deeper", Some("deeper")),
             ],
             "/code/app",
             Utc::now(),
         );
         assert!(changed);
         let branches: Vec<&str> = registry.tasks.iter().map(|t| t.branch.as_str()).collect();
-        assert_eq!(branches, ["kept", "older"]);
+        assert_eq!(branches, ["kept", "older", "worktree-agent-a1"]);
+        assert_eq!(
+            registry
+                .record_for_branch("worktree-agent-a1")
+                .unwrap()
+                .requested_by
+                .as_deref(),
+            Some("Claude Code")
+        );
+        assert_eq!(
+            registry.record_for_branch("older").unwrap().requested_by,
+            None
+        );
         assert_eq!(
             registry.record_for_branch("kept").unwrap().base.as_deref(),
             Some("main"),
@@ -538,6 +563,10 @@ mod tests {
             &[
                 tree("/code/app.worktrees/kept", Some("kept")),
                 tree("/code/app.worktrees/older", Some("older")),
+                tree(
+                    "/code/app/.claude/worktrees/agent-a1",
+                    Some("worktree-agent-a1"),
+                ),
             ],
             "/code/app",
             Utc::now(),

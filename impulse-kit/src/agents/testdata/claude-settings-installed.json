@@ -33,7 +33,7 @@
             "type" : "command"
           }
         ],
-        "matcher" : "Edit|Write|MultiEdit|NotebookEdit|Bash"
+        "matcher" : "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"
       }
     ],
     "PreToolUse" : [
@@ -44,7 +44,7 @@
             "type" : "command"
           }
         ],
-        "matcher" : "Bash"
+        "matcher" : "Bash|Agent|Task"
       }
     ],
     "SessionStart" : [
@@ -77,6 +77,26 @@
       }
     ],
     "StopFailure" : [
+      {
+        "hooks" : [
+          {
+            "command" : "[ -n \"$IMPULSE_CLI\" ] && \"$IMPULSE_CLI\" hook claude || true",
+            "type" : "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStart" : [
+      {
+        "hooks" : [
+          {
+            "command" : "[ -n \"$IMPULSE_CLI\" ] && \"$IMPULSE_CLI\" hook claude || true",
+            "type" : "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop" : [
       {
         "hooks" : [
           {

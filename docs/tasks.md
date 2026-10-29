@@ -239,6 +239,10 @@ Tasks keep agents' files apart, but not everything else: two agents can still ch
 - **Check after a big merge.** A merge without conflicts can still break code that relied on something the other side changed. After merging a large change, reinstall dependencies and run the type checker or tests before anything else (in trailhead, `npm ci && npm test`).
 - **Clean up worktrees you made yourself.** Impulse archives its own tasks. For worktrees made with `git worktree add`, `git worktree list` shows them all, `git worktree remove <path>` removes one, and `git worktree prune` forgets folders you deleted by hand.
 
+### Worktrees Claude Code makes
+
+Claude Code makes worktrees of its own: for a session started with `claude --worktree`, and for a subagent started with `isolation: "worktree"`. They're in the repository's `.claude/worktrees/` folder, on branches named `worktree-<name>`. Impulse lists them as tasks, "started for Claude Code", so they show with the repository's other tasks (in **Switch Workspace**, `impulse tasks` and the hooks' summaries) and you can open, review, finish and archive them like any other. They have no slot or base. Claude Code removes a subagent's worktree when the subagent changed nothing, and Impulse drops the task with it.
+
 ## Tasks agents start
 
 An agent that has split its work into independent pieces can ask Impulse to start a task for each one, with an agent working on a brief it wrote. It asks with [Impulse's MCP server](agents.md#impulses-mcp-server) (`create_task`) or the command line:

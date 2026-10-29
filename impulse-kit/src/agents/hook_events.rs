@@ -7,7 +7,9 @@
 use super::state_machine::AgentHook;
 
 /// The state change `event` reports; `None` for events that don't change
-/// it (tools starting, subagents, compaction, a session's summary).
+/// it (tools starting, subagents, compaction, a session's summary). A Stop
+/// with subagents still running in the background is
+/// `AgentHook::AwaitingSubagents`, which the caller, knowing that, makes it.
 pub fn hook(
     agent: Option<&str>,
     event: &str,
@@ -58,7 +60,15 @@ pub enum Reply {
     RanShell,
     /// A question before a command that merges a branch a task is still on.
     BeforeShell,
+    /// A note when an Agent call starts a subagent in a checkout others
+    /// are editing.
+    BeforeSubagent,
+    /// The same note for the subagent itself, as it starts.
+    SubagentStarted,
 }
+
+/// Claude Code's tool that starts a subagent (`Task` in older versions).
+pub const CLAUDE_SUBAGENT_TOOLS: [&str; 2] = ["Agent", "Task"];
 
 /// Claude Code's tools that edit files.
 pub const CLAUDE_EDIT_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -77,6 +87,10 @@ pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Rep
         }
         ("claude", "PostToolUse", Some("Bash")) => Some(Reply::RanShell),
         ("claude", "PreToolUse", Some("Bash")) => Some(Reply::BeforeShell),
+        ("claude", "PreToolUse", Some(tool)) if CLAUDE_SUBAGENT_TOOLS.contains(&tool) => {
+            Some(Reply::BeforeSubagent)
+        }
+        ("claude", "SubagentStart", _) => Some(Reply::SubagentStarted),
         ("opencode", "session.start", _) => Some(Reply::SessionSummary),
         ("opencode", "tool.execute.after", Some(tool)) if OPENCODE_EDIT_TOOLS.contains(&tool) => {
             Some(Reply::EditedFile)
@@ -106,6 +120,16 @@ mod tests {
             Some(Reply::BeforeShell)
         );
         assert_eq!(reply(Some("claude"), "PostToolUse", Some("Read")), None);
+        assert_eq!(
+            reply(Some("claude"), "PreToolUse", Some("Agent")),
+            Some(Reply::BeforeSubagent)
+        );
+        assert_eq!(
+            reply(Some("claude"), "SubagentStart", None),
+            Some(Reply::SubagentStarted)
+        );
+        assert_eq!(reply(Some("claude"), "PostToolUse", Some("Agent")), None);
+        assert_eq!(hook(Some("claude"), "SubagentStop", None, None), None);
         assert_eq!(
             reply(Some("opencode"), "session.start", None),
             Some(Reply::SessionSummary)

@@ -42,6 +42,9 @@ pub enum AgentHook {
     /// approval, even one given without Return; otherwise no change.
     UsedTool(Option<String>),
     Stopped,
+    /// The turn ended with subagents still running in the background: the
+    /// agent takes another turn when they finish, so it's still working.
+    AwaitingSubagents,
     /// The turn ended on an error (Claude Code's StopFailure: a rate limit,
     /// an overloaded API, ...), described when the hook says.
     Failed(String),
@@ -118,6 +121,10 @@ pub struct AgentStateMachine {
     /// starting again (a question that sent no report was answered) means
     /// the agent went on.
     ended_by_spinner: bool,
+    /// The turn ended waiting for subagents in the background: the agent
+    /// sits at its prompt (no spinner, maybe a reminder that it's waiting
+    /// for input) while they work.
+    awaiting_subagents: bool,
 }
 
 fn seconds(value: f64) -> Duration {
@@ -154,6 +161,7 @@ impl AgentStateMachine {
             title_spins: false,
             spinner_stopped: None,
             ended_by_spinner: false,
+            awaiting_subagents: false,
         }
     }
 
@@ -164,6 +172,11 @@ impl AgentStateMachine {
     /// When `state` last changed.
     pub fn since(&self) -> Instant {
         self.since
+    }
+
+    /// Working only because subagents run in the background.
+    pub fn awaiting_subagents(&self) -> bool {
+        self.state == AgentState::Working && self.awaiting_subagents
     }
 
     /// Output this soon after a keystroke is its echo.
@@ -184,8 +197,16 @@ impl AgentStateMachine {
                 self.hooks_active = true;
                 self.last_hook = Some(now);
                 self.reported_by_status = false;
+                if !matches!(hook, AgentHook::UsedTool(_) | AgentHook::Notification(_)) {
+                    self.awaiting_subagents = false;
+                }
                 match hook {
                     AgentHook::SessionStarted => self.transition(AgentState::Idle, now),
+                    AgentHook::AwaitingSubagents => {
+                        let changed = self.transition(AgentState::Working, now);
+                        self.awaiting_subagents = true;
+                        changed
+                    }
                     AgentHook::PromptSubmitted => self.transition(AgentState::Working, now),
                     AgentHook::Stopped | AgentHook::Failed(_) => {
                         self.transition(AgentState::Done, now)
@@ -210,8 +231,11 @@ impl AgentStateMachine {
                         }
                         // Other notifications end a turn only while one
                         // runs: Claude Code's "waiting for your input"
-                        // reminder comes long after it finished.
-                        self.state == AgentState::Working && self.transition(AgentState::Done, now)
+                        // reminder comes long after it finished, or while
+                        // its subagents work.
+                        self.state == AgentState::Working
+                            && !self.awaiting_subagents
+                            && self.transition(AgentState::Done, now)
                     }
                     AgentHook::Status(reported) => {
                         self.reported_by_status = true;
@@ -352,6 +376,10 @@ impl AgentStateMachine {
     pub fn next_deadline(&self) -> Option<Instant> {
         match self.state {
             AgentState::Working if self.reported_by_status => None,
+            // The spinner stopped with the turn; silence still ends it.
+            AgentState::Working if self.awaiting_subagents => {
+                Some(self.quiet_since() + self.silence_with_hooks)
+            }
             AgentState::Working => {
                 if let Some(stopped) = self.spinner_stopped {
                     let stopped_since = stopped
@@ -401,6 +429,7 @@ impl AgentStateMachine {
         self.state = next;
         self.since = now;
         self.ended_by_spinner = false;
+        self.awaiting_subagents = false;
         if next != AgentState::Working {
             self.streak_start = None;
         }
@@ -950,6 +979,36 @@ mod tests {
             AgentState::Idle,
             "interrupted, not finished: nothing to flag"
         );
+    }
+
+    #[test]
+    fn subagents_in_the_background_keep_it_working() {
+        let c = clock();
+        let mut machine = AgentStateMachine::new(c.at(0.0));
+        hook(&mut machine, AgentHook::PromptSubmitted, c.at(1.0));
+        machine.handle(title("◐ Fix the parser"), c.at(1.1));
+        // The turn ends with subagents running: the spinner stops, the
+        // reminder that it waits for input comes, and neither ends it.
+        assert!(!hook(&mut machine, AgentHook::AwaitingSubagents, c.at(5.0)));
+        assert!(machine.awaiting_subagents());
+        machine.handle(title("✳ Fix the parser"), c.at(5.1));
+        assert!(!hook(
+            &mut machine,
+            notification("Claude is waiting for your input"),
+            c.at(65.0)
+        ));
+        assert!(!machine.tick(c.at(100.0)));
+        assert_eq!(machine.state(), AgentState::Working);
+        // One finishes and the agent takes another turn, then stops for good.
+        hook(&mut machine, AgentHook::PromptSubmitted, c.at(120.0));
+        assert!(!machine.awaiting_subagents());
+        assert!(hook(&mut machine, AgentHook::Stopped, c.at(130.0)));
+        assert_eq!(machine.state(), AgentState::Done);
+        // Silence still ends a wait nobody reports the end of.
+        hook(&mut machine, AgentHook::AwaitingSubagents, c.at(200.0));
+        assert_eq!(machine.next_deadline(), Some(c.at(500.0)));
+        assert!(machine.tick(c.at(500.0)));
+        assert_eq!(machine.state(), AgentState::Idle);
     }
 
     #[test]

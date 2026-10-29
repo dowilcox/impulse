@@ -11,6 +11,10 @@
 #   claude finish    mid-turn, asks Impulse to finish its own task (as the
 #                    MCP server's finish_task does), saving the answer in
 #                    ~/mcp/finish.txt, then keeps working
+#   claude subagents starts two subagents in the background that both edit
+#                    src/photos.ts, ends its turn while they run, and lets
+#                    them finish once ~/mcp/subagents-go exists; Impulse's
+#                    answers go to ~/mcp/subagent-notes.txt
 #   claude mcp …     what Agent Integration runs to install Impulse's MCP
 #                    server: recorded in ~/mcp/<agent>-mcp.txt, one call a
 #                    line, as JSON
@@ -112,6 +116,38 @@ case "$mode" in
     echo "Done. Trails without an elevation now borrow one from their region;"
     echo "Annette Lake now gets 205 m from Mount Si's trailhead."
     hook Stop '{"session_id":"demo-session"}'
+    ;;
+  subagents)
+    mkdir -p "$HOME/mcp"
+    note() { impulse hook "$agent" "$1" "$2" >> "$HOME/mcp/subagent-notes.txt" 2>&1; }
+    s='"session_id":"demo-session"'
+    file="$PWD/src/photos.ts"
+    hook UserPromptSubmit "{$s}"
+    prompt_line "Add the photos endpoint and its tests, in parallel."
+    start() { # id, description
+      note PreToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"}}"
+      note SubagentStart "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"cwd\":\"$PWD\"}"
+      note PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"},\"tool_response\":{\"agentId\":\"$1\"}}"
+      step "Agent" "$2 (running in the background)"
+    }
+    edit() { # id
+      note PostToolUse "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$file\"},\"cwd\":\"$PWD\"}"
+    }
+    start sub-a "Write the photos endpoint"
+    start sub-b "Write the photo tests"
+    edit sub-a
+    edit sub-b
+    running='{"id":"sub-a","type":"subagent","status":"running","description":"Write the photos endpoint","agent_type":"general-purpose"},{"id":"sub-b","type":"subagent","status":"running","description":"Write the photo tests","agent_type":"general-purpose"}'
+    hook Stop "{$s,\"background_tasks\":[$running]}"
+    echo; echo "Both subagents are working; I'll check their results when they finish."
+    touch "$HOME/mcp/subagents-ready"
+    for _ in $(seq 300); do [ -e "$HOME/mcp/subagents-go" ] && break; sleep 0.2; done
+    note SubagentStop "{$s,\"agent_id\":\"sub-a\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Added GET /trails/:id/photos\"}"
+    hook UserPromptSubmit "{$s}"
+    note SubagentStop "{$s,\"agent_id\":\"sub-b\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Added test/photos.test.ts\"}"
+    hook Stop "{$s,\"background_tasks\":[]}"
+    echo "Both finished: the endpoint and its tests are in."
+    touch "$HOME/mcp/subagents-finished"
     ;;
   done)
     hook UserPromptSubmit '{"session_id":"demo-session"}'

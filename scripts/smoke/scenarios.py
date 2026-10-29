@@ -408,6 +408,33 @@ def check_agents(run) -> None:
     run.expect(bool(refs.strip()), "the agent's turn is checkpointed under refs/impulse/checkpoints/", refs)
     review = run.dump("agent-review")
     run.expect(any(s["kind"] == "review" for s in surfaces(review)), "Review Last Turn opens a review")
+    def subagents(name: str) -> dict | None:
+        found = [t for t in surfaces(run.dump(name), "terminal") if t.get("subagents")]
+        return found[0] if found else None
+
+    waiting = subagents("subagents-waiting")
+    if run.expect(waiting is not None, "the agent's subagents are listed"):
+        run.expect(waiting["agentState"] == "working",
+                   "a turn ended with subagents running keeps the agent working", waiting["agentState"])
+        run.expect([(s["label"], s["running"]) for s in waiting["subagents"]]
+                   == [("Write the photos endpoint", True), ("Write the photo tests", True)],
+                   "both subagents run, named by their Agent calls", waiting["subagents"])
+    finished = subagents("subagents-done")
+    if run.expect(finished is not None, "the subagents are still listed once done"):
+        run.expect(finished["agentState"] == "done", "the agent finishes with its subagents",
+                   finished["agentState"])
+        run.expect([s["result"] for s in finished["subagents"]]
+                   == ["Added GET /trails/:id/photos", "Added test/photos.test.ts"],
+                   "each subagent's report is kept", finished["subagents"])
+    notes_file = HOME / "mcp" / "subagent-notes.txt"
+    notes = notes_file.read_text() if notes_file.exists() else ""
+    for text, what in (
+        ("shares the checkout with 1 other subagent still running", "the agent is told as it starts a second one"),
+        ("other subagents are working in this same checkout", "the second subagent is told as it starts"),
+        ('also edited by another subagent (\\"Write the photos endpoint\\")',
+         "the second subagent is told the first changed the file"),
+    ):
+        run.expect(text in notes, what, notes[-600:])
     tasks = [t for t in surfaces(run.dump("final"), "terminal")
              if any((b["command"] or "").startswith("impulse tasks") for b in t["blocks"])]
     if run.expect(tasks, "impulse tasks ran"):
@@ -420,6 +447,10 @@ AGENT_ACTIONS = [
     "newtab", "until=prompt", "run=claude turn", "until=40:agent:done", "sleep=1", "dump=agent-turn",
     "review-agent", "until=20:tabs:3", "sleep=1", "dump=agent-review",
     "newtab", "until=prompt", "run=claude working", "until=30:agent:working", "dump=agent-working",
+    "newtab", "until=prompt", "run=claude subagents", "until=30:file:~/mcp/subagents-ready", "sleep=1",
+    "dump=subagents-waiting",
+    "newtab", "until=prompt", "run=touch ~/mcp/subagents-go", "until=30:file:~/mcp/subagents-finished",
+    "sleep=1", "dump=subagents-done",
     "newtab", "until=prompt", "run=impulse tasks", "until=20:blocks:1",
 ]
 
@@ -962,7 +993,7 @@ SCENARIOS = [
     terminal_scenario("fish", "/opt/homebrew/bin/fish"),
     {"name": "images", "about": "a PNG by the kitty graphics protocol, placed and by placeholders, then cleared",
      "session": ONE, "setup": setup_images, "actions": IMAGE_ACTIONS, "check": check_images},
-    {"name": "agents", "about": "agent states from hooks, checkpoints, review last turn, impulse tasks",
+    {"name": "agents", "about": "agent states from hooks, subagents, checkpoints, review last turn, impulse tasks",
      "session": ONE, "actions": AGENT_ACTIONS, "check": check_agents},
     {"name": "lsp", "about": "server install, the trust question, TypeScript features, restricted folders",
      "session": ONE, "setup": setup_lsp, "settings": {"workspace_trust": True}, "lsp": True,

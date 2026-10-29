@@ -391,6 +391,44 @@ pub fn request(
                     // ("rate_limit").
                     message = text("last_assistant_message").or_else(|| text("error"));
                 }
+                if event.as_deref() == Some("SubagentStop") {
+                    // What the subagent reported.
+                    message = text("last_assistant_message");
+                }
+                // Claude Code: the subagent an event comes from (absent for
+                // the agent itself), and its type.
+                if let Some(subagent) = text("agent_id") {
+                    arguments.insert("subagent".into(), subagent);
+                }
+                if let Some(subagent_type) = text("agent_type") {
+                    arguments.insert("subagentType".into(), subagent_type);
+                }
+                // The subagents a Stop leaves running in the background,
+                // which wake the agent when they finish: `[{"id", "agentType",
+                // "description"}]`. Absent when Claude Code doesn't say.
+                if let Some(serde_json::Value::Array(tasks)) = object.get("background_tasks") {
+                    let running: Vec<serde_json::Value> = tasks
+                        .iter()
+                        .filter(|task| {
+                            matches!(
+                                task.get("type").and_then(|t| t.as_str()),
+                                Some("subagent" | "workflow")
+                            )
+                        })
+                        .map(|task| {
+                            let field = |key: &str| task.get(key).and_then(|v| v.as_str());
+                            serde_json::json!({
+                                "id": field("id").unwrap_or(""),
+                                "agentType": field("agent_type").or(field("type")).unwrap_or(""),
+                                "description": field("description").or(field("name")).unwrap_or(""),
+                            })
+                        })
+                        .collect();
+                    arguments.insert(
+                        "background".into(),
+                        serde_json::Value::Array(running).to_string(),
+                    );
+                }
                 if let Some(session) = text("session_id").or_else(|| text("thread-id")) {
                     arguments.insert("session".into(), session);
                 }
@@ -398,6 +436,8 @@ pub fn request(
                 if let Some(tool) = text("tool_name") {
                     arguments.insert("tool".into(), tool);
                 }
+                let starts_subagent =
+                    matches!(text("tool_name").as_deref(), Some("Agent" | "Task"));
                 if let Some(serde_json::Value::Object(input)) = object.get("tool_input") {
                     let field =
                         |key: &str| input.get(key).and_then(|v| v.as_str()).map(String::from);
@@ -406,6 +446,28 @@ pub fn request(
                     }
                     if let Some(file) = field("file_path").or_else(|| field("notebook_path")) {
                         arguments.insert("toolFile".into(), file);
+                    }
+                    // An Agent call: what it asks for, the subagent's type,
+                    // and whether it works in a folder of its own (its own
+                    // worktree, or one the call names).
+                    if starts_subagent {
+                        if let Some(description) = field("description") {
+                            arguments.insert("toolDescription".into(), description);
+                        }
+                        if let Some(subagent_type) = field("subagent_type") {
+                            arguments.insert("toolSubagentType".into(), subagent_type);
+                        }
+                        if field("isolation").is_some() || field("cwd").is_some() {
+                            arguments.insert("toolIsolated".into(), "1".into());
+                        }
+                    }
+                }
+                // The subagent an Agent call started.
+                if starts_subagent {
+                    if let Some(serde_json::Value::Object(response)) = object.get("tool_response") {
+                        if let Some(id) = response.get("agentId").and_then(|v| v.as_str()) {
+                            arguments.insert("launched".into(), id.to_string());
+                        }
                     }
                 }
                 if let Some(hook_cwd) = text("cwd") {

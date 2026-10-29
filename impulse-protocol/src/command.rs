@@ -46,7 +46,7 @@ pub enum Command {
         /// `None`: "manual checkpoint".
         message: Option<String>,
     },
-    Hook(Hook),
+    Hook(Box<Hook>),
     Tasks(Tasks),
     Turns {
         limit: Option<usize>,
@@ -97,6 +97,17 @@ pub struct Hook {
     pub tool_file: Option<String>,
     /// The folder the hook says the agent is in.
     pub hook_cwd: Option<String>,
+    /// Claude Code: the subagent the event comes from, and its type.
+    pub subagent: Option<String>,
+    pub subagent_type: Option<String>,
+    /// An Agent call: what it asks for, the type it starts, whether the
+    /// subagent gets a folder of its own, and (once it returns) its id.
+    pub tool_description: Option<String>,
+    pub tool_subagent_type: Option<String>,
+    pub tool_isolated: bool,
+    pub launched: Option<String>,
+    /// A Stop: the subagents still running in the background, as JSON.
+    pub background: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -198,7 +209,7 @@ impl ControlRequest {
             "checkpoint" => Command::Checkpoint {
                 message: arg("message").filter(|m| !m.is_empty()),
             },
-            "hook" => Command::Hook(Hook {
+            "hook" => Command::Hook(Box::new(Hook {
                 agent: arg("agent"),
                 event: arg("event").unwrap_or_default(),
                 message: arg("message"),
@@ -207,7 +218,14 @@ impl ControlRequest {
                 tool_command: arg("toolCommand"),
                 tool_file: arg("toolFile"),
                 hook_cwd: arg("hookCwd"),
-            }),
+                subagent: arg("subagent"),
+                subagent_type: arg("subagentType"),
+                tool_description: arg("toolDescription"),
+                tool_subagent_type: arg("toolSubagentType"),
+                tool_isolated: has("toolIsolated"),
+                launched: arg("launched"),
+                background: arg("background"),
+            })),
             "tasks" => Command::Tasks(if let Some(task) = arg("wait") {
                 Tasks::Wait {
                     task,

@@ -83,7 +83,8 @@ fn is_inside(path: &str) -> bool {
 
 /// The registry of the repository `root` is in, brought in line with its
 /// worktrees first (tasks removed by hand dropped, older tasks in
-/// `<repo>.worktrees/` adopted). `None` outside a repository. When git can't
+/// `<repo>.worktrees/` and Claude Code's in `<repo>/.claude/worktrees/`
+/// adopted). `None` outside a repository. When git can't
 /// list the worktrees, the registry is left as it is.
 pub(crate) fn registry(root: &str) -> Option<TaskRegistry> {
     let common = branches::common_git_directory(root)?;

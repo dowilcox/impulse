@@ -150,6 +150,58 @@ fn tool_hooks_carry_the_tool_and_what_it_acts_on() {
 }
 
 #[test]
+fn subagent_hooks_say_which_subagent() {
+    let call = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"write c","prompt":"…","isolation":"worktree","subagent_type":"general-purpose"}}"#,
+    )
+    .unwrap();
+    assert_eq!(call.argument("toolDescription"), Some("write c"));
+    assert_eq!(call.argument("toolSubagentType"), Some("general-purpose"));
+    assert_eq!(call.argument("toolIsolated"), Some("1"));
+    let launched = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{"description":"write b"},"tool_response":{"status":"async_launched","agentId":"ae2e9"}}"#,
+    )
+    .unwrap();
+    assert_eq!(launched.argument("launched"), Some("ae2e9"));
+    assert_eq!(launched.argument("toolIsolated"), None);
+    // A shell command's description is no Agent call's.
+    let bash = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls","description":"List files"}}"#,
+    )
+    .unwrap();
+    assert_eq!(bash.argument("toolDescription"), None);
+    let inside = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"PostToolUse","tool_name":"Write","agent_id":"ae2e9","agent_type":"general-purpose","tool_input":{"file_path":"/r/b.txt"}}"#,
+    )
+    .unwrap();
+    assert_eq!(inside.argument("subagent"), Some("ae2e9"));
+    assert_eq!(inside.argument("subagentType"), Some("general-purpose"));
+    let stopped = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"SubagentStop","agent_id":"ae2e9","agent_type":"general-purpose","last_assistant_message":"Created b.txt"}"#,
+    )
+    .unwrap();
+    assert_eq!(stopped.argument("message"), Some("Created b.txt"));
+    let stop = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"Stop","background_tasks":[{"id":"a1","type":"subagent","status":"running","description":"write c","agent_type":"general-purpose"},{"id":"b2","type":"shell","status":"running","description":"npm run dev","command":"npm run dev"}]}"#,
+    )
+    .unwrap();
+    let background: serde_json::Value =
+        serde_json::from_str(stop.argument("background").unwrap()).unwrap();
+    assert_eq!(
+        background,
+        serde_json::json!([{"id": "a1", "agentType": "general-purpose", "description": "write c"}])
+    );
+    let quiet = parse_stdin(&["hook", "claude"], r#"{"hook_event_name":"Stop"}"#).unwrap();
+    assert_eq!(quiet.argument("background"), None);
+}
+
+#[test]
 fn tasks_lists_and_waits() {
     assert_eq!(arguments(&["tasks"]), Some(map(&[])));
     assert_eq!(arguments(&["tasks", "--json"]), Some(map(&[("json", "1")])));

@@ -11,19 +11,23 @@ use serde_json::{json, Map, Value};
 /// The Claude Code events Impulse listens to, each with the tools a tool
 /// event is limited to: before shell commands (a merge of a branch still
 /// being worked on asks first) and after edits and shell commands (notes
-/// about files other tasks change, and dependencies that changed).
-/// StopFailure ends a turn an API error stopped, which sends no Stop.
-pub const CLAUDE_HOOKS: [(&str, Option<&str>); 7] = [
+/// about files other tasks change, and dependencies that changed), and
+/// around subagents (Agent, `Task` in older versions: which ones run, and
+/// notes when they share a checkout). StopFailure ends a turn an API error
+/// stopped, which sends no Stop.
+pub const CLAUDE_HOOKS: [(&str, Option<&str>); 9] = [
     ("SessionStart", None),
     ("UserPromptSubmit", None),
     ("Notification", None),
     ("Stop", None),
     ("StopFailure", None),
-    ("PreToolUse", Some("Bash")),
+    ("PreToolUse", Some("Bash|Agent|Task")),
     (
         "PostToolUse",
-        Some("Edit|Write|MultiEdit|NotebookEdit|Bash"),
+        Some("Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"),
     ),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
 ];
 
 pub fn claude_events() -> Vec<&'static str> {
@@ -106,17 +110,29 @@ pub fn claude_hook_status(json: Option<&[u8]>) -> Status {
     let Some(hooks) = settings.get("hooks").and_then(Value::as_object) else {
         return Status::NotInstalled;
     };
-    let events = claude_events();
-    let present = events
+    let ours = |event: &str| -> Vec<&Map<String, Value>> {
+        objects(hooks.get(event))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|entry| is_our_claude_entry(entry))
+            .collect()
+    };
+    let present = CLAUDE_HOOKS
         .iter()
-        .filter(|event| {
-            objects(hooks.get(**event))
-                .is_some_and(|entries| entries.into_iter().any(is_our_claude_entry))
+        .filter(|(event, _)| !ours(event).is_empty())
+        .count();
+    // An older Impulse's entry may listen to fewer tools.
+    let current = CLAUDE_HOOKS
+        .iter()
+        .filter(|(event, matcher)| {
+            ours(event)
+                .iter()
+                .any(|entry| entry.get("matcher").and_then(Value::as_str) == *matcher)
         })
         .count();
     if present == 0 {
         Status::NotInstalled
-    } else if present == events.len() {
+    } else if current == CLAUDE_HOOKS.len() {
         Status::Installed
     } else {
         Status::Outdated
@@ -124,7 +140,8 @@ pub fn claude_hook_status(json: Option<&[u8]>) -> Status {
 }
 
 /// settings.json with Impulse's hooks added (other settings and hooks
-/// kept). Already-installed hooks aren't duplicated.
+/// kept). Already-installed hooks aren't duplicated, and get the tools an
+/// older Impulse's didn't listen to.
 pub fn installing_claude_hooks(json: Option<&[u8]>) -> Result<Vec<u8>, InstallError> {
     let mut settings = Map::new();
     if let Some(json) = json.filter(|j| !j.is_empty()) {
@@ -140,7 +157,13 @@ pub fn installing_claude_hooks(json: Option<&[u8]>) -> Result<Vec<u8>, InstallEr
         let mut entries: Vec<Value> = match objects(hooks.get(event)) {
             Some(entries) => entries
                 .into_iter()
-                .map(|e| Value::Object(e.clone()))
+                .map(|entry| {
+                    let mut entry = entry.clone();
+                    if let Some(matcher) = matcher.filter(|_| is_our_claude_entry(&entry)) {
+                        entry.insert("matcher".into(), Value::from(matcher));
+                    }
+                    Value::Object(entry)
+                })
                 .collect(),
             None => Vec::new(),
         };
@@ -479,10 +502,10 @@ mod tests {
         let pre_tool_use = hooks["PreToolUse"].as_array().unwrap();
         assert_eq!(pre_tool_use.len(), 2);
         assert_eq!(pre_tool_use[0]["hooks"][0]["command"], "audit");
-        assert_eq!(pre_tool_use[1]["matcher"], "Bash");
+        assert_eq!(pre_tool_use[1]["matcher"], "Bash|Agent|Task");
         assert_eq!(
             hooks["PostToolUse"][0]["matcher"],
-            "Edit|Write|MultiEdit|NotebookEdit|Bash"
+            "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"
         );
     }
 
@@ -508,6 +531,18 @@ mod tests {
             claude_hook_status(Some(&before_stop_failure)),
             Status::Outdated
         );
+        // Shell commands only, before subagents: the matcher is brought up
+        // to date in place.
+        let mut settings = object(&updated);
+        settings["hooks"]["PreToolUse"][0]["matcher"] = "Bash".into();
+        let shell_only = serde_json::to_vec(&settings).unwrap();
+        assert_eq!(claude_hook_status(Some(&shell_only)), Status::Outdated);
+        let again = object(&installing_claude_hooks(Some(&shell_only)).unwrap());
+        assert_eq!(again["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            again["hooks"]["PreToolUse"][0]["matcher"],
+            "Bash|Agent|Task"
+        );
     }
 
     #[test]
@@ -531,8 +566,9 @@ mod tests {
     }
 
     /// The testdata files are what the Swift app's `AgentHookInstaller`
-    /// wrote for the same input: Impulse writes settings.json the same way
-    /// whichever app does it.
+    /// wrote for the same input, plus the subagent hooks added since
+    /// (SubagentStart, SubagentStop, Agent|Task in the tool matchers):
+    /// Impulse writes settings.json the same way whichever app does it.
     #[test]
     fn writes_settings_as_the_swift_app_does() {
         let fresh = include_str!("testdata/claude-settings-fresh.json");
