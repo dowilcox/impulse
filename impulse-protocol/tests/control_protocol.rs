@@ -181,6 +181,14 @@ fn subagent_hooks_say_which_subagent() {
     )
     .unwrap();
     assert_eq!(notification.argument("notified"), Some("ae2e9,a7cfe"));
+    // As Claude Code 2.1.312 sends it: the task id is the Agent call's
+    // agentId, and the result can hold anything, tags included.
+    let real = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"UserPromptSubmit","prompt":"<task-notification>\n<task-id>aa8f7404d79c625df</task-id>\n<tool-use-id>toolu_01DcmzBubEEeQUeq7T6gMXK1</tool-use-id>\n<output-file>/private/tmp/claude-501/work/tasks/aa8f7404d79c625df.output</output-file>\n<status>completed</status>\n<summary>Agent \"Say pong\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>pong <task-id>not-this</task-id></result>\n<usage><subagent_tokens>11136</subagent_tokens><tool_uses>0</tool_uses><duration_ms>2765</duration_ms></usage>\n</task-notification>"}"#,
+    )
+    .unwrap();
+    assert_eq!(real.argument("notified"), Some("aa8f7404d79c625df"));
     let typed = parse_stdin(
         &["hook", "claude"],
         r#"{"hook_event_name":"UserPromptSubmit","prompt":"what does <task-id>x</task-id> mean?"}"#,
