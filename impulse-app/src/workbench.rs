@@ -937,7 +937,7 @@ impl Workbench {
             self.workspace_mut().tabs[index].preview = false;
             return false;
         }
-        self.editor_closed(&old);
+        self.surface_closed(&old, cx);
         let pane = self.next_id();
         let tab = &mut self.workspace_mut().tabs[index];
         tab.layout = impulse_kit::layout_tree::LayoutTree::Leaf(pane);
@@ -1143,7 +1143,7 @@ impl Workbench {
         let tab = self.workspace_mut().tabs.remove(index);
         let back_to = was_active.then_some(tab.opener).flatten();
         for surface in tab.panes.values() {
-            self.editor_closed(surface);
+            self.surface_closed(surface, cx);
         }
         let saved = crate::session::session_tab(&tab, true, cx);
         let title = tab.focused_surface().name(cx);
@@ -1331,7 +1331,7 @@ impl Workbench {
                 let Some(pane) = self.workspaces[w].tabs[t].pane_of(|s| surface_id(s) == id) else {
                     continue;
                 };
-                self.editor_closed(surface);
+                self.surface_closed(surface, cx);
                 let workspace = self.workspaces[w].id;
                 let from_tab = self.workspaces[w].tabs[t].id;
                 self.remember(
@@ -1824,7 +1824,7 @@ impl Workbench {
         }
         let removed = self.workspaces.remove(index);
         for surface in removed.all_surfaces() {
-            self.editor_closed(surface);
+            self.surface_closed(surface, cx);
         }
         if remember {
             let saved = crate::session::session_workspace(&removed, true, cx);

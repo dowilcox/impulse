@@ -16,8 +16,11 @@ thread_local! {
 
 /// Count the terminals that need attention and show it, when it changed.
 pub fn update(cx: &mut App) {
+    // Not a window that closed but whose workbench hasn't been dropped yet.
+    let open = cx.windows();
     let count = crate::session::workbenches(cx)
         .iter()
+        .filter(|(_, handle)| open.contains(handle))
         .map(|(workbench, _)| {
             workbench
                 .read(cx)

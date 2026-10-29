@@ -354,8 +354,14 @@ impl Workbench {
         }
     }
 
-    /// An editor surface closed: answer the `impulse edit` waiting on it.
-    pub(crate) fn editor_closed(&mut self, surface: &Surface) {
+    /// A surface closed: answer the `impulse edit` waiting on an editor;
+    /// a terminal's notifications are withdrawn and the badge counted
+    /// again without it (once it's out of its tab).
+    pub(crate) fn surface_closed(&mut self, surface: &Surface, cx: &mut gpui_kit::App) {
+        if let Some(terminal) = surface.terminal() {
+            crate::agent_notify::clear(terminal.entity_id().as_u64(), cx);
+            cx.defer(crate::badge::update);
+        }
         let id = crate::workbench::surface_id(surface);
         self.pending_edits.retain(|(editor, reply)| {
             if *editor == id {

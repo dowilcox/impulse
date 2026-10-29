@@ -573,6 +573,13 @@ impl Workbench {
                 // save (closing was already asked about).
                 let last = crate::session::workbenches(cx).len() <= 1;
                 if !last {
+                    for workspace in &w.workspaces {
+                        for terminal in workspace.all_surfaces().filter_map(|s| s.terminal()) {
+                            crate::agent_notify::clear(terminal.entity_id().as_u64(), cx);
+                        }
+                    }
+                    // Counted once the window is gone.
+                    cx.defer(crate::badge::update);
                     return window.remove_window();
                 }
                 // Saving reads every workbench, this one included: once
