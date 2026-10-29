@@ -245,7 +245,7 @@ Claude Code makes worktrees of its own: for a session started with `claude --wor
 
 ## Tasks agents start
 
-An agent that has split its work into independent pieces can ask Impulse to start a task for each one, with an agent working on a brief it wrote. It asks with [Impulse's MCP server](agents.md#impulses-mcp-server) (`create_task`) or the command line:
+An agent that has split its work into independent pieces can ask Impulse to start a task for each one, with an agent working on a brief it wrote. Agents don't do this unprompted: [tell them to](agents.md#have-agents-start-tasks-instead-of-subagents) in their instructions file. It asks with [Impulse's MCP server](agents.md#impulses-mcp-server) (`create_task`) or the command line:
 
 ```sh
 impulse tasks new Fix elevation units --agent claude --brief-file brief.md
