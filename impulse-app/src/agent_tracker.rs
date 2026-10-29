@@ -91,6 +91,9 @@ pub(crate) struct AgentTracker {
     held: Option<Task<()>>,
     probe: Option<Task<()>>,
     tick: Option<(Instant, Task<()>)>,
+    /// Ends a turn that waits for subagents' reports that don't come
+    /// (`TerminalView::schedule_report_wait`).
+    report_wait: Option<Task<()>>,
     progress_shown: bool,
     command_started: Option<Instant>,
     /// Text waiting for the agent to finish its turn (`agent_send`).
@@ -124,6 +127,7 @@ impl Default for AgentTracker {
             held: None,
             probe: None,
             tick: None,
+            report_wait: None,
             progress_shown: false,
             command_started: None,
             pending_text: Vec::new(),
@@ -525,6 +529,7 @@ impl TerminalView {
         tracker.status_message = None;
         tracker.subagents.clear();
         tracker.tick = None;
+        tracker.report_wait = None;
         // Text queued for this agent isn't for whatever runs next.
         tracker.pending_text.clear();
         cx.emit(AgentSignal::Changed);
@@ -574,6 +579,40 @@ impl TerminalView {
             cx.emit(AgentSignal::Changed);
             cx.notify();
         }
+    }
+
+    /// A turn that ended waiting for background subagents' reports
+    /// (`AgentHook::AwaitingSubagents`) ends after all once none is waited
+    /// for any more (`Subagents::report_deadline`) and none still runs: the
+    /// agent had them some other way, within its turn.
+    pub(crate) fn schedule_report_wait(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let deadline = self
+            .agent
+            .machine
+            .awaiting_subagents()
+            .then(|| self.agent.subagents.report_deadline(now))
+            .flatten();
+        let Some(deadline) = deadline else {
+            self.agent.report_wait = None;
+            return;
+        };
+        let wait = deadline.saturating_duration_since(now);
+        self.agent.report_wait = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |view, cx| {
+                view.agent.report_wait = None;
+                let subagents = &view.agent.subagents;
+                if view.agent.machine.awaiting_subagents()
+                    && subagents.running_count() == 0
+                    && subagents.awaiting_reports(Instant::now()) == 0
+                {
+                    view.agent_hook(AgentHook::Stopped, None, cx);
+                } else {
+                    view.schedule_report_wait(cx);
+                }
+            });
+        }));
     }
 
     /// Keep one timer armed for the machine's next timeout. Output pushes

@@ -11,10 +11,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Window};
 use impulse_kit::agents::hook_events::{self, Reply};
+use impulse_kit::agents::hook_installer;
 use impulse_kit::agents::state_machine::{AgentHook, AgentState};
 use impulse_kit::git::task_overlap::Changes;
 use impulse_kit::git::task_registry::{self, TaskRecord};
@@ -26,6 +28,7 @@ use impulse_protocol::control::{ControlRequest, ControlResponse};
 
 use crate::settings_store::SettingsStore;
 use crate::terminal_view::TerminalView;
+use crate::toasts::Toast;
 use crate::workbench::Workbench;
 use crate::workspace::{Kind, Surface};
 
@@ -473,10 +476,14 @@ impl Workbench {
                 };
                 let clash = apply_hook(request, terminal, cx);
                 let agent = args.get("agent").map(String::as_str);
+                let event = args.get("event").map(String::as_str).unwrap_or("");
                 if agent == Some("claude") {
                     self.follow_subagent_worktrees(terminal, cx);
+                    if event == "SessionStart" {
+                        let cwd = terminal.read(cx).cwd.clone();
+                        self.check_claude_hooks(cwd, window, cx);
+                    }
                 }
-                let event = args.get("event").map(String::as_str).unwrap_or("");
                 let tool = args.get("tool").map(String::as_str);
                 let Some(reply) = hook_events::reply(agent, event, tool) else {
                     answer(ControlResponse::ok());
@@ -549,6 +556,48 @@ impl Workbench {
     /// opencode plugin, with (nothing: an empty ok). `clash`: the note for
     /// an edit made beside a subagent editing the same file, or for one
     /// about to be, why it's stopped.
+    /// Claude Code's hooks as an older Impulse installed them miss events
+    /// or tools this one listens to, which Agent Integration updates: said
+    /// once a run, as a session starts. `cwd`: the session's terminal's
+    /// folder, whose project may have them instead.
+    fn check_claude_hooks(&mut self, cwd: String, window: &mut Window, cx: &mut Context<Self>) {
+        static CHECKED: AtomicBool = AtomicBool::new(false);
+        if CHECKED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let home = crate::workspace::home();
+        let outdated = cx.background_spawn(async move {
+            let mut files = vec![home.join(".claude/settings.json")];
+            if let Some(root) = impulse_git::branches::repo_root(&cwd) {
+                files.push(Path::new(&root).join(".claude/settings.local.json"));
+            }
+            files.iter().any(|file| {
+                hook_installer::claude_hook_status(std::fs::read(file).ok().as_deref())
+                    == hook_installer::Status::Outdated
+            })
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            if !outdated.await {
+                return;
+            }
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                let note = Toast::warning(
+                    "This version of Impulse listens to more of Claude Code's hooks. Update them to keep its state and subagents exact.",
+                )
+                .title("Claude Code's hooks are out of date")
+                .lifetime(None);
+                workbench.note_with_action(note, "Update…", window, cx, |workbench, window, cx| {
+                    workbench.present_agent_integration(
+                        crate::agent_integration::Part::Hooks,
+                        window,
+                        cx,
+                    )
+                });
+            });
+        })
+        .detach();
+    }
+
     fn agent_hook_reply(
         &mut self,
         reply: Reply,
@@ -942,8 +991,9 @@ fn apply_hook(
             .flatten();
         // Subagents still running, or finished but not yet reported to the
         // agent, each bring it back for another turn.
+        let now = std::time::Instant::now();
         let hook = hook.map(|hook| match hook {
-            AgentHook::Stopped if still_running || t.agent.subagents.awaiting_reports() > 0 => {
+            AgentHook::Stopped if still_running || t.agent.subagents.awaiting_reports(now) > 0 => {
                 AgentHook::AwaitingSubagents
             }
             hook => hook,
@@ -951,6 +1001,7 @@ fn apply_hook(
         if let Some(hook) = hook {
             t.agent_hook(hook, agent.as_deref(), cx);
         }
+        t.schedule_report_wait(cx);
         t.agent.reports_by_hook = true;
         if let (Some(agent), Some(session)) = (agent, session) {
             t.agent.session = Some((agent, session));
@@ -983,10 +1034,10 @@ fn follow_subagents(
         "SessionStart" => subagents.clear(),
         "UserPromptSubmit" => subagents.new_turn(),
         "Stop" => {
-            subagents.new_turn();
             if let Some(running) = background {
                 subagents.still_running(&running, now);
             }
+            subagents.turn_ended(now);
         }
         "PreToolUse" if calls_agent => subagents.launching(
             arg("toolDescription"),
@@ -999,6 +1050,7 @@ fn follow_subagents(
                     id,
                     arg("toolDescription"),
                     args.contains_key("launchedAsync"),
+                    now,
                 );
             }
         }

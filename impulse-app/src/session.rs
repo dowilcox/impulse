@@ -381,14 +381,23 @@ pub(crate) fn session_workspace(
 impl Workbench {
     /// This window as the session file holds it.
     pub(crate) fn session_window(&self, with_scrollback: bool, cx: &App) -> SessionWindow {
+        // A subagent's worktree listed but never shown is the subagent's
+        // while it runs, not one to come back as a workspace of its own.
+        let kept =
+            |workspace: &Workspace| workspace.subagent.is_none() || !workspace.tabs.is_empty();
         let workspaces = self
             .workspaces
             .iter()
+            .filter(|workspace| kept(workspace))
             .map(|workspace| session_workspace(workspace, with_scrollback, cx))
             .collect();
+        let active = self.workspaces[..self.active.min(self.workspaces.len())]
+            .iter()
+            .filter(|workspace| kept(workspace))
+            .count();
         SessionWindow {
             workspaces: Some(workspaces),
-            active_workspace_index: Some(self.active as i64),
+            active_workspace_index: Some(active as i64),
             sidebar_visible: Some(self.sidebar_shown),
             sidebar_width: Some(self.sidebar_px as f64),
             frame: Some(frame_of(self.bounds, cx)),

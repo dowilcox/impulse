@@ -13,9 +13,12 @@
 //! worktree is made. A Stop lists the subagents still running in the
 //! background, and each one that finishes there is reported to the agent
 //! in a turn of its own (a UserPromptSubmit with its task-notification).
+//! That turn begins as soon as the agent is idle, so a report that hasn't
+//! come `REPORT_WAIT` after the turn ended, or after the subagent finished
+//! if that was later, is taken to have reached the agent some other way.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Subagent types that only read: they don't change a checkout they share.
 pub const READ_ONLY_TYPES: [&str; 3] = ["Explore", "Plan", "claude-code-guide"];
@@ -26,6 +29,14 @@ pub const CLAUDE_WORKTREES: &str = ".claude/worktrees";
 
 /// The longest result kept for a subagent.
 const RESULT_LIMIT: usize = 2000;
+
+/// How long a background subagent's report is waited for once the agent's
+/// turn has ended and the subagent has finished.
+pub const REPORT_WAIT: Duration = Duration::from_secs(60);
+
+/// How long a call that returned before its subagent started waits for
+/// that start (a worktree being made); one that never comes is forgotten.
+const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Subagent {
@@ -163,8 +174,9 @@ pub struct Subagents {
     /// Calls that returned before their subagent started (its worktree
     /// being made, or opencode's subagents in the background, which start
     /// once the call returns): its subagent's id, the call, and whether it
-    /// runs in the background. In the order they returned.
-    launched_early: Vec<(String, Call, bool)>,
+    /// runs in the background, and when it returned. In the order they
+    /// returned.
+    launched_early: Vec<(String, Call, bool, Instant)>,
     /// Each file's last edit in this batch (absolute paths).
     edits: HashMap<String, (Editor, Instant)>,
     /// Edits stopped before they were made, by file and editor: the time
@@ -172,6 +184,8 @@ pub struct Subagents {
     warned: HashMap<(String, Editor), Instant>,
     /// This batch's agent was told about sharing its checkout.
     told: bool,
+    /// When the agent's last turn ended (Stop); `None` while one runs.
+    turn_ended: Option<Instant>,
 }
 
 impl Subagents {
@@ -204,10 +218,36 @@ impl Subagents {
         *self = Self::default();
     }
 
-    /// A turn began or ended: calls that never started a subagent (denied,
-    /// or failed) are forgotten.
+    /// A turn began: calls that never started a subagent (denied, or
+    /// failed) are forgotten.
     pub fn new_turn(&mut self) {
         self.pending.clear();
+        self.turn_ended = None;
+    }
+
+    /// The agent's turn ended (Stop): calls that never started a subagent
+    /// are forgotten, and reports of subagents finished in the background
+    /// are waited for from now.
+    pub fn turn_ended(&mut self, now: Instant) {
+        self.pending.clear();
+        self.forget_early_launches(now);
+        self.turn_ended = Some(now);
+    }
+
+    /// Calls that returned long ago and whose subagent never started.
+    fn forget_early_launches(&mut self, now: Instant) {
+        self.launched_early
+            .retain(|(.., at)| now.saturating_duration_since(*at) < LAUNCH_WAIT);
+    }
+
+    /// When the wait for `subagent`'s report ends; `None` while it isn't
+    /// waited for yet (the agent's turn goes on) or there's none to wait
+    /// for.
+    fn report_due(&self, subagent: &Subagent) -> Option<Instant> {
+        if !subagent.awaits_report() {
+            return None;
+        }
+        Some(self.turn_ended?.max(subagent.finished?) + REPORT_WAIT)
     }
 
     /// The agent was told these subagents finished (a turn Claude Code
@@ -221,9 +261,22 @@ impl Subagents {
     }
 
     /// Subagents that finished in the background but whose report the
-    /// agent hasn't had: it takes another turn for each.
-    pub fn awaiting_reports(&self) -> usize {
-        self.list.iter().filter(|s| s.awaits_report()).count()
+    /// agent hasn't had, as of `now`: it takes another turn for each.
+    pub fn awaiting_reports(&self, now: Instant) -> usize {
+        self.list
+            .iter()
+            .filter(|s| s.awaits_report())
+            .filter(|s| self.report_due(s).is_none_or(|due| now < due))
+            .count()
+    }
+
+    /// The next time, after `now`, that a report stops being waited for.
+    pub fn report_deadline(&self, now: Instant) -> Option<Instant> {
+        self.list
+            .iter()
+            .filter_map(|s| self.report_due(s))
+            .filter(|due| *due > now)
+            .min()
     }
 
     /// The agent is about to make an Agent call (PreToolUse), for a
@@ -247,7 +300,8 @@ impl Subagents {
     /// none running, nor any finished one still to be reported, begins a
     /// new batch.
     pub fn started(&mut self, id: &str, agent_type: &str, cwd: Option<&str>, now: Instant) {
-        if self.running_count() == 0 && self.awaiting_reports() == 0 && self.find(id).is_none() {
+        self.forget_early_launches(now);
+        if self.running_count() == 0 && self.awaiting_reports(now) == 0 && self.find(id).is_none() {
             self.list.clear();
             self.edits.clear();
             self.warned.clear();
@@ -258,7 +312,7 @@ impl Subagents {
             .iter()
             .position(|(early, ..)| early == id);
         let (description, background) = match early.map(|at| self.launched_early.remove(at)) {
-            Some((_, call, background)) => (call.description, background),
+            Some((_, call, background, _)) => (call.description, background),
             None => (self.pending.pop_front().and_then(|c| c.description), false),
         };
         if let Some(existing) = self.find_mut(id) {
@@ -285,7 +339,13 @@ impl Subagents {
 
     /// The Agent call returned (PostToolUse) with the subagent's id, its
     /// description (for certain) and whether it went on in the background.
-    pub fn launched(&mut self, id: &str, description: Option<&str>, background: bool) {
+    pub fn launched(
+        &mut self,
+        id: &str,
+        description: Option<&str>,
+        background: bool,
+        now: Instant,
+    ) {
         let description = description.filter(|d| !d.is_empty()).map(str::to_string);
         if let Some(subagent) = self.find_mut(id) {
             subagent.background |= background;
@@ -310,7 +370,9 @@ impl Subagents {
             shares_checkout: false,
         });
         self.launched_early.retain(|(early, ..)| early != id);
-        self.launched_early.push((id.to_string(), call, background));
+        self.forget_early_launches(now);
+        self.launched_early
+            .push((id.to_string(), call, background, now));
     }
 
     /// A subagent stopped (SubagentStop), with its last message.
@@ -387,8 +449,8 @@ impl Subagents {
             .chain(
                 self.launched_early
                     .iter()
-                    .filter(|(id, call, _)| call.shares_checkout && Some(id.as_str()) != excluding)
-                    .map(|(_, call, _)| call.label()),
+                    .filter(|(id, call, ..)| call.shares_checkout && Some(id.as_str()) != excluding)
+                    .map(|(_, call, ..)| call.label()),
             )
             .chain(
                 self.pending
@@ -550,7 +612,7 @@ mod tests {
             Some("/r/app/.claude/worktrees/agent-y")
         );
         // The call's own answer has the last word.
-        list.launched("y", Some("fix the parser"), false);
+        list.launched("y", Some("fix the parser"), false, start);
         assert_eq!(list.all()[1].label(), "fix the parser");
         assert_eq!(list.summary().as_deref(), Some("2 subagents running"));
     }
@@ -637,7 +699,7 @@ mod tests {
         // The worktree one returns first, and the next call's subagent
         // starts before it does.
         list.launching(Some("own tree"), None, false);
-        list.launched("w", Some("own tree"), true);
+        list.launched("w", Some("own tree"), true, start);
         list.launching(Some("shared"), None, false);
         list.started("s", "general-purpose", Some("/r/app"), start);
         list.started(
@@ -661,23 +723,72 @@ mod tests {
     fn finishing_in_the_background_awaits_its_report() {
         let start = Instant::now();
         let mut list = two(start);
-        list.launched("b", Some("write b"), true);
-        list.launched("c", Some("write c"), true);
+        list.launched("b", Some("write b"), true, start);
+        list.launched("c", Some("write c"), true, start);
         list.stopped("b", None, at(start, 2));
         list.stopped("c", None, at(start, 3));
-        assert_eq!(list.awaiting_reports(), 2);
+        assert_eq!(list.awaiting_reports(at(start, 7)), 2);
         // A subagent started before they're reported joins their batch.
         list.launching(Some("more"), Some("Explore"), false);
         list.started("d", "Explore", None, at(start, 4));
         assert_eq!(list.all().len(), 3);
         list.reported(&["b"]);
-        assert_eq!(list.awaiting_reports(), 1);
+        assert_eq!(list.awaiting_reports(at(start, 7)), 1);
         list.reported(&["c"]);
-        assert_eq!(list.awaiting_reports(), 0);
+        assert_eq!(list.awaiting_reports(at(start, 7)), 0);
         // Resumed, it will be reported again.
         list.started("b", "general-purpose", None, at(start, 5));
         list.stopped("b", None, at(start, 6));
-        assert_eq!(list.awaiting_reports(), 1);
+        assert_eq!(list.awaiting_reports(at(start, 7)), 1);
+    }
+
+    #[test]
+    fn a_report_that_never_comes_stops_being_waited_for() {
+        let start = Instant::now();
+        let mut list = two(start);
+        list.launched("b", Some("write b"), true, start);
+        list.launched("c", Some("write c"), true, start);
+        list.stopped("b", None, at(start, 2));
+        // Waited for while the turn goes on, however long it takes.
+        assert_eq!(list.awaiting_reports(at(start, 600)), 1);
+        assert_eq!(list.report_deadline(at(start, 600)), None);
+        // From the turn's end on, for REPORT_WAIT.
+        list.turn_ended(at(start, 600));
+        let due = at(start, 600) + REPORT_WAIT;
+        assert_eq!(list.report_deadline(at(start, 601)), Some(due));
+        assert_eq!(list.awaiting_reports(due - Duration::from_secs(1)), 1);
+        assert_eq!(list.awaiting_reports(due), 0);
+        // One finishing after the turn ended is waited for from then.
+        list.stopped("c", None, at(start, 700));
+        assert_eq!(list.awaiting_reports(at(start, 700)), 1);
+        assert_eq!(
+            list.report_deadline(at(start, 700)),
+            Some(at(start, 700) + REPORT_WAIT)
+        );
+        // Nothing waited for: the next subagent starts a new batch.
+        let later = at(start, 700) + REPORT_WAIT;
+        assert_eq!(list.awaiting_reports(later), 0);
+        list.launching(Some("next"), None, false);
+        list.started("e", "general-purpose", None, later);
+        assert_eq!(list.all().len(), 1);
+    }
+
+    #[test]
+    fn a_call_whose_subagent_never_starts_is_forgotten() {
+        let start = Instant::now();
+        let mut list = Subagents::default();
+        // opencode's: the call returns, and its subagent never starts.
+        list.launching(Some("write b"), Some("general"), false);
+        list.launched("b", Some("write b"), true, start);
+        list.turn_ended(at(start, 5));
+        list.launching(Some("write c"), Some("general"), false);
+        assert!(list.launch_note(Some("general"), false).is_some());
+        let mut list = Subagents::default();
+        list.launching(Some("write b"), Some("general"), false);
+        list.launched("b", Some("write b"), true, start);
+        list.turn_ended(start + LAUNCH_WAIT);
+        list.launching(Some("write c"), Some("general"), false);
+        assert_eq!(list.launch_note(Some("general"), false), None);
     }
 
     #[test]
@@ -752,8 +863,8 @@ mod tests {
         list.launching(Some("write b"), Some("general"), false);
         list.launching(Some("write c"), Some("general"), false);
         assert!(list.launch_note(Some("general"), false).is_some());
-        list.launched("b", Some("write b"), true);
-        list.launched("c", Some("write c"), true);
+        list.launched("b", Some("write b"), true, start);
+        list.launched("c", Some("write c"), true, start);
         list.started("b", "general", Some("/r/app"), start);
         assert!(list
             .start_note("b")
