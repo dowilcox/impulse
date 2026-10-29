@@ -241,7 +241,7 @@ Tasks keep agents' files apart, but not everything else: two agents can still ch
 
 ### Worktrees Claude Code makes
 
-Claude Code makes worktrees of its own: for a session started with `claude --worktree`, and for a subagent started with `isolation: "worktree"`. They're in the repository's `.claude/worktrees/` folder, on branches named `worktree-<name>`. Impulse lists them as tasks, "started for Claude Code", so they show with the repository's other tasks (in **Switch Workspace**, `impulse tasks` and the hooks' summaries) and you can open, review, finish and archive them like any other. They have no slot or base. Claude Code removes a subagent's worktree when the subagent changed nothing, and Impulse drops the task with it.
+Claude Code makes worktrees of its own: for a session started with `claude --worktree`, and for a subagent started with `isolation: "worktree"`. They're in the repository's `.claude/worktrees/` folder, on branches named `worktree-<name>`. Impulse lists them as tasks, "started for Claude Code", so they show with the repository's other tasks (in **Switch Workspace**, `impulse tasks` and the hooks' summaries) and you can open, review, finish and archive them like any other. They have no slot or base. A subagent's worktree also appears in the sidebar as soon as the subagent starts (with [hooks](agents.md#agent-hooks) installed), under its repository and named for what it was asked to do, with the working ring while it runs; nothing runs there until you open it, when it gets its first terminal. Claude Code removes a subagent's worktree when the subagent changed nothing, and Impulse drops the task with it, and the sidebar's row too unless you've opened it. A row you close doesn't come back.
 
 ## Tasks agents start
 

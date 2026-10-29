@@ -473,6 +473,9 @@ impl Workbench {
                 };
                 let clash = apply_hook(request, terminal, cx);
                 let agent = args.get("agent").map(String::as_str);
+                if agent == Some("claude") {
+                    self.follow_subagent_worktrees(terminal, cx);
+                }
                 let event = args.get("event").map(String::as_str).unwrap_or("");
                 let tool = args.get("tool").map(String::as_str);
                 let Some(reply) = hook_events::reply(agent, event, tool) else {
@@ -985,6 +988,9 @@ fn follow_subagents(
     }
     if let (Some(id), Some(tool), "PreToolUse" | "PostToolUse") = (subagent, tool, event) {
         subagents.used_tool(id, tool);
+    }
+    if let (Some(id), Some(cwd)) = (subagent, arg("hookCwd")) {
+        subagents.worked_in(id, cwd, pane);
     }
     if event != "PostToolUse" || !tool.is_some_and(|t| hook_events::CLAUDE_EDIT_TOOLS.contains(&t))
     {

@@ -127,6 +127,9 @@ pub struct Workbench {
     /// Workspace ids, the most recently shown last: closing one goes back to
     /// the one used before it.
     pub(crate) recent_workspaces: Vec<u64>,
+    /// The subagents' worktrees listed in the sidebar, each once
+    /// (`Workbench::follow_subagent_worktrees`): one closed stays closed.
+    pub(crate) subagent_worktrees: std::collections::HashSet<PathBuf>,
     /// The task states' refresh waiting for changes to settle
     /// (`Workbench::schedule_task_refresh`).
     pub(crate) task_refresh: Option<gpui_kit::Task<()>>,
@@ -294,6 +297,7 @@ impl Workbench {
             sidebar_px: settings.sidebar_width as f32,
             sidebar_seen: (settings.sidebar_visible, settings.sidebar_width),
             recent_workspaces: Vec::new(),
+            subagent_worktrees: Default::default(),
             notice_timer: None,
             tab_scroll: gpui_kit::ScrollHandle::new(),
             tab_scrolled_to: Default::default(),

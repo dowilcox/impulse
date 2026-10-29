@@ -262,6 +262,9 @@ impl Workbench {
         if let Some(summary) = &workspace.task.summary {
             lines.push(summary.clone());
         }
+        if workspace.subagent.is_some() {
+            lines.push("A Claude Code subagent's worktree".into());
+        }
         if workspace.task.merged {
             lines.push("Merged into its base".into());
         } else if workspace.task.upstream_gone {

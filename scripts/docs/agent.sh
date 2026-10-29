@@ -17,6 +17,13 @@
 #                    the first of the turns Claude Code takes to report them;
 #                    after that turn it waits for ~/mcp/subagents-go-on.
 #                    Impulse's answers go to ~/mcp/subagent-notes.txt
+#   claude subagent-worktrees
+#                    starts two subagents in the background, each in a
+#                    worktree of its own as Claude Code makes them
+#                    (.claude/worktrees/<id>), ends its turn while they run,
+#                    and once ~/mcp/subagent-worktrees-go exists lets them
+#                    finish: the first with a change, the second with none,
+#                    so its worktree is removed as Claude Code removes it
 #   claude mcp …     what Agent Integration runs to install Impulse's MCP
 #                    server: recorded in ~/mcp/<agent>-mcp.txt, one call a
 #                    line, as JSON
@@ -159,6 +166,43 @@ case "$mode" in
     hook Stop "{$s,\"background_tasks\":[]}"
     echo "Both finished: the endpoint and its tests are in."
     touch "$HOME/mcp/subagents-finished"
+    ;;
+  subagent-worktrees)
+    mkdir -p "$HOME/mcp"
+    s='"session_id":"demo-session"'
+    hook UserPromptSubmit "{$s}"
+    prompt_line "Try both fixes for the elevation units, each in its own worktree."
+    start() { # id, description, the folder its SubagentStart names
+      git worktree add -q -b "worktree-$1" ".claude/worktrees/$1" HEAD
+      input="{\"description\":\"$2\",\"isolation\":\"worktree\"}"
+      hook PreToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":$input}"
+      # The call returns before a subagent with its own worktree starts.
+      hook PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":$input,\"tool_response\":{\"isAsync\":true,\"agentId\":\"$1\"}}"
+      hook SubagentStart "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"cwd\":\"$3\"}"
+      step "Agent" "$2 (running in the background)"
+    }
+    start agent-w1 "Use metres throughout" "$PWD/.claude/worktrees/agent-w1"
+    # Named only by the folder its tools run in.
+    start agent-w2 "Convert at the edges" "$PWD"
+    hook PreToolUse "{$s,\"agent_id\":\"agent-w2\",\"agent_type\":\"general-purpose\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"},\"cwd\":\"$PWD/.claude/worktrees/agent-w2\"}"
+    changed="$PWD/.claude/worktrees/agent-w1/src/units.ts"
+    mkdir -p "$(dirname "$changed")" && echo 'export const METRES = true;' > "$changed"
+    hook PostToolUse "{$s,\"agent_id\":\"agent-w1\",\"agent_type\":\"general-purpose\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$changed\"},\"cwd\":\"$PWD/.claude/worktrees/agent-w1\"}"
+    running='{"id":"agent-w1","type":"subagent","status":"running","description":"Use metres throughout","agent_type":"general-purpose"},{"id":"agent-w2","type":"subagent","status":"running","description":"Convert at the edges","agent_type":"general-purpose"}'
+    hook Stop "{$s,\"background_tasks\":[$running]}"
+    echo; echo "Both subagents are working in their own worktrees."
+    touch "$HOME/mcp/subagent-worktrees-ready"
+    for _ in $(seq 300); do [ -e "$HOME/mcp/subagent-worktrees-go" ] && break; sleep 0.2; done
+    hook SubagentStop "{$s,\"agent_id\":\"agent-w1\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Elevations are metres everywhere\"}"
+    hook SubagentStop "{$s,\"agent_id\":\"agent-w2\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Nothing to change\"}"
+    # Claude Code removes the worktree of a subagent that changed nothing.
+    git worktree remove --force .claude/worktrees/agent-w2 && git branch -q -D worktree-agent-w2
+    for id in agent-w1 agent-w2; do
+      hook UserPromptSubmit "{$s,\"prompt\":\"<task-notification>\\n<task-id>$id</task-id>\\n<status>completed</status>\\n</task-notification>\"}"
+      hook Stop "{$s,\"background_tasks\":[]}"
+    done
+    echo "One fix is in its worktree; the other needed nothing."
+    touch "$HOME/mcp/subagent-worktrees-finished"
     ;;
   done)
     hook UserPromptSubmit '{"session_id":"demo-session"}'

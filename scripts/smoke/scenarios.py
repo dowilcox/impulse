@@ -431,6 +431,22 @@ def check_agents(run) -> None:
         run.expect([s["result"] for s in finished["subagents"]]
                    == ["Added GET /trails/:id/photos", "Added test/photos.test.ts"],
                    "each subagent's report is kept", finished["subagents"])
+    def subagent_workspaces(name: str) -> tuple[list, dict]:
+        dump = run.dump(name)
+        listed = [w for w in dump["workspaces"] if w.get("subagent")]
+        active = next(w for w in dump["workspaces"] if w["active"])
+        return listed, active
+
+    listed, active = subagent_workspaces("subagent-worktrees-running")
+    run.expect([(w["name"], w["subagent"]["running"]) for w in listed]
+               == [("Use metres throughout", True), ("Convert at the edges", True)],
+               "each subagent's worktree is listed as a workspace, named by its Agent call", listed)
+    run.expect(all(w["task"] and w["tabs"] == 0 for w in listed),
+               "they're tasks, not opened (no terminals yet)", listed)
+    run.expect(not active.get("subagent"), "the agent's own workspace stays in front", active)
+    listed, _ = subagent_workspaces("subagent-worktrees-done")
+    run.expect([(w["name"], w["subagent"]["running"]) for w in listed] == [("Use metres throughout", False)],
+               "a finished subagent's worktree stays, and one Claude Code removed goes with it", listed)
     notes_file = HOME / "mcp" / "subagent-notes.txt"
     notes = notes_file.read_text() if notes_file.exists() else ""
     for text, what in (
@@ -457,6 +473,10 @@ AGENT_ACTIONS = [
     "newtab", "until=prompt", "run=touch ~/mcp/subagents-go", "until=30:file:~/mcp/subagents-one-reported",
     "sleep=1", "dump=subagents-one-reported",
     "run=touch ~/mcp/subagents-go-on", "until=30:file:~/mcp/subagents-finished", "sleep=1", "dump=subagents-done",
+    "newtab", "until=prompt", "run=claude subagent-worktrees", "until=30:file:~/mcp/subagent-worktrees-ready",
+    "sleep=1", "dump=subagent-worktrees-running",
+    "newtab", "until=prompt", "run=touch ~/mcp/subagent-worktrees-go",
+    "until=30:file:~/mcp/subagent-worktrees-finished", "sleep=1", "dump=subagent-worktrees-done",
     "newtab", "until=prompt", "run=impulse tasks", "until=20:blocks:1",
 ]
 

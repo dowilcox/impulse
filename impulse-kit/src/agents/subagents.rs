@@ -268,6 +268,16 @@ impl Subagents {
         }
     }
 
+    /// A hook of subagent `id` ran in `cwd`: its own worktree, when
+    /// SubagentStart didn't name one and `cwd` is in a worktree other than
+    /// the one its agent works in (`agent_cwd`).
+    pub fn worked_in(&mut self, id: &str, cwd: &str, agent_cwd: &str) {
+        let worktree = worktree_of(cwd).filter(|w| worktree_of(agent_cwd).as_ref() != Some(w));
+        if let Some(subagent) = self.find_mut(id).filter(|s| s.worktree.is_none()) {
+            subagent.worktree = worktree;
+        }
+    }
+
     /// The agent's turn ended (Stop) with these subagents (id, type,
     /// description) still running in the background: any other one that
     /// seems to be running has stopped without saying so.
@@ -434,6 +444,30 @@ mod tests {
         list.launched("y", Some("fix the parser"), false);
         assert_eq!(list.all()[1].label(), "fix the parser");
         assert_eq!(list.summary().as_deref(), Some("2 subagents running"));
+    }
+
+    #[test]
+    fn a_worktree_shows_in_later_hooks() {
+        let start = Instant::now();
+        let mut list = Subagents::default();
+        list.started("w", "general-purpose", Some("/r/app"), start);
+        list.started("v", "general-purpose", Some("/r/app"), start);
+        list.worked_in("w", "/r/app/.claude/worktrees/agent-w/src", "/r/app");
+        assert_eq!(
+            list.all()[0].worktree.as_deref(),
+            Some("/r/app/.claude/worktrees/agent-w")
+        );
+        assert!(!list.all()[0].edits_shared_checkout());
+        // The agent's own worktree isn't the subagent's.
+        let own = "/r/app/.claude/worktrees/session";
+        list.worked_in("v", own, own);
+        assert_eq!(list.all()[1].worktree, None);
+        // The first worktree it was seen in stays.
+        list.worked_in("w", "/r/app/.claude/worktrees/other", "/r/app");
+        assert_eq!(
+            list.all()[0].worktree.as_deref(),
+            Some("/r/app/.claude/worktrees/agent-w")
+        );
     }
 
     #[test]

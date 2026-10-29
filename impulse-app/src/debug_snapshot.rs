@@ -1351,6 +1351,10 @@ fn dump(name: &str, workbench: &mut Workbench, window: &mut Window, cx: &mut Con
                 "task": w.task.is_task,
                 "active": index == workbench.active,
                 "trusted": workbench.trust.is_trusted(&w.root.to_string_lossy()),
+                "tabs": w.tabs.len(),
+                "subagent": w.subagent(cx).map(|s| json!({
+                    "id": s.id, "running": s.is_running(),
+                })),
             })
         })
         .collect();

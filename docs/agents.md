@@ -421,7 +421,7 @@ With `agent_task_creation` set to `off`, the server doesn't offer `create_task`;
 
 Several agents in one checkout get in each other's way. Give each one its own task worktree: **New Task…** (⌥⌘N) creates a branch in its own folder, opens it as a workspace and can start the agent for you. See [Tasks](tasks.md), and [Running agents in parallel](tasks.md#running-agents-in-parallel) for habits that keep their work from colliding.
 
-The same goes for subagents. Claude Code's run in the agent's own checkout unless the Agent call gives them a worktree of their own (`isolation: "worktree"`), and Impulse lists those worktrees as [tasks](tasks.md#worktrees-claude-code-makes). To ask for it, tell the agent something like "run subagents that edit files with worktree isolation", or put it in your `CLAUDE.md`. With [hooks](#agent-hooks), Impulse tells the agent when subagents share a checkout and when two of them edit the same file. Or have the agent start tasks instead, as the next section describes.
+The same goes for subagents. Claude Code's run in the agent's own checkout unless the Agent call gives them a worktree of their own (`isolation: "worktree"`), and Impulse lists those worktrees as [tasks](tasks.md#worktrees-claude-code-makes), each in the sidebar while its subagent works. To ask for it, tell the agent something like "run subagents that edit files with worktree isolation", or put it in your `CLAUDE.md`. With [hooks](#agent-hooks), Impulse tells the agent when subagents share a checkout and when two of them edit the same file. Or have the agent start tasks instead, as the next section describes.
 
 ### Have agents start tasks instead of subagents
 

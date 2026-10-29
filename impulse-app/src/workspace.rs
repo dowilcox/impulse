@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::{App, Entity, Window};
+use gpui_kit::{App, Entity, WeakEntity, Window};
 use impulse_kit::layout_tree::{LayoutTree, SplitAxis};
 
 use crate::editor_tab::EditorTab;
@@ -270,6 +270,13 @@ pub enum Kind {
     Scratch,
 }
 
+/// The Claude Code subagent a workspace was listed for, in its own
+/// worktree: the terminal its agent runs in, and its id there.
+pub struct SubagentLink {
+    pub terminal: WeakEntity<TerminalView>,
+    pub id: String,
+}
+
 /// A folder the window works in, with its own tabs.
 pub struct Workspace {
     pub id: u64,
@@ -294,6 +301,8 @@ pub struct Workspace {
     pub task: crate::tasks::TaskInfo,
     /// TCP ports its terminals' processes listen on (`port_scan`).
     pub ports: Vec<impulse_kit::listening_ports::ListeningPort>,
+    /// Listed for a subagent working in this worktree.
+    pub subagent: Option<SubagentLink>,
 }
 
 impl Workspace {
@@ -319,6 +328,7 @@ impl Workspace {
             declined: false,
             task,
             ports: Vec::new(),
+            subagent: None,
         };
         workspace.refresh_branch();
         // The folders left open in this project last time.
@@ -352,6 +362,22 @@ impl Workspace {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| self.root.display().to_string()),
         }
+    }
+
+    /// The subagent it was listed for, while that's known.
+    pub fn subagent<'a>(
+        &self,
+        cx: &'a App,
+    ) -> Option<&'a impulse_kit::agents::subagents::Subagent> {
+        let link = self.subagent.as_ref()?;
+        let terminal = link.terminal.upgrade()?;
+        terminal
+            .read(cx)
+            .agent
+            .subagents
+            .all()
+            .iter()
+            .find(|s| s.id == link.id)
     }
 
     /// Where new terminals start.

@@ -17,7 +17,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::{prelude::*, App, Context, Window};
+use gpui_kit::{prelude::*, App, Context, Entity, Window};
 use impulse_git::{branches, operations, scoped_diff, snapshot};
 use impulse_kit::child_process::ChildProcess;
 use impulse_kit::git::task_overlap::{self, Pair};
@@ -27,9 +27,10 @@ use impulse_kit::project::config::{Loaded, ProjectConfig, ProjectTrust};
 use impulse_kit::project::{compose_file, folder_clone, task_environment};
 use impulse_kit::trust::WorkspaceTrust;
 
+use crate::terminal_view::TerminalView;
 use crate::workbench::Workbench;
 use crate::workbench_chrome::abbreviate_home;
-use crate::workspace::{Kind, Workspace};
+use crate::workspace::{Kind, SubagentLink, Workspace};
 
 // MARK: Paths
 
@@ -1318,6 +1319,82 @@ impl Workbench {
         self.activate_workspace(at, window, cx);
         self.refresh_task_states(cx);
         at
+    }
+
+    /// Claude Code's subagents in worktrees of their own (`isolation:
+    /// "worktree"`), from the agent in `terminal`: each worktree listed in
+    /// the sidebar once, as a task named for what its subagent was asked
+    /// to do, without showing it (its first terminal starts when it's
+    /// shown). One never shown goes when Claude Code removes its worktree,
+    /// as it does for a subagent that changed nothing.
+    pub(crate) fn follow_subagent_worktrees(
+        &mut self,
+        terminal: &Entity<TerminalView>,
+        cx: &mut Context<Self>,
+    ) {
+        let subagents: Vec<(String, PathBuf, String, String)> = terminal
+            .read(cx)
+            .agent
+            .subagents
+            .all()
+            .iter()
+            .filter_map(|s| {
+                let worktree = crate::workspace::normalize(Path::new(s.worktree.as_ref()?));
+                Some((s.id.clone(), worktree, s.label(), s.agent_type.clone()))
+            })
+            .collect();
+        let mut changed = false;
+        for (id, worktree, label, agent_type) in subagents {
+            if let Some(workspace) = self.workspaces.iter_mut().find(|w| w.root == worktree) {
+                // The Agent call's description can come after its subagent
+                // started.
+                if workspace.subagent.is_some()
+                    && workspace.custom_name.as_deref() == Some(agent_type.as_str())
+                {
+                    workspace.custom_name = Some(label);
+                }
+                continue;
+            }
+            if !worktree.is_dir() || !self.subagent_worktrees.insert(worktree.clone()) {
+                continue;
+            }
+            let mut workspace = Workspace::new(self.next_id(), Kind::Folder, worktree);
+            workspace.custom_name = Some(label);
+            workspace.subagent = Some(SubagentLink {
+                terminal: terminal.downgrade(),
+                id,
+            });
+            // Before Scratch, which stays last; the sidebar groups it with
+            // its repository.
+            let at = self
+                .workspaces
+                .iter()
+                .position(|w| w.kind == Kind::Scratch)
+                .unwrap_or(self.workspaces.len());
+            self.workspaces.insert(at, workspace);
+            changed = true;
+        }
+        let active = self.workspaces.get(self.active).map(|w| w.id);
+        let before = self.workspaces.len();
+        self.workspaces
+            .retain(|w| w.subagent.is_none() || !w.tabs.is_empty() || w.root.is_dir());
+        if self.workspaces.len() != before {
+            self.active = self
+                .workspaces
+                .iter()
+                .position(|w| Some(w.id) == active)
+                .unwrap_or(0);
+            let ids: HashSet<u64> = self.workspaces.iter().map(|w| w.id).collect();
+            self.recent_workspaces.retain(|id| ids.contains(id));
+            changed = true;
+        }
+        if changed {
+            self.refresh_task_states(cx);
+        }
+        // Their rows show whether their subagents still run.
+        if self.workspaces.iter().any(|w| w.subagent.is_some()) {
+            cx.notify();
+        }
     }
 
     /// The index of the folder workspace at `path`, if one is open.

@@ -386,7 +386,8 @@ impl Workbench {
             .iter()
             .filter_map(|tab| Self::tab_agent(tab, cx).map(|(_, s)| s))
             .collect();
-        let working = states.iter().filter(|s| **s == AgentState::Working).count();
+        let working = states.iter().filter(|s| **s == AgentState::Working).count()
+            + usize::from(workspace.subagent(cx).is_some_and(|s| s.is_running()));
         let waiting = states.iter().filter(|s| s.wants_user()).count();
         if working == 0 && waiting == 0 {
             return None;
