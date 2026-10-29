@@ -468,10 +468,25 @@ pub fn request(
                         if let Some(id) = response.get("agentId").and_then(|v| v.as_str()) {
                             arguments.insert("launched".into(), id.to_string());
                         }
+                        // In the background: Claude Code tells the agent
+                        // when it finishes, in a turn of its own.
+                        if response.get("isAsync").and_then(|v| v.as_bool()) == Some(true) {
+                            arguments.insert("launchedAsync".into(), "1".into());
+                        }
                     }
                 }
                 if let Some(hook_cwd) = text("cwd") {
                     arguments.insert("hookCwd".into(), hook_cwd);
+                }
+                // A turn Claude Code starts to tell the agent that subagents
+                // in the background finished: their ids, comma-separated.
+                if event.as_deref() == Some("UserPromptSubmit") {
+                    let notified = text("prompt")
+                        .map(|prompt| task_notifications(&prompt))
+                        .unwrap_or_default();
+                    if !notified.is_empty() {
+                        arguments.insert("notified".into(), notified.join(","));
+                    }
                 }
             }
             let Some(event) = event.filter(|event| !event.is_empty()) else {
@@ -508,6 +523,22 @@ fn take_flag(
     }
     words.retain(|w| w != flag);
     arguments.insert(key.into(), "1".into());
+}
+
+/// The task ids of the `<task-notification>`s in a prompt Claude Code
+/// submits for itself: `<task-notification>\n<task-id>a1…</task-id>…`.
+fn task_notifications(prompt: &str) -> Vec<String> {
+    prompt
+        .split("<task-notification>")
+        .skip(1)
+        .filter_map(|block| {
+            let block = block.split("</task-notification>").next()?;
+            let start = block.find("<task-id>")? + "<task-id>".len();
+            let end = start + block[start..].find("</task-id>")?;
+            Some(block[start..end].trim().to_string())
+        })
+        .filter(|id| !id.is_empty())
+        .collect()
 }
 
 /// `impulse tasks new`'s words: the title, and its options anywhere among

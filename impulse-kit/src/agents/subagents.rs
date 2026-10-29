@@ -7,8 +7,11 @@
 //! The hooks arrive in this order for each Agent call: PreToolUse (with
 //! the call's description), SubagentStart (with the subagent's id), and
 //! PostToolUse (with both), which for a subagent in the background comes
-//! right away and for one in the foreground once it's done. A Stop lists
-//! the subagents still running in the background.
+//! right away and for one in the foreground once it's done. A subagent
+//! with its own worktree may start only after its PostToolUse, once the
+//! worktree is made. A Stop lists the subagents still running in the
+//! background, and each one that finishes there is reported to the agent
+//! in a turn of its own (a UserPromptSubmit with its task-notification).
 
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
@@ -39,11 +42,21 @@ pub struct Subagent {
     pub result: Option<String>,
     /// The last tool it used that Impulse heard of.
     pub last_tool: Option<String>,
+    /// It runs in the background: the agent hears that it finished in a
+    /// turn of its own.
+    pub background: bool,
+    /// That turn began.
+    pub reported: bool,
 }
 
 impl Subagent {
     pub fn is_running(&self) -> bool {
         self.finished.is_none()
+    }
+
+    /// It finished in the background, and the agent hasn't been told yet.
+    pub fn awaits_report(&self) -> bool {
+        self.background && !self.is_running() && !self.reported
     }
 
     /// Whether it may change the checkout its agent is in.
@@ -112,6 +125,10 @@ pub struct Subagents {
     list: Vec<Subagent>,
     /// The descriptions of Agent calls whose subagent hasn't started yet.
     pending: VecDeque<Option<String>>,
+    /// Calls that returned before their subagent started (its worktree
+    /// being made): its description and whether it runs in the
+    /// background, by its id.
+    launched_early: HashMap<String, (Option<String>, bool)>,
     /// Each file's last edit in this batch (absolute paths).
     edits: HashMap<String, (Editor, Instant)>,
     /// This batch's agent was told about sharing its checkout.
@@ -154,6 +171,22 @@ impl Subagents {
         self.pending.clear();
     }
 
+    /// The agent was told these subagents finished (a turn Claude Code
+    /// starts for itself).
+    pub fn reported(&mut self, ids: &[&str]) {
+        for subagent in &mut self.list {
+            if ids.contains(&subagent.id.as_str()) {
+                subagent.reported = true;
+            }
+        }
+    }
+
+    /// Subagents that finished in the background but whose report the
+    /// agent hasn't had: it takes another turn for each.
+    pub fn awaiting_reports(&self) -> usize {
+        self.list.iter().filter(|s| s.awaits_report()).count()
+    }
+
     /// The agent is about to make an Agent call (PreToolUse).
     pub fn launching(&mut self, description: Option<&str>) {
         self.pending
@@ -161,18 +194,23 @@ impl Subagents {
     }
 
     /// A subagent started (SubagentStart), in `cwd`. One starting with
-    /// none running begins a new batch.
+    /// none running, nor any finished one still to be reported, begins a
+    /// new batch.
     pub fn started(&mut self, id: &str, agent_type: &str, cwd: Option<&str>, now: Instant) {
-        if self.running_count() == 0 && self.find(id).is_none() {
+        if self.running_count() == 0 && self.awaiting_reports() == 0 && self.find(id).is_none() {
             self.list.clear();
             self.edits.clear();
             self.told = false;
         }
-        let description = self.pending.pop_front().flatten();
+        let (description, background) = match self.launched_early.remove(id) {
+            Some(early) => early,
+            None => (self.pending.pop_front().flatten(), false),
+        };
         if let Some(existing) = self.find_mut(id) {
             // Resumed (SendMessage to a subagent that finished).
             existing.finished = None;
             existing.result = None;
+            existing.reported = false;
             existing.started = now;
             return;
         }
@@ -185,18 +223,28 @@ impl Subagents {
             finished: None,
             result: None,
             last_tool: None,
+            background,
+            reported: false,
         });
     }
 
-    /// The Agent call returned (PostToolUse) with the subagent's id and its
-    /// description: the description, for certain.
-    pub fn launched(&mut self, id: &str, description: Option<&str>) {
-        let Some(description) = description.filter(|d| !d.is_empty()) else {
-            return;
-        };
+    /// The Agent call returned (PostToolUse) with the subagent's id, its
+    /// description (for certain) and whether it went on in the background.
+    pub fn launched(&mut self, id: &str, description: Option<&str>, background: bool) {
+        let description = description.filter(|d| !d.is_empty()).map(str::to_string);
         if let Some(subagent) = self.find_mut(id) {
-            subagent.description = Some(description.to_string());
+            subagent.background |= background;
+            if description.is_some() {
+                subagent.description = description;
+            }
+            return;
         }
+        // It hasn't started yet: its description is no other's to take.
+        if let Some(at) = self.pending.iter().position(|d| *d == description) {
+            self.pending.remove(at);
+        }
+        self.launched_early
+            .insert(id.to_string(), (description, background));
     }
 
     /// A subagent stopped (SubagentStop), with its last message.
@@ -225,7 +273,9 @@ impl Subagents {
     /// seems to be running has stopped without saying so.
     pub fn still_running(&mut self, running: &[(String, String, String)], now: Instant) {
         for subagent in &mut self.list {
-            if subagent.is_running() && !running.iter().any(|(id, _, _)| *id == subagent.id) {
+            let still = running.iter().any(|(id, _, _)| *id == subagent.id);
+            subagent.background |= still;
+            if subagent.is_running() && !still {
                 subagent.finished = Some(now);
             }
         }
@@ -240,6 +290,8 @@ impl Subagents {
                     finished: None,
                     result: None,
                     last_tool: None,
+                    background: true,
+                    reported: false,
                 });
             }
         }
@@ -379,7 +431,7 @@ mod tests {
             Some("/r/app/.claude/worktrees/agent-y")
         );
         // The call's own answer has the last word.
-        list.launched("y", Some("fix the parser"));
+        list.launched("y", Some("fix the parser"), false);
         assert_eq!(list.all()[1].label(), "fix the parser");
         assert_eq!(list.summary().as_deref(), Some("2 subagents running"));
     }
@@ -402,6 +454,56 @@ mod tests {
         list.launching(Some("next"));
         list.started("e", "general-purpose", None, at(start, 9));
         assert_eq!(list.all().len(), 1);
+    }
+
+    #[test]
+    fn a_call_that_returns_before_its_subagent_starts_keeps_its_name() {
+        let start = Instant::now();
+        let mut list = Subagents::default();
+        // The worktree one returns first, and the next call's subagent
+        // starts before it does.
+        list.launching(Some("own tree"));
+        list.launched("w", Some("own tree"), true);
+        list.launching(Some("shared"));
+        list.started("s", "general-purpose", Some("/r/app"), start);
+        list.started(
+            "w",
+            "general-purpose",
+            Some("/r/app/.claude/worktrees/agent-w"),
+            start,
+        );
+        let labels: Vec<(String, bool)> = list
+            .all()
+            .iter()
+            .map(|s| (s.label(), s.background))
+            .collect();
+        assert_eq!(
+            labels,
+            [("shared".into(), false), ("own tree".into(), true)]
+        );
+    }
+
+    #[test]
+    fn finishing_in_the_background_awaits_its_report() {
+        let start = Instant::now();
+        let mut list = two(start);
+        list.launched("b", Some("write b"), true);
+        list.launched("c", Some("write c"), true);
+        list.stopped("b", None, at(start, 2));
+        list.stopped("c", None, at(start, 3));
+        assert_eq!(list.awaiting_reports(), 2);
+        // A subagent started before they're reported joins their batch.
+        list.launching(Some("more"));
+        list.started("d", "Explore", None, at(start, 4));
+        assert_eq!(list.all().len(), 3);
+        list.reported(&["b"]);
+        assert_eq!(list.awaiting_reports(), 1);
+        list.reported(&["c"]);
+        assert_eq!(list.awaiting_reports(), 0);
+        // Resumed, it will be reported again.
+        list.started("b", "general-purpose", None, at(start, 5));
+        list.stopped("b", None, at(start, 6));
+        assert_eq!(list.awaiting_reports(), 1);
     }
 
     #[test]

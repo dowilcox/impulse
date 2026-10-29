@@ -419,6 +419,11 @@ def check_agents(run) -> None:
         run.expect([(s["label"], s["running"]) for s in waiting["subagents"]]
                    == [("Write the photos endpoint", True), ("Write the photo tests", True)],
                    "both subagents run, named by their Agent calls", waiting["subagents"])
+    halfway = subagents("subagents-one-reported")
+    if run.expect(halfway is not None, "the subagents are listed while their reports arrive"):
+        run.expect(halfway["agentState"] == "working",
+                   "a turn that reports one finished subagent, with another still to report, keeps it working",
+                   halfway["agentState"])
     finished = subagents("subagents-done")
     if run.expect(finished is not None, "the subagents are still listed once done"):
         run.expect(finished["agentState"] == "done", "the agent finishes with its subagents",
@@ -449,8 +454,9 @@ AGENT_ACTIONS = [
     "newtab", "until=prompt", "run=claude working", "until=30:agent:working", "dump=agent-working",
     "newtab", "until=prompt", "run=claude subagents", "until=30:file:~/mcp/subagents-ready", "sleep=1",
     "dump=subagents-waiting",
-    "newtab", "until=prompt", "run=touch ~/mcp/subagents-go", "until=30:file:~/mcp/subagents-finished",
-    "sleep=1", "dump=subagents-done",
+    "newtab", "until=prompt", "run=touch ~/mcp/subagents-go", "until=30:file:~/mcp/subagents-one-reported",
+    "sleep=1", "dump=subagents-one-reported",
+    "run=touch ~/mcp/subagents-go-on", "until=30:file:~/mcp/subagents-finished", "sleep=1", "dump=subagents-done",
     "newtab", "until=prompt", "run=impulse tasks", "until=20:blocks:1",
 ]
 

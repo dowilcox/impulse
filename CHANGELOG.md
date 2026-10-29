@@ -7,7 +7,7 @@ All notable changes to Impulse are documented in this file.
 ### Subagents
 
 - Claude Code's subagents show in the toolbelt: **Subagents · 2 running** lists each one by what it was asked to do, its state and the last tool it used, with **Copy Report** once it finishes and **Open Worktree** for one working in a worktree of its own. Install the agent hooks again (Install Agent Hooks… shows them as out of date) to get them.
-- An agent whose turn ends with subagents still running in the background stays **Working** ("Waiting on 2 subagents") instead of showing **Finished** and notifying you before the work is done.
+- An agent whose turn ends with subagents still running in the background stays **Working** ("Waiting on 2 subagents") until it has taken the turn that reports the last of them, instead of showing **Finished** and notifying you before the work is done.
 - Claude Code is told when subagents share its checkout: as it starts a subagent beside others that edit files (with a suggestion to give them worktrees of their own), as that subagent starts, and when two of them, or the agent and one, edit the same file at the same time. Turn it off with `agent_hook_subagents`.
 - Worktrees Claude Code makes (`claude --worktree`, subagents with worktree isolation, in `.claude/worktrees/`) are listed as tasks, so you can open, review, finish and archive them like your own.
 

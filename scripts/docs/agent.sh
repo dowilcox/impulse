@@ -13,8 +13,10 @@
 #                    ~/mcp/finish.txt, then keeps working
 #   claude subagents starts two subagents in the background that both edit
 #                    src/photos.ts, ends its turn while they run, and lets
-#                    them finish once ~/mcp/subagents-go exists; Impulse's
-#                    answers go to ~/mcp/subagent-notes.txt
+#                    them finish once ~/mcp/subagents-go exists, both before
+#                    the first of the turns Claude Code takes to report them;
+#                    after that turn it waits for ~/mcp/subagents-go-on.
+#                    Impulse's answers go to ~/mcp/subagent-notes.txt
 #   claude mcp …     what Agent Integration runs to install Impulse's MCP
 #                    server: recorded in ~/mcp/<agent>-mcp.txt, one call a
 #                    line, as JSON
@@ -127,7 +129,7 @@ case "$mode" in
     start() { # id, description
       note PreToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"}}"
       note SubagentStart "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"cwd\":\"$PWD\"}"
-      note PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"},\"tool_response\":{\"agentId\":\"$1\"}}"
+      note PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"},\"tool_response\":{\"isAsync\":true,\"agentId\":\"$1\"}}"
       step "Agent" "$2 (running in the background)"
     }
     edit() { # id
@@ -142,9 +144,18 @@ case "$mode" in
     echo; echo "Both subagents are working; I'll check their results when they finish."
     touch "$HOME/mcp/subagents-ready"
     for _ in $(seq 300); do [ -e "$HOME/mcp/subagents-go" ] && break; sleep 0.2; done
+    # As Claude Code does it: both stop, then a turn reports each one.
     note SubagentStop "{$s,\"agent_id\":\"sub-a\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Added GET /trails/:id/photos\"}"
-    hook UserPromptSubmit "{$s}"
     note SubagentStop "{$s,\"agent_id\":\"sub-b\",\"agent_type\":\"general-purpose\",\"last_assistant_message\":\"Added test/photos.test.ts\"}"
+    reported() { # id
+      hook UserPromptSubmit "{$s,\"prompt\":\"<task-notification>\\n<task-id>$1</task-id>\\n<status>completed</status>\\n</task-notification>\"}"
+    }
+    reported sub-a
+    hook Stop "{$s,\"background_tasks\":[]}"
+    echo "The endpoint is in; the tests are next."
+    touch "$HOME/mcp/subagents-one-reported"
+    for _ in $(seq 300); do [ -e "$HOME/mcp/subagents-go-on" ] && break; sleep 0.2; done
+    reported sub-b
     hook Stop "{$s,\"background_tasks\":[]}"
     echo "Both finished: the endpoint and its tests are in."
     touch "$HOME/mcp/subagents-finished"

@@ -106,8 +106,12 @@ pub struct Hook {
     pub tool_subagent_type: Option<String>,
     pub tool_isolated: bool,
     pub launched: Option<String>,
+    /// The Agent call left its subagent running in the background.
+    pub launched_async: bool,
     /// A Stop: the subagents still running in the background, as JSON.
     pub background: Option<String>,
+    /// A UserPromptSubmit: the subagents whose finishing it reports.
+    pub notified: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -224,7 +228,9 @@ impl ControlRequest {
                 tool_subagent_type: arg("toolSubagentType"),
                 tool_isolated: has("toolIsolated"),
                 launched: arg("launched"),
+                launched_async: has("launchedAsync"),
                 background: arg("background"),
+                notified: arg("notified"),
             })),
             "tasks" => Command::Tasks(if let Some(task) = arg("wait") {
                 Tasks::Wait {

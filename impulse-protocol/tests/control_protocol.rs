@@ -166,6 +166,27 @@ fn subagent_hooks_say_which_subagent() {
     .unwrap();
     assert_eq!(launched.argument("launched"), Some("ae2e9"));
     assert_eq!(launched.argument("toolIsolated"), None);
+    assert_eq!(launched.argument("launchedAsync"), None);
+    let in_background = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"PostToolUse","tool_name":"Agent","tool_input":{"description":"write b"},"tool_response":{"isAsync":true,"status":"async_launched","agentId":"ae2e9"}}"#,
+    )
+    .unwrap();
+    assert_eq!(in_background.argument("launchedAsync"), Some("1"));
+    // The turn Claude Code takes when subagents in the background finish
+    // names them; one the user typed names none.
+    let notification = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"UserPromptSubmit","prompt":"<task-notification>\n<task-id>ae2e9</task-id>\n<status>completed</status>\n</task-notification>\n<task-notification>\n<task-id>a7cfe</task-id>\n</task-notification>"}"#,
+    )
+    .unwrap();
+    assert_eq!(notification.argument("notified"), Some("ae2e9,a7cfe"));
+    let typed = parse_stdin(
+        &["hook", "claude"],
+        r#"{"hook_event_name":"UserPromptSubmit","prompt":"what does <task-id>x</task-id> mean?"}"#,
+    )
+    .unwrap();
+    assert_eq!(typed.argument("notified"), None);
     // A shell command's description is no Agent call's.
     let bash = parse_stdin(
         &["hook", "claude"],

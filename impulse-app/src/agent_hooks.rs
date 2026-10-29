@@ -896,15 +896,10 @@ fn apply_hook(
         event,
         tool,
         args.get("message").map(String::as_str),
-    )
-    .map(|hook| match hook {
-        AgentHook::Stopped if background.as_ref().is_some_and(|b| !b.is_empty()) => {
-            AgentHook::AwaitingSubagents
-        }
-        hook => hook,
-    });
+    );
     let session = args.get("session").filter(|s| !s.is_empty()).cloned();
     terminal.update(cx, |t, cx| {
+        let still_running = background.as_ref().is_some_and(|b| !b.is_empty());
         let clash = (agent.as_deref() == Some("claude"))
             .then(|| {
                 follow_subagents(
@@ -917,6 +912,14 @@ fn apply_hook(
                 )
             })
             .flatten();
+        // Subagents still running, or finished but not yet reported to the
+        // agent, each bring it back for another turn.
+        let hook = hook.map(|hook| match hook {
+            AgentHook::Stopped if still_running || t.agent.subagents.awaiting_reports() > 0 => {
+                AgentHook::AwaitingSubagents
+            }
+            hook => hook,
+        });
         if let Some(hook) = hook {
             t.agent_hook(hook, agent.as_deref(), cx);
         }
@@ -946,7 +949,12 @@ fn follow_subagents(
     let calls_agent = tool.is_some_and(|t| hook_events::CLAUDE_SUBAGENT_TOOLS.contains(&t));
     match event {
         "SessionStart" => subagents.clear(),
-        "UserPromptSubmit" => subagents.new_turn(),
+        "UserPromptSubmit" => {
+            subagents.new_turn();
+            if let Some(ids) = arg("notified") {
+                subagents.reported(&ids.split(',').collect::<Vec<_>>());
+            }
+        }
         "Stop" => {
             subagents.new_turn();
             if let Some(running) = background {
@@ -956,7 +964,11 @@ fn follow_subagents(
         "PreToolUse" if calls_agent => subagents.launching(arg("toolDescription")),
         "PostToolUse" if calls_agent => {
             if let Some(id) = arg("launched") {
-                subagents.launched(id, arg("toolDescription"));
+                subagents.launched(
+                    id,
+                    arg("toolDescription"),
+                    args.contains_key("launchedAsync"),
+                );
             }
         }
         "SubagentStart" => {
