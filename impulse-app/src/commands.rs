@@ -424,6 +424,13 @@ const WORKBENCH: &[(&str, &str, &str, &[&str], &str)] = &[
         "folder-git-2",
     ),
     (
+        "scratch_workspace",
+        "Scratch Workspace",
+        "Workspaces",
+        &["scratch", "terminal", "home", "new"],
+        "square-terminal",
+    ),
+    (
         "open_workspace",
         "Open Folder as Workspace…",
         "Workspaces",

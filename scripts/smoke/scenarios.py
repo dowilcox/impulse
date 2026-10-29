@@ -962,6 +962,44 @@ def check_mcp(run) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Scratch: Scratch Workspace opens it (once), it closes beside others, Undo
+# brings it back, and it's kept as a window's last workspace.
+
+
+SCRATCH_ACTIONS = [
+    "until=prompt", "dump=start",
+    "scratch-workspace", "until=prompt", "dump=opened",
+    "scratch-workspace", "sleep=1", "dump=again",
+    "close-workspace", "sleep=1", "dump=closed",
+    "reopen", "sleep=1", "dump=reopened",
+    f"workspace={PROJECT}", "sleep=1", "close-workspace", "sleep=1", "dump=folder-closed",
+    "close-workspace", "sleep=1", "dump=kept",
+]
+
+
+def check_scratch(run) -> None:
+    def scratches(name: str) -> list[dict]:
+        return [w for w in run.dump(name)["workspaces"] if w["kind"] == "scratch"]
+
+    def scratch_tabs(name: str) -> int:
+        return sum(1 for tab in run.dump(name)["tabs"] if tab["workspace"] == "Scratch")
+
+    run.expect(scratches("start") == [], "the session starts without Scratch", scratches("start"))
+    opened = scratches("opened")
+    run.expect(len(opened) == 1 and opened[0]["active"], "Scratch Workspace adds Scratch and shows it", opened)
+    run.expect(scratch_tabs("opened") == 1, "with a terminal in it", scratch_tabs("opened"))
+    run.expect(len(scratches("again")) == 1 and scratch_tabs("again") == 1,
+               "a second time shows the same Scratch", run.dump("again")["workspaces"])
+    run.expect(scratches("closed") == [], "Scratch closes beside a folder", run.dump("closed")["workspaces"])
+    run.expect(len(scratches("reopened")) == 1 and scratch_tabs("reopened") == 1,
+               "Reopen brings Scratch back with its terminal", run.dump("reopened")["workspaces"])
+    left = run.dump("folder-closed")["workspaces"]
+    run.expect([w["kind"] for w in left] == ["scratch"], "closing the folder leaves Scratch", left)
+    kept = run.dump("kept")["workspaces"]
+    run.expect([w["kind"] for w in kept] == ["scratch"], "a window's last workspace stays", kept)
+
+
+# ---------------------------------------------------------------------------
 # Session restore: workspaces, tabs, a split, an editor and terminal output
 # saved by one launch come back in the next.
 
@@ -999,6 +1037,8 @@ SCENARIOS = [
     terminal_scenario("fish", "/opt/homebrew/bin/fish"),
     {"name": "images", "about": "a PNG by the kitty graphics protocol, placed and by placeholders, then cleared",
      "session": ONE, "setup": setup_images, "actions": IMAGE_ACTIONS, "check": check_images},
+    {"name": "scratch", "about": "Scratch Workspace, closing Scratch and bringing it back",
+     "session": ONE, "actions": SCRATCH_ACTIONS, "check": check_scratch},
     {"name": "agents", "about": "agent states from hooks, subagents, checkpoints, review last turn, impulse tasks",
      "session": ONE, "actions": AGENT_ACTIONS, "check": check_agents},
     {"name": "lsp", "about": "server install, the trust question, TypeScript features, restricted folders",

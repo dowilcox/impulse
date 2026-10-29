@@ -32,6 +32,7 @@ The defaults are the Mac's with ⌘ as Ctrl, and ⌥ is Alt. Keys this page give
 | Compose Message to Agent                | ⌘I       | Ctrl+Alt+I                                          |
 | Next Agent Needing You                  | ⇧⌘U      | Ctrl+Alt+U (Ctrl+Shift+U is the input method's)     |
 | Switch Workspace…                       | ⌃⌘O      | Ctrl+Alt+O                                          |
+| Scratch Workspace                       | ⌃⌘N      | Ctrl+Alt+Shift+N (Ctrl+Alt+N is New Task)           |
 | Switch Branch…                          | ⌃⌘B      | Ctrl+Alt+B                                          |
 | Show History of This File               | ⌃⇧⌘H     | Ctrl+Alt+Shift+H                                    |
 | Show Problems                           | ⌃⌘M      | Ctrl+Alt+M                                          |
@@ -75,6 +76,7 @@ In the editor, Ctrl+Shift+↩ inserts a line above (not Zoom Pane), and the edit
 | ⌃⇧⇥      | Show Previous Tab (in the current workspace)                         | Window      | `prev_tab`             |
 | ⌘1 … ⌘9  | Tab 1 … Tab 9: the first to ninth tab of the current workspace       | Window      | —                      |
 | ⌃⌘O      | Switch Workspace… (the palette in `w:` mode)                         | File        | `switch_workspace`     |
+| ⌃⌘N      | Scratch Workspace: go to Scratch, adding it back if it was closed    | File        | `scratch_workspace`    |
 | ⌘O       | Open…: a file in an editor tab, or a folder as a workspace           | File        | —                      |
 | ⌥⌘N      | New Task…                                                            | File        | `new_task`             |
 | Unbound  | New Task from Branch… (the palette in `task:` mode)                  | File        | `new_task_from_branch` |

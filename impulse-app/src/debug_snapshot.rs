@@ -510,6 +510,7 @@ fn command_for(action: &str) -> Option<&'static str> {
         "reopen" => "reopen_tab",
         "newtab" | "new-terminal" => "new_tab",
         "close-workspace" => "close_workspace",
+        "scratch-workspace" => "scratch_workspace",
         "finish-task" => "finish_task",
         "trust-prompt" => "trust_folder",
         "problems" => "show_problems",

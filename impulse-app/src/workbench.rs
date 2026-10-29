@@ -1263,18 +1263,38 @@ impl Workbench {
                 let Some(workspace) = self.restore_workspace(&saved, window, cx) else {
                     return;
                 };
+                // A closed Scratch's tabs join the one made since.
+                let scratch = self.workspaces.iter().position(|w| w.kind == Kind::Scratch);
+                let into = match (workspace.kind, scratch) {
+                    (Kind::Scratch, Some(scratch)) => {
+                        let existing = &mut self.workspaces[scratch];
+                        existing.active = existing.tabs.len();
+                        existing.tabs.extend(workspace.tabs);
+                        existing.active =
+                            existing.active.min(existing.tabs.len().saturating_sub(1));
+                        scratch
+                    }
+                    (Kind::Scratch, None) => {
+                        self.workspaces.push(workspace);
+                        self.workspaces.len() - 1
+                    }
+                    // Before Scratch, which stays last.
+                    (Kind::Folder, _) => {
+                        let at = position.min(scratch.unwrap_or(self.workspaces.len()));
+                        self.workspaces.insert(at, workspace);
+                        at
+                    }
+                };
                 // Tabs closed from it before go back to it.
+                let id = self.workspaces[into].id;
                 for (_, item) in &mut self.closed {
                     if let Closed::Tab { workspace: w, .. } = item {
                         if *w == old {
-                            *w = workspace.id;
+                            *w = id;
                         }
                     }
                 }
-                // Before Scratch, which stays last.
-                let at = position.min(self.workspaces.len().saturating_sub(1));
-                self.workspaces.insert(at, workspace);
-                self.activate_workspace(at, window, cx);
+                self.activate_workspace(into, window, cx);
             }
         }
     }
@@ -1565,6 +1585,7 @@ impl Workbench {
             "open_keybindings" => self.open_keybindings(window, cx),
             "show_problems" => self.show_problems(window, cx),
             "open_workspace" => self.choose_workspace_folder(window, cx),
+            "scratch_workspace" => self.show_scratch(window, cx),
             "close_workspace" => self.close_workspace(self.active, window, cx),
             "quick_terminal" => crate::quick_terminal::toggle(cx),
             "component_gallery" => crate::component_gallery::show(None, false, cx),
@@ -1747,9 +1768,9 @@ impl Workbench {
         self.activate_workspace(index, window, cx);
     }
 
-    /// Close a folder workspace and its tabs (Scratch can't be closed),
-    /// asking first about unsaved files and running commands as closing a
-    /// tab does.
+    /// Close a workspace and its tabs (Scratch only beside others: a
+    /// window always has a workspace), asking first about unsaved files and
+    /// running commands as closing a tab does.
     pub(crate) fn close_workspace(
         &mut self,
         index: usize,
@@ -1759,7 +1780,7 @@ impl Workbench {
         let Some(id) = self
             .workspaces
             .get(index)
-            .filter(|w| w.kind != Kind::Scratch)
+            .filter(|_| self.can_close_workspace(index))
             .map(|w| w.id)
         else {
             return;

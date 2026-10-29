@@ -394,7 +394,7 @@ impl Workbench {
                 action(|w, i, window, cx| w.present_archive_merged_tasks(i, window, cx)),
             );
         }
-        if workspace.kind == Kind::Folder {
+        if self.can_close_workspace(index) {
             push(
                 "Close Workspace",
                 true,

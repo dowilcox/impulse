@@ -27,7 +27,9 @@ Scratch is for terminals that don't belong to a project. Every window starts in 
 
 New terminals in Scratch start in your home folder, or in the folder set as **Scratch folder** (`scratch_directory`) in Settings ▸ General ▸ Workspaces.
 
-When a window has nothing but its first, untouched terminal in Scratch, opening a folder replaces it. Once you've used that terminal (or renamed Scratch), Scratch stays beside your folders. Closing the last folder workspace brings Scratch back.
+When a window has nothing but its first, untouched terminal in Scratch, opening a folder replaces it. Once you've used that terminal (or renamed Scratch), Scratch stays beside your folders until you close it like any workspace. Closing the last folder workspace brings Scratch back, since a window always keeps one workspace.
+
+Press ⌃⌘N (**File ▸ Scratch Workspace**, Ctrl+Alt+Shift+N on Linux) to go to Scratch from anywhere. If the window has none, because you closed it or a folder took its place, it's made again, last in the sidebar, with a fresh terminal. A window has one Scratch at most: pressing it again shows the same one.
 
 ### Switching workspaces
 
@@ -95,7 +97,7 @@ Right-click a row for its context menu:
 | **Finish Task…**              | For a task: land its work and archive it. See [Tasks](tasks.md#finish-a-task).                                          |
 | **Archive Task…**             | For a worktree: archive it. See [Tasks](tasks.md).                                                                      |
 | **Archive Merged Tasks…**     | Archive the repository's merged tasks together. See [Tasks](tasks.md#archive-merged-tasks).                             |
-| **Close Workspace**           | Close the workspace and all its tabs.                                                                                   |
+| **Close Workspace**           | Close the workspace and all its tabs. Scratch has it while the window has other workspaces.                             |
 
 ### Renaming a workspace
 

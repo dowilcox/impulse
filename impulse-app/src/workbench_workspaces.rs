@@ -54,6 +54,32 @@ impl Workbench {
         );
     }
 
+    /// Scratch Workspace: this window's Scratch, made again (last; showing
+    /// it opens a terminal) once it was closed or a folder took its place.
+    pub(crate) fn show_scratch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let index = match self.workspaces.iter().position(|w| w.kind == Kind::Scratch) {
+            Some(index) => index,
+            None => {
+                let id = self.next_id();
+                self.workspaces.push(crate::workspace::Workspace::new(
+                    id,
+                    Kind::Scratch,
+                    crate::workspace::home(),
+                ));
+                self.workspaces.len() - 1
+            }
+        };
+        self.activate_workspace(index, window, cx);
+    }
+
+    /// Folders close (the last one leaves Scratch in its place), and Scratch
+    /// does beside others; Scratch Workspace brings it back.
+    pub(crate) fn can_close_workspace(&self, index: usize) -> bool {
+        self.workspaces
+            .get(index)
+            .is_some_and(|w| w.kind == Kind::Folder || self.workspaces.len() > 1)
+    }
+
     /// Rename Workspace: an empty name goes back to the folder's.
     pub(crate) fn rename_workspace(
         &mut self,

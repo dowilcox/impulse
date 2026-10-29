@@ -303,6 +303,7 @@ impulse-app/              the app on GPUI + GPUI Kit for
                           workbench_workspaces.rs (recent folders in
                           recent-workspaces.json via
                           impulse_kit::recent_workspaces, Rename Workspace,
+                          Scratch Workspace: Workbench::show_scratch,
                           Workbench::text_prompt for one-field dialogs),
                           agents (agent_tracker.rs: AgentTracker in each
                           TerminalView, found from the foreground process by

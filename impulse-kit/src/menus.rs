@@ -125,6 +125,7 @@ pub fn main_menu(platform: Platform) -> Vec<Menu> {
         command("Next Agent Needing You", "next_agent"),
         command("Review Last Agent Turn", "review_agent_turn"),
         command("Switch Workspace…", "switch_workspace"),
+        command("Scratch Workspace", "scratch_workspace"),
         Separator,
         command("Close Tab", "close_tab"),
         command("Reopen Closed Tab", "reopen_tab"),

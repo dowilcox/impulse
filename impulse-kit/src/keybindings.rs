@@ -149,6 +149,12 @@ pub const BUILTINS: &[Builtin] = &[
         "Navigation",
         "Ctrl+Cmd+O",
     ),
+    b(
+        "scratch_workspace",
+        "Scratch Workspace",
+        "Navigation",
+        "Ctrl+Cmd+N",
+    ),
     b("switch_branch", "Switch Branch…", "Git", "Ctrl+Cmd+B"),
     b("git_fetch", "Fetch", "Git", ""),
     b("git_pull", "Pull", "Git", ""),
@@ -268,6 +274,8 @@ const LINUX: &[(&str, &str)] = &[
     ("next_agent", "Ctrl+Alt+U"),
     ("equalize_panes", "Ctrl+Alt+="),
     ("switch_workspace", "Ctrl+Alt+O"),
+    // Ctrl+N is New File, Ctrl+Alt+N New Task.
+    ("scratch_workspace", "Ctrl+Alt+Shift+N"),
     ("switch_branch", "Ctrl+Alt+B"),
     ("file_history", "Ctrl+Alt+Shift+H"),
     ("show_problems", "Ctrl+Alt+M"),

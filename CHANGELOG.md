@@ -13,6 +13,7 @@ All notable changes to Impulse are documented in this file.
 
 ### Improvements
 
+- **Scratch Workspace** (⌃⌘N, Ctrl+Alt+Shift+N on Linux, in the File menu and the command palette) takes you to the window's Scratch workspace, and brings it back with a fresh terminal when it was closed or a folder took its place. Scratch can now be closed like any workspace while the window has others.
 - Switch Workspace (`w:` in the command palette) shows tasks as tasks: each one under its repository as in the sidebar, with a branch icon, "task of" its repository instead of the worktree's path, and `merged` once its branch is; typing a repository's name finds its tasks too.
 
 ### Fixes
