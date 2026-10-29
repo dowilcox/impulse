@@ -452,6 +452,8 @@ def check_agents(run) -> None:
     for text, what in (
         ("shares the checkout with 1 other subagent still running", "the agent is told as it starts a second one"),
         ("other subagents are working in this same checkout", "the second subagent is told as it starts"),
+        ('at the same time (\\"Write the photo tests\\")',
+         "the first subagent is told of the second, started in the same message"),
         ('also edited by another subagent (\\"Write the photos endpoint\\")',
          "the second subagent is told the first changed the file"),
     ):

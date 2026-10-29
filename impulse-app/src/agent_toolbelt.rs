@@ -415,10 +415,10 @@ mod tests {
         assert_eq!(subagents_label(0, 5), "Subagents · 5 done");
         let mut list = impulse_kit::agents::subagents::Subagents::default();
         let now = Instant::now();
-        list.launching(Some("Fix the parser"));
+        list.launching(Some("Fix the parser"), None, false);
         list.started("a", "general-purpose", None, now);
         list.used_tool("a", "Edit");
-        list.launching(None);
+        list.launching(None, Some("Explore"), false);
         list.started("b", "Explore", None, now);
         list.stopped("b", Some("Found it"), now);
         let lines: Vec<String> = list.all().iter().map(subagent_line).collect();

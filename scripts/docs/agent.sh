@@ -133,17 +133,27 @@ case "$mode" in
     file="$PWD/src/photos.ts"
     hook UserPromptSubmit "{$s}"
     prompt_line "Add the photos endpoint and its tests, in parallel."
-    start() { # id, description
-      note PreToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"}}"
+    # As Claude Code makes two Agent calls in one message: both calls'
+    # PreToolUse, then both subagents start, then both calls return.
+    call() { # description
+      note PreToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$1\"}}"
+    }
+    start() { # id
       note SubagentStart "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"cwd\":\"$PWD\"}"
+    }
+    launched() { # id, description
       note PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"},\"tool_response\":{\"isAsync\":true,\"agentId\":\"$1\"}}"
       step "Agent" "$2 (running in the background)"
     }
     edit() { # id
       note PostToolUse "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$file\"},\"cwd\":\"$PWD\"}"
     }
-    start sub-a "Write the photos endpoint"
-    start sub-b "Write the photo tests"
+    call "Write the photos endpoint"
+    call "Write the photo tests"
+    start sub-a
+    start sub-b
+    launched sub-a "Write the photos endpoint"
+    launched sub-b "Write the photo tests"
     edit sub-a
     edit sub-b
     running='{"id":"sub-a","type":"subagent","status":"running","description":"Write the photos endpoint","agent_type":"general-purpose"},{"id":"sub-b","type":"subagent","status":"running","description":"Write the photo tests","agent_type":"general-purpose"}'

@@ -118,13 +118,31 @@ impl Clash {
 /// Who edited a file: a subagent, by its id, or the agent itself (`None`).
 type Editor = Option<String>;
 
+/// An Agent call whose subagent hasn't started yet.
+#[derive(Clone, Debug)]
+struct Call {
+    description: Option<String>,
+    agent_type: String,
+    /// Its subagent will work in the agent's checkout: no folder of its
+    /// own, and a type that edits.
+    shares_checkout: bool,
+}
+
+impl Call {
+    fn label(&self) -> String {
+        self.description
+            .clone()
+            .unwrap_or_else(|| self.agent_type.clone())
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Subagents {
     /// The latest batch: the ones running and the ones that finished since
     /// none were.
     list: Vec<Subagent>,
-    /// The descriptions of Agent calls whose subagent hasn't started yet.
-    pending: VecDeque<Option<String>>,
+    /// Agent calls whose subagent hasn't started yet.
+    pending: VecDeque<Call>,
     /// Calls that returned before their subagent started (its worktree
     /// being made): its description and whether it runs in the
     /// background, by its id.
@@ -187,10 +205,21 @@ impl Subagents {
         self.list.iter().filter(|s| s.awaits_report()).count()
     }
 
-    /// The agent is about to make an Agent call (PreToolUse).
-    pub fn launching(&mut self, description: Option<&str>) {
-        self.pending
-            .push_back(description.map(str::to_string).filter(|d| !d.is_empty()));
+    /// The agent is about to make an Agent call (PreToolUse), for a
+    /// subagent of `agent_type` (`None`: general-purpose) that gets a
+    /// folder of its own when `isolated`.
+    pub fn launching(
+        &mut self,
+        description: Option<&str>,
+        agent_type: Option<&str>,
+        isolated: bool,
+    ) {
+        let agent_type = agent_type.unwrap_or("general-purpose").to_string();
+        self.pending.push_back(Call {
+            description: description.map(str::to_string).filter(|d| !d.is_empty()),
+            shares_checkout: !isolated && !is_read_only(&agent_type),
+            agent_type,
+        });
     }
 
     /// A subagent started (SubagentStart), in `cwd`. One starting with
@@ -204,7 +233,7 @@ impl Subagents {
         }
         let (description, background) = match self.launched_early.remove(id) {
             Some(early) => early,
-            None => (self.pending.pop_front().flatten(), false),
+            None => (self.pending.pop_front().and_then(|c| c.description), false),
         };
         if let Some(existing) = self.find_mut(id) {
             // Resumed (SendMessage to a subagent that finished).
@@ -240,7 +269,11 @@ impl Subagents {
             return;
         }
         // It hasn't started yet: its description is no other's to take.
-        if let Some(at) = self.pending.iter().position(|d| *d == description) {
+        if let Some(at) = self
+            .pending
+            .iter()
+            .position(|c| c.description == description)
+        {
             self.pending.remove(at);
         }
         self.launched_early
@@ -309,22 +342,35 @@ impl Subagents {
     }
 
     /// The running subagents, other than `excluding`, that may change the
-    /// agent's checkout.
-    fn shared_checkout_writers(&self, excluding: Option<&str>) -> Vec<&Subagent> {
+    /// agent's checkout, and the Agent calls for more of them whose
+    /// subagents haven't started yet, but the newest `skip_calls`: calls
+    /// made together reach their PreToolUse before any of their subagents
+    /// starts. By label.
+    fn shared_checkout_writers(&self, excluding: Option<&str>, skip_calls: usize) -> Vec<String> {
+        let calls = self.pending.len().saturating_sub(skip_calls);
         self.running()
             .filter(|s| s.edits_shared_checkout() && Some(s.id.as_str()) != excluding)
+            .map(Subagent::label)
+            .chain(
+                self.pending
+                    .iter()
+                    .take(calls)
+                    .filter(|c| c.shares_checkout)
+                    .map(Call::label),
+            )
             .collect()
     }
 
     /// What to tell the agent as it makes an Agent call (PreToolUse) that
     /// gives the subagent no folder of its own (`isolated`: its own
-    /// worktree or `cwd`), while others that edit run in the same checkout.
-    /// Once per batch.
+    /// worktree or `cwd`), while others that edit run in the same checkout
+    /// or are being started beside it. The call is already the newest
+    /// pending one (`launching`). Once per batch.
     pub fn launch_note(&mut self, agent_type: Option<&str>, isolated: bool) -> Option<String> {
         if isolated || self.told || is_read_only(agent_type.unwrap_or("general-purpose")) {
             return None;
         }
-        let others = self.shared_checkout_writers(None);
+        let others = self.shared_checkout_writers(None, 1);
         if others.is_empty() {
             return None;
         }
@@ -344,7 +390,7 @@ impl Subagents {
         if !self.find(id)?.edits_shared_checkout() {
             return None;
         }
-        let others = self.shared_checkout_writers(Some(id));
+        let others = self.shared_checkout_writers(Some(id), 0);
         if others.is_empty() {
             return None;
         }
@@ -393,10 +439,10 @@ impl Subagents {
 }
 
 /// `"write b", "write c"`.
-fn quoted_list(subagents: &[&Subagent]) -> String {
-    subagents
+fn quoted_list(labels: &[String]) -> String {
+    labels
         .iter()
-        .map(|s| format!("\"{}\"", s.label()))
+        .map(|label| format!("\"{label}\""))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -414,9 +460,9 @@ mod tests {
     /// message: each call's PreToolUse, then its SubagentStart.
     fn two(start: Instant) -> Subagents {
         let mut list = Subagents::default();
-        list.launching(Some("write b"));
+        list.launching(Some("write b"), None, false);
         list.started("b", "general-purpose", Some("/r/app"), start);
-        list.launching(Some("write c"));
+        list.launching(Some("write c"), None, false);
         list.started("c", "general-purpose", Some("/r/app"), start);
         list
     }
@@ -425,8 +471,8 @@ mod tests {
     fn calls_and_starts_pair_up_in_order() {
         let start = Instant::now();
         let mut list = Subagents::default();
-        list.launching(Some("look around"));
-        list.launching(Some("fix it"));
+        list.launching(Some("look around"), Some("Explore"), false);
+        list.launching(Some("fix it"), None, false);
         list.started("x", "Explore", Some("/r/app"), start);
         list.started(
             "y",
@@ -444,6 +490,37 @@ mod tests {
         list.launched("y", Some("fix the parser"), false);
         assert_eq!(list.all()[1].label(), "fix the parser");
         assert_eq!(list.summary().as_deref(), Some("2 subagents running"));
+    }
+
+    #[test]
+    fn calls_made_together_count_before_their_subagents_start() {
+        let start = Instant::now();
+        let mut list = Subagents::default();
+        // Claude Code runs both calls' PreToolUse before either starts.
+        list.launching(Some("alpha"), None, false);
+        assert_eq!(list.launch_note(None, false), None);
+        list.launching(Some("look"), Some("Explore"), false);
+        list.launching(Some("own tree"), None, true);
+        list.launching(Some("beta"), None, false);
+        let note = list.launch_note(None, false).unwrap();
+        assert!(note.starts_with(
+            "Impulse: this subagent shares the checkout with 1 other subagent still running (\"alpha\")."
+        ));
+        list.started("a", "general-purpose", Some("/r/app"), start);
+        assert_eq!(
+            list.start_note("a").as_deref(),
+            Some("Impulse: other subagents are working in this same checkout at the same time (\"beta\"). Change only the files your task needs, and read a file again right before editing it: another agent may have changed it.")
+        );
+        list.started("l", "Explore", Some("/r/app"), start);
+        list.started(
+            "w",
+            "general-purpose",
+            Some("/r/app/.claude/worktrees/w"),
+            start,
+        );
+        list.started("b", "general-purpose", Some("/r/app"), start);
+        assert!(list.start_note("b").unwrap().contains("(\"alpha\")"));
+        assert_eq!(list.all()[3].label(), "beta");
     }
 
     #[test]
@@ -477,7 +554,7 @@ mod tests {
         list.stopped("b", Some("  done\n"), at(start, 5));
         assert_eq!(list.all()[0].result.as_deref(), Some("done"));
         // Another while one runs joins the batch...
-        list.launching(None);
+        list.launching(None, None, false);
         list.started("d", "general-purpose", None, at(start, 6));
         assert_eq!(list.all().len(), 3);
         assert_eq!(list.all()[2].label(), "general-purpose");
@@ -485,7 +562,7 @@ mod tests {
         list.stopped("d", None, at(start, 7));
         assert_eq!(list.summary(), None);
         // ...one after all finished starts over.
-        list.launching(Some("next"));
+        list.launching(Some("next"), None, false);
         list.started("e", "general-purpose", None, at(start, 9));
         assert_eq!(list.all().len(), 1);
     }
@@ -496,9 +573,9 @@ mod tests {
         let mut list = Subagents::default();
         // The worktree one returns first, and the next call's subagent
         // starts before it does.
-        list.launching(Some("own tree"));
+        list.launching(Some("own tree"), None, false);
         list.launched("w", Some("own tree"), true);
-        list.launching(Some("shared"));
+        list.launching(Some("shared"), None, false);
         list.started("s", "general-purpose", Some("/r/app"), start);
         list.started(
             "w",
@@ -527,7 +604,7 @@ mod tests {
         list.stopped("c", None, at(start, 3));
         assert_eq!(list.awaiting_reports(), 2);
         // A subagent started before they're reported joins their batch.
-        list.launching(Some("more"));
+        list.launching(Some("more"), Some("Explore"), false);
         list.started("d", "Explore", None, at(start, 4));
         assert_eq!(list.all().len(), 3);
         list.reported(&["b"]);
@@ -597,7 +674,7 @@ mod tests {
         let start = Instant::now();
         let mut list = Subagents::default();
         list.edited(None, "/r/app/x.rs", start);
-        list.launching(Some("write b"));
+        list.launching(Some("write b"), None, false);
         list.started("b", "general-purpose", None, at(start, 2));
         // The batch starts afresh, and the file was changed before b began.
         assert_eq!(list.edited(Some("b"), "/r/app/x.rs", at(start, 3)), None);
@@ -607,11 +684,11 @@ mod tests {
     fn launching_beside_editors_says_so_once() {
         let start = Instant::now();
         let mut list = Subagents::default();
-        list.launching(Some("look"));
+        list.launching(Some("look"), Some("Explore"), false);
         list.started("x", "Explore", None, start);
         // Readers don't count.
         assert_eq!(list.launch_note(None, false), None);
-        list.launching(Some("write b"));
+        list.launching(Some("write b"), None, false);
         list.started("b", "general-purpose", None, start);
         assert_eq!(list.launch_note(Some("Explore"), false), None);
         assert_eq!(list.launch_note(None, true), None);
@@ -627,7 +704,7 @@ mod tests {
         let start = Instant::now();
         let mut list = two(start);
         assert_eq!(list.start_note("b").as_deref(), Some("Impulse: other subagents are working in this same checkout at the same time (\"write c\"). Change only the files your task needs, and read a file again right before editing it: another agent may have changed it."));
-        list.launching(Some("own tree"));
+        list.launching(Some("own tree"), None, false);
         list.started(
             "w",
             "general-purpose",

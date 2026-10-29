@@ -964,7 +964,11 @@ fn follow_subagents(
                 subagents.still_running(&running, now);
             }
         }
-        "PreToolUse" if calls_agent => subagents.launching(arg("toolDescription")),
+        "PreToolUse" if calls_agent => subagents.launching(
+            arg("toolDescription"),
+            arg("toolSubagentType"),
+            args.contains_key("toolIsolated"),
+        ),
         "PostToolUse" if calls_agent => {
             if let Some(id) = arg("launched") {
                 subagents.launched(
