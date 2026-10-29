@@ -151,10 +151,11 @@ pub struct Workbench {
     pub(crate) sidebar_drag: Option<crate::workbench_chrome::SidebarDrag>,
     /// The Workspaces section's height once its handle moved (`None`: fit
     /// its rows up to 280), saved with the session; the drag in progress
-    /// (height and pointer at its start); the height last laid out.
+    /// (height and pointer at its start); its scroll, whose bounds are the
+    /// height last laid out.
     pub(crate) workspaces_height: Option<f32>,
     pub(crate) workspaces_drag: Option<(f32, f32)>,
-    pub(crate) workspaces_measured: Rc<std::cell::Cell<f32>>,
+    pub(crate) workspaces_scroll: gpui_kit::ScrollHandle,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
     /// The size of the area a tab's panes share, as last drawn.
     pub(crate) content_size: Rc<std::cell::Cell<Option<gpui_kit::Size<gpui_kit::Pixels>>>>,
@@ -312,7 +313,7 @@ impl Workbench {
             sidebar_drag: None,
             workspaces_height: None,
             workspaces_drag: None,
-            workspaces_measured: Default::default(),
+            workspaces_scroll: gpui_kit::ScrollHandle::new(),
             split_bounds: Default::default(),
             content_size: Default::default(),
             pending_edits: Vec::new(),

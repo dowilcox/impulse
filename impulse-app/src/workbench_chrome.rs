@@ -2040,7 +2040,6 @@ impl Workbench {
             };
         // Swift's WorkspacesSection: rows 1 pt apart, 6 pt above and below,
         // scrolling past 280 pt unless its handle set a height.
-        let measured = self.workspaces_measured.clone();
         let mut workspaces = div()
             .id("workspaces")
             .relative()
@@ -2052,16 +2051,9 @@ impl Workbench {
                 None => d.max_h(px(280.)),
             })
             .overflow_y_scroll()
+            .track_scroll(&self.workspaces_scroll)
             .py(px(6.))
-            .gap(px(1.))
-            .child(
-                gpui_kit::canvas(
-                    move |bounds, _, _| measured.set(f32::from(bounds.size.height)),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            );
+            .gap(px(1.));
         // A repository's workspaces (its tasks) under its name.
         for (name, group) in self.workspace_groups() {
             let indented = name.is_some();
@@ -2710,8 +2702,9 @@ impl Workbench {
                                 w.workspaces_height = None;
                                 w.workspaces_drag = None;
                             } else {
-                                let height =
-                                    w.workspaces_height.unwrap_or(w.workspaces_measured.get());
+                                let height = w.workspaces_height.unwrap_or_else(|| {
+                                    f32::from(w.workspaces_scroll.bounds().size.height)
+                                });
                                 w.workspaces_drag = Some((height, f32::from(event.position.y)));
                             }
                             cx.notify();
