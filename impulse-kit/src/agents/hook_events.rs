@@ -60,6 +60,9 @@ pub enum Reply {
     RanShell,
     /// A question before a command that merges a branch a task is still on.
     BeforeShell,
+    /// An edit stopped, once, when it would overwrite a file another agent
+    /// in the same checkout changed meanwhile.
+    BeforeEdit,
     /// A note when an Agent call starts a subagent in a checkout others
     /// are editing.
     BeforeSubagent,
@@ -87,6 +90,9 @@ pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Rep
         }
         ("claude", "PostToolUse", Some("Bash")) => Some(Reply::RanShell),
         ("claude", "PreToolUse", Some("Bash")) => Some(Reply::BeforeShell),
+        ("claude", "PreToolUse", Some(tool)) if CLAUDE_EDIT_TOOLS.contains(&tool) => {
+            Some(Reply::BeforeEdit)
+        }
         ("claude", "PreToolUse", Some(tool)) if CLAUDE_SUBAGENT_TOOLS.contains(&tool) => {
             Some(Reply::BeforeSubagent)
         }
@@ -118,6 +124,10 @@ mod tests {
         assert_eq!(
             reply(Some("claude"), "PreToolUse", Some("Bash")),
             Some(Reply::BeforeShell)
+        );
+        assert_eq!(
+            reply(Some("claude"), "PreToolUse", Some("Write")),
+            Some(Reply::BeforeEdit)
         );
         assert_eq!(reply(Some("claude"), "PostToolUse", Some("Read")), None);
         assert_eq!(

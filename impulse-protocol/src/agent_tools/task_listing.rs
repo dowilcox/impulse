@@ -248,6 +248,18 @@ pub mod hook_reply {
         }))
     }
 
+    /// Stop a tool call before it runs (`PreToolUse`), telling the agent
+    /// why: it may try again.
+    pub fn deny(reason: &str) -> String {
+        encode(json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }))
+    }
+
     /// For the opencode plugin: text for the agent's context (a session's
     /// summary goes beside opencode's instructions, a note after the tool's
     /// output).

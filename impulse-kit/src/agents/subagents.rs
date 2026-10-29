@@ -2,7 +2,8 @@
 //! each one's type, what it was asked to do, the worktree it works in when
 //! it has its own, whether it's still running and what it reported. And
 //! who last edited each file, so agents changing one file in one checkout
-//! at the same time can be told.
+//! at the same time can be told: before the edit (PreToolUse), which stops
+//! it once so the agent reads the file again, or after it.
 //!
 //! The hooks arrive in this order for each Agent call: PreToolUse (with
 //! the call's description), SubagentStart (with the subagent's id), and
@@ -113,6 +114,22 @@ impl Clash {
             ),
         }
     }
+
+    /// Why the edit of `file` about to be made was stopped (PreToolUse).
+    pub fn warning(&self, file: &str) -> String {
+        match self {
+            Clash::WithRunningSubagent(other) => format!(
+                "Impulse: stopped this edit of {file}: your subagent \"{other}\" also edited it and is still running in this checkout, and edits made at the same time overwrite each other. Let it finish first, or read the file again and retry if this edit can't wait."
+            ),
+            Clash::WhileRunning(other) => format!(
+                "Impulse: stopped this edit of {file}: {} changed it while you were working, in this same checkout, so your edit could overwrite theirs. Read the file again, make your edit against what it holds now, and mention it when you report back.",
+                match other {
+                    Some(other) => format!("another subagent (\"{other}\")"),
+                    None => "the agent that started you".into(),
+                }
+            ),
+        }
+    }
 }
 
 /// Who edited a file: a subagent, by its id, or the agent itself (`None`).
@@ -149,6 +166,9 @@ pub struct Subagents {
     launched_early: HashMap<String, (Option<String>, bool)>,
     /// Each file's last edit in this batch (absolute paths).
     edits: HashMap<String, (Editor, Instant)>,
+    /// Edits stopped before they were made, by file and editor: the time
+    /// of the other's edit each was stopped over. The retry goes through.
+    warned: HashMap<(String, Editor), Instant>,
     /// This batch's agent was told about sharing its checkout.
     told: bool,
 }
@@ -229,6 +249,7 @@ impl Subagents {
         if self.running_count() == 0 && self.awaiting_reports() == 0 && self.find(id).is_none() {
             self.list.clear();
             self.edits.clear();
+            self.warned.clear();
             self.told = false;
         }
         let (description, background) = match self.launched_early.remove(id) {
@@ -400,15 +421,39 @@ impl Subagents {
         ))
     }
 
+    /// `editor` (a subagent's id, or `None` for the agent) is about to edit
+    /// `file` (an absolute path, PreToolUse): the clash to stop it for,
+    /// once for each edit of someone else's.
+    pub fn before_edit(&mut self, editor: Option<&str>, file: &str) -> Option<Clash> {
+        let editor: Editor = editor.map(str::to_string);
+        let (other, at) = self.edits.get(file)?.clone();
+        let key = (file.to_string(), editor.clone());
+        if self.warned.get(&key) == Some(&at) {
+            return None;
+        }
+        let clash = self.clash(&editor, other, at)?;
+        self.warned.insert(key, at);
+        Some(clash)
+    }
+
     /// `editor` (a subagent's id, or `None` for the agent) edited `file`
-    /// (an absolute path); the clash it makes, if any.
+    /// (an absolute path); the clash it makes, if any. None when the edit
+    /// was stopped over it beforehand: the agent knows.
     pub fn edited(&mut self, editor: Option<&str>, file: &str, now: Instant) -> Option<Clash> {
         let editor: Editor = editor.map(str::to_string);
         let (other, at) = self.edits.insert(file.to_string(), (editor.clone(), now))?;
-        if other == editor {
+        if self.warned.get(&(file.to_string(), editor.clone())) == Some(&at) {
             return None;
         }
-        match &editor {
+        self.clash(&editor, other, at)
+    }
+
+    /// Whether `editor` changing a file `other` last changed at `at` clashes.
+    fn clash(&self, editor: &Editor, other: Editor, at: Instant) -> Option<Clash> {
+        if other == *editor {
+            return None;
+        }
+        match editor {
             None => {
                 let subagent = self.find(other.as_deref()?)?;
                 (subagent.is_running() && subagent.worktree.is_none())
@@ -681,6 +726,36 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_over_anothers_is_stopped_once() {
+        let start = Instant::now();
+        let mut list = two(start);
+        // Nobody edited it yet, and b's own edits are b's.
+        assert_eq!(list.before_edit(Some("b"), "/r/app/x.rs"), None);
+        list.edited(Some("b"), "/r/app/x.rs", at(start, 1));
+        assert_eq!(list.before_edit(Some("b"), "/r/app/x.rs"), None);
+        assert_eq!(
+            list.before_edit(Some("c"), "/r/app/x.rs"),
+            Some(Clash::WhileRunning(Some("write b".into())))
+        );
+        // The retry, after reading the file again, goes through, and isn't
+        // told about it again once made.
+        assert_eq!(list.before_edit(Some("c"), "/r/app/x.rs"), None);
+        assert_eq!(list.edited(Some("c"), "/r/app/x.rs", at(start, 2)), None);
+        // A new edit of b's stops c again.
+        list.edited(Some("b"), "/r/app/x.rs", at(start, 3));
+        assert_eq!(
+            list.before_edit(Some("c"), "/r/app/x.rs"),
+            Some(Clash::WhileRunning(Some("write b".into())))
+        );
+        // The agent itself, over a subagent still running.
+        assert_eq!(
+            list.before_edit(None, "/r/app/x.rs"),
+            Some(Clash::WithRunningSubagent("write b".into()))
+        );
+        assert_eq!(list.before_edit(None, "/r/app/x.rs"), None);
+    }
+
+    #[test]
     fn launching_beside_editors_says_so_once() {
         let start = Instant::now();
         let mut list = Subagents::default();
@@ -723,5 +798,8 @@ mod tests {
         assert!(Clash::WithRunningSubagent("write c".into())
             .note("x.rs")
             .starts_with("Impulse: your subagent \"write c\" also edited x.rs"));
+        assert!(Clash::WhileRunning(Some("write b".into()))
+            .warning("x.rs")
+            .starts_with("Impulse: stopped this edit of x.rs: another subagent (\"write b\") changed it while you were working"));
     }
 }

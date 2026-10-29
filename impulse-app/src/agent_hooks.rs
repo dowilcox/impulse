@@ -547,7 +547,8 @@ impl Workbench {
 
     /// What Impulse answers a Claude Code hook, or an event from its
     /// opencode plugin, with (nothing: an empty ok). `clash`: the note for
-    /// an edit made beside a subagent editing the same file.
+    /// an edit made beside a subagent editing the same file, or for one
+    /// about to be, why it's stopped.
     fn agent_hook_reply(
         &mut self,
         reply: Reply,
@@ -604,6 +605,10 @@ impl Workbench {
                     .get("subagent")
                     .and_then(|id| terminal.read(cx).agent.subagents.start_note(id));
                 reply_with(note.map(|n| hook_reply::context(&n, "SubagentStart")));
+            }
+            Reply::BeforeEdit => {
+                let clash = clash.filter(|_| settings.agent_hook_subagents);
+                reply_with(clash.map(|n| hook_reply::deny(&n)));
             }
             Reply::EditedFile if !settings.agent_hook_shared_files => {
                 let clash = clash.filter(|_| settings.agent_hook_subagents);
@@ -883,7 +888,7 @@ fn background_subagents(args: &BTreeMap<String, String>) -> Option<Vec<(String, 
 
 /// What a hook says about the agent's state and its subagents. Returns the
 /// note for an edit made at the same time as another agent's edit of the
-/// same file in the checkout.
+/// same file in the checkout, or, before such an edit, why it's stopped.
 fn apply_hook(
     request: &ControlRequest,
     terminal: &Entity<TerminalView>,
@@ -936,8 +941,9 @@ fn apply_hook(
 }
 
 /// Claude Code's subagents, from one of its hook events; the note for a
-/// clashing edit. `pane`: the terminal's folder, which files are named
-/// relative to when the hook doesn't say its own.
+/// clashing edit, or before one, why it's stopped. `pane`: the terminal's
+/// folder, which files are named relative to when the hook doesn't say its
+/// own.
 fn follow_subagents(
     args: &BTreeMap<String, String>,
     event: &str,
@@ -996,17 +1002,19 @@ fn follow_subagents(
     if let (Some(id), Some(cwd)) = (subagent, arg("hookCwd")) {
         subagents.worked_in(id, cwd, pane);
     }
-    if event != "PostToolUse" || !tool.is_some_and(|t| hook_events::CLAUDE_EDIT_TOOLS.contains(&t))
-    {
+    if !tool.is_some_and(|t| hook_events::CLAUDE_EDIT_TOOLS.contains(&t)) {
         return None;
     }
     let file = arg("toolFile")?;
-    let clash = subagents.edited(subagent, file, now)?;
     let folder = arg("hookCwd").unwrap_or(pane);
     let relative = file
         .strip_prefix(&format!("{}/", folder.trim_end_matches('/')))
         .unwrap_or(file);
-    Some(clash.note(relative))
+    match event {
+        "PreToolUse" => Some(subagents.before_edit(subagent, file)?.warning(relative)),
+        "PostToolUse" => Some(subagents.edited(subagent, file, now)?.note(relative)),
+        _ => None,
+    }
 }
 
 /// A task branch a command would merge.

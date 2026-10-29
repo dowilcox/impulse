@@ -454,10 +454,13 @@ def check_agents(run) -> None:
         ("other subagents are working in this same checkout", "the second subagent is told as it starts"),
         ('at the same time (\\"Write the photo tests\\")',
          "the first subagent is told of the second, started in the same message"),
-        ('also edited by another subagent (\\"Write the photos endpoint\\")',
-         "the second subagent is told the first changed the file"),
+        ('"permissionDecision":"deny","permissionDecisionReason":"Impulse: stopped this edit of src/photos.ts: '
+         'another subagent (\\"Write the photos endpoint\\")',
+         "the second subagent's edit is stopped once, as the first changed the file"),
     ):
         run.expect(text in notes, what, notes[-600:])
+    run.expect(notes.count("stopped this edit") == 1 and "also edited by" not in notes,
+               "the retry goes through, and isn't told about the first's edit again", notes[-600:])
     tasks = [t for t in surfaces(run.dump("final"), "terminal")
              if any((b["command"] or "").startswith("impulse tasks") for b in t["blocks"])]
     if run.expect(tasks, "impulse tasks ran"):

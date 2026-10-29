@@ -10,7 +10,8 @@ use serde_json::{json, Map, Value};
 
 /// The Claude Code events Impulse listens to, each with the tools a tool
 /// event is limited to: before shell commands (a merge of a branch still
-/// being worked on asks first) and after edits and shell commands (notes
+/// being worked on asks first), before edits (one that would overwrite a
+/// subagent's is stopped once) and after edits and shell commands (notes
 /// about files other tasks change, and dependencies that changed), and
 /// around subagents (Agent, `Task` in older versions: which ones run, and
 /// notes when they share a checkout). StopFailure ends a turn an API error
@@ -21,7 +22,10 @@ pub const CLAUDE_HOOKS: [(&str, Option<&str>); 9] = [
     ("Notification", None),
     ("Stop", None),
     ("StopFailure", None),
-    ("PreToolUse", Some("Bash|Agent|Task")),
+    (
+        "PreToolUse",
+        Some("Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"),
+    ),
     (
         "PostToolUse",
         Some("Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"),
@@ -502,7 +506,10 @@ mod tests {
         let pre_tool_use = hooks["PreToolUse"].as_array().unwrap();
         assert_eq!(pre_tool_use.len(), 2);
         assert_eq!(pre_tool_use[0]["hooks"][0]["command"], "audit");
-        assert_eq!(pre_tool_use[1]["matcher"], "Bash|Agent|Task");
+        assert_eq!(
+            pre_tool_use[1]["matcher"],
+            "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"
+        );
         assert_eq!(
             hooks["PostToolUse"][0]["matcher"],
             "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"
@@ -531,8 +538,8 @@ mod tests {
             claude_hook_status(Some(&before_stop_failure)),
             Status::Outdated
         );
-        // Shell commands only, before subagents: the matcher is brought up
-        // to date in place.
+        // Shell commands only, before subagents, and before edits too: the
+        // matcher is brought up to date in place.
         let mut settings = object(&updated);
         settings["hooks"]["PreToolUse"][0]["matcher"] = "Bash".into();
         let shell_only = serde_json::to_vec(&settings).unwrap();
@@ -541,8 +548,12 @@ mod tests {
         assert_eq!(again["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(
             again["hooks"]["PreToolUse"][0]["matcher"],
-            "Bash|Agent|Task"
+            "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"
         );
+        let mut settings = object(&updated);
+        settings["hooks"]["PreToolUse"][0]["matcher"] = "Bash|Agent|Task".into();
+        let before_edits = serde_json::to_vec(&settings).unwrap();
+        assert_eq!(claude_hook_status(Some(&before_edits)), Status::Outdated);
     }
 
     #[test]
@@ -566,8 +577,8 @@ mod tests {
     }
 
     /// The testdata files are what the Swift app's `AgentHookInstaller`
-    /// wrote for the same input, plus the subagent hooks added since
-    /// (SubagentStart, SubagentStop, Agent|Task in the tool matchers):
+    /// wrote for the same input, plus the hooks added since (SubagentStart,
+    /// SubagentStop, Agent|Task in the tool matchers, PreToolUse's edits):
     /// Impulse writes settings.json the same way whichever app does it.
     #[test]
     fn writes_settings_as_the_swift_app_does() {

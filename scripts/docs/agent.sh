@@ -12,7 +12,8 @@
 #                    MCP server's finish_task does), saving the answer in
 #                    ~/mcp/finish.txt, then keeps working
 #   claude subagents starts two subagents in the background that both edit
-#                    src/photos.ts, ends its turn while they run, and lets
+#                    src/photos.ts (the second's first try stopped, as
+#                    the first changed it), ends its turn while they run, and lets
 #                    them finish once ~/mcp/subagents-go exists, both before
 #                    the first of the turns Claude Code takes to report them;
 #                    after that turn it waits for ~/mcp/subagents-go-on.
@@ -145,8 +146,12 @@ case "$mode" in
       note PostToolUse "{$s,\"tool_name\":\"Agent\",\"tool_input\":{\"description\":\"$2\"},\"tool_response\":{\"isAsync\":true,\"agentId\":\"$1\"}}"
       step "Agent" "$2 (running in the background)"
     }
+    write() { # event, id
+      note "$1" "{$s,\"agent_id\":\"$2\",\"agent_type\":\"general-purpose\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$file\"},\"cwd\":\"$PWD\"}"
+    }
     edit() { # id
-      note PostToolUse "{$s,\"agent_id\":\"$1\",\"agent_type\":\"general-purpose\",\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$file\"},\"cwd\":\"$PWD\"}"
+      write PreToolUse "$1"
+      write PostToolUse "$1"
     }
     call "Write the photos endpoint"
     call "Write the photo tests"
@@ -155,6 +160,9 @@ case "$mode" in
     launched sub-a "Write the photos endpoint"
     launched sub-b "Write the photo tests"
     edit sub-a
+    # Stopped: sub-a changed the file while sub-b worked. The retry, after
+    # reading it again, goes through.
+    write PreToolUse sub-b
     edit sub-b
     running='{"id":"sub-a","type":"subagent","status":"running","description":"Write the photos endpoint","agent_type":"general-purpose"},{"id":"sub-b","type":"subagent","status":"running","description":"Write the photo tests","agent_type":"general-purpose"}'
     hook Stop "{$s,\"background_tasks\":[$running]}"

@@ -44,7 +44,7 @@
             "type" : "command"
           }
         ],
-        "matcher" : "Bash|Agent|Task"
+        "matcher" : "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task"
       }
     ],
     "SessionStart" : [
