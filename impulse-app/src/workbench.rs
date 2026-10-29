@@ -153,6 +153,8 @@ pub struct Workbench {
     pub(crate) workspaces_drag: Option<(f32, f32)>,
     pub(crate) workspaces_measured: Rc<std::cell::Cell<f32>>,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
+    /// The size of the area a tab's panes share, as last drawn.
+    pub(crate) content_size: Rc<std::cell::Cell<Option<gpui_kit::Size<gpui_kit::Pixels>>>>,
     /// `impulse edit` requests waiting for their editor to close.
     pub(crate) pending_edits: Vec<(
         gpui_kit::EntityId,
@@ -308,6 +310,7 @@ impl Workbench {
             workspaces_drag: None,
             workspaces_measured: Default::default(),
             split_bounds: Default::default(),
+            content_size: Default::default(),
             pending_edits: Vec::new(),
             theme_override: args.theme.clone(),
             theme_id,
@@ -534,6 +537,27 @@ impl Workbench {
 
     // MARK: Surfaces and tabs
 
+    /// The size a new pane filling a tab gets: the tab area as last drawn,
+    /// or before the first frame, the window less its bars and sidebar.
+    /// Its shell starts at that size rather than printing at 80×24 until
+    /// the pane is drawn (see `fit_terminals` for the panes of a split).
+    fn pane_size_estimate(&self, window: &Window, cx: &App) -> gpui_kit::Size<gpui_kit::Pixels> {
+        use impulse_kit::chrome::metrics::{STATUS_BAR_HEIGHT, TITLEBAR_HEIGHT};
+        if let Some(size) = self.content_size.get() {
+            return size;
+        }
+        let window = window.viewport_size();
+        let sidebar = if self.sidebar_shown {
+            px(self.sidebar_width(cx))
+        } else {
+            px(0.)
+        };
+        gpui_kit::size(
+            window.width - sidebar,
+            window.height - px(TITLEBAR_HEIGHT + STATUS_BAR_HEIGHT),
+        )
+    }
+
     /// A terminal starting in `dir`, running `commands` first.
     pub(crate) fn new_terminal(
         &mut self,
@@ -555,6 +579,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) -> Surface {
         let (theme, palette) = (self.theme.clone(), self.palette.clone());
+        let pane = self.pane_size_estimate(window, cx);
         let terminal = cx.new(|cx| {
             TerminalView::restoring(
                 theme,
@@ -562,6 +587,7 @@ impl Workbench {
                 dir.to_string_lossy().into_owned(),
                 commands,
                 transcript,
+                Some(pane),
                 window,
                 cx,
             )

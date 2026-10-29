@@ -60,6 +60,28 @@ const LINK_TIP_DELAY: std::time::Duration = std::time::Duration::from_millis(700
 /// The rule under replayed output from a previous session.
 const RESTORED_RULE: &str = "restored from the previous session";
 
+/// The columns and rows that fit in `area` with the grid's padding.
+fn grid_size(area: gpui_kit::Size<Pixels>, m: Metrics) -> (u16, u16) {
+    let cols = ((f32::from(area.width) - PADDING * 2.0) / f32::from(m.width))
+        .floor()
+        .max(2.0) as u16;
+    let rows = ((f32::from(area.height) - PADDING * 2.0) / f32::from(m.height))
+        .floor()
+        .max(1.0) as u16;
+    (cols, rows)
+}
+
+/// A transcript without the "restored" rule it ends with when no command
+/// ran since it was restored, so restoring it again doesn't stack rules.
+fn without_rule(transcript: &str) -> &str {
+    let body = transcript.trim_end_matches(['\r', '\n']);
+    match body.rfind('\n') {
+        Some(at) if body[at..].contains(RESTORED_RULE) => &transcript[..at + 1],
+        None if body.contains(RESTORED_RULE) => "",
+        _ => transcript,
+    }
+}
+
 actions!(
     terminal,
     [
@@ -442,20 +464,6 @@ impl Grid {
         })
     }
 
-    /// The row holding the "restored from the previous session" rule,
-    /// looking a few rows up from `above` (the shell prints its prompt's
-    /// first lines before the prompt mark).
-    fn restored_rule_row(&self, above: i32) -> Option<i32> {
-        let mut row = above.min(self.rows as i32) - 1;
-        while row >= 0 && row >= above - 8 {
-            if self.row_text(row as usize).text.contains(RESTORED_RULE) {
-                return Some(row);
-            }
-            row -= 1;
-        }
-        None
-    }
-
     /// The last row at or above `up_to` with a glyph on it.
     /// The last row up to `up_to` with something on it: text, or an image
     /// (`covered`, the rows under direct placements).
@@ -540,6 +548,8 @@ pub struct TerminalView {
     font: Font,
     metrics: Metrics,
     size: (u16, u16),
+    /// The grid was sized to its pane (see `fit_pane`).
+    pub(crate) fitted: bool,
     buffer: Vec<u8>,
     /// The last grid snapshot, with the scroll place and size it was read
     /// at; read again only after damage (output, selection, search).
@@ -633,9 +643,6 @@ pub struct TerminalView {
     /// The command sent from the bar began with a space (kept out of the
     /// history).
     pub(crate) hidden_pending: bool,
-    /// Started with a previous session's output, shown above the first
-    /// prompt until a command runs.
-    restored_output: bool,
     current_hidden: bool,
     current_command: Option<String>,
     /// Blocks whose command was typed with a leading space.
@@ -723,17 +730,21 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::restoring(theme, palette, cwd, commands, None, window, cx)
+        Self::restoring(theme, palette, cwd, commands, None, None, window, cx)
     }
 
     /// A terminal that first shows `transcript` (a previous session's
-    /// output) under a dim "restored" rule, as the Swift app does.
+    /// output) under a dim "restored" rule, as the Swift app does. Its
+    /// shell starts at the size `pane` holds (80×24 without one) until the
+    /// pane is drawn.
+    #[allow(clippy::too_many_arguments)]
     pub fn restoring(
         theme: ResolvedTheme,
         palette: ChromePalette,
         cwd: String,
         commands: Vec<String>,
         transcript: Option<String>,
+        pane: Option<gpui_kit::Size<Pixels>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -748,7 +759,6 @@ impl TerminalView {
         // In a task: which one, its slot and the main checkout.
         env.extend(crate::tasks::identity(&cwd));
         let launch = crate::shell_launch::launch(&env);
-        let restored_output = transcript.as_deref().is_some_and(|t| !t.is_empty());
         let config = TerminalConfig {
             shell_path: launch.shell.clone(),
             shell_args: launch.args.clone(),
@@ -763,11 +773,12 @@ impl TerminalView {
             allow_clipboard_read: true,
             images: settings.terminal_images,
             restored_transcript: transcript
+                .map(|t| without_rule(&t).to_string())
                 .filter(|t| !t.is_empty())
                 .map(|t| format!("{t}\u{1b}[0;2m── {RESTORED_RULE} ──\u{1b}[0m\r\n")),
             ..Default::default()
         };
-        let size = (80, 24);
+        let size = pane.map_or((80, 24), |pane| grid_size(pane, metrics));
         let backend = TerminalBackend::new(
             config,
             size.0,
@@ -886,6 +897,7 @@ impl TerminalView {
             font,
             metrics,
             size,
+            fitted: false,
             buffer: Vec::new(),
             grid_cache: None,
             grid_dirty: true,
@@ -933,7 +945,6 @@ impl TerminalView {
             session_status: SessionStatus::default(),
             hidden_pending: false,
             current_hidden: false,
-            restored_output,
             current_command: None,
             hidden_blocks: HashSet::new(),
             session_id,
@@ -1261,21 +1272,28 @@ impl TerminalView {
     /// pixels (`scale` to a point), which programs size images by.
     fn fit(&mut self, bounds: Bounds<Pixels>, scale: f32) {
         let m = self.metrics;
-        let cols = ((f32::from(bounds.size.width) - PADDING * 2.0) / f32::from(m.width))
-            .floor()
-            .max(2.0) as u16;
-        let rows = ((f32::from(bounds.size.height) - PADDING * 2.0) / f32::from(m.height))
-            .floor()
-            .max(1.0) as u16;
+        let (cols, rows) = grid_size(bounds.size, m);
         if (cols, rows) != self.size {
             self.size = (cols, rows);
         }
+        self.fitted = true;
         let cell = (
             (f32::from(m.width) * scale).round().max(1.0) as u16,
             (f32::from(m.height) * scale).round().max(1.0) as u16,
         );
         // Unchanged sizes are ignored there.
         self.backend.resize(cols, rows, cell.0, cell.1);
+    }
+
+    /// Size the grid for `pane` before it's drawn there (a terminal in a
+    /// hidden tab or workspace), so its shell doesn't print a greeting at
+    /// 80×24 that stays wrapped, or filled with a background color where
+    /// it scrolled, once the grid widens.
+    pub(crate) fn fit_pane(&mut self, mut pane: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
+        if self.bar_shown(cx) {
+            pane.size.height -= self.bar_height(window, cx);
+        }
+        self.fit(pane, window.scale_factor());
     }
 
     /// The grid, the block overlay and the modes, read again only when
@@ -3657,10 +3675,11 @@ impl TerminalView {
                     block.end_row
                 } else if overlay.has_blocks {
                     overlay.prompt_row.map_or(rows - 1, |p| p - 1)
-                } else if let (true, Some(prompt)) = (self.restored_output, overlay.prompt_row) {
+                } else if let Some(rule) = overlay.restored_row {
                     // Before the first command, a restored session's output
-                    // (ending at its "restored" rule) is the content.
-                    grid.restored_rule_row(prompt).unwrap_or(prompt - 1)
+                    // (ending at its "restored" rule) is the content, not
+                    // the shell's greeting under it.
+                    rule
                 } else {
                     -1
                 };
@@ -4154,6 +4173,25 @@ mod session_status_tests {
         assert_eq!(status.summary().as_deref(), Some("Building: step 2"));
         status.apply(&fields(&[("status-color", "rgb:zz/00/00")]));
         assert_eq!(status.dot_color(), None);
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::{without_rule, RESTORED_RULE};
+
+    #[test]
+    fn a_saved_rule_is_left_for_the_new_one() {
+        let rule = format!("\u{1b}[0;2m── {RESTORED_RULE} ──\u{1b}[0m\r\n");
+        assert_eq!(
+            without_rule(&format!("one\r\ntwo\r\n{rule}")),
+            "one\r\ntwo\r\n"
+        );
+        assert_eq!(without_rule(&rule), "");
+        // Commands ran after it: it stays where it was.
+        let later = format!("one\r\n{rule}$ ls\r\nfile\r\n");
+        assert_eq!(without_rule(&later), later);
+        assert_eq!(without_rule("plain\r\n"), "plain\r\n");
     }
 }
 

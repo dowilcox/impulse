@@ -72,6 +72,9 @@ pub(crate) struct CommandBlockTracker {
     /// Consumed by the next command block; while no command is running it
     /// identifies the live input-prompt region.
     pending_prompt_row: Option<i64>,
+    /// Absolute grid row just below a previous session's output put back
+    /// before the shell started (where the shell's own output began).
+    restored_end: Option<i64>,
     /// Estimated number of history lines evicted at the scrollback cap.
     /// Added to grid coordinates so absolute rows stay monotonic.
     row_base: i64,
@@ -130,6 +133,18 @@ impl CommandBlockTracker {
         }
     }
 
+    /// The row just below the previous session's output the terminal
+    /// started with (a row that starts a line, so reflowing keeps it
+    /// exact).
+    pub(crate) fn set_restored_end(&mut self, abs_row: i64) {
+        self.restored_end = Some(abs_row);
+        self.touch();
+    }
+
+    pub(crate) fn restored_end(&self) -> Option<i64> {
+        self.restored_end
+    }
+
     /// Grow the eviction estimate once the scrollback cap is reached, so
     /// absolute rows recorded before and after eviction stay comparable.
     pub(crate) fn bump_row_base(&mut self, evicted_lines: u64) {
@@ -150,6 +165,7 @@ impl CommandBlockTracker {
             }
         };
         remap(&mut self.pending_prompt_row);
+        remap(&mut self.restored_end);
         for block in self.completed.iter_mut().chain(self.current.iter_mut()) {
             remap(&mut block.prompt_row);
             remap(&mut block.output_row);

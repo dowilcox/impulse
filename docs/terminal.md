@@ -479,7 +479,7 @@ Each terminal keeps **Scrollback lines** (`terminal_scrollback`, 10,000 by defau
 
 ### Restored scrollback
 
-When Impulse restores your session, each terminal starts a fresh shell in its previous folder and shows roughly the last 2,000 lines of its previous output, colors included, above a dim rule that reads `── restored from the previous session ──`. Restored output is plain text: it isn't split into command blocks. Reopening a closed tab brings its output back the same way. Turn off **Restore terminal scrollback** (`restore_scrollback`) in Settings ▸ General to start restored terminals empty. See [Workspaces and tabs](workspaces-and-tabs.md) for session restore.
+When Impulse restores your session, each terminal starts a fresh shell in its previous folder and shows roughly the last 2,000 lines of its previous output, colors included, above a dim rule that reads `── restored from the previous session ──`. Until you run a command there, the restored output is all it shows, not the new shell's greeting; a terminal you never ran a command in comes back with just what it had restored, or empty. Restored output is plain text: it isn't split into command blocks. Reopening a closed tab brings its output back the same way. Turn off **Restore terminal scrollback** (`restore_scrollback`) in Settings ▸ General to start restored terminals empty. See [Workspaces and tabs](workspaces-and-tabs.md) for session restore.
 
 ## Font, cursor and colors
 

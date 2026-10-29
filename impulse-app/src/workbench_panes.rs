@@ -9,11 +9,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::{
-    canvas, deferred, div, prelude::*, px, relative, AnyElement, Bounds, Context, MouseButton,
-    MouseMoveEvent, MouseUpEvent, Pixels, Window,
+    canvas, deferred, div, prelude::*, px, relative, size, AnyElement, App, Bounds, Context,
+    Entity, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, Window,
 };
-use impulse_kit::layout_tree::{LayoutTree, PaneDirection, SplitAxis};
+use impulse_kit::layout_tree::{LayoutRect, LayoutTree, PaneDirection, SplitAxis};
 
+use crate::terminal_view::TerminalView;
 use crate::workbench::Workbench;
 use crate::workbench_chrome::hsla;
 use crate::workspace::{PaneId, Surface, Tab};
@@ -27,6 +28,46 @@ const RESIZE_STEP: f64 = 0.05;
 
 /// Where each split of each tab was drawn, for turning a drag into a ratio.
 pub type SplitBounds = Rc<RefCell<HashMap<(u64, Vec<usize>), Bounds<Pixels>>>>;
+
+/// A tab with terminals not sized to their panes yet.
+struct UnfittedTab {
+    layout: LayoutTree<PaneId>,
+    zoomed: Option<PaneId>,
+    terminals: Vec<(PaneId, Entity<TerminalView>)>,
+}
+
+/// Size terminals that haven't been drawn to the panes they'll have, as
+/// their tabs would lay them out in `bounds`, the shown tab's area: a shell
+/// started in a hidden tab otherwise prints its greeting at 80×24.
+fn fit_terminals(
+    bounds: Bounds<Pixels>,
+    tabs: Vec<UnfittedTab>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let area = LayoutRect::new(
+        0.,
+        0.,
+        f64::from(f32::from(bounds.size.width)),
+        f64::from(f32::from(bounds.size.height)),
+    );
+    for tab in tabs {
+        let frames = tab.layout.frames(area, f64::from(GAP));
+        for (id, terminal) in tab.terminals {
+            let frame = if tab.zoomed == Some(id) {
+                Some(area)
+            } else {
+                frames.get(&id).copied()
+            };
+            let Some(frame) = frame else { continue };
+            let pane = Bounds::new(
+                bounds.origin,
+                size(px(frame.width as f32), px(frame.height as f32)),
+            );
+            terminal.update(cx, |view, cx| view.fit_pane(pane, window, cx));
+        }
+    }
+}
 
 /// A divider being dragged.
 #[derive(Clone)]
@@ -47,14 +88,52 @@ impl Workbench {
             Some(zoomed) => self.pane(tab, zoomed, false, window, cx),
             None => self.layout_node(tab, &tab.layout, Vec::new(), window, cx),
         };
+        let unfitted = self.unfitted_terminals(cx);
+        let content_size = self.content_size.clone();
         div()
             .flex()
             .flex_1()
             .min_w_0()
             .h_full()
+            .relative()
             .bg(hsla(self.palette.hairline))
+            .child(
+                canvas(
+                    move |bounds, window, cx| {
+                        content_size.set(Some(bounds.size));
+                        fit_terminals(bounds, unfitted, window, cx);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .child(body)
             .into_any_element()
+    }
+
+    /// The terminals of every tab, shown or not, whose grids were never
+    /// sized to their panes, with the layouts that place them.
+    fn unfitted_terminals(&self, cx: &App) -> Vec<UnfittedTab> {
+        let mut tabs = Vec::new();
+        for tab in self.workspaces.iter().flat_map(|w| &w.tabs) {
+            let terminals: Vec<_> = tab
+                .panes
+                .iter()
+                .filter_map(|(id, surface)| match surface {
+                    Surface::Terminal(t) if !t.read(cx).fitted => Some((*id, t.clone())),
+                    _ => None,
+                })
+                .collect();
+            if !terminals.is_empty() {
+                tabs.push(UnfittedTab {
+                    layout: tab.layout.clone(),
+                    zoomed: tab.zoomed,
+                    terminals,
+                });
+            }
+        }
+        tabs
     }
 
     fn layout_node(
