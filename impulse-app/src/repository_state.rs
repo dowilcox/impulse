@@ -201,7 +201,7 @@ impl RepositoryState {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        if self.watcher.is_some() {
+        if self._watching.is_some() {
             return;
         }
         let (sender, receiver) = async_channel::unbounded();
@@ -214,12 +214,27 @@ impl RepositoryState {
                 let _ = sender.try_send(change);
             },
         );
-        if let Err(error) = watcher.start() {
-            log::warn!("couldn't watch {}: {error}", self.root);
-            return;
-        }
-        self.watcher = Some(watcher);
+        let root = self.root.clone();
         self._watching = Some(cx.spawn(async move |this, cx| {
+            // Off the main thread: on Linux starting walks the whole working
+            // tree, a watch per folder (ignored build output too), and takes
+            // seconds in a large one, a frozen window at launch otherwise.
+            let started = cx
+                .background_spawn(async move { watcher.start().map(|()| watcher) })
+                .await;
+            let watcher = match started {
+                Ok(watcher) => watcher,
+                Err(error) => {
+                    log::warn!("couldn't watch {root}: {error}");
+                    return;
+                }
+            };
+            if this
+                .update(cx, |this, _| this.watcher = Some(watcher))
+                .is_err()
+            {
+                return;
+            }
             while let Ok(change) = receiver.recv().await {
                 let changed = this.update(cx, |this, cx| {
                     cx.emit(RepositoryEvent::FilesChanged(change));

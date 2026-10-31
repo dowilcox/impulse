@@ -20,6 +20,7 @@ All notable changes to Impulse are documented in this file.
 
 ### Fixes
 
+- On Linux, opening a project with a large build folder (a Rust `target/`, `node_modules/`) no longer freezes the window for a few seconds, grayed out as not responding, at launch or when the project opens: Impulse starts watching the project's files in the background.
 - opencode 2's edits get Impulse's notes again (a file another task also changes): the plugin read the edited file's path under the name opencode 1 used, so `write` and `edit` never sent one.
 - A terminal's branch chip follows a branch switch made anywhere (the command palette, Manage Branches, another terminal or an agent) instead of waiting for your next command.
 - Quitting no longer beach-balls for a few seconds with several terminals open, most of all with fish: each shell's output is still read while it exits (on macOS fish waited for that before it could finish), the shells close together rather than one after another, and closing a tab no longer waits for its shell.
