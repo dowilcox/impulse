@@ -30,17 +30,22 @@ use impulse_kit::completion::{
     input, shell_completions, CompletionCandidate, CompletionResult, TextSpan,
 };
 use impulse_kit::shell::quoting;
+use impulse_kit::shell::syntax::{self, Verdict};
+use impulse_kit::shell::ShellType;
 
 use crate::command_editor::{CommandEditor, CommandEditorEvent, EditorKey};
 use crate::command_history::CommandHistory;
 use crate::settings_store::SettingsStore;
 use crate::terminal_view::{format_block_duration, TerminalView, TerminalViewEvent};
-use crate::workbench_chrome::{abbreviate_home, hsla};
+use crate::workbench_chrome::{abbreviate_home, chrome_button, hsla, icon_button, ButtonKind};
 
 /// How far the bar is from its top edge to the editor's first line, plus
 /// the space under it: padding, the chip row, the gap and the input row's
 /// padding and border.
 const BAR_CHROME_HEIGHT: f32 = 8.0 + 22.0 + 6.0 + 14.0 + 8.0;
+/// The editor's tallest, in lines: 30% of the window within these.
+const MIN_EDITOR_LINES: usize = 8;
+const MAX_EDITOR_LINES: usize = 16;
 /// Rows the completion menu shows before scrolling.
 const MENU_ROWS: usize = 10;
 const MENU_ROW_HEIGHT: f32 = 28.0;
@@ -83,6 +88,20 @@ pub(crate) struct InputBar {
     spinner_step: usize,
     spinner_ticking: bool,
     spinner_drawn: Option<Instant>,
+    /// The bar's command waits for fish to say it parses, not sent yet
+    /// (another Return meanwhile does nothing).
+    checking: bool,
+    /// fish couldn't parse the command in the bar: its message, over it.
+    rejection: Option<Rejection>,
+}
+
+/// A command the shell would have kept in its command line unrun
+/// (`impulse_kit::shell::syntax`), kept in the bar instead.
+pub(crate) struct Rejection {
+    command: String,
+    message: String,
+    /// bash can parse it: offered as Run with bash.
+    bash_parses: bool,
 }
 
 fn c(hex: &str) -> KitRgba {
@@ -257,6 +276,14 @@ impl TerminalView {
 
     pub(crate) fn bar_text_changed(&mut self, cx: &mut Context<Self>) {
         let text = self.editor_text(cx);
+        if self
+            .bar
+            .rejection
+            .as_ref()
+            .is_some_and(|r| command_text(&text).as_deref() != Some(&r.command))
+        {
+            self.bar.rejection = None;
+        }
         if self.bar.history_index.is_some() && Some(text.clone()) != self.current_history_entry(cx)
         {
             self.bar.history_index = None;
@@ -294,13 +321,104 @@ impl TerminalView {
             let Some(command) = command_text(&text) else {
                 return;
             };
-            self.run_command(&command);
+            return self.run_checked(command, true, cx);
         }
+        self.clear_bar(cx);
+    }
+
+    /// Empty the bar after what was in it went to the shell.
+    fn clear_bar(&mut self, cx: &mut Context<Self>) {
         self.editor.update(cx, |e, cx| e.set_text("", cx));
         self.set_suggestion(None, cx);
         self.bar.history_index = None;
         self.bar.saved_draft.clear();
+        self.bar.rejection = None;
         self.close_menu(cx);
+        cx.notify();
+    }
+
+    /// Run a command at the shell's prompt once the shell can parse it.
+    /// fish keeps a command it can't parse in its command line, unrun and
+    /// without a word to the integration, so it's checked first and, if
+    /// fish refuses it, stays in the bar with fish's message instead of
+    /// going out. `from_bar`: the command is the bar's text, emptied once
+    /// it's sent.
+    pub(crate) fn run_checked(&mut self, command: String, from_bar: bool, cx: &mut Context<Self>) {
+        // The shell this terminal runs, whatever the login shell is now.
+        let shell = ShellType::detect(&self.shell_path);
+        if shell != ShellType::Fish {
+            self.run_command(&command);
+            if from_bar {
+                self.clear_bar(cx);
+            }
+            return;
+        }
+        if from_bar {
+            if self.bar.checking {
+                return;
+            }
+            self.bar.checking = true;
+        }
+        let path = self.shell_path.clone();
+        cx.spawn(async move |this, cx| {
+            let checked = command.clone();
+            let verdict = cx
+                .background_spawn(async move { syntax::check(shell, &path, &checked) })
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                if from_bar {
+                    view.bar.checking = false;
+                }
+                let in_bar = command_text(&view.editor_text(cx)).as_deref() == Some(&command);
+                match verdict {
+                    Verdict::Parses => {
+                        view.run_command(&command);
+                        if from_bar && in_bar {
+                            view.clear_bar(cx);
+                        }
+                    }
+                    Verdict::Rejected {
+                        message,
+                        at,
+                        bash_parses,
+                    } => {
+                        if !in_bar {
+                            view.set_bar_text(command.clone(), cx);
+                        }
+                        // The bar's text may carry spaces the command lost.
+                        let lead = view.editor_text(cx).find(command.as_str()).unwrap_or(0);
+                        if let Some(at) = at {
+                            view.editor
+                                .update(cx, |editor, cx| editor.set_cursor(lead + at, cx));
+                        }
+                        view.bar.rejection = Some(Rejection {
+                            command,
+                            message,
+                            bash_parses,
+                        });
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The rejected command, run by bash instead (a bash script pasted at
+    /// fish's prompt).
+    fn run_with_bash(&mut self, cx: &mut Context<Self>) {
+        let Some(rejection) = self.bar.rejection.take() else {
+            return;
+        };
+        let command = format!(
+            "bash -c {}",
+            quoting::quoted(&rejection.command, ShellType::Fish)
+        );
+        let in_bar = command_text(&self.editor_text(cx)).as_deref() == Some(&rejection.command);
+        self.run_command(&command);
+        if in_bar {
+            self.clear_bar(cx);
+        }
         cx.notify();
     }
 
@@ -718,6 +836,9 @@ impl TerminalView {
         };
         let cwd = self.cwd_option();
         let lookup = self.lookup.clone();
+        // A pasted script shows up to 30% of the window before it scrolls.
+        let max_lines = (((window.viewport_size().height * 0.3) / line_height).floor() as usize)
+            .clamp(MIN_EDITOR_LINES, MAX_EDITOR_LINES);
         if self.editor.read(cx).masked != password {
             self.bar.history_index = None;
             self.bar.saved_draft.clear();
@@ -747,6 +868,10 @@ impl TerminalView {
                 editor.fixed_line_height = Some(line_height);
                 changed = true;
             }
+            if editor.max_lines != max_lines {
+                editor.max_lines = max_lines;
+                changed = true;
+            }
             if running && editor.suggestion.is_some() {
                 editor.suggestion = None;
                 changed = true;
@@ -760,6 +885,7 @@ impl TerminalView {
         });
 
         let text_empty = self.editor.read(cx).text().is_empty();
+        let text_lines = self.editor.read(cx).text().trim_end().lines().count();
         let accent = c(&theme.accent);
         let width = self.bar.width.clone();
         div()
@@ -778,6 +904,7 @@ impl TerminalView {
                     .size_full(),
             )
             .child(self.chip_row(cx))
+            .when_some(self.rejection_panel(cx), |d, panel| d.child(panel))
             .child(
                 div()
                     .flex()
@@ -825,7 +952,11 @@ impl TerminalView {
                                 .flex_none()
                                 .text_size(px(10.))
                                 .text_color(hsla(c(&theme.fg_comment)))
-                                .child("⏎ run"),
+                                .child(if text_lines > 1 {
+                                    format!("{text_lines} lines  ⏎ run")
+                                } else {
+                                    "⏎ run".to_string()
+                                }),
                         )
                     }),
             )
@@ -863,6 +994,75 @@ impl TerminalView {
             }
         })
         .detach();
+    }
+
+    /// fish's message for the command it refused, over the editor: what's
+    /// wrong, the line and a caret under the spot, as fish prints them.
+    fn rejection_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let rejection = self.bar.rejection.as_ref()?;
+        let theme = &self.theme;
+        let p = &self.palette;
+        let red = c(&theme.red);
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(hsla(red))
+                    .child("fish can't run this, so it wasn't sent"),
+            )
+            .when(rejection.bash_parses, |d| {
+                d.child(
+                    chrome_button(
+                        "rejection-bash",
+                        "Run with bash",
+                        None,
+                        ButtonKind::Secondary,
+                        false,
+                        p,
+                    )
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.run_with_bash(cx);
+                    })),
+                )
+            })
+            .child(
+                icon_button("rejection-dismiss", "x", "Dismiss", 22., 12., false, p).on_click(
+                    cx.listener(|view, _, _, cx| {
+                        cx.stop_propagation();
+                        view.bar.rejection = None;
+                        cx.notify();
+                    }),
+                ),
+            );
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .px(px(10.))
+                .py(px(6.))
+                .rounded(px(8.))
+                .bg(hsla(red.opacity(0.08)))
+                .border_1()
+                .border_color(hsla(red.opacity(0.35)))
+                .child(header)
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .font_family(mono_family(cx))
+                        .text_size(px(12.))
+                        .text_color(hsla(c(&theme.fg)))
+                        .child(rejection.message.clone()),
+                )
+                .into_any_element(),
+        )
     }
 
     fn leading_glyph(&self) -> AnyElement {

@@ -40,7 +40,9 @@ impulse-kit/              pure logic (no UI, testable on any OS), its
                           and "Oct 5, 2026 at 3:27 PM"), tree_expansion (the file tree's open
                           folders per project, file-tree-expanded.json),
                           problems, review comments, update checker, shell
-                          (types, quoting, login shell, integration),
+                          (types, quoting, login shell, integration,
+                          syntax: fish --no-execute before a command is
+                          sent),
                           completion, command history (SQLite), kitty
                           keyboard, terminal hints/paths/find,
                           ChildProcess, SessionState (session-state.json +
@@ -210,7 +212,10 @@ impulse-app/              the app on GPUI + GPUI Kit for
                           material/<file>.svg), the terminal input bar
                           (terminal_input_bar.rs over command_editor.rs:
                           SF Mono on macOS; chips, shell
-                          colors, ghost suggestions, Tab menu,
+                          colors, ghost suggestions, Tab menu, commands
+                          fish can't parse kept in the bar with its error
+                          and Run with bash (run_checked), long text
+                          scrolled by the wheel,
                           history from command_history.rs, which shares
                           history.sqlite3 and backs the palette's h:
                           mode, Import Shell History and Clear Command

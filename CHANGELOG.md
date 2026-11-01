@@ -20,6 +20,9 @@ All notable changes to Impulse are documented in this file.
 
 ### Fixes
 
+- A command fish can't run, such as a bash script pasted into the input bar, no longer leaves the terminal stuck: fish kept it in its command line unrun, its error went unseen and whatever you ran next was added to it. Impulse now asks fish first and keeps such a command in the bar with fish's error above it and the cursor at the spot, offering **Run with bash** when bash can run it. **Run** on a shell block in the Markdown preview is checked the same way.
+- The input bar shows more of a long command: up to 30% of the window's height (8 to 16 lines), with a scrollbar, scrolling with the mouse wheel and the number of lines in its `⏎ run` hint.
+- What the shell prints as it starts (a greeting, `fastfetch` from your config) shows above the input bar instead of being hidden until you scrolled up a little, and a restored terminal's output no longer sits at the bottom of the pane under rows of empty space before the first command.
 - On Linux, opening a project with a large build folder (a Rust `target/`, `node_modules/`) no longer freezes the window for a few seconds, grayed out as not responding, at launch or when the project opens: Impulse starts watching the project's files in the background.
 - opencode 2's edits get Impulse's notes again (a file another task also changes): the plugin read the edited file's path under the name opencode 1 used, so `write` and `edit` never sent one.
 - A terminal's branch chip follows a branch switch made anywhere (the command palette, Manage Branches, another terminal or an agent) instead of waiting for your next command.

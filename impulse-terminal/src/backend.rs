@@ -1005,6 +1005,8 @@ pub struct BlockOverlay {
     /// = further into history). Lets the frontend clamp scroll-down so the
     /// tucked-away prompt can't be revealed past the last command output.
     pub display_offset: i32,
+    /// Scrollback lies above the viewport's top: the output fills it.
+    pub history_above: bool,
 }
 
 /// Longest command text included in overlay regions; headers only need a
@@ -1898,6 +1900,7 @@ impl TerminalBackend {
         let mut overlay = BlockOverlay {
             rows: rows.min(u16::MAX as usize) as u16,
             display_offset: display_offset.clamp(0, i32::MAX as i64) as i32,
+            history_above: history_size > display_offset,
             ..Default::default()
         };
         if mode.contains(TermMode::ALT_SCREEN) {

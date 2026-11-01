@@ -18,7 +18,8 @@ use gpui_kit::{
     actions, canvas, div, fill, point, prelude::*, px, size, App, Bounds, ClipboardItem, Context,
     ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Font, Hsla,
     KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
-    SharedString, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine,
+    ScrollWheelEvent, SharedString, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window,
+    WrappedLine,
 };
 use impulse_kit::shell::lookup::CommandLookup;
 use impulse_kit::shell_parser::{parse_shell_input, ShellTokenRole};
@@ -26,7 +27,8 @@ use impulse_kit::theme::ResolvedTheme;
 
 use crate::terminal_view::rgba;
 
-/// Lines shown before the editor stops growing.
+/// Lines shown before the editor stops growing (its owner may allow more:
+/// `CommandEditor::max_lines`).
 const MAX_VISIBLE_LINES: usize = 8;
 
 actions!(command_editor, [Copy, Cut, Paste, SelectAll, Undo, Redo]);
@@ -146,6 +148,14 @@ struct Layout {
     lines: Vec<(WrappedLine, usize, Pixels)>,
     origin: Point<Pixels>,
     line_height: Pixels,
+    /// How far the text is scrolled up, when it's taller than the editor.
+    scroll: Pixels,
+    content_height: Pixels,
+    height: Pixels,
+    /// The cursor and the text's length the scroll last followed: it keeps
+    /// the cursor's line in view only when one of them changes, so the
+    /// wheel can scroll away from it.
+    followed: Option<(usize, usize)>,
 }
 
 pub struct CommandEditor {
@@ -174,6 +184,8 @@ pub struct CommandEditor {
     /// The line height its owner worked out from the font (the input
     /// bar's, as AppKit's `defaultLineHeight`), else 1.32 times the size.
     pub fixed_line_height: Option<Pixels>,
+    /// Lines shown before the editor stops growing and scrolls.
+    pub max_lines: usize,
     undo: Vec<(String, Range<usize>)>,
     redo: Vec<(String, Range<usize>)>,
     /// The last edit was typing, which undoes as one step with the typing
@@ -226,6 +238,7 @@ impl CommandEditor {
             font: gpui_kit::font("JetBrains Mono"),
             font_size: px(13.),
             fixed_line_height: None,
+            max_lines: MAX_VISIBLE_LINES,
             undo: Vec::new(),
             redo: Vec::new(),
             typing: false,
@@ -284,15 +297,25 @@ impl CommandEditor {
         self.selected.is_empty() && self.selected.start == self.text.len()
     }
 
+    /// Put the caret at byte `offset` of the text (the start of its
+    /// character), scrolled into view.
+    pub fn set_cursor(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let mut offset = offset.min(self.text.len());
+        while !self.text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        self.move_to(offset, cx);
+    }
+
     fn line_height(&self) -> Pixels {
         self.fixed_line_height
             .unwrap_or_else(|| (self.font_size * 1.32).ceil())
     }
 
     /// The editor's height for its text: one line at least, at most
-    /// `MAX_VISIBLE_LINES`.
+    /// `max_lines`.
     pub fn height(&self, window: &mut Window) -> Pixels {
-        let lines = self.visual_lines(window).clamp(1, MAX_VISIBLE_LINES);
+        let lines = self.visual_lines(window).clamp(1, self.max_lines.max(1));
         self.line_height() * lines as f32
     }
 
@@ -517,6 +540,20 @@ impl CommandEditor {
         if let Some(text) = self.selected_text() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
             self.replace(self.selected.clone(), "", false, cx);
+        }
+    }
+
+    /// The wheel scrolls text taller than the editor; at either end it
+    /// goes on to the terminal.
+    fn scroll_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let mut layout = self.layout.borrow_mut();
+        let max = (layout.content_height - layout.height).max(px(0.));
+        let delta = event.delta.pixel_delta(layout.line_height).y;
+        let scroll = (layout.scroll - delta).clamp(px(0.), max);
+        if scroll != layout.scroll {
+            layout.scroll = scroll;
+            cx.stop_propagation();
+            cx.notify();
         }
     }
 
@@ -1106,6 +1143,8 @@ struct Frame {
     ghost: Option<String>,
     selection: Option<Range<usize>>,
     caret: Option<usize>,
+    /// Where the cursor is, blinking or not (what the scroll follows).
+    cursor: usize,
     colors: EditorColors,
     font: Font,
     font_size: Pixels,
@@ -1127,6 +1166,7 @@ impl Render for CommandEditor {
             }),
             caret: (focused && self.caret_on && self.selected.is_empty())
                 .then(|| self.text_to_display(self.cursor())),
+            cursor: self.text_to_display(self.cursor()),
             display,
             runs,
             colors: self.colors.clone(),
@@ -1151,6 +1191,7 @@ impl Render for CommandEditor {
             .on_action(cx.listener(Self::redo))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
+            .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|editor, _, _, _| editor.selecting = false),
@@ -1226,25 +1267,34 @@ impl Frame {
             top += lh * rows as f32;
         }
         let content_height = top;
+        let (previous_scroll, followed) = {
+            let previous = layout.borrow();
+            (previous.scroll, previous.followed)
+        };
         let mut new_layout = Layout {
             lines: placed,
             origin: bounds.origin,
             line_height: lh,
+            scroll: px(0.),
+            content_height,
+            height: bounds.size.height,
+            followed: Some((self.cursor, self.display.len())),
         };
-        // The caret's line stays in view when the text is taller than the
-        // editor.
-        let caret_y = self
-            .caret
-            .or(self.selection.as_ref().map(|s| s.end))
-            .and_then(|c| position(&new_layout, c))
-            .map_or(px(0.), |p| p.y);
-        let scroll = if content_height > bounds.size.height {
-            (caret_y + lh - bounds.size.height)
-                .max(px(0.))
-                .min(content_height - bounds.size.height)
-        } else {
-            px(0.)
-        };
+        // Taller than the editor: scrolled by the wheel, and to the
+        // cursor's line whenever the cursor or the text changes.
+        let max_scroll = (content_height - bounds.size.height).max(px(0.));
+        let mut scroll = previous_scroll.min(max_scroll);
+        if followed != new_layout.followed {
+            let cursor = self.selection.as_ref().map_or(self.cursor, |s| s.end);
+            if let Some(y) = position(&new_layout, cursor).map(|p| p.y) {
+                if y < scroll {
+                    scroll = y;
+                } else if y + lh > scroll + bounds.size.height {
+                    scroll = (y + lh - bounds.size.height).min(max_scroll);
+                }
+            }
+        }
+        new_layout.scroll = scroll;
         new_layout.origin = bounds.origin - point(px(0.), scroll);
         let origin = new_layout.origin;
 
@@ -1321,6 +1371,24 @@ impl Frame {
                     Bounds::new(origin + at, size(px(2.), lh)),
                     self.colors.caret,
                 ));
+            }
+            // A thin bar at the right edge says there's more to scroll to.
+            if max_scroll > px(0.) {
+                let height = bounds.size.height;
+                let thumb = (height * (height / content_height)).max(px(12.));
+                let top = (height - thumb) * (scroll / max_scroll);
+                let mut color = self.colors.ghost;
+                color.a *= 0.6;
+                window.paint_quad(
+                    fill(
+                        Bounds::new(
+                            bounds.origin + point(bounds.size.width - px(3.), top),
+                            size(px(3.), thumb),
+                        ),
+                        color,
+                    )
+                    .corner_radii(px(1.5)),
+                );
             }
         });
         *layout.borrow_mut() = new_layout;

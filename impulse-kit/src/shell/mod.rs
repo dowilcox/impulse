@@ -1,8 +1,9 @@
 //! The shells Impulse runs in its terminals: which kind a shell is, how to
 //! quote text typed into it (`quoting`), the user's login shell and its PATH
 //! (`login`), the integration scripts that report prompts, commands and the
-//! working directory (`integration`), and whether a command word names
-//! something the shell can run (`lookup`).
+//! working directory (`integration`), whether a command word names
+//! something the shell can run (`lookup`), and whether fish can parse a
+//! command before it's typed at its prompt (`syntax`).
 
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,7 @@ pub mod integration;
 pub mod login;
 pub mod lookup;
 pub mod quoting;
+pub mod syntax;
 
 /// How a shell quotes, and which integration script it gets. Every shell
 /// that isn't zsh or fish is treated as bash.

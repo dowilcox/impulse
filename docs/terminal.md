@@ -117,7 +117,7 @@ A command block is one command and its output. Blocks make long sessions easy to
 - **Separators.** A thin line separates blocks. Blank lines your prompt prints before itself are collapsed into a small gap.
 - **Sticky header.** When you scroll partway through a long block, its command stays pinned along the top of the terminal (`❯ npm test`), with its status at the right, so you know whose output you're reading.
 
-With the input bar on, the shell's prompt for the next command isn't drawn in the grid: the input bar takes its place, and the newest output sits directly above it.
+With the input bar on, the shell's prompt for the next command isn't drawn in the grid: the input bar takes its place, and the newest output sits directly above it. What the shell prints as it starts, such as a greeting or `fastfetch` from your config, shows above the bar too, under a restored terminal's earlier output.
 
 ### Block actions
 
@@ -236,7 +236,8 @@ The clock button at the right opens [history search](#searching-history) (⌃R).
 
 Type a command and press Return to run it. The terminal scrolls to the bottom and the command's block appears above the bar.
 
-- **Several lines.** Press ⇧↩ or ⌥↩ to start a new line. The bar grows to 8 lines and then scrolls. When you run a multi-line command, it reaches the shell as a single paste and runs as a whole, rather than line by line.
+- **Several lines.** Press ⇧↩ or ⌥↩ to start a new line. The bar grows to 30% of the window's height (8 to 16 lines) and then scrolls: a thin bar at its right edge shows where you are, and the scroll wheel moves through the text. The hint at the right end counts the lines (`24 lines ⏎ run`). When you run a multi-line command, it reaches the shell as a single paste and runs as a whole, rather than line by line.
+- **Commands fish can't run.** In fish, Impulse asks fish whether it can parse a command before sending it. If it can't, such as a bash script with `NAME=value` or `if … then … fi`, the command stays in the bar, with fish's error above it and the cursor where fish points, instead of being left half-typed in fish's own command line. When bash can parse it, **Run with bash** runs it with `bash -c`. This also applies to **Run** on a shell block in the Markdown preview.
 - **Pasting.** Pasted text keeps its newlines. Copied files paste as their paths, escaped for the shell. A copied image is saved to a file in the temporary folder and its path is inserted.
 - **Dropping files.** Drop files from Finder (or your file manager, or Impulse's file tree) onto the terminal to insert their escaped paths into the input bar.
 - **Typing or pasting while the grid has focus.** At a prompt, text you type or paste (⌘V) in the grid goes to the input bar, which takes the keyboard back, so it never sits unseen in the shell's own line.

@@ -1709,7 +1709,7 @@ impl Workbench {
             .active_terminal()
             .filter(|t| bar && t.read(cx).at_prompt())
         {
-            Some(terminal) => terminal.update(cx, |t, _| t.run_command(&line)),
+            Some(terminal) => terminal.update(cx, |t, cx| t.run_checked(line, false, cx)),
             None => {
                 let dir = self.current_directory(cx);
                 let terminal = self.new_terminal(dir, vec![line], window, cx);

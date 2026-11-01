@@ -612,6 +612,9 @@ pub struct TerminalView {
     /// How the shell quotes (completions, inserted paths).
     pub(crate) shell: ShellType,
     pub(crate) shell_name: String,
+    /// The shell the terminal runs, which checks what the bar sends it
+    /// (`impulse_kit::shell::syntax`).
+    pub(crate) shell_path: String,
     /// What the shell can run, from its integration.
     pub(crate) lookup: CommandLookup,
     pub(crate) branch: Option<String>,
@@ -931,6 +934,7 @@ impl TerminalView {
             bar: InputBar::default(),
             shell: ShellType::detect(&shell_path),
             shell_name: impulse_kit::shell::login::default_shell_name(),
+            shell_path: launch.shell.clone(),
             lookup,
             branch: None,
             followed_repository: None,
@@ -1153,6 +1157,14 @@ impl TerminalView {
                     // mark was lost (the bar would otherwise stay hidden at
                     // a bare prompt), and nothing reads a password.
                     self.command_running = false;
+                    if !self.tracks_prompts {
+                        // The first prompt is tucked away too, under a
+                        // restored session's output or a long greeting.
+                        self.tuck = Tuck {
+                            armed: true,
+                            ..Tuck::default()
+                        };
+                    }
                     self.tracks_prompts = true;
                     self.password = false;
                     for command in std::mem::take(&mut self.start_commands) {
@@ -3668,20 +3680,18 @@ impl TerminalView {
             .rposition(|&c| c)
             .map_or(-1, |row| row as i32);
         if !overlay.alt_screen && !self.direct {
-            let fills = overlay.blocks.iter().any(|b| b.start_row < 0);
+            // Before the first command, a restored session's output or a
+            // long greeting fills the pane once scrollback lies above it.
+            let fills = overlay.blocks.iter().any(|b| b.start_row < 0)
+                || (!overlay.has_blocks && overlay.history_above);
             let at_prompt = overlay.prompt_row.is_some();
             if suppress && at_prompt {
-                last = if let Some(block) = overlay.blocks.last() {
-                    block.end_row
-                } else if overlay.has_blocks {
-                    overlay.prompt_row.map_or(rows - 1, |p| p - 1)
-                } else if let Some(rule) = overlay.restored_row {
-                    // Before the first command, a restored session's output
-                    // (ending at its "restored" rule) is the content, not
-                    // the shell's greeting under it.
-                    rule
-                } else {
-                    -1
+                // Everything above the prompt: before the first command
+                // that's a restored session's output and what the shell
+                // printed starting up (a greeting, fastfetch).
+                last = match overlay.blocks.last() {
+                    Some(block) => block.end_row,
+                    None => overlay.prompt_row.map_or(rows - 1, |p| p - 1),
                 };
                 // Without the blank lines shells print before a prompt.
                 last = grid.last_non_blank_row(last, covered).max(below_images);

@@ -967,7 +967,7 @@ impl crate::workbench::Workbench {
         if let Some(terminal) = waiting {
             if run_now {
                 terminal.update(cx, |t, cx| {
-                    t.run_command(&command.text);
+                    t.run_checked(command.text.clone(), false, cx);
                     t.focus(window, cx);
                 });
             } else {
