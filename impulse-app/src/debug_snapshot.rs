@@ -757,6 +757,16 @@ fn perform_now(action: &str, cx: &mut App) {
                     });
                 }
             }
+            ("submit", None) => match workbench.active_terminal().cloned() {
+                // Return in the input bar: run what's in it, checked.
+                Some(terminal) => terminal.update(cx, |t, cx| t.submit_bar(cx)),
+                None => fail("submit: no terminal is selected".to_string()),
+            },
+            ("run-with-bash", None) => match workbench.active_terminal().cloned() {
+                // The rejection panel's Run with bash.
+                Some(terminal) => terminal.update(cx, |t, cx| t.run_with_bash(cx)),
+                None => fail("run-with-bash: no terminal is selected".to_string()),
+            },
             ("problems", Some(file)) => {
                 // A JSON list of {path (root-relative), line, column,
                 // severity, message, source, code?}.
@@ -1465,6 +1475,7 @@ fn describe(surface: &Surface, cx: &App) -> Value {
                     impulse_kit::agents::known_agents::resume_command(agent, session)
                 }),
                 "input": t.editor_text(cx),
+                "rejection": t.bar_rejection(),
                 "blocks": blocks,
                 "transcript": t.backend.transcript(400, false),
                 "images": images,

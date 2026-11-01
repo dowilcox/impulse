@@ -326,6 +326,18 @@ impl TerminalView {
         self.clear_bar(cx);
     }
 
+    /// Return in the bar (the snapshots' `submit`).
+    #[cfg(debug_assertions)]
+    pub(crate) fn submit_bar(&mut self, cx: &mut Context<Self>) {
+        self.submit(cx);
+    }
+
+    /// fish's message for the command it refused, if the bar shows one.
+    #[cfg(debug_assertions)]
+    pub(crate) fn bar_rejection(&self) -> Option<String> {
+        self.bar.rejection.as_ref().map(|r| r.message.clone())
+    }
+
     /// Empty the bar after what was in it went to the shell.
     fn clear_bar(&mut self, cx: &mut Context<Self>) {
         self.editor.update(cx, |e, cx| e.set_text("", cx));
@@ -406,7 +418,7 @@ impl TerminalView {
 
     /// The rejected command, run by bash instead (a bash script pasted at
     /// fish's prompt).
-    fn run_with_bash(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn run_with_bash(&mut self, cx: &mut Context<Self>) {
         let Some(rejection) = self.bar.rejection.take() else {
             return;
         };
