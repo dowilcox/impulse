@@ -90,7 +90,11 @@ fn impulse(args: &[&str], cwd: &Path, socket: Option<&str>, stdin: &[u8]) -> Out
     }
     let mut child = command.spawn().unwrap();
     let mut input = child.stdin.take().unwrap();
-    input.write_all(stdin).unwrap();
+    // A command that refuses before reading its input (`edit /dev/stdin`)
+    // may exit first: the pipe is then closed, which isn't the test's fault.
+    if let Err(error) = input.write_all(stdin) {
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     drop(input);
     child.wait_with_output().unwrap()
 }
