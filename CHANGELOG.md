@@ -2,7 +2,7 @@
 
 All notable changes to Impulse are documented in this file.
 
-## Unreleased
+## 1.1.2
 
 ### Fixes
 
