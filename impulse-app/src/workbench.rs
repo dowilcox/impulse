@@ -1438,7 +1438,7 @@ impl Workbench {
     }
 
     /// The folder new terminals and splits start in: the focused surface's.
-    fn current_directory(&self, cx: &App) -> PathBuf {
+    pub(crate) fn current_directory(&self, cx: &App) -> PathBuf {
         self.focused_surface()
             .and_then(|s| s.directory(cx))
             .filter(|d| d.is_dir())

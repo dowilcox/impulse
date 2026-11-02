@@ -993,10 +993,6 @@ pub struct BlockOverlay {
     /// True while the alternate screen (vim, htop, ...) is active; block
     /// decorations should not be drawn.
     pub alt_screen: bool,
-    /// Viewport row of the last line of the previous session's output the
-    /// terminal started with (negative above the viewport), `None` without
-    /// one.
-    pub restored_row: Option<i32>,
     /// Whether any command block has been tracked at all this session. Lets
     /// the frontend tell a genuinely fresh shell (safe to blank the redundant
     /// prompt) from one where blocks merely scrolled out of view.
@@ -1928,10 +1924,6 @@ impl TerminalBackend {
                 overlay.prompt_row = Some(row.clamp(i32::MIN as i64, i32::MAX as i64) as i32);
             }
         }
-
-        overlay.restored_row = blocks
-            .restored_end()
-            .map(|abs| (to_viewport(abs) - 1).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
 
         let all: Vec<&TerminalCommandBlock> = blocks.iter_blocks().collect();
         overlay.has_blocks = !all.is_empty();

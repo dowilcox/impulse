@@ -336,6 +336,64 @@ def terminal_scenario(shell: str, path: str, cli: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# fish's parse check: a bash script stays in the bar with fish's error
+# rather than in fish's command line, Run with bash runs it; a preview's Run
+# over a draft gives the draft back on dismiss; and a new terminal's start
+# command is checked too.
+
+FISH_SCRIPT = "NAME=world\\necho hello-$NAME"
+FISH_ACTIONS = [
+    "until=prompt",
+    "run=echo fish-ready", "until=20:blocks:1",
+    f"draft={FISH_SCRIPT}", "submit", "sleep=2", "dump=rejected",
+    "run-with-bash", "until=20:blocks:2", "sleep=1", "dump=bash",
+    "draft=echo draft-kept", "run-checked=if true\\necho x", "sleep=2", "dump=over-draft",
+    "dismiss-rejection", "sleep=1", "dump=dismissed",
+    "start-terminal=NAME=started\\necho x", "until=tabs:2", "until=prompt", "sleep=3",
+    "dump=started",
+]
+
+
+def fish_terminal(dump: dict, index: int = 0) -> dict:
+    return [t for t in surfaces(dump, "terminal")][index]
+
+
+def check_fish_check(run) -> None:
+    script = FISH_SCRIPT.replace("\\n", "\n")
+    rejected = fish_terminal(run.dump("rejected"))
+    run.expect(rejected["input"] == script, "the script stays in the bar", rejected["input"])
+    run.expect("NAME=world" in (rejected["rejection"] or ""), "fish's error is shown",
+               rejected["rejection"])
+    run.expect(len(rejected["blocks"]) == 1, "nothing reached fish", [b["command"] for b in rejected["blocks"]])
+
+    bash = fish_terminal(run.dump("bash"))
+    last = bash["blocks"][-1] if bash["blocks"] else {}
+    run.expect((last.get("command") or "").startswith("bash -c"), "Run with bash runs it with bash -c",
+               last.get("command"))
+    run.expect("hello-world" in plain(bash["transcript"]), "bash ran the script", plain(bash["transcript"])[-200:])
+    run.expect(bash["input"] == "" and bash["rejection"] is None, "the bar is empty again",
+               [bash["input"], bash["rejection"]])
+
+    over = fish_terminal(run.dump("over-draft"))
+    run.expect(over["input"] == "if true\necho x" and over["rejection"],
+               "a refused preview command goes over the draft, with fish's error",
+               [over["input"], over["rejection"]])
+    dismissed = fish_terminal(run.dump("dismissed"))
+    run.expect(dismissed["input"] == "echo draft-kept" and dismissed["rejection"] is None,
+               "dismissing gives the draft back", [dismissed["input"], dismissed["rejection"]])
+
+    started_dump = run.dump("started")
+    terminals = [t for t in surfaces(started_dump, "terminal")]
+    if not run.expect(len(terminals) == 2, "a second terminal started", len(terminals)):
+        return
+    started = terminals[1]
+    run.expect(started["input"] == "NAME=started\necho x" and started["rejection"],
+               "a start command fish can't parse waits in the new terminal's bar",
+               [started["input"], started["rejection"]])
+    run.expect(not started["blocks"], "it didn't reach fish", [b["command"] for b in started["blocks"]])
+
+
+# ---------------------------------------------------------------------------
 # Images: a script prints a PNG by the kitty graphics protocol, once placed
 # directly and once shown by Unicode placeholder cells; `clear` takes the
 # direct placement away.
@@ -1120,6 +1178,9 @@ SCENARIOS = [
     terminal_scenario("zsh", "/bin/zsh", cli=True),
     terminal_scenario("bash", "/bin/bash"),
     terminal_scenario("fish", "/opt/homebrew/bin/fish"),
+    {"name": "fish-check", "about": "commands fish can't parse stay in the bar: Run with bash, drafts, "
+                                    "start commands",
+     "session": ONE, "shell": "/opt/homebrew/bin/fish", "actions": FISH_ACTIONS, "check": check_fish_check},
     {"name": "images", "about": "a PNG by the kitty graphics protocol, placed and by placeholders, then cleared",
      "session": ONE, "setup": setup_images, "actions": IMAGE_ACTIONS, "check": check_images},
     {"name": "scratch", "about": "Scratch Workspace, closing Scratch and bringing it back",

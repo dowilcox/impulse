@@ -5,7 +5,8 @@
 //! error lands under a prompt the input bar hides and whatever is typed next
 //! is added to the leftover (a pasted bash script, an `if … then … fi` fish
 //! waits to see an `end` for). Checked first with `fish --no-execute`,
-//! such a command stays in the bar with fish's error instead. bash and zsh
+//! such a command stays in the bar with fish's error instead; a plain one-line
+//! command isn't asked about (`plainly_parses`). bash and zsh
 //! report their own errors at a fresh prompt, so they aren't checked.
 
 use std::time::Duration;
@@ -13,7 +14,8 @@ use std::time::Duration;
 use super::ShellType;
 use crate::child_process::ChildProcess;
 
-/// A parse takes a few milliseconds; past this the command just runs.
+/// Asking fish takes some 15 ms (most of it starting fish); past this the
+/// command just runs.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,7 +36,7 @@ pub enum Verdict {
 /// Ask the shell at `shell_path` whether it can parse `command`, without
 /// running any of it. Blocks: call it off the main thread.
 pub fn check(shell: ShellType, shell_path: &str, command: &str) -> Verdict {
-    if shell != ShellType::Fish {
+    if shell != ShellType::Fish || plainly_parses(command) {
         return Verdict::Parses;
     }
     let Some(message) = fish_error(shell_path, command) else {
@@ -45,6 +47,32 @@ pub fn check(shell: ShellType, shell_path: &str, command: &str) -> Verdict {
         bash_parses: bash_parses(command),
         message,
     }
+}
+
+/// Words that open, close or need a block, or need a command after them:
+/// a command with one of them anywhere is asked about.
+const KEYWORDS: &[&str] = &[
+    "if", "else", "end", "for", "in", "while", "function", "begin", "switch", "case", "break",
+    "continue", "return", "and", "or", "not", "time", "builtin", "command", "exec",
+];
+
+/// `command` is certain to parse without asking fish (a process start, some
+/// 15 ms): one line of plain words, no quotes, expansions, redirections or
+/// separators, no keyword, and no `=` in its first word (`NAME=value`).
+/// Most commands typed at a prompt are like this.
+pub fn plainly_parses(command: &str) -> bool {
+    let plain = |c: char| c.is_ascii_alphanumeric() || " _./:@%+,~=-".contains(c);
+    if !command.chars().all(plain) {
+        return false;
+    }
+    let mut words = command.split(' ').filter(|w| !w.is_empty());
+    let Some(first) = words.next() else {
+        return false;
+    };
+    !first.contains('=')
+        && std::iter::once(first)
+            .chain(words)
+            .all(|word| !KEYWORDS.contains(&word))
 }
 
 /// fish's message for `command`, or `None` when it parses (or fish
@@ -80,16 +108,11 @@ pub fn error_offset(command: &str, message: &str) -> Option<usize> {
     let mut lines = message.lines().skip(1);
     let source = lines.next()?;
     let caret = lines.next().unwrap_or_default();
-    let column = caret.chars().position(|c| c != ' ').unwrap_or(0);
     let mut start = 0;
     let mut fallback = None;
     for line in command.split('\n') {
         if line == source {
-            let within = line
-                .char_indices()
-                .nth(column)
-                .map_or(line.len(), |(i, _)| i);
-            return Some(start + within);
+            return Some(start + caret_offset(line, caret));
         }
         if fallback.is_none() && line.trim() == source.trim() {
             fallback = Some(start + (line.len() - line.trim_start().len()));
@@ -97,6 +120,33 @@ pub fn error_offset(command: &str, message: &str) -> Option<usize> {
         start += line.len() + 1;
     }
     fallback
+}
+
+/// The byte offset in `line` of the character fish's caret line points at.
+/// fish pads the caret line with a tab for each tab before the spot and as
+/// many spaces as each other character is wide on screen (two for 日).
+fn caret_offset(line: &str, caret: &str) -> usize {
+    let pad = caret.chars().take_while(|c| *c == ' ' || *c == '\t');
+    let (mut tabs, mut columns) = (0usize, 0usize);
+    for c in pad {
+        if c == '\t' {
+            tabs += 1;
+        } else {
+            columns += 1;
+        }
+    }
+    for (i, c) in line.char_indices() {
+        if tabs == 0 && columns == 0 {
+            return i;
+        }
+        if c == '\t' {
+            tabs = tabs.saturating_sub(1);
+        } else {
+            columns =
+                columns.saturating_sub(unicode_width::UnicodeWidthChar::width(c).unwrap_or(0));
+        }
+    }
+    line.len()
 }
 
 #[cfg(test)]
@@ -120,6 +170,59 @@ mod tests {
             error_offset(script, message),
             Some(script.find("\"unterminated").unwrap())
         );
+    }
+
+    #[test]
+    fn the_caret_counts_tabs_and_wide_characters_as_fish_pads_them() {
+        // As fish 4.9 prints them.
+        let script = "echo\tfoo; FOO=1";
+        let message = "fish: Unsupported use of '='.\necho\tfoo; FOO=1\n    \t     ^~~~^";
+        assert_eq!(
+            error_offset(script, message),
+            Some(script.find("FOO").unwrap())
+        );
+        let script = "echo 日本; X=1";
+        let message = "fish: Unsupported use of '='.\necho 日本; X=1\n           ^~^";
+        assert_eq!(
+            error_offset(script, message),
+            Some(script.find("X=").unwrap())
+        );
+    }
+
+    #[test]
+    fn plain_commands_are_not_asked_about() {
+        for plain in [
+            "ls -la ~/x",
+            "git log --oneline -5",
+            "npm run build -- --watch",
+            "cargo +nightly build",
+            "echo a=b",
+            "echo a:b@c,d+e %self",
+            "cd -",
+        ] {
+            assert!(plainly_parses(plain), "{plain}");
+        }
+        for asked in [
+            "",
+            "NAME=world",
+            "break",
+            "end",
+            "begin",
+            "echo end",
+            "and",
+            "time",
+            "echo $HOME",
+            "echo 'a'",
+            "ls | wc",
+            "ls > out",
+            "a; b",
+            "a\nb",
+            "echo (pwd)",
+            "echo *",
+            "echo\tx",
+        ] {
+            assert!(!plainly_parses(asked), "{asked:?}");
+        }
     }
 
     #[test]
@@ -164,6 +267,21 @@ mod tests {
             check(ShellType::Fish, fish, "echo one\necho two"),
             Verdict::Parses
         );
+        // What the fast path lets through, fish parses; a keyword alone
+        // can need it not to.
+        for command in ["ls -la ~/x", "echo a=b", "cargo +nightly build", "cd -"] {
+            assert!(plainly_parses(command));
+            assert_eq!(fish_error(fish, command), None, "{command}");
+        }
+        for keyword in [
+            "break", "continue", "end", "else", "begin", "and", "or", "time",
+        ] {
+            assert!(fish_error(fish, keyword).is_some(), "{keyword}");
+        }
+        match check(ShellType::Fish, fish, "echo 日本; X=1") {
+            Verdict::Rejected { at, .. } => assert_eq!(at, Some("echo 日本; ".len())),
+            other => panic!("{other:?}"),
+        }
         assert_eq!(
             check(ShellType::Fish, fish, "export FOO=bar"),
             Verdict::Parses

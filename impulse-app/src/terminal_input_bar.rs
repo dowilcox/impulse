@@ -102,6 +102,10 @@ pub(crate) struct Rejection {
     message: String,
     /// bash can parse it: offered as Run with bash.
     bash_parses: bool,
+    /// What the bar held when the command was put there to show this (a
+    /// preview's Run, a start command), given back once it's run or
+    /// dismissed. `None`: the command was the bar's own.
+    draft: Option<String>,
 }
 
 fn c(hex: &str) -> KitRgba {
@@ -356,10 +360,25 @@ impl TerminalView {
     /// going out. `from_bar`: the command is the bar's text, emptied once
     /// it's sent.
     pub(crate) fn run_checked(&mut self, command: String, from_bar: bool, cx: &mut Context<Self>) {
+        self.run_checked_in_order(vec![command], from_bar, cx);
+    }
+
+    /// `run_checked` for several commands (a new terminal's start
+    /// commands), sent in order; one fish refuses stops those after it.
+    pub(crate) fn run_checked_in_order(
+        &mut self,
+        commands: Vec<String>,
+        from_bar: bool,
+        cx: &mut Context<Self>,
+    ) {
         // The shell this terminal runs, whatever the login shell is now.
         let shell = ShellType::detect(&self.shell_path);
-        if shell != ShellType::Fish {
-            self.run_command(&command);
+        // Without the bar, fish's own command line shows its error.
+        let checked = shell == ShellType::Fish && self.bar_shown(cx);
+        if !checked || commands.iter().all(|c| syntax::plainly_parses(c)) {
+            for command in &commands {
+                self.run_command(command);
+            }
             if from_bar {
                 self.clear_bar(cx);
             }
@@ -373,47 +392,69 @@ impl TerminalView {
         }
         let path = self.shell_path.clone();
         cx.spawn(async move |this, cx| {
-            let checked = command.clone();
-            let verdict = cx
-                .background_spawn(async move { syntax::check(shell, &path, &checked) })
-                .await;
-            let _ = this.update(cx, |view, cx| {
-                if from_bar {
-                    view.bar.checking = false;
+            for command in commands {
+                let (checked, path) = (command.clone(), path.clone());
+                let verdict = cx
+                    .background_spawn(async move { syntax::check(shell, &path, &checked) })
+                    .await;
+                let sent = this
+                    .update(cx, |view, cx| {
+                        view.take_verdict(command, verdict, from_bar, cx)
+                    })
+                    .unwrap_or(false);
+                if !sent {
+                    break;
                 }
-                let in_bar = command_text(&view.editor_text(cx)).as_deref() == Some(&command);
-                match verdict {
-                    Verdict::Parses => {
-                        view.run_command(&command);
-                        if from_bar && in_bar {
-                            view.clear_bar(cx);
-                        }
-                    }
-                    Verdict::Rejected {
-                        message,
-                        at,
-                        bash_parses,
-                    } => {
-                        if !in_bar {
-                            view.set_bar_text(command.clone(), cx);
-                        }
-                        // The bar's text may carry spaces the command lost.
-                        let lead = view.editor_text(cx).find(command.as_str()).unwrap_or(0);
-                        if let Some(at) = at {
-                            view.editor
-                                .update(cx, |editor, cx| editor.set_cursor(lead + at, cx));
-                        }
-                        view.bar.rejection = Some(Rejection {
-                            command,
-                            message,
-                            bash_parses,
-                        });
-                        cx.notify();
-                    }
-                }
-            });
+            }
         })
         .detach();
+    }
+
+    /// Send `command` if fish parses it, else keep it in the bar with
+    /// fish's message. Whether it was sent.
+    fn take_verdict(
+        &mut self,
+        command: String,
+        verdict: Verdict,
+        from_bar: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if from_bar {
+            self.bar.checking = false;
+        }
+        let text = self.editor_text(cx);
+        let in_bar = command_text(&text).as_deref() == Some(&command);
+        let Verdict::Rejected {
+            message,
+            at,
+            bash_parses,
+        } = verdict
+        else {
+            self.run_command(&command);
+            if from_bar && in_bar {
+                self.clear_bar(cx);
+            }
+            return true;
+        };
+        // What the bar held comes back once the command leaves it.
+        let draft = (!in_bar).then(|| {
+            self.set_bar_text(command.clone(), cx);
+            text
+        });
+        // The bar's text may carry spaces the command lost.
+        let lead = self.editor_text(cx).find(command.as_str()).unwrap_or(0);
+        if let Some(at) = at {
+            self.editor
+                .update(cx, |editor, cx| editor.set_cursor(lead + at, cx));
+        }
+        self.bar.rejection = Some(Rejection {
+            command,
+            message,
+            bash_parses,
+            draft,
+        });
+        cx.notify();
+        false
     }
 
     /// The rejected command, run by bash instead (a bash script pasted at
@@ -430,6 +471,22 @@ impl TerminalView {
         self.run_command(&command);
         if in_bar {
             self.clear_bar(cx);
+            if let Some(draft) = rejection.draft {
+                self.set_bar_text(draft, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The rejection panel's ✕: the message goes, and a command put in the
+    /// bar to show it gives the bar back what it held.
+    pub(crate) fn dismiss_rejection(&mut self, cx: &mut Context<Self>) {
+        let Some(rejection) = self.bar.rejection.take() else {
+            return;
+        };
+        let in_bar = command_text(&self.editor_text(cx)).as_deref() == Some(&rejection.command);
+        if let (true, Some(draft)) = (in_bar, rejection.draft) {
+            self.set_bar_text(draft, cx);
         }
         cx.notify();
     }
@@ -1047,8 +1104,7 @@ impl TerminalView {
                 icon_button("rejection-dismiss", "x", "Dismiss", 22., 12., false, p).on_click(
                     cx.listener(|view, _, _, cx| {
                         cx.stop_propagation();
-                        view.bar.rejection = None;
-                        cx.notify();
+                        view.dismiss_rejection(cx);
                     }),
                 ),
             );

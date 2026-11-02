@@ -30,6 +30,10 @@ use impulse_git::{RepoSnapshot, RepoWatcher};
 /// (`impulse_git::all_statuses`).
 pub type StatusMap = HashMap<String, HashMap<String, String>>;
 
+/// How long a watcher that failed to start waits before a refresh tries
+/// again: each try walks the whole tree.
+const WATCH_RETRY: Duration = Duration::from_secs(60);
+
 pub enum RepositoryEvent {
     /// HEAD moved (a commit, pull, merge or checkout, from Impulse or a
     /// terminal) while no operation was in progress, from one commit to
@@ -60,6 +64,9 @@ pub struct RepositoryState {
     waiting: Vec<oneshot::Sender<()>>,
     watcher: Option<RepoWatcher>,
     _watching: Option<Task<()>>,
+    /// When the watcher last failed to start (too many folders for the
+    /// system's inotify watches): a refresh after `WATCH_RETRY` tries again.
+    watch_failed: Option<std::time::Instant>,
     /// Operations run one at a time, as on the Swift app's serial queue.
     lock: Arc<Mutex<()>>,
     /// When the background fetch last started (`git_auto_fetch_minutes`).
@@ -100,6 +107,7 @@ impl RepositoryState {
             waiting: Vec::new(),
             watcher: None,
             _watching: None,
+            watch_failed: None,
             lock: Arc::new(Mutex::new(())),
             last_fetch: None,
             quiet_fetch_in_flight: false,
@@ -201,9 +209,13 @@ impl RepositoryState {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
-        if self._watching.is_some() {
+        let retry = self
+            .watch_failed
+            .is_some_and(|failed| failed.elapsed() >= WATCH_RETRY);
+        if self._watching.is_some() && !retry {
             return;
         }
+        self.watch_failed = None;
         let (sender, receiver) = async_channel::unbounded();
         let mut watcher = RepoWatcher::new(
             &snapshot.root,
@@ -226,6 +238,9 @@ impl RepositoryState {
                 Ok(watcher) => watcher,
                 Err(error) => {
                     log::warn!("couldn't watch {root}: {error}");
+                    let _ = this.update(cx, |this, _| {
+                        this.watch_failed = Some(std::time::Instant::now())
+                    });
                     return;
                 }
             };

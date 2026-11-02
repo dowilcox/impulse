@@ -1167,8 +1167,11 @@ impl TerminalView {
                     }
                     self.tracks_prompts = true;
                     self.password = false;
-                    for command in std::mem::take(&mut self.start_commands) {
-                        self.run_command(&command);
+                    // Checked as a typed command is: one fish can't parse
+                    // waits in the bar instead of in fish's command line.
+                    let commands = std::mem::take(&mut self.start_commands);
+                    if !commands.is_empty() {
+                        self.run_checked_in_order(commands, false, cx);
                     }
                 }
                 TerminalEvent::CommandBlockStarted(block) => {

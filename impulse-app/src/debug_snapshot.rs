@@ -767,6 +767,29 @@ fn perform_now(action: &str, cx: &mut App) {
                 Some(terminal) => terminal.update(cx, |t, cx| t.run_with_bash(cx)),
                 None => fail("run-with-bash: no terminal is selected".to_string()),
             },
+            ("run-checked", Some(command)) => match workbench.active_terminal().cloned() {
+                // A preview's Run in a terminal at its prompt: checked, and
+                // a refused command put over whatever the bar held.
+                Some(terminal) => {
+                    let command = command.replace("\\n", "\n");
+                    terminal.update(cx, |t, cx| t.run_checked(command, false, cx))
+                }
+                None => fail("run-checked: no terminal is selected".to_string()),
+            },
+            ("dismiss-rejection", None) => match workbench.active_terminal().cloned() {
+                // The rejection panel's ✕.
+                Some(terminal) => terminal.update(cx, |t, cx| t.dismiss_rejection(cx)),
+                None => fail("dismiss-rejection: no terminal is selected".to_string()),
+            },
+            ("start-terminal", Some(command)) => {
+                // A new terminal tab starting with a command, as a preview's
+                // Run or a custom shortcut opens one.
+                let dir = workbench.current_directory(cx);
+                let command = command.replace("\\n", "\n");
+                let terminal = workbench.new_terminal(dir, vec![command], window, cx);
+                let active = workbench.active;
+                workbench.add_tab(active, terminal, window, cx);
+            }
             ("problems", Some(file)) => {
                 // A JSON list of {path (root-relative), line, column,
                 // severity, message, source, code?}.

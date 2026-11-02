@@ -23,6 +23,8 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
 chrono = "0.4"
 unicode-normalization = "0.1"
+# Columns of fish's error caret (shell::syntax).
+unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

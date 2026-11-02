@@ -72,12 +72,6 @@ fn before_a_command_the_restored_output_is_what_is_kept() {
         format!("old output\r\nold line two\r\n{RULE}\r\n")
     );
 
-    // The greeting pushed the rule above the viewport.
-    let overlay = backend.block_overlay();
-    let prompt = overlay.prompt_row.unwrap();
-    let rule = overlay.restored_row.expect("restored row");
-    assert_eq!(prompt - rule, 31, "{overlay:?}");
-
     // A narrower grid rewraps the greeting's lines, and the rule moves with it.
     backend.resize(8, 24, 8, 16);
     std::thread::sleep(Duration::from_millis(200));
@@ -98,6 +92,5 @@ fn a_fresh_terminal_with_no_command_keeps_nothing() {
     wait_for_prompt(&backend);
 
     assert_eq!(backend.transcript(1000, false), "");
-    assert_eq!(backend.block_overlay().restored_row, None);
     let _ = std::fs::remove_file(&script);
 }
