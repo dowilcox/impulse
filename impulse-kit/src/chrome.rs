@@ -204,9 +204,63 @@ pub mod metrics {
     pub const LEFT_DOCK_DEFAULT_WIDTH: f32 = 260.0;
 }
 
+/// How tall a sidebar section that scrolls (the Workspaces list) is drawn.
+///
+/// `content` is its rows' whole height, padding included, and `rows` each
+/// row's top and height from the section's top. A list that fits under
+/// `limit` gets its whole height. One that doesn't ends halfway through the
+/// lowest row it can, so it plainly goes on and is never left to scroll by
+/// a few points of padding.
+pub fn section_height(content: f32, rows: &[(f32, f32)], limit: f32) -> f32 {
+    if content <= limit {
+        return content;
+    }
+    rows.iter()
+        .map(|(top, height)| top + height / 2.0)
+        .take_while(|middle| *middle <= limit)
+        .last()
+        .unwrap_or(limit)
+}
+
+/// A height set by hand (the section's handle dragged), let out to the
+/// whole list when that is no more than half a row taller and within
+/// `max`: a list left to scroll by a few points feels broken.
+pub fn snapped_section_height(content: f32, height: f32, max: f32) -> f32 {
+    if content > height && content - height <= metrics::ROW_HEIGHT / 2.0 && content <= max {
+        content
+    } else {
+        height
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_section_that_fits_gets_its_whole_height() {
+        assert_eq!(section_height(246.0, &[(6.0, 26.0)], 280.0), 246.0);
+        assert_eq!(section_height(280.0, &[(6.0, 26.0)], 280.0), 280.0);
+    }
+
+    #[test]
+    fn an_overflowing_section_ends_halfway_through_a_row() {
+        // Rows 26 tall and 1 apart below 6 of padding: 11 of them are 302.
+        let rows: Vec<(f32, f32)> = (0..11).map(|i| (6.0 + 27.0 * i as f32, 26.0)).collect();
+        // The tenth row (top 249) is cut at its middle rather than the
+        // eleventh by 9 points.
+        assert_eq!(section_height(302.0, &rows, 280.0), 262.0);
+        // No row's middle under the limit: the limit.
+        assert_eq!(section_height(302.0, &rows, 10.0), 10.0);
+    }
+
+    #[test]
+    fn a_dragged_height_just_short_of_the_list_lets_it_out() {
+        assert_eq!(snapped_section_height(300.0, 292.0, 600.0), 300.0);
+        assert_eq!(snapped_section_height(300.0, 250.0, 600.0), 250.0);
+        assert_eq!(snapped_section_height(300.0, 320.0, 600.0), 320.0);
+        assert_eq!(snapped_section_height(300.0, 292.0, 295.0), 292.0);
+    }
 
     #[test]
     fn parses_hex_like_nscolor() {

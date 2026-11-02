@@ -121,7 +121,7 @@ You can also choose **Move Up** or **Move Down** from a row's context menu (they
 
 ### Resizing the workspaces section
 
-The workspaces section grows with its rows up to a fixed height, then scrolls. To give it a different height, drag the hairline under it; the cursor changes to a resize arrow and the line turns the accent color. The Files panel below always keeps at least 120 points. Double-click the hairline to go back to fitting the rows. A dragged height is saved with the window's session. While tabs are [listed in the sidebar](#tabs-in-the-sidebar), the section can't be dragged shorter than about five rows (or all of its rows, when it has fewer), so the active workspace's tabs stay in view.
+The workspaces section grows with its rows up to half the sidebar's height (at least 280 points), then scrolls, stopping halfway through a row so you can see there's more. To give it a different height, drag the hairline under it; the cursor changes to a resize arrow and the line turns the accent color. The Files panel below always keeps at least 120 points. Double-click the hairline to go back to fitting the rows. A dragged height is saved with the window's session. While tabs are [listed in the sidebar](#tabs-in-the-sidebar), the section can't be dragged shorter than about five rows (or all of its rows, when it has fewer), so the active workspace's tabs stay in view.
 
 ## Tabs
 

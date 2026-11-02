@@ -150,7 +150,7 @@ pub struct Workbench {
     /// The sidebar's edge being dragged (`workbench_chrome`).
     pub(crate) sidebar_drag: Option<crate::workbench_chrome::SidebarDrag>,
     /// The Workspaces section's height once its handle moved (`None`: fit
-    /// its rows up to 280), saved with the session; the drag in progress
+    /// its rows up to half the dock, `fitted_workspaces_limit`), saved with the session; the drag in progress
     /// (height and pointer at its start); its scroll, whose bounds are the
     /// height last laid out.
     pub(crate) workspaces_height: Option<f32>,

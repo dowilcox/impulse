@@ -49,6 +49,13 @@ pub(crate) fn with_shortcut(help: &str, command: &str, cx: &gpui_kit::App) -> St
 /// sibling takes the rest.
 pub(crate) const GIVES_WAY: f32 = 1e8;
 
+/// The Workspaces section's rows: a workspace, a tab listed under it, and
+/// the space between rows and above and below them.
+const WORKSPACE_ROW_HEIGHT: f32 = 26.;
+const WORKSPACE_TAB_ROW_HEIGHT: f32 = 24.;
+const WORKSPACES_GAP: f32 = 1.;
+const WORKSPACES_PADDING: f32 = 6.;
+
 /// How wide `text` is, shaped as the chrome draws it (no ligatures).
 pub(crate) fn shaped_width(
     text: &str,
@@ -1284,7 +1291,14 @@ impl Workbench {
             .child(space("titlebar-end", 8.))
     }
 
-    fn workspace_row(&self, index: usize, indented: bool, cx: &mut Context<Self>) -> AnyElement {
+    /// A workspace's row, with its tabs under it while they're listed, and
+    /// the height of each of those rows (for `section_height`).
+    fn workspace_row(
+        &self,
+        index: usize,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, Vec<f32>) {
         let p = &self.palette;
         let workspace = &self.workspaces[index];
         let selected = index == self.active;
@@ -1299,7 +1313,9 @@ impl Workbench {
             .iter()
             .filter(|tab| Self::tab_needs_attention(tab, cx))
             .count();
-        let mut column = div().flex().flex_col();
+        // Not shrunk when the section overflows (see `repository_header`).
+        let mut column = div().flex().flex_col().flex_none();
+        let mut heights = vec![WORKSPACE_ROW_HEIGHT];
         let row = div()
             .id(("workspace", id))
             .role(gpui_kit::Role::ListItem)
@@ -1312,7 +1328,7 @@ impl Workbench {
             .flex()
             .items_center()
             .gap(px(6.))
-            .h(px(26.))
+            .h(px(WORKSPACE_ROW_HEIGHT))
             .pl(px(if indented { 16. } else { 8. }))
             .pr(px(6.))
             .relative()
@@ -1562,6 +1578,7 @@ impl Workbench {
                 let title = surface.title(cx);
                 let attention = !active_tab && Self::tab_needs_attention(tab, cx);
                 let dirty = tab.panes.values().any(|s| s.is_dirty(cx));
+                heights.push(WORKSPACE_TAB_ROW_HEIGHT);
                 column = column.child(
                     div()
                         .id(("workspace-tab", tab.id))
@@ -1570,7 +1587,7 @@ impl Workbench {
                         .flex()
                         .items_center()
                         .gap(px(6.))
-                        .h(px(24.))
+                        .h(px(WORKSPACE_TAB_ROW_HEIGHT))
                         .pl(px(40.))
                         .pr(px(8.))
                         .text_size(px(11.5))
@@ -1627,6 +1644,7 @@ impl Workbench {
                 );
             }
             if tabs_in_sidebar && selected {
+                heights.push(metrics::ROW_HEIGHT);
                 column = column.child(
                     div()
                         .id(("workspace-new-tab", id))
@@ -1649,7 +1667,7 @@ impl Workbench {
                 );
             }
         }
-        column.into_any_element()
+        (column.into_any_element(), heights)
     }
 
     /// One row of the file tree.
@@ -2038,32 +2056,58 @@ impl Workbench {
             |id: &'static str, name: &'static str, help: &'static str, active: bool| {
                 icon_button(id, name, help, 22., 13., active, p)
             };
-        // Swift's WorkspacesSection: rows 1 pt apart, 6 pt above and below,
-        // scrolling past 280 pt unless its handle set a height.
-        let mut workspaces = div()
+        // Swift's WorkspacesSection: rows 1 pt apart, 6 pt above and below.
+        // A repository's workspaces (its tasks) under its name; each row's
+        // top and height kept to choose the section's height.
+        let mut children = Vec::new();
+        let mut rows = Vec::new();
+        let mut top = WORKSPACES_PADDING;
+        let mut add = |child: AnyElement, heights: &[f32]| {
+            children.push(child);
+            for height in heights {
+                rows.push((top, *height));
+                top += height;
+            }
+            top += WORKSPACES_GAP;
+        };
+        for (name, group) in self.workspace_groups() {
+            let indented = name.is_some();
+            if let Some(name) = name {
+                add(
+                    self.repository_header(name, group[0], cx),
+                    &[crate::task_sidebar::REPOSITORY_HEADER_HEIGHT],
+                );
+            }
+            for index in group {
+                let (row, heights) = self.workspace_row(index, indented, cx);
+                add(row, &heights);
+            }
+        }
+        let content = top - if rows.is_empty() { 0. } else { WORKSPACES_GAP } + WORKSPACES_PADDING;
+        let height = match self.workspaces_height {
+            Some(height) => impulse_kit::chrome::snapped_section_height(
+                content,
+                self.clamped_workspaces_height(height, window),
+                self.workspaces_height_limit(window),
+            ),
+            None => impulse_kit::chrome::section_height(
+                content,
+                &rows,
+                self.fitted_workspaces_limit(window),
+            ),
+        };
+        let workspaces = div()
             .id("workspaces")
             .relative()
             .flex()
             .flex_col()
             .flex_none()
-            .map(|d| match self.workspaces_height {
-                Some(height) => d.h(px(self.clamped_workspaces_height(height, window))),
-                None => d.max_h(px(280.)),
-            })
+            .h(px(height))
             .overflow_y_scroll()
             .track_scroll(&self.workspaces_scroll)
-            .py(px(6.))
-            .gap(px(1.));
-        // A repository's workspaces (its tasks) under its name.
-        for (name, group) in self.workspace_groups() {
-            let indented = name.is_some();
-            if let Some(name) = name {
-                workspaces = workspaces.child(self.repository_header(name, group[0], cx));
-            }
-            for index in group {
-                workspaces = workspaces.child(self.workspace_row(index, indented, cx));
-            }
-        }
+            .py(px(WORKSPACES_PADDING))
+            .gap(px(WORKSPACES_GAP))
+            .children(children);
         div()
             .relative()
             .flex()
@@ -2651,13 +2695,31 @@ impl Workbench {
 }
 
 impl Workbench {
-    /// The Workspaces section's height kept between nothing and the dock
-    /// less the Files panel's 120 (Swift's `heightLimit`).
-    fn clamped_workspaces_height(&self, height: f32, window: &Window) -> f32 {
-        let dock = f32::from(window.viewport_size().height)
+    /// The sidebar's height under the titlebar and over the status bar.
+    fn dock_height(window: &Window) -> f32 {
+        f32::from(window.viewport_size().height)
             - metrics::TITLEBAR_HEIGHT
-            - metrics::STATUS_BAR_HEIGHT;
-        height.clamp(0., (dock - 120.).max(0.))
+            - metrics::STATUS_BAR_HEIGHT
+    }
+
+    /// The tallest the Workspaces section gets: the dock less the Files
+    /// panel's 120 (Swift's `heightLimit`).
+    fn workspaces_height_limit(&self, window: &Window) -> f32 {
+        (Self::dock_height(window) - 120.).max(0.)
+    }
+
+    /// The Workspaces section's height kept between nothing and its limit.
+    fn clamped_workspaces_height(&self, height: f32, window: &Window) -> f32 {
+        height.clamp(0., self.workspaces_height_limit(window))
+    }
+
+    /// How tall the Workspaces section grows to fit its rows before it
+    /// scrolls: half the dock, or 280 (Swift's fixed limit) in a short
+    /// window.
+    fn fitted_workspaces_limit(&self, window: &Window) -> f32 {
+        (Self::dock_height(window) / 2.)
+            .max(280.)
+            .min(self.workspaces_height_limit(window))
     }
 
     /// The hairline under the workspaces, with a taller grab band (Swift's

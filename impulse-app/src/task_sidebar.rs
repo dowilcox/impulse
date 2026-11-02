@@ -31,6 +31,9 @@ fn action(
     Some(Rc::new(f))
 }
 
+/// The height of a repository's name over its workspaces.
+pub(crate) const REPOSITORY_HEADER_HEIGHT: f32 = 22.;
+
 impl Workbench {
     /// The task commands from the palette, menus and keys.
     pub(crate) fn run_task_command(
@@ -143,10 +146,14 @@ impl Workbench {
         let header = div()
             .id(gpui_kit::SharedString::from(format!("repository-{name}")))
             .flex()
+            // The Workspaces section is a flex column with a height limit:
+            // a shrinkable header is squeezed to its text when the rows
+            // overflow it, and the section scrolls by what's left over.
+            .flex_none()
             .items_center()
             .gap(px(5.))
             .px(px(14.))
-            .h(px(22.))
+            .h(px(REPOSITORY_HEADER_HEIGHT))
             .child(icon("git-fork", 11., p.text_tertiary))
             .child(
                 div()

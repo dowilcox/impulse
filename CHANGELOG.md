@@ -2,6 +2,12 @@
 
 All notable changes to Impulse are documented in this file.
 
+## Unreleased
+
+### Fixes
+
+- The sidebar's Workspaces section no longer scrolls by a few points when its rows almost fit: the repository names over tasks were squeezed to make room and the rest scrolled. The section now grows with its rows up to half the sidebar's height (at least 280 points), and a list longer than that stops halfway through a row, so it plainly scrolls. A height dragged to just short of the whole list lets it out to fit.
+
 ## 1.1.1
 
 ### Fixes
