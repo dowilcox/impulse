@@ -429,12 +429,6 @@ impl Workbench {
     ) {
         // The sidebar as this window had it (Swift keeps it per window).
         self.workspaces_height = state.workspaces_height.map(|h| h.max(0.) as f32);
-        self.collapsed_repositories = state
-            .collapsed_repositories
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
         if let Some(width) = state.sidebar_width.filter(|w| *w > 120.) {
             self.sidebar_px = width.round() as f32;
         }
@@ -481,6 +475,13 @@ impl Workbench {
             }
         }
         self.show_workspace(active, window, cx);
+        // After showing the active workspace, which expands its repository:
+        // a repository collapsed over it stays collapsed.
+        self.collapsed_repositories = state
+            .collapsed_repositories
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
     }
 
     /// A saved workspace with its tabs; `None` for a folder that's gone.

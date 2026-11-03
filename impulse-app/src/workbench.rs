@@ -743,6 +743,10 @@ impl Workbench {
             return;
         }
         self.active = index;
+        // The sidebar shows the workspace you switched to: its repository's
+        // rows come out from under a collapsed header.
+        self.collapsed_repositories
+            .remove(&crate::tasks::group_key(&self.workspaces[index]));
         let id = self.workspaces[index].id;
         self.recent_workspaces.retain(|w| *w != id);
         self.recent_workspaces.push(id);

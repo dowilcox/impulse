@@ -141,7 +141,8 @@ impl Workbench {
         self.collapsed_repositories.contains(key)
     }
 
-    /// Collapse or expand a repository's group in the sidebar.
+    /// Collapse or expand a repository's group in the sidebar
+    /// (`show_workspace` expands the one it switches into).
     pub(crate) fn toggle_repository(&mut self, key: &str, cx: &mut Context<Self>) {
         if !self.collapsed_repositories.remove(key) {
             self.collapsed_repositories.insert(key.to_string());
