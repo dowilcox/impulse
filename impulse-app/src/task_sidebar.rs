@@ -3,6 +3,8 @@
 //! chip and its overlap chip (the files it changes that another workspace
 //! of the repository changes too, with a conflict check), its summary in
 //! the row's tooltip, and the row's context menu with the task commands.
+//! A repository's header collapses its rows (`collapsed_repositories`,
+//! saved with the session).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -133,18 +135,53 @@ impl Workbench {
         }
     }
 
-    /// A repository's header over its workspaces.
-    /// `first` is the group's first workspace: a right-click offers Archive
-    /// Merged Tasks… while the repository has some, as Swift's header does.
+    /// Whether the sidebar shows the rows of the repository group whose
+    /// key (`tasks::group_key`) is `key`.
+    pub(crate) fn repository_collapsed(&self, key: &str) -> bool {
+        self.collapsed_repositories.contains(key)
+    }
+
+    /// Collapse or expand a repository's group in the sidebar.
+    pub(crate) fn toggle_repository(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_repositories.remove(key) {
+            self.collapsed_repositories.insert(key.to_string());
+        }
+        cx.notify();
+    }
+
+    /// A repository's header over its workspaces; a click collapses or
+    /// expands them. `group` is its workspaces: a collapsed one says how
+    /// many there are and how many of their terminals need attention, and
+    /// carries the selection mark while the active workspace is one of
+    /// them. A right-click offers Archive Merged Tasks… while the
+    /// repository has some, as Swift's header does.
     pub(crate) fn repository_header(
         &self,
         name: String,
-        first: usize,
+        group: &[usize],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = &self.palette;
+        let first = group[0];
+        let key = tasks::group_key(&self.workspaces[first]);
+        let collapsed = self.repository_collapsed(&key);
+        let holds_active = collapsed && group.contains(&self.active);
+        let attention: usize = if collapsed {
+            group
+                .iter()
+                .flat_map(|&i| self.workspaces[i].tabs.iter())
+                .filter(|tab| Self::tab_needs_attention(tab, cx))
+                .count()
+        } else {
+            0
+        };
         let header = div()
             .id(gpui_kit::SharedString::from(format!("repository-{name}")))
+            .role(gpui_kit::Role::Button)
+            .aria_label(format!("{name}, {} workspaces", group.len()))
+            .aria_expanded(!collapsed)
+            .group("repository")
+            .relative()
             .flex()
             // The Workspaces section is a flex column with a height limit:
             // a shrinkable header is squeezed to its text when the rows
@@ -152,18 +189,98 @@ impl Workbench {
             .flex_none()
             .items_center()
             .gap(px(5.))
-            .px(px(14.))
+            .pl(px(6.))
+            .pr(px(6.))
             .h(px(REPOSITORY_HEADER_HEIGHT))
-            .child(icon("git-fork", 11., p.text_tertiary))
+            .when(holds_active, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(3.))
+                        .top(px(4.))
+                        .w(px(2.))
+                        .h(px(14.))
+                        .rounded_full()
+                        .bg(hsla(p.accent)),
+                )
+            })
+            .on_click(cx.listener({
+                let key = key.clone();
+                move |w, _, _, cx| w.toggle_repository(&key, cx)
+            }))
+            // Shown on hover or while collapsed, as a workspace row's is
+            // while its tabs are listed.
             .child(
                 div()
+                    .w(px(12.))
+                    .flex_none()
+                    .when(!collapsed, |d| {
+                        d.invisible().group_hover("repository", |s| s.visible())
+                    })
+                    .child(icon(
+                        if collapsed {
+                            "chevron-right"
+                        } else {
+                            "chevron-down"
+                        },
+                        10.,
+                        p.text_tertiary,
+                    )),
+            )
+            .child(icon(
+                "git-fork",
+                11.,
+                if holds_active {
+                    p.accent
+                } else {
+                    p.text_tertiary
+                },
+            ))
+            .child(
+                div()
+                    .min_w_0()
                     .text_size(px(11.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(hsla(p.text_secondary))
+                    .font_weight(if holds_active {
+                        FontWeight::SEMIBOLD
+                    } else {
+                        FontWeight::MEDIUM
+                    })
+                    .text_color(hsla(if holds_active {
+                        p.text
+                    } else {
+                        p.text_secondary
+                    }))
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .child(name),
-            );
+            )
+            .when(collapsed, |d| {
+                d.child(div().flex_1().min_w(px(4.)))
+                    .child(if attention > 0 {
+                        // The workspace rows' attention badge.
+                        div()
+                            .flex_none()
+                            .min_w(px(16.))
+                            .h(px(15.))
+                            .px(px(5.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_full()
+                            .bg(hsla(p.attention))
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(hsla(p.text_on_accent))
+                            .child(attention.to_string())
+                    } else {
+                        div()
+                            .flex_none()
+                            .font_family("JetBrains Mono")
+                            .text_size(px(10.))
+                            .text_color(hsla(p.text_tertiary))
+                            .child(group.len().to_string())
+                    })
+            });
         let Some(workspace) = self
             .workspaces
             .get(first)

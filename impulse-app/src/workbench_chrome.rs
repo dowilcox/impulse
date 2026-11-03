@@ -2074,9 +2074,12 @@ impl Workbench {
             let indented = name.is_some();
             if let Some(name) = name {
                 add(
-                    self.repository_header(name, group[0], cx),
+                    self.repository_header(name, &group, cx),
                     &[crate::task_sidebar::REPOSITORY_HEADER_HEIGHT],
                 );
+                if self.repository_collapsed(&crate::tasks::group_key(&self.workspaces[group[0]])) {
+                    continue;
+                }
             }
             for index in group {
                 let (row, heights) = self.workspace_row(index, indented, cx);

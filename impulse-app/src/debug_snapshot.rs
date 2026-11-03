@@ -594,6 +594,17 @@ fn perform_now(action: &str, cx: &mut App) {
                     None => fail(format!("select-workspace: no workspace “{wanted}”")),
                 }
             }
+            ("toggle-repository", Some(wanted)) => {
+                let key = workbench
+                    .workspaces
+                    .iter()
+                    .find(|w| w.task.repository_name().as_deref() == Some(wanted))
+                    .map(crate::tasks::group_key);
+                match key {
+                    Some(key) => workbench.toggle_repository(&key, cx),
+                    None => fail(format!("toggle-repository: no repository “{wanted}”")),
+                }
+            }
             ("select-tab", Some(index)) => {
                 let tabs = all_tabs(workbench);
                 if let Some(at) = index.parse::<usize>().ok().and_then(|i| tabs.get(i)) {

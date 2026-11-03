@@ -2,6 +2,12 @@
 
 All notable changes to Impulse are documented in this file.
 
+## Unreleased
+
+### Improvements
+
+- A repository's header in the sidebar collapses its workspaces: click it to hide the main checkout's and its tasks' rows under the repository's name, and again to show them. Collapsed, the header shows how many workspaces it holds, or how many of their terminals need attention, and marks the repository you're working in. The sidebar remembers which repositories are collapsed.
+
 ## 1.1.2
 
 ### Fixes

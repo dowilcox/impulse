@@ -49,6 +49,10 @@ pub struct SessionWindow {
     pub sidebar_width: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspaces_height: Option<f64>,
+    /// The repositories (their shared git folders) whose workspaces the
+    /// sidebar shows collapsed under their name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed_repositories: Option<Vec<String>>,
 }
 
 /// A workspace and its tabs.
@@ -498,6 +502,21 @@ mod tests {
         assert_eq!(tab.panes[0].transcript.as_deref(), Some("hello\r\n"));
         assert_eq!(tab.panes[1].line, Some(3));
         assert_eq!(tab.layout.as_ref().unwrap().leaves(), vec![0, 1]);
+    }
+
+    #[test]
+    fn collapsed_repositories_are_kept_and_optional() {
+        let mut state = sample();
+        state.windows[0].collapsed_repositories = Some(vec!["/repo/.git".into()]);
+        let text = serde_json::to_string(&state).unwrap();
+        let back: SessionState = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            back.windows[0].collapsed_repositories.as_deref(),
+            Some(&["/repo/.git".to_string()][..])
+        );
+        // Files written before collapsing existed read as nothing collapsed.
+        let old: SessionWindow = serde_json::from_str(r#"{"workspaces":[]}"#).unwrap();
+        assert_eq!(old.collapsed_repositories, None);
     }
 
     #[test]

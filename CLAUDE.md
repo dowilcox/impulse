@@ -239,7 +239,8 @@ impulse-app/              the app on GPUI + GPUI Kit for
                           tasks (tasks.rs: registry, identity, trust, prep;
                           task_sheet.rs New Task; task_finish.rs Finish
                           Task; task_cleanup.rs Archive/Undo;
-                          task_sidebar.rs repository groups, merged and
+                          task_sidebar.rs repository groups (collapsed by
+                          their header: collapsed_repositories), merged and
                           overlap chips), project settings
                           (project_setup.rs: the Project Setup tab,
                           Surface::ProjectSetup, over

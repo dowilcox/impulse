@@ -395,6 +395,18 @@ impl Workbench {
             .iter()
             .filter(|workspace| kept(workspace))
             .count();
+        // Only repositories still open here, in a fixed order.
+        let mut collapsed: Vec<String> = self
+            .collapsed_repositories
+            .iter()
+            .filter(|key| {
+                self.workspaces
+                    .iter()
+                    .any(|w| w.task.common_dir.as_ref() == Some(*key))
+            })
+            .cloned()
+            .collect();
+        collapsed.sort();
         SessionWindow {
             workspaces: Some(workspaces),
             active_workspace_index: Some(active as i64),
@@ -402,6 +414,7 @@ impl Workbench {
             sidebar_width: Some(self.sidebar_px as f64),
             frame: Some(frame_of(self.bounds, cx)),
             workspaces_height: self.workspaces_height.map(f64::from),
+            collapsed_repositories: Some(collapsed).filter(|c| !c.is_empty()),
             ..Default::default()
         }
     }
@@ -416,6 +429,12 @@ impl Workbench {
     ) {
         // The sidebar as this window had it (Swift keeps it per window).
         self.workspaces_height = state.workspaces_height.map(|h| h.max(0.) as f32);
+        self.collapsed_repositories = state
+            .collapsed_repositories
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         if let Some(width) = state.sidebar_width.filter(|w| *w > 120.) {
             self.sidebar_px = width.round() as f32;
         }

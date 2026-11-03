@@ -154,6 +154,9 @@ pub struct Workbench {
     /// (height and pointer at its start); its scroll, whose bounds are the
     /// height last laid out.
     pub(crate) workspaces_height: Option<f32>,
+    /// The repositories whose workspaces the sidebar hides under their
+    /// header (by `tasks::group_key`), saved with the session.
+    pub(crate) collapsed_repositories: std::collections::HashSet<String>,
     pub(crate) workspaces_drag: Option<(f32, f32)>,
     pub(crate) workspaces_scroll: gpui_kit::ScrollHandle,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
@@ -312,6 +315,7 @@ impl Workbench {
             drag: None,
             sidebar_drag: None,
             workspaces_height: None,
+            collapsed_repositories: Default::default(),
             workspaces_drag: None,
             workspaces_scroll: gpui_kit::ScrollHandle::new(),
             split_bounds: Default::default(),

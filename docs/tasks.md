@@ -176,7 +176,7 @@ An agent that's working in the main checkout can't follow its files: the move wa
 
 ![The Workspaces section of the sidebar: a "trailhead" group header over three rows: trailhead on feature/forecast-cache; the active fix-elevation task, whose agent has finished (a bot with 1, a +9 diff stat and an attention badge); and add-trail-photos, with an agent working (a spinner) and +7](images/tasks-sidebar-group.png)
 
-A task appears in the Workspaces section at the top of the sidebar like any other workspace, named after its folder (`fix-elevation`). When two or more open workspaces belong to the same repository (the main checkout and its tasks, or several tasks), Impulse groups them under a header with the repository's name (`trailhead`) and indents their rows. With only one workspace open from a repository, there is no header.
+A task appears in the Workspaces section at the top of the sidebar like any other workspace, named after its folder (`fix-elevation`). When two or more open workspaces belong to the same repository (the main checkout and its tasks, or several tasks), Impulse groups them under a header with the repository's name (`trailhead`) and indents their rows. With only one workspace open from a repository, there is no header. Click the header to collapse its workspaces under it, and again to bring them back; a collapsed header shows how many workspaces it holds, or the attention badge when any of their terminals needs you, and carries the selection mark while the workspace you're in is one of them. Which repositories are collapsed is kept with the session.
 
 Each row shows, from left to right:
 
