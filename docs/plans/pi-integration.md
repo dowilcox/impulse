@@ -24,6 +24,10 @@ Pi (`@earendil-works/pi-coding-agent` 1.5, the CLI `pi`) is a supported agent at
 
 Full smoke run (8 Nov 2026, Linux, Xvfb with software Vulkan, zsh 5.9, bash, fish 3.7, node 22): every scenario passed, 542 checks: editor 30, terminal-zsh 115, terminal-bash 108, terminal-fish 108, fish-check 11, images 4, scratch 8, agents 39, lsp 15, tasks 14, agent-integration 11, opencode 32, pi 25, mcp 19, session 3.
 
+## Real Pi run (8 Nov 2026)
+
+Pi 1.5.0 (`@earendil-works/pi-coding-agent`) in this branch's dev build under Xvfb, the extension loaded with `pi -e`, the model Gemma 4 E4B served locally by Hob's `llama-server` (no cloud account). Items marked verified below come from this run. Found: Esc mid-turn shows Finished (see below), and the summary still says "(or Impulse's impulse_list_tasks tool, if you have its MCP server)" in Pi, where the tools are always there.
+
 ## Needs another environment
 
 ### A real Pi (any machine where Pi can be installed)
@@ -31,20 +35,20 @@ Full smoke run (8 Nov 2026, Linux, Xvfb with software Vulkan, zsh 5.9, bash, fis
 Installing Pi from npm wasn't allowed in the container, so the extension has only run under the stand-in (`scripts/smoke/pi-agent.mjs`), which calls it as Pi's documentation says Pi does. Before release, with a real Pi and a model:
 
 - [ ] Agent Integration ▸ Hooks ▸ Pi ▸ Install Extension, then `pi` in an Impulse terminal: Pi loads it without errors (`/extensions` or the startup list shows it); outside Impulse it does nothing.
-- [ ] A prompt: the tab shows Working, then Finished, with a notification. A retried or compacted run stays one turn.
-- [ ] Esc mid-turn: Pi sends `agent_settled` with `aborted`, which the extension reports as `Stop`, so the agent shows Finished (opencode does the same; Claude Code shows Idle). Decide whether aborted should be Idle instead (a new event name mapped to `AgentHook::Status(Idle)` or similar).
-- [ ] An error (bad API key, rate limit): Finished, with the provider's message in the notification.
-- [ ] `git merge <branch of a busy task>` asked of Pi: Pi's confirm dialog shows Impulse's reason; the tab shows Needs your input while it's open; declining blocks the command with the reason.
-- [ ] Impulse's tools: Pi lists `impulse_list_tasks` and the rest; `impulse_create_task` opens New Task in Impulse and waits; Esc while it waits cancels the call (`notifications/cancelled`).
-- [ ] The tools' JSON schemas are accepted by Pi's validator and by each provider used (Anthropic, OpenAI, Google); Impulse's `inputSchema`s are plain JSON Schema, which Pi documents as fine, but provider quirks (e.g. `additionalProperties`) only show with real calls.
-- [ ] The summary section appears in Pi's system prompt (`/session` or an HTML export) once per session, not repeated each turn.
+- [x] A prompt: the tab shows Working, then Finished, with a notification. A retried or compacted run stays one turn. **Verified 8 Nov** (Working, then Finished; no notification checked: the run was under Xvfb without D-Bus).
+- [x] Esc mid-turn: Pi sends `agent_settled` with `aborted`, which the extension reports as `Stop`, so the agent shows Finished (opencode does the same; Claude Code shows Idle). Decide whether aborted should be Idle instead (a new event name mapped to `AgentHook::Status(Idle)` or similar). **Verified 8 Nov**: Finished, as predicted. Still to decide: Finished or Idle.
+- [x] An error (bad API key, rate limit): Finished, with the provider's message in the notification. **Verified 8 Nov** (a bad OpenAI key: Finished, the 401 in the transcript).
+- [x] `git merge <branch of a busy task>` asked of Pi: Pi's confirm dialog shows Impulse's reason; the tab shows Needs your input while it's open; declining blocks the command with the reason. **Verified 8 Nov**: the dialog read "Impulse asks before this merge — busy is still being worked on: … 1 uncommitted file …", the tab showed Needs your input, Yes ran it. Declining not tried.
+- [ ] Impulse's tools: Pi lists `impulse_list_tasks` and the rest; `impulse_create_task` opens New Task in Impulse and waits; Esc while it waits cancels the call (`notifications/cancelled`). **Partly verified 8 Nov**: `impulse_list_tasks` called and answered; `impulse_create_task` not tried.
+- [ ] The tools' JSON schemas are accepted by Pi's validator and by each provider used (Anthropic, OpenAI, Google); Impulse's `inputSchema`s are plain JSON Schema, which Pi documents as fine, but provider quirks (e.g. `additionalProperties`) only show with real calls. **Partly verified 8 Nov**: accepted by Pi and by llama.cpp's OpenAI-compatible server (Gemma 4 E4B through Hob's `llama-server`); not yet by Anthropic, OpenAI or Google.
+- [x] The summary section appears in Pi's system prompt (`/session` or an HTML export) once per session, not repeated each turn. **Verified 8 Nov**: the model quoted the `<impulse>` section. Once-per-session not checked.
 - [ ] Notes after an edit of a file another task changes, and after a `git pull` that changes a lock file.
 - [ ] Trust: a project with `.pi/extensions` in a folder trusted in Impulse loads without Pi's trust prompt; in a task made from a remote branch (restricted) Pi doesn't load it; elsewhere Pi asks as usual. With `agent_hook_project_trust` off, Pi always asks.
 - [ ] `/reload`, `/new`, `/resume`, `/fork`: the tools come back, and Impulse's resume command follows the new session (restart Impulse and check the terminal resumes the right one).
-- [ ] `pi -p "…"` run by Pi's own bash tool, and a subagent extension's child Pis: they don't change the pane's state.
+- [x] `pi -p "…"` run by Pi's own bash tool, and a subagent extension's child Pis: they don't change the pane's state. **`pi -p` verified 8 Nov**: the nested Pi had Impulse's tools and the pane kept the outer Pi's state.
 - [ ] Recognition: Pi installed with npm (both package names), with bun, and as the release binary, through `nvm`/`volta` shims.
 - [ ] `PI_CODING_AGENT_DIR` set in the shell profile but not in Impulse's own environment: Agent Integration and the out-of-date check read Impulse's environment, so they'd look in `~/.pi/agent`. If that matters, read it from the login shell (`impulse_kit::shell::login`) instead.
-- [ ] Older Pi (`@mariozechner/pi-coding-agent` 0.x): `project_trust`, `agent_settled` and `ui_prompt_*` may not exist there. Without `agent_settled` no `Stop` is sent and turns end by silence (5 minutes). Either document a minimum Pi version or fall back to `agent_end` when `agent_settled` never fires.
+- [x] Older Pi (`@mariozechner/pi-coding-agent` 0.x): decided against. 0.69 has no `agent_settled` (no `Stop`), `project_trust`, `ui_prompt_*` or `systemPromptOptions.sections` (the `before_agent_start` handler would throw), so Pi 1.5 is the documented minimum ([Agents](../agents.md#what-gets-written)).
 
 ### macOS
 
