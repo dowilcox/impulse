@@ -429,6 +429,20 @@ pub const PI_EXTENSION: &str = include_str!("../../resources/agents/pi-extension
 
 /// Pi's own folder: `$PI_CODING_AGENT_DIR` (a leading `~` is the home
 /// folder), else `~/.pi/agent`.
+/// The environment agents' folders are found in: Impulse's own, with what
+/// the login shell sets on top (`shell::login::LOGIN_VARIABLES`), as an
+/// agent started in a terminal sees it. Impulse started from a desktop
+/// launcher misses `PI_CODING_AGENT_DIR` set in a shell profile otherwise.
+pub fn agents_environment() -> std::collections::HashMap<String, String> {
+    let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
+    for name in crate::shell::login::LOGIN_VARIABLES {
+        if let Some(value) = crate::shell::login::login_variable(name) {
+            environment.insert(name.to_string(), value);
+        }
+    }
+    environment
+}
+
 pub fn pi_agent_directory(
     environment: &std::collections::HashMap<String, String>,
     home: &str,

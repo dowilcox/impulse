@@ -47,7 +47,7 @@ Installing Pi from npm wasn't allowed in the container, so the extension has onl
 - [ ] `/reload`, `/new`, `/resume`, `/fork`: the tools come back, and Impulse's resume command follows the new session (restart Impulse and check the terminal resumes the right one).
 - [x] `pi -p "…"` run by Pi's own bash tool, and a subagent extension's child Pis: they don't change the pane's state. **`pi -p` verified 8 Nov**: the nested Pi had Impulse's tools and the pane kept the outer Pi's state.
 - [ ] Recognition: Pi installed with npm (both package names), with bun, and as the release binary, through `nvm`/`volta` shims.
-- [ ] `PI_CODING_AGENT_DIR` set in the shell profile but not in Impulse's own environment: Agent Integration and the out-of-date check read Impulse's environment, so they'd look in `~/.pi/agent`. If that matters, read it from the login shell (`impulse_kit::shell::login`) instead.
+- [x] `PI_CODING_AGENT_DIR` set in the shell profile but not in Impulse's own environment: **fixed** (Nov 2026). The login shell Impulse already starts for its `PATH` reports it too (`shell::login::LOGIN_VARIABLES`, `login_variable`), and Agent Integration and the out-of-date check read it through `hook_installer::agents_environment`.
 - [x] Older Pi (`@mariozechner/pi-coding-agent` 0.x): decided against. 0.69 has no `agent_settled` (no `Stop`), `project_trust`, `ui_prompt_*` or `systemPromptOptions.sections` (the `before_agent_start` handler would throw), so Pi 1.5 is the documented minimum ([Agents](../agents.md#what-gets-written)).
 
 ### macOS

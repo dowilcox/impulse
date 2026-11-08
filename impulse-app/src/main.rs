@@ -383,6 +383,11 @@ fn main() {
         quick_terminal::init(cx);
         repository_state::start_auto_fetch(cx);
         update_check::start(cx);
+        // The login shell's PATH and variables (shell::login), captured
+        // off the main thread now so completions, Agent Integration and
+        // Pi's folder never wait for a shell's startup files.
+        cx.background_spawn(async { impulse_kit::completion::input::warm_cache() })
+            .detach();
         control_server::start(cx, control_commands::dispatch);
         instance::serve(cx);
         cx.on_app_quit(|cx| {

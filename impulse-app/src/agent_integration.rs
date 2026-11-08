@@ -121,8 +121,10 @@ fn text(data: &Option<Vec<u8>>) -> String {
 }
 
 impl Model {
+    /// The sheet for `agent`, its files read once.
     pub fn new(
         part: Part,
+        agent: Agent,
         project_root: Option<String>,
         main_checkout: Option<String>,
         fallback_cli: String,
@@ -131,7 +133,12 @@ impl Model {
     ) -> Self {
         let mut model = Self {
             part,
-            agent: Agent::Claude,
+            // Hooks have no "Other": that's the MCP side's.
+            agent: if part == Part::Hooks && agent == Agent::Other {
+                Agent::Claude
+            } else {
+                agent
+            },
             scope: Scope::User,
             fallback_cli,
             project_root,
@@ -1153,17 +1160,15 @@ impl Workbench {
         let fallback_cli = crate::control_server::cli_path()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| mcp::DEFAULT_CLI.to_string());
-        let mut model = Model::new(
+        let model = Model::new(
             part,
+            agent.unwrap_or(Agent::Claude),
             project_root,
             main_checkout,
             fallback_cli,
             crate::workspace::home(),
-            std::env::vars().collect(),
+            hooks::agents_environment(),
         );
-        if let Some(agent) = agent {
-            model.set_agent(agent);
-        }
         let palette = self.palette.clone();
         let workbench = cx.entity().downgrade();
         let scope = crate::settings_view::choice_select(
@@ -1306,6 +1311,7 @@ mod tests {
     fn model(part: Part, home: &Path) -> Model {
         Model::new(
             part,
+            Agent::Claude,
             None,
             None,
             "/opt/impulse".into(),
@@ -1407,15 +1413,15 @@ mod tests {
         let home = home();
         let mut environment = HashMap::new();
         environment.insert("PI_CODING_AGENT_DIR".to_string(), "~/pi-config".to_string());
-        let mut sheet = Model::new(
+        let sheet = Model::new(
             Part::Hooks,
+            Agent::Pi,
             None,
             None,
             "/opt/impulse".into(),
             home.clone(),
             environment,
         );
-        sheet.set_agent(Agent::Pi);
         assert!(sheet.path.ends_with("pi-config/extensions/impulse.js"));
         let _ = std::fs::remove_dir_all(&home);
     }

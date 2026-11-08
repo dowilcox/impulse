@@ -606,7 +606,7 @@ impl Workbench {
         }
         let home = crate::workspace::home();
         let outdated = cx.background_spawn(async move {
-            let environment = std::env::vars().collect();
+            let environment = hook_installer::agents_environment();
             let folder = hook_installer::pi_agent_directory(&environment, &home.to_string_lossy());
             let file = Path::new(&folder)
                 .join("extensions")
