@@ -26,7 +26,7 @@ Full smoke run (8 Nov 2026, Linux, Xvfb with software Vulkan, zsh 5.9, bash, fis
 
 ## Real Pi run (8 Nov 2026)
 
-Pi 1.5.0 (`@earendil-works/pi-coding-agent`) in this branch's dev build under Xvfb, the extension loaded with `pi -e`, the model Gemma 4 E4B served locally by Hob's `llama-server` (no cloud account). Items marked verified below come from this run. Found: Esc mid-turn shows Finished (see below), and the summary still says "(or Impulse's impulse_list_tasks tool, if you have its MCP server)" in Pi, where the tools are always there.
+Pi 1.5.0 (`@earendil-works/pi-coding-agent`) in this branch's dev build under Xvfb, the extension loaded with `pi -e`, the model Gemma 4 E4B served locally by Hob's `llama-server` (no cloud account). Items marked verified below come from this run. Found: Esc mid-turn shows Finished (see below), and the summary said "(or Impulse's impulse_list_tasks tool, if you have its MCP server)" in Pi, where the tools are always there (since reworded for every agent: "Run `impulse tasks` or Impulse's list_tasks tool before merging…").
 
 ## Needs another environment
 
@@ -57,6 +57,7 @@ Installing Pi from npm wasn't allowed in the container, so the extension has onl
 - [ ] `scripts/build.sh --dev`, then `python3 scripts/smoke/run.py pi opencode agents agent-integration` (needs `node`).
 - [ ] The Agent Integration sheet in SF Pro: the MCP Server side shows five agents at 88 points each beside Claude Code's 170-point scope pop-up (fits on Linux with a few points to spare); check "Claude Code" isn't clipped.
 - [ ] Regenerate `docs/images/agents-hooks-sheet.png` (`python3 scripts/docs/capture.py agents-hooks-sheet`): it shows three agents, the sheet now has four on Hooks. The shots are made on the Mac (window buttons, SF Pro), so it wasn't regenerated on Linux.
+- [ ] Regenerate `docs/images/tasks-sidebar-group.png` and `tasks-sidebar-collapsed.png` (`python3 scripts/docs/capture.py tasks-sidebar`): the repository header moved 2 points and got a hover tint, and the collapsed shot was first made on Linux at 1x.
 - [ ] A desktop notification for a finished and a failed Pi turn, and the Dock badge while Pi needs input.
 
 ### CI

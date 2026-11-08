@@ -216,7 +216,7 @@ impl TaskListing {
             .collect();
         lines.push(format!("Other workspaces: {}.", others.join("; ")));
         lines.push(
-            "Run `impulse tasks` (or Impulse's list_tasks tool, if you have its MCP server) before merging a branch or making sweeping edits, to see what they're changing."
+            "Run `impulse tasks` or Impulse's list_tasks tool before merging a branch or making sweeping edits, to see what they're changing."
                 .to_string(),
         );
         Some(lines.join("\n"))
