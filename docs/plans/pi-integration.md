@@ -22,7 +22,7 @@ Pi (`@earendil-works/pi-coding-agent` 1.5, the CLI `pi`) is a supported agent at
 - Smoke checks under Xvfb (`scripts/smoke/run.py`), including the new `pi` scenario: Agent Integration replacing an older extension, the out-of-date note, states (done, needs input during the merge question, done after an error), resume, the trust answer, the summary section with tools renamed, the shared-file note, Impulse's tools in the pane, the merge question approved, and a nested Pi reporting nothing. Results of the full run are below.
 - The extension was checked by hand against Pi 1.5.0's published type declarations (`dist/core/extensions/types.d.ts`): every event it handles exists with the fields it reads; `project_trust` returns `{trusted}`; `edit` and `write` take `path`; the session manager has `getSessionId`/`getSessionFile`; the bash tool spreads `process.env` into commands at call time (so `IMPULSE_PI_PID` reaches nested Pis).
 
-Full smoke run: in progress when this was first written; see the next update of this file.
+Full smoke run (8 Nov 2026, Linux, Xvfb with software Vulkan, zsh 5.9, bash, fish 3.7, node 22): every scenario passed, 542 checks: editor 30, terminal-zsh 115, terminal-bash 108, terminal-fish 108, fish-check 11, images 4, scratch 8, agents 39, lsp 15, tasks 14, agent-integration 11, opencode 32, pi 25, mcp 19, session 3.
 
 ## Needs another environment
 
