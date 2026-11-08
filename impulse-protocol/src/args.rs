@@ -37,7 +37,7 @@ pub const USAGE: &str = "impulse — talk to the Impulse window this terminal is
   impulse blocks show <id> [--lines <n>] one command's output
   impulse unsaved [--json]              files open with unsaved edits
   impulse project [--json]              the trusted project settings: scripts, actions
-  impulse hook <claude|codex|opencode> [event]
+  impulse hook <claude|codex|opencode|pi> [event]
                                         for agent hooks (reads hook input on stdin)
   impulse mcp                           an MCP server (stdio) for agents, with the
                                         same commands as tools
@@ -353,13 +353,14 @@ pub fn request(
         "hook" => {
             let Some(agent) = rest.first().cloned() else {
                 return Err(UsageError::new(
-                    "usage: impulse hook <claude|codex|opencode> [event]",
+                    "usage: impulse hook <claude|codex|opencode|pi> [event]",
                 ));
             };
             arguments.insert("agent".into(), agent.clone());
             // An explicit event name, and/or a JSON payload: Codex passes
             // its notification as the last argument; Claude Code, and
-            // Impulse's opencode plugin, write hook input to stdin.
+            // Impulse's opencode plugin and Pi extension, write hook input
+            // to stdin.
             let mut event: Option<String> = None;
             let mut payload: Option<Vec<u8>> = None;
             for word in &rest[1..] {
@@ -369,7 +370,7 @@ pub fn request(
                     event = Some(word.clone());
                 }
             }
-            if payload.is_none() && (agent == "claude" || agent == "opencode") {
+            if payload.is_none() && matches!(agent.as_str(), "claude" | "opencode" | "pi") {
                 payload = stdin();
             }
             let mut message: Option<String> = None;
@@ -502,7 +503,7 @@ pub fn request(
             }
             let Some(event) = event.filter(|event| !event.is_empty()) else {
                 return Err(UsageError::new(
-                    "usage: impulse hook <claude|codex|opencode> <event>",
+                    "usage: impulse hook <claude|codex|opencode|pi> <event>",
                 ));
             };
             arguments.insert("event".into(), event);

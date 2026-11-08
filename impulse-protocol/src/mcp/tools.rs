@@ -460,7 +460,7 @@ fn task_actions() -> Vec<McpTool> {
         )
         .property(
             "agent",
-            string("The agent to start there: claude, codex, gemini, aider, opencode, amp, copilot, cursor, goose, qwen or crush. Omit for a plain terminal."),
+            string("The agent to start there: claude, codex, gemini, aider, opencode, amp, copilot, cursor, goose, qwen, crush or pi. Omit for a plain terminal."),
         )
         .property(
             "brief",

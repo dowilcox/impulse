@@ -19,8 +19,9 @@ Impulse never calls an AI model itself. The agents are the command-line programs
 | Goose        | `goose`            |
 | Qwen Code    | `qwen`             |
 | Crush        | `crush`            |
+| Pi           | `pi`               |
 
-Run the agent the way you normally do, in any Impulse terminal. Nothing needs to be configured for Impulse to notice it. [Hooks](#agent-hooks) make the status exact for Claude Code, Codex and opencode.
+Run the agent the way you normally do, in any Impulse terminal. Nothing needs to be configured for Impulse to notice it. [Hooks](#agent-hooks) make the status exact for Claude Code, Codex, opencode and Pi.
 
 ## How Impulse recognizes an agent
 
@@ -227,7 +228,7 @@ You can also record a checkpoint yourself with `impulse checkpoint` (see [Comman
 
 ## Agent hooks
 
-Without hooks, Impulse infers an agent's state from its output, which is usually right but can lag or misread a pause. Claude Code and Codex can call a program at key moments ("hooks"), and opencode loads plugins that can. Install Impulse's hooks (for opencode, its plugin) and the agent tells Impulse exactly when it starts working, needs you and finishes. Hooks also let Impulse [resume](#resume-after-a-restart) the agent's session after a restart.
+Without hooks, Impulse infers an agent's state from its output, which is usually right but can lag or misread a pause. Claude Code and Codex can call a program at key moments ("hooks"), and opencode and Pi load plugins and extensions that can. Install Impulse's hooks (for opencode, its plugin; for Pi, its extension) and the agent tells Impulse exactly when it starts working, needs you and finishes. Hooks also let Impulse [resume](#resume-after-a-restart) the agent's session after a restart.
 
 The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environment variable, which only Impulse terminals set. In any other terminal, the hook does nothing and exits successfully, so it's safe to install them for all projects.
 
@@ -236,8 +237,8 @@ The hooks call the `impulse` command-line tool through the `IMPULSE_CLI` environ
 ![The Agent Integration sheet on Hooks, with Claude Code and "All projects" selected, "Not installed ~/.claude/settings.json", and a preview of the lines that will be added](images/agents-hooks-sheet.png)
 
 1. Run **Install Agent Hooks…** from the command palette, or click **Agent hooks give exact status…** at the bottom of the agent list. The Agent Integration sheet opens on **Hooks** (its other half sets up [Impulse's MCP server](#impulses-mcp-server)).
-2. Choose **Claude Code**, **Codex** or **opencode**.
-3. For Claude Code, choose **All projects** or **This project only** (only available when the window is in a git repository). Codex's and opencode's are for all projects.
+2. Choose **Claude Code**, **Codex**, **opencode** or **Pi**.
+3. For Claude Code, choose **All projects** or **This project only** (only available when the window is in a git repository). Codex's, opencode's and Pi's are for all projects.
 4. Check the status line ("Installed" or "Not installed", and the file that will change) and the preview of the change: added lines are marked `+`, removed lines `-`.
 5. Click **Install Hooks**. Impulse shows "Installed Claude Code hooks. Restart running agents to pick them up."
 6. Quit and restart any agents that were already running.
@@ -274,7 +275,7 @@ Impulse rewrites the file pretty-printed with its keys sorted. Hooks that are al
 
 ### What the hooks tell agents
 
-In a repository with [tasks](tasks.md), Impulse's hooks for Claude Code and opencode also tell the agent about the other workspaces, which it otherwise can't see, and about subagents that share a checkout (Claude Code's, and opencode's from its subagent tool). Each can be turned off in Settings ▸ Terminal ▸ Agents.
+In a repository with [tasks](tasks.md), Impulse's hooks for Claude Code, opencode and Pi also tell the agent about the other workspaces, which it otherwise can't see, and about subagents that share a checkout (Claude Code's, and opencode's from its subagent tool). Each can be turned off in Settings ▸ Terminal ▸ Agents.
 
 | When                                                                                                                                                                       | The agent is told                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Setting                   |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -282,7 +283,7 @@ In a repository with [tasks](tasks.md), Impulse's hooks for Claude Code and open
 | It edits a file that another workspace also changes                                                                                                                        | "Impulse: src/lib/units.ts is also changed in the task fix-elevation, where Claude Code is working…" Once per file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `agent_hook_shared_files` |
 | The agent starts a subagent in its own checkout while other subagents that edit files are running there, or starting in the same message                                   | After the call: that they share the checkout and can overwrite each other's changes, and to give subagents that edit files their own worktree (`isolation: "worktree"`), which Impulse lists as [tasks](tasks.md#worktrees-claude-code-makes). Once per batch of subagents. opencode's subagents always share the checkout (its subagent tool has no worktree of their own to give), and its note comes after the subagent call's output. The new subagent is told too, as it starts: to change only the files its task needs and read a file again right before editing it. Read-only subagents (Explore, Plan) don't count. | `agent_hook_subagents`    |
 | A subagent edits a file that another subagent, or the agent that started it, changed while it was running, in the same checkout                                            | Before the edit: it's stopped once, with "Impulse: stopped this edit of src/parser.rs: another subagent ("Fix the lexer") changed it while you were working, in this same checkout…" and to read the file again and make the edit against what it holds now. The retry goes through. The agent itself, about to edit a file a subagent that's still running edited, is stopped once and told to let it finish first. With Claude Code hooks from before Impulse stopped edits, the same is said after the edit instead. opencode's plugin stops the edit by failing the tool call with the same reason.                       | `agent_hook_subagents`    |
-| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code and opencode stop and ask you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-by-hand).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `agent_hook_merge_guard`  |
+| It runs `git merge`, `git rebase` or `git pull` on a task's branch while that task is still being worked on (its agent working or waiting for input, or uncommitted files) | Nothing: Claude Code, opencode and Pi stop and ask you first, showing the same reason as Impulse's own [merge question](tasks.md#merge-by-hand).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `agent_hook_merge_guard`  |
 | Its `git pull`, merge or checkout brought in a changed lock file or `Dockerfile`                                                                                           | Which files changed, and the commands from the project's [`[on_change]` rules](project-config.md#when-files-change) to run before testing. Until you've trusted the project settings, only the well-known dependency files it changed, and to reinstall dependencies.                                                                                                                                                                                                                                                                                                                                                         | `agent_hook_dependencies` |
 
 Nothing is written into your repository or its instruction files (`CLAUDE.md`, `AGENTS.md`): it all goes through the hooks. opencode's plugin puts the summary beside opencode's own instructions (its system prompt) for the rest of the session (a subagent's note, in its own session's), and a note after the output of the edit, shell command or subagent call it's about, which the agent reads next. Codex only tells Impulse when a turn ends, so it gets none of this; it can still run `impulse tasks`.
@@ -305,6 +306,18 @@ A session belongs to the last terminal that showed it. The plugin also gives ope
 
 Because the files are Impulse's, they're written without a backup and replaced as a whole when a newer Impulse changes them ("Out of date"). Installing also removes `plugins/impulse.js`, the single-file plugin older Impulses installed for opencode 1 (which opencode 2 can't load). A folder holding a file that isn't Impulse's is left alone: the sheet says to rename or remove it first.
 
+**Pi:** one file, `~/.pi/agent/extensions/impulse.js` (under `$PI_CODING_AGENT_DIR/extensions` if you set it), an extension of Impulse's own. The button reads **Install Extension**. Pi loads it in every Pi you start; outside an Impulse terminal (no `IMPULSE_CLI`) it does nothing. A Pi that's already running picks it up with `/reload`. The extension runs inside Pi, in the pane, so it reports straight to the pane's Impulse with `impulse hook pi <event>`, by the CLI's path rather than through a shell:
+
+- **State.** A run starting (`UserPromptSubmit`), settling (`Stop`), or ending on the provider's error (`StopFailure`, with the error in the notification). An extension's dialog that waits for you mid-turn shows **Needs your input** until it's answered. Retries and queued messages Pi runs before it settles stay one turn.
+- **The notes and questions below**, as Claude Code gets them: the other workspaces' summary goes in a section of Pi's system prompt, a note after an edit (`edit`, `write`) or shell command (`bash`) goes after the tool's output, and before a merge of a branch a task is still on Pi asks you with Impulse's reason (without a UI to ask in, as with `pi -p`, the command doesn't run).
+- **Impulse's tools**, as Pi's own (`impulse_list_tasks`, `impulse_create_task`, …), from an `impulse mcp` the extension starts in the pane. Pi needs no MCP server entry.
+- **Folder trust.** Before Pi loads a project's own extensions, settings and skills, it's told what Impulse thinks of the folder: a folder you trust in Impulse is trusted for that run, one Impulse keeps restricted (a task made from someone else's branch) is not, and anywhere else Pi asks as it always does. Turn this off with `agent_hook_project_trust`.
+- **Resume.** The session's id, so Impulse can [resume](#resume-after-a-restart) it with `pi --session <id>`.
+
+A Pi started by the pane's Pi (a subagent extension's, or `pi -p` run by its bash tool) gets Impulse's tools but reports nothing, so the pane shows the pane's own Pi. Pi has no subagents of its own, so there are no subagent notes for it.
+
+Because the file is Impulse's, it's replaced as a whole when a newer Impulse changes it ("Out of date"). A file of the same name that isn't Impulse's is left alone, and the sheet says so.
+
 ### Remove hooks
 
 Open the sheet again, choose the same agent (and, for Claude Code, the same scope), check the preview of the lines that will be removed, and click **Remove Hooks**. Impulse shows "Removed Impulse's Claude Code hooks." (or Codex, or opencode), and keeps the previous version as `<file>.impulse-backup`, as when installing.
@@ -312,6 +325,7 @@ Open the sheet again, choose the same agent (and, for Claude Code, the same scop
 - **Claude Code:** Impulse removes only its own hook entries, and drops events (and the `hooks` object) that end up empty.
 - **Codex:** Impulse removes its `notify` line, the comment above it and the blank line it added after them. A `notify` program that isn't Impulse's is left alone. If Impulse's command was edited onto several lines, the sheet says to remove it from `config.toml` by hand.
 - **opencode:** Impulse deletes its plugin's files, and the folder once it's empty.
+- **Pi:** Impulse deletes its extension file.
 
 ## Resume after a restart
 
@@ -343,7 +357,7 @@ The `impulse` command-line tool, available in every Impulse terminal, has comman
 
 ## Impulse's MCP server
 
-Hooks tell Impulse what an agent is doing. Impulse's MCP server works the other way: it gives the agent tools to ask Impulse about the work around it, and to start tasks. Any agent that loads [Model Context Protocol](https://modelcontextprotocol.io) servers can use it: Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor Agent, Goose, Amp and others. opencode gets the same tools from Impulse's [plugin](#what-gets-written) instead.
+Hooks tell Impulse what an agent is doing. Impulse's MCP server works the other way: it gives the agent tools to ask Impulse about the work around it, and to start tasks. Any agent that loads [Model Context Protocol](https://modelcontextprotocol.io) servers can use it: Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor Agent, Goose, Amp and others. opencode and Pi get the same tools from Impulse's [plugin and extension](#what-gets-written) instead.
 
 The server is the `impulse mcp` command, which the agent starts itself. Each tool is one of the [`impulse` commands](cli.md#commands), so the agent gets the same answers as you do in a terminal. The server keeps nothing between calls and decides nothing: Impulse checks every call as it checks the command. Outside an Impulse terminal it starts but offers no tools, so registering it for all projects is safe.
 

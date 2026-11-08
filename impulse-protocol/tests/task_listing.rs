@@ -89,14 +89,14 @@ fn hook_replies_are_claude_code_json() {
         claude_ask["hookSpecificOutput"]["permissionDecision"],
         "ask"
     );
-    // Impulse's opencode plugin reads plain keys.
-    let note: Value = serde_json::from_str(&hook_reply::opencode_context("a note")).unwrap();
+    // Impulse's opencode plugin and Pi extension read plain keys.
+    let note: Value = serde_json::from_str(&hook_reply::plugin_context("a note")).unwrap();
     assert_eq!(note, json!({"context": "a note"}));
-    let ask: Value = serde_json::from_str(&hook_reply::opencode_ask("still moving")).unwrap();
+    let ask: Value = serde_json::from_str(&hook_reply::plugin_ask("still moving")).unwrap();
     assert_eq!(
         ask,
         json!({"ask": "still moving"}),
-        "opencode asks you, with Impulse's reason"
+        "the agent asks you, with Impulse's reason"
     );
     let deny: Value = serde_json::from_str(&hook_reply::deny("read it again")).unwrap();
     assert_eq!(
@@ -107,8 +107,12 @@ fn hook_replies_are_claude_code_json() {
             "permissionDecisionReason": "read it again",
         })
     );
-    let stop: Value = serde_json::from_str(&hook_reply::opencode_deny("read it again")).unwrap();
+    let stop: Value = serde_json::from_str(&hook_reply::plugin_deny("read it again")).unwrap();
     assert_eq!(stop, json!({"deny": "read it again"}));
+    let trust: Value = serde_json::from_str(&hook_reply::plugin_trust(true)).unwrap();
+    assert_eq!(trust, json!({"trusted": "yes"}));
+    let trust: Value = serde_json::from_str(&hook_reply::plugin_trust(false)).unwrap();
+    assert_eq!(trust, json!({"trusted": "no"}));
 }
 
 // Beyond the Swift tests: the JSON is the Swift app's.

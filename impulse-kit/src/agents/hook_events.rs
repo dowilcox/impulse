@@ -1,8 +1,10 @@
 //! What agents' hook events mean to Impulse: Claude Code's hook events,
-//! Codex's notify, and the events Impulse's opencode plugin sends. An event
-//! may change the agent's state, and Claude Code and the opencode plugin
-//! also read what Impulse answers (a summary of the other tasks, notes about
-//! shared files and dependencies, a question before a risky merge).
+//! Codex's notify, and the events Impulse's opencode plugin and Pi
+//! extension send (Pi's under Claude Code's names where they mean the
+//! same). An event may change the agent's state, and Claude Code, the
+//! opencode plugin and the Pi extension also read what Impulse answers (a
+//! summary of the other tasks, notes about shared files and dependencies, a
+//! question before a risky merge, and for Pi whether to trust the folder).
 
 use super::state_machine::AgentHook;
 
@@ -25,6 +27,18 @@ pub fn hook(
         "StopFailure" => return Some(AgentHook::Failed(message())),
         "Notification" => return Some(AgentHook::Notification(message())),
         _ => {}
+    }
+    if agent == Some("pi") {
+        return Some(match event {
+            // A dialog waits for you mid-turn (titled, when it is), then
+            // it's answered.
+            "prompt.start" => AgentHook::Notification(match message() {
+                title if title.is_empty() => "Pi needs your input".into(),
+                title => format!("Pi needs your input: {title}"),
+            }),
+            "prompt.end" => AgentHook::UsedTool(None),
+            _ => return None,
+        });
     }
     if agent != Some("opencode") {
         return None;
@@ -68,6 +82,9 @@ pub enum Reply {
     BeforeSubagent,
     /// The same note for the subagent itself, as it starts.
     SubagentStarted,
+    /// Whether Pi loads the folder's own extensions and settings: yes in a
+    /// folder Impulse trusts, no in one it keeps restricted.
+    ProjectTrust,
 }
 
 /// Claude Code's tool that starts a subagent (`Task` in older versions).
@@ -83,6 +100,12 @@ pub const OPENCODE_EDIT_TOOLS: [&str; 3] = ["edit", "write", "patch"];
 /// opencode's tool that starts a subagent (a child session).
 pub const OPENCODE_SUBAGENT_TOOL: &str = "subagent";
 
+/// Pi's tools that edit files.
+pub const PI_EDIT_TOOLS: [&str; 2] = ["edit", "write"];
+
+/// Pi's shell tool.
+pub const PI_SHELL_TOOL: &str = "bash";
+
 /// Whether `agent`'s `tool` starts a subagent.
 pub fn starts_subagent(agent: Option<&str>, tool: Option<&str>) -> bool {
     match (agent, tool) {
@@ -97,8 +120,16 @@ pub fn edits_files(agent: Option<&str>, tool: Option<&str>) -> bool {
     match (agent, tool) {
         (Some("claude"), Some(tool)) => CLAUDE_EDIT_TOOLS.contains(&tool),
         (Some("opencode"), Some(tool)) => OPENCODE_EDIT_TOOLS.contains(&tool),
+        (Some("pi"), Some(tool)) => PI_EDIT_TOOLS.contains(&tool),
         _ => false,
     }
+}
+
+/// Whether Impulse's answers to `agent` are the simple JSON its plugin or
+/// extension reads (`{"context": …}`, `{"ask": …}`, `{"deny": …}`), not
+/// Claude Code's hook output.
+pub fn reads_plugin_replies(agent: Option<&str>) -> bool {
+    matches!(agent, Some("opencode" | "pi"))
 }
 
 /// The Claude Code hook event an event of `agent`'s stands for, as far as
@@ -153,6 +184,13 @@ pub fn reply(agent: Option<&str>, event: &str, tool: Option<&str>) -> Option<Rep
             Some(Reply::BeforeEdit)
         }
         ("opencode", "subagent.start", _) => Some(Reply::SubagentStarted),
+        ("pi", "SessionStart", _) => Some(Reply::SessionSummary),
+        ("pi", "ProjectTrust", _) => Some(Reply::ProjectTrust),
+        ("pi", "PostToolUse", Some(tool)) if PI_EDIT_TOOLS.contains(&tool) => {
+            Some(Reply::EditedFile)
+        }
+        ("pi", "PostToolUse", Some(PI_SHELL_TOOL)) => Some(Reply::RanShell),
+        ("pi", "PreToolUse", Some(PI_SHELL_TOOL)) => Some(Reply::BeforeShell),
         _ => None,
     }
 }
@@ -246,6 +284,64 @@ mod tests {
         assert_eq!(reply(Some("opencode"), "PreToolUse", Some("Bash")), None);
         assert_eq!(reply(Some("codex"), "agent-turn-complete", None), None);
         assert_eq!(reply(None, "SessionStart", None), None);
+    }
+
+    #[test]
+    fn pi_events_are_claude_codes_where_they_mean_the_same() {
+        let pi = |event, tool| hook(Some("pi"), event, tool, None);
+        assert_eq!(pi("SessionStart", None), Some(AgentHook::SessionStarted));
+        assert_eq!(
+            pi("UserPromptSubmit", None),
+            Some(AgentHook::PromptSubmitted)
+        );
+        assert_eq!(pi("Stop", None), Some(AgentHook::Stopped));
+        assert_eq!(
+            hook(Some("pi"), "StopFailure", None, Some("429 rate limited")),
+            Some(AgentHook::Failed("429 rate limited".into()))
+        );
+        assert_eq!(
+            hook(
+                Some("pi"),
+                "prompt.start",
+                None,
+                Some("Impulse asks before this merge")
+            ),
+            Some(AgentHook::Notification(
+                "Pi needs your input: Impulse asks before this merge".into()
+            ))
+        );
+        assert_eq!(
+            pi("prompt.start", None),
+            Some(AgentHook::Notification("Pi needs your input".into()))
+        );
+        assert_eq!(pi("prompt.end", None), Some(AgentHook::UsedTool(None)));
+        assert_eq!(pi("ProjectTrust", None), None);
+        // opencode's names mean nothing from Pi.
+        assert_eq!(pi("session.execution.started", None), None);
+        assert_eq!(hook(Some("claude"), "prompt.start", None, None), None);
+        assert!(edits_files(Some("pi"), Some("write")));
+        assert!(!edits_files(Some("pi"), Some("bash")));
+        assert!(!starts_subagent(Some("pi"), Some("subagent")));
+        assert!(reads_plugin_replies(Some("pi")));
+        assert!(reads_plugin_replies(Some("opencode")));
+        assert!(!reads_plugin_replies(Some("claude")));
+    }
+
+    #[test]
+    fn pi_gets_answers_for_its_extensions_events() {
+        let pi = |event, tool| reply(Some("pi"), event, tool);
+        assert_eq!(pi("SessionStart", None), Some(Reply::SessionSummary));
+        assert_eq!(pi("ProjectTrust", None), Some(Reply::ProjectTrust));
+        assert_eq!(pi("PostToolUse", Some("edit")), Some(Reply::EditedFile));
+        assert_eq!(pi("PostToolUse", Some("write")), Some(Reply::EditedFile));
+        assert_eq!(pi("PostToolUse", Some("bash")), Some(Reply::RanShell));
+        assert_eq!(pi("PreToolUse", Some("bash")), Some(Reply::BeforeShell));
+        // No subagents in Pi, so no edit is stopped for one.
+        assert_eq!(pi("PreToolUse", Some("edit")), None);
+        assert_eq!(pi("PostToolUse", Some("read")), None);
+        // Claude Code's tool names aren't Pi's.
+        assert_eq!(pi("PreToolUse", Some("Bash")), None);
+        assert_eq!(reply(Some("claude"), "ProjectTrust", None), None);
     }
 
     #[test]

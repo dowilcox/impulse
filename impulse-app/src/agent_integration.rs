@@ -24,18 +24,27 @@ pub enum Agent {
     Claude,
     Codex,
     Opencode,
+    /// Pi: Impulse's extension is its hooks and its tools.
+    Pi,
     /// Agents Impulse doesn't configure: the MCP entry to copy.
     Other,
 }
 
 impl Agent {
-    pub const ALL: [Agent; 4] = [Agent::Claude, Agent::Codex, Agent::Opencode, Agent::Other];
+    pub const ALL: [Agent; 5] = [
+        Agent::Claude,
+        Agent::Codex,
+        Agent::Opencode,
+        Agent::Pi,
+        Agent::Other,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Agent::Claude => "Claude Code",
             Agent::Codex => "Codex",
             Agent::Opencode => "opencode",
+            Agent::Pi => "Pi",
             Agent::Other => "Other",
         }
     }
@@ -176,6 +185,7 @@ impl Model {
     /// What the sheet installs, in its messages.
     pub fn what(&self) -> &'static str {
         match self.part {
+            Part::Hooks if self.agent == Agent::Pi => "extension",
             Part::Hooks => "hooks",
             Part::Mcp => "MCP server",
         }
@@ -228,6 +238,22 @@ impl Model {
         self.part == Part::Hooks && self.agent == Agent::Opencode
     }
 
+    /// Pi's hooks are an extension file of Impulse's own, written whole and
+    /// removed.
+    fn writes_pi_extension(&self) -> bool {
+        self.part == Part::Hooks && self.agent == Agent::Pi
+    }
+
+    /// Where Impulse's Pi extension goes.
+    fn pi_extension(&self) -> PathBuf {
+        Path::new(&hooks::pi_agent_directory(
+            &self.environment,
+            &self.home_str(),
+        ))
+        .join("extensions")
+        .join(hooks::PI_EXTENSION_NAME)
+    }
+
     /// What's in opencode's plugins folder now: Impulse's folder and the
     /// older single-file plugin.
     fn read_opencode_plugin(&self) -> OpencodePlugin {
@@ -276,6 +302,9 @@ impl Model {
         }
         if self.agent == Agent::Opencode {
             return self.reload_opencode_plugin();
+        }
+        if self.agent == Agent::Pi {
+            return self.reload_pi_extension();
         }
         let path = match (self.agent, self.scope, &self.project_root) {
             (Agent::Claude, Scope::Project, Some(root)) => {
@@ -367,6 +396,32 @@ impl Model {
                     .into(),
             );
         }
+    }
+
+    /// Pi's hooks: Impulse's extension file, which also gives Pi Impulse's
+    /// tools.
+    fn reload_pi_extension(&mut self) {
+        let path = self.pi_extension();
+        self.path = path.to_string_lossy().into_owned();
+        let data = read(&path);
+        self.before = text(&data);
+        self.previewed = data.clone();
+        let found = data.is_some().then_some(self.before.as_str());
+        let status = hooks::pi_extension_status(found);
+        self.installed = status == Status::Installed;
+        self.outdated = status == Status::Outdated;
+        if self.installed {
+            self.after = Some(String::new());
+        } else {
+            match hooks::installing_pi_extension(found) {
+                Ok(extension) => self.after = Some(extension.to_string()),
+                Err(failure) => self.fail(failure),
+            }
+        }
+        self.notice = Some(
+            "The extension also gives Pi Impulse's tools, so Pi needs no MCP server entry. Every Pi loads it; outside Impulse terminals it does nothing. In a running Pi, /reload picks it up."
+                .into(),
+        );
     }
 
     fn claude_scope(&self) -> ClaudeScope {
@@ -470,6 +525,24 @@ impl Model {
                     );
                 }
             }
+            Agent::Pi => {
+                // Pi gets Impulse's tools from the extension, as its own
+                // tools, from the pane it runs in.
+                let path = self.pi_extension();
+                self.path = path.to_string_lossy().into_owned();
+                let data = read(&path);
+                self.previewed = data.clone();
+                self.before.clear();
+                self.installed = hooks::pi_extension_status(
+                    data.map(|d| String::from_utf8_lossy(&d).into_owned())
+                        .as_deref(),
+                ) == Status::Installed;
+                self.after = None;
+                self.notice = Some(
+                    "Pi gets Impulse's tools from Impulse's extension, as tools of its own: install it under Hooks."
+                        .into(),
+                );
+            }
             Agent::Other => {
                 self.path.clear();
                 self.previewed = None;
@@ -517,6 +590,8 @@ impl Model {
         }
         let result = if self.writes_opencode_plugin() {
             self.write_opencode_plugin()
+        } else if self.writes_pi_extension() && self.installed {
+            std::fs::remove_file(&self.path)
         } else {
             self.write_config(&after)
         };
@@ -584,7 +659,14 @@ impl Model {
     /// The status line above the preview.
     pub fn status_text(&self) -> &'static str {
         let old_entry = self.part == Part::Mcp && self.agent == Agent::Opencode;
-        if self.agent == Agent::Other {
+        let from_extension = self.part == Part::Mcp && self.agent == Agent::Pi;
+        if from_extension {
+            if self.installed {
+                "Impulse's extension gives Pi the tools"
+            } else {
+                "Comes with Impulse's extension"
+            }
+        } else if self.agent == Agent::Other {
             "Add this to the agent's own MCP settings (each agent keeps them in its own file)"
         } else if old_entry {
             if self.installed {
@@ -797,7 +879,8 @@ impl Render for AgentIntegration {
                 .iter()
                 .position(|agent| *agent == m.agent)
                 .unwrap_or(0),
-            100.,
+            // Five fit beside Claude Code's scope.
+            if agents.len() > 4 { 88. } else { 100. },
             light,
             false,
             {
@@ -906,10 +989,10 @@ impl Render for AgentIntegration {
             let label = format!(
                 "{} {}",
                 if m.installed { "Remove" } else { "Install" },
-                if m.part == Part::Hooks {
-                    "Hooks"
-                } else {
-                    "MCP Server"
+                match m.part {
+                    Part::Hooks if m.agent == Agent::Pi => "Extension",
+                    Part::Hooks => "Hooks",
+                    Part::Mcp => "MCP Server",
                 }
             );
             Some(chrome_button(
@@ -1265,6 +1348,60 @@ mod tests {
         assert!(sheet.installed);
         assert_eq!(sheet.apply(), Outcome::Written);
         assert!(!home.join(".config/opencode/plugins/impulse").exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn pi_extension_is_a_file_of_impulses_own() {
+        let home = home();
+        let mut sheet = model(Part::Hooks, &home);
+        sheet.set_agent(Agent::Pi);
+        let file = home.join(".pi/agent/extensions/impulse.js");
+        assert_eq!(sheet.path, file.to_string_lossy());
+        assert_eq!(sheet.what(), "extension");
+        assert!(sheet
+            .diff()
+            .iter()
+            .any(|l| l == "+ // Impulse's Pi extension."));
+        assert_eq!(sheet.apply(), Outcome::Written);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), hooks::PI_EXTENSION);
+        // Its tools come with it.
+        sheet.set_part(Part::Mcp);
+        assert_eq!(sheet.agent, Agent::Pi);
+        assert!(sheet.installed);
+        assert!(sheet.after.is_none());
+        assert_eq!(
+            sheet.status_text(),
+            "Impulse's extension gives Pi the tools"
+        );
+        sheet.set_part(Part::Hooks);
+        assert!(sheet.installed);
+        assert_eq!(sheet.apply(), Outcome::Written);
+        assert!(!file.exists());
+        // Someone else's file of that name is left alone.
+        std::fs::write(&file, "export default function () {}\n").unwrap();
+        sheet.reload();
+        assert!(!sheet.installed);
+        assert!(sheet.after.is_none());
+        assert!(sheet.error.as_deref().unwrap().contains("isn't Impulse's"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn pi_follows_its_folder_variable() {
+        let home = home();
+        let mut environment = HashMap::new();
+        environment.insert("PI_CODING_AGENT_DIR".to_string(), "~/pi-config".to_string());
+        let mut sheet = Model::new(
+            Part::Hooks,
+            None,
+            None,
+            "/opt/impulse".into(),
+            home.clone(),
+            environment,
+        );
+        sheet.set_agent(Agent::Pi);
+        assert!(sheet.path.ends_with("pi-config/extensions/impulse.js"));
         let _ = std::fs::remove_dir_all(&home);
     }
 

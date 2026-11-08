@@ -677,6 +677,44 @@ mod tests {
     }
 
     #[test]
+    fn pi_extension_events_drive_the_state() {
+        let event = |name: &str, tool: Option<&str>, message: Option<&str>| {
+            hook_events::hook(Some("pi"), name, tool, message)
+        };
+        assert_eq!(
+            event("ProjectTrust", None, None),
+            None,
+            "the trust question changes nothing"
+        );
+        let c = clock();
+        let mut machine = AgentStateMachine::new(c.at(0.0));
+        // A turn whose merge Impulse asks about, then one an error ends.
+        let turns = [
+            ("SessionStart", None),
+            ("UserPromptSubmit", None),
+            ("prompt.start", Some("Impulse asks before this merge")),
+            ("prompt.end", None),
+            ("Stop", None),
+            ("UserPromptSubmit", None),
+            ("StopFailure", Some("429 rate limited")),
+        ];
+        let mut states = Vec::new();
+        for (offset, (name, message)) in turns.into_iter().enumerate() {
+            hook(
+                &mut machine,
+                event(name, None, message).unwrap(),
+                c.at(offset as f64),
+            );
+            states.push(machine.state());
+        }
+        use AgentState::*;
+        assert_eq!(
+            states,
+            [Idle, Working, NeedsInput, Working, Done, Working, Done]
+        );
+    }
+
+    #[test]
     fn opencode_plugin_events_drive_the_state() {
         let event = |name: &str, tool: Option<&str>, message: Option<&str>| {
             hook_events::hook(Some("opencode"), name, tool, message)

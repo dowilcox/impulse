@@ -72,7 +72,7 @@ You can type any other base git understands: a local branch (`main`), a remote b
 
 #### Start
 
-What runs in the task's first terminal. **Just a terminal** (the default) opens a shell and nothing else. The rest of the list is every supported agent that Impulse finds on your login shell's `PATH`, by its display name: Claude Code (`claude`), Codex (`codex`), Gemini CLI (`gemini`), Aider (`aider`), opencode (`opencode`), Amp (`amp`), Copilot CLI (`copilot`), Cursor Agent (`cursor-agent`), Goose (`goose`), Qwen Code (`qwen`) and Crush (`crush`). Agents that aren't installed don't appear. The agent starts with no arguments; type your first prompt into it once it's running.
+What runs in the task's first terminal. **Just a terminal** (the default) opens a shell and nothing else. The rest of the list is every supported agent that Impulse finds on your login shell's `PATH`, by its display name: Claude Code (`claude`), Codex (`codex`), Gemini CLI (`gemini`), Aider (`aider`), opencode (`opencode`), Amp (`amp`), Copilot CLI (`copilot`), Cursor Agent (`cursor-agent`), Goose (`goose`), Qwen Code (`qwen`), Crush (`crush`) and Pi (`pi`). Agents that aren't installed don't appear. The agent starts with no arguments; type your first prompt into it once it's running.
 
 #### Move uncommitted files
 

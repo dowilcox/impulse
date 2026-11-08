@@ -593,6 +593,7 @@ All of these are in Settings ▸ Terminal, and in `settings.json` under the keys
 | Tell agents when subagents share a checkout               | `agent_hook_subagents`               | On                     |
 | Ask before an agent merges a branch still being worked on | `agent_hook_merge_guard`             | On                     |
 | Tell agents when dependency files changed                 | `agent_hook_dependencies`            | On                     |
+| Pi trusts the folders Impulse trusts                      | `agent_hook_project_trust`           | On                     |
 | When an agent asks to start a task                        | `agent_task_creation`                | Ask me                 |
 | Open tasks agents may start                               | `agent_task_limit`                   | 4                      |
 | Agents may read terminal output                           | `agent_tool_terminal_output`         | In their own workspace |

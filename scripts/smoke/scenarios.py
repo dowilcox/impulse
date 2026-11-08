@@ -1007,6 +1007,105 @@ def check_opencode(run) -> None:
 MCP_DIR = HOME / "mcp"
 
 
+# ---------------------------------------------------------------------------
+# Pi: Agent Integration replaces an older Impulse's extension with this
+# one, which also brings Impulse's tools. A stand-in Pi (pi-agent.mjs)
+# loads it as Pi's extension runner would and plays turns through it, so
+# the states, the folder's trust, the other tasks' summary, a note about a
+# shared file, the merge it asks about, an error ending a run, Impulse's
+# tools and the session to resume all come from the real extension
+# talking to the real app.
+
+PI_EXTENSIONS = HOME / ".pi" / "agent" / "extensions"
+PI_OUT = HOME / "pi"
+PI_OLD_EXTENSION = "// Impulse's Pi extension.\nexport default function () {}\n"
+PI_EXTENSION_SOURCE = (Path(__file__).resolve().parents[2] / "impulse-kit" / "resources" / "agents"
+                       / "pi-extension" / "impulse.js")
+
+
+def setup_pi() -> None:
+    write(PI_EXTENSIONS / "impulse.js", PI_OLD_EXTENSION)
+    stand_in = HOME / "bin" / "pi"
+    write(stand_in, (Path(__file__).parent / "pi-agent.mjs").read_text())
+    stand_in.chmod(0o755)
+    # The demo project is trusted in Impulse, so Pi is told to trust it.
+    trusted = {"version": 1, "trusted": [os.path.realpath(PROJECT)], "restricted": []}
+    write(make_demo.data_dir("impulse-dev") / "trusted-folders.json", json.dumps(trusted))
+
+
+PI_ACTIONS = [
+    "agent-sheet=hooks:pi", "sleep=1", "dump=pi-hooks-preview", "agent-sheet-apply", "sleep=1",
+    "agent-sheet=mcp:pi", "sleep=1", "dump=pi-mcp", "agent-sheet-close", "sleep=1",
+    "until=prompt", "run=pi turn", "until=40:agent:done", "sleep=1", "dump=pi-turn",
+    "newtab", "until=prompt", "run=pi merge", "until=30:agent:needsInput", "dump=pi-merge-asked",
+    f"until=40:file:{PI_OUT / 'merge.json'}", "until=20:agent:done", "dump=pi-merge",
+    "newtab", "until=prompt", "run=pi failed", f"until=40:file:{PI_OUT / 'failed.json'}",
+    "until=20:agent:done", "dump=pi-failed",
+    "newtab", "until=prompt", "run=pi nested", f"until=40:file:{PI_OUT / 'nested.json'}", "sleep=1",
+    "dump=pi-nested",
+]
+
+
+def check_pi(run) -> None:
+    hooks = run.dump("pi-hooks-preview").get("agentSheet") or {}
+    run.expect(hooks.get("agent") == "Pi" and hooks.get("outdated")
+               and hooks.get("path", "").endswith("/.pi/agent/extensions/impulse.js"),
+               "the sheet offers Pi's extension, over an older one", hooks)
+    run.expect("no MCP server entry" in (hooks.get("notice") or ""),
+               "it says the extension brings the tools too", hooks.get("notice"))
+    installed = PI_EXTENSIONS / "impulse.js"
+    run.expect(installed.exists() and installed.read_text() == PI_EXTENSION_SOURCE.read_text(),
+               "Install writes the extension as shipped")
+    mcp = run.dump("pi-mcp").get("agentSheet") or {}
+    run.expect(mcp.get("installed") and "install it under Hooks" in (mcp.get("notice") or ""),
+               "the MCP side says the tools come with the extension", mcp)
+
+    def stand_in(dump: dict, mode: str) -> dict | None:
+        return next((t for t in surfaces(dump, "terminal")
+                     if f"Pi (stand-in): {mode}" in plain(t["transcript"])), None)
+
+    def output(mode: str) -> dict:
+        file = PI_OUT / f"{mode}.json"
+        return json.loads(file.read_text()) if file.exists() else {}
+
+    for name, mode, state in (("pi-turn", "turn", "done"), ("pi-merge-asked", "merge", "needsInput"),
+                              ("pi-merge", "merge", "done"), ("pi-failed", "failed", "done")):
+        found = stand_in(run.dump(name), mode)
+        if run.expect(found is not None and found["agent"] == "pi", f"it's recognized as Pi ({name})",
+                      found and found["agent"]):
+            run.expect(found["agentState"] == state, f"its extension reports {state} ({name})", found["agentState"])
+    turn = stand_in(run.dump("pi-turn"), "turn") or {}
+    run.expect(turn.get("resume") == "pi --session 0193f5a2-smoke-turn",
+               "the session to resume comes from the extension", turn.get("resume"))
+    out = output("turn")
+    run.expect(out.get("trust") == {"trusted": "yes"},
+               "Pi is told to trust a folder Impulse trusts", out.get("trust"))
+    section = out.get("section") or ""
+    run.expect("main checkout of trailhead" in section and "add-trail-photos" in section,
+               "a new session gets the other tasks' summary in its system prompt", section)
+    run.expect("impulse_list_tasks" in section and "Check impulse_list_tasks before merging" in section,
+               "with Impulse's instructions, naming the tools as Pi knows them", section)
+    edit = out.get("editOutput", "")
+    run.expect("src/photos.ts is also changed in the task add-trail-photos" in edit,
+               "an edit of a file a task also changes gets a note after the tool's output", edit)
+    run.expect("impulse_list_tasks" in out.get("tools", []), "Impulse's tools come with the extension",
+               out.get("tools"))
+    run.expect("add-trail-photos" in (out.get("listTasks") or ""), "a tool call runs in Pi's own pane",
+               out.get("listTasks"))
+    merge = output("merge")
+    asked = merge.get("asked", [])
+    run.expect(len(asked) == 1 and "add-trail-photos" in asked[0].get("message", ""),
+               "a merge of a busy task's branch is asked about, with Impulse's reason", asked)
+    run.expect(merge.get("blocked") is None, "approved, it runs", merge.get("blocked"))
+    nested = output("nested")
+    run.expect("add-trail-photos" in (nested.get("listTasks") or ""),
+               "a Pi started by the pane's Pi has Impulse's tools", nested.get("listTasks"))
+    run.expect("also changed" not in nested.get("editOutput", ""),
+               "and reports nothing, so it gets no notes", nested.get("editOutput"))
+    found = stand_in(run.dump("pi-nested"), "nested") or {}
+    run.expect(found.get("resume") is None, "nor a session to resume", found.get("resume"))
+
+
 def mcp_call(id: int, method: str, params: dict | None = None) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": id, "method": method, "params": params or {}})
 
@@ -1200,6 +1299,11 @@ SCENARIOS = [
                                   "plugin folder, which drives states, the summary, notes, the merge question, "
                                   "shells' pane, Impulse's tools and resume",
      "session": ONE, "setup": setup_opencode, "actions": OPENCODE_ACTIONS, "check": check_opencode},
+    {"name": "pi", "about": "Agent Integration replaces an older Pi extension; the extension drives states, the "
+                            "folder's trust, the summary, notes, the merge question, an error, Impulse's tools, "
+                            "nested Pis and resume",
+     "session": ONE, "settings": {"workspace_trust": True}, "setup": setup_pi,
+     "actions": PI_ACTIONS, "check": check_pi},
     {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet, "
                              "an agent finishing its own task",
      "session": folder_session(REPO_ROOT), "setup": setup_mcp, "actions": MCP_ACTIONS, "check": check_mcp,

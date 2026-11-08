@@ -103,6 +103,27 @@ impl WorkspaceTrust {
         trusting_folder(&self.state.lock().unwrap(), &path)
     }
 
+    /// What Impulse tells a program that asks whether to load `path`'s own
+    /// code (Pi, before it loads a project's extensions): yes in a folder
+    /// the user trusts, no in one kept restricted (a task made from someone
+    /// else's branch), and nothing to say otherwise or when Impulse doesn't
+    /// ask about folders at all, so the program asks as it would.
+    pub fn verdict(&self, path: &str) -> Option<bool> {
+        let path = normalize(path);
+        let state = self.state.lock().unwrap();
+        if !state.enabled {
+            return None;
+        }
+        if trusting_folder(&state, &path).is_some() {
+            return Some(true);
+        }
+        state
+            .restricted
+            .iter()
+            .any(|r| contains(r, &path))
+            .then_some(false)
+    }
+
     pub fn trusted_folders(&self) -> Vec<String> {
         self.state.lock().unwrap().folders.iter().cloned().collect()
     }
@@ -315,6 +336,25 @@ mod tests {
             "a name prefix isn't a folder"
         );
         assert!(!trust.is_trusted(&format!("{}/Code", s.root)));
+    }
+
+    #[test]
+    fn verdicts_for_programs_that_ask() {
+        let s = scratch();
+        let code = format!("{}/Code", s.root);
+        let app = format!("{code}/app");
+        let trust = WorkspaceTrust::new(None);
+        assert_eq!(trust.verdict(&app), None);
+        trust.trust(&code);
+        assert_eq!(trust.verdict(&app), Some(true));
+        trust.restrict(&app);
+        assert_eq!(trust.verdict(&format!("{app}/src")), Some(false));
+        assert_eq!(trust.verdict(&format!("{code}/other")), Some(true));
+        assert_eq!(trust.verdict(&s.root), None);
+        // Not asking about folders: the program decides.
+        trust.set_enabled(false);
+        assert_eq!(trust.verdict(&app), None);
+        assert_eq!(trust.verdict(&code), None);
     }
 
     #[cfg(unix)]

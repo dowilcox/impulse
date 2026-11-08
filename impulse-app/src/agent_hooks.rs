@@ -2,12 +2,12 @@
 //! `hook`, `status` and `notify`, `AgentWorkspaceCommands`' `turns` and
 //! `blocks`, and `TaskAwareness`' hook replies): what an agent's hooks
 //! report about it, `impulse status`, its turns, the terminals' command
-//! blocks, and what Impulse answers Claude Code's hooks and the opencode
-//! plugin with, letting agents see each other: a summary of the
-//! repository's other workspaces when a session starts, a note when it
-//! edits a file another workspace changes, a question before it merges a
-//! branch a task is still working on, and dependency files that changed
-//! under it.
+//! blocks, and what Impulse answers Claude Code's hooks, the opencode
+//! plugin and the Pi extension with, letting agents see each other: a
+//! summary of the repository's other workspaces when a session starts, a
+//! note when it edits a file another workspace changes, a question before it
+//! merges a branch a task is still working on, and dependency files that
+//! changed under it; and Pi whether to trust a folder as Impulse does.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -553,7 +553,7 @@ impl Workbench {
     }
 
     /// What Impulse answers a Claude Code hook, or an event from its
-    /// opencode plugin, with (nothing: an empty ok). `clash`: the note for
+    /// opencode plugin or Pi extension, with (nothing: an empty ok). `clash`: the note for
     /// an edit made beside a subagent editing the same file, or for one
     /// about to be, why it's stopped.
     /// Claude Code's hooks as an older Impulse installed them miss events
@@ -613,12 +613,13 @@ impl Workbench {
             .get("hookCwd")
             .cloned()
             .unwrap_or_else(|| terminal.read(cx).cwd.clone());
-        let opencode = args.get("agent").map(String::as_str) == Some("opencode");
+        let plugin = hook_events::reads_plugin_replies(args.get("agent").map(String::as_str));
         // Claude Code takes a note as JSON (a SessionStart hook's plain
-        // output is context already); the opencode plugin, as its own JSON.
+        // output is context already); the opencode plugin and the Pi
+        // extension, as their own JSON.
         let context = move |text: &str| {
-            if opencode {
-                hook_reply::opencode_context(text)
+            if plugin {
+                hook_reply::plugin_context(text)
             } else {
                 hook_reply::context(text, "PostToolUse")
             }
@@ -637,7 +638,7 @@ impl Workbench {
                         fill_agents(&mut listing, cx);
                         listing.session_summary()
                     });
-                    reply_with(text.map(|t| if opencode { context(&t) } else { t }));
+                    reply_with(text.map(|t| if plugin { context(&t) } else { t }));
                 })
                 .detach();
             }
@@ -649,8 +650,8 @@ impl Workbench {
                 });
                 // opencode's plugin adds it to the call's output.
                 reply_with(note.map(|n| {
-                    if opencode {
-                        hook_reply::opencode_context(&n)
+                    if plugin {
+                        hook_reply::plugin_context(&n)
                     } else {
                         hook_reply::context(&n, "PreToolUse")
                     }
@@ -661,8 +662,8 @@ impl Workbench {
                     .get("subagent")
                     .and_then(|id| terminal.read(cx).agent.subagents.start_note(id));
                 reply_with(note.map(|n| {
-                    if opencode {
-                        hook_reply::opencode_context(&n)
+                    if plugin {
+                        hook_reply::plugin_context(&n)
                     } else {
                         hook_reply::context(&n, "SubagentStart")
                     }
@@ -671,8 +672,8 @@ impl Workbench {
             Reply::BeforeEdit => {
                 let clash = clash.filter(|_| settings.agent_hook_subagents);
                 reply_with(clash.map(|n| {
-                    if opencode {
-                        hook_reply::opencode_deny(&n)
+                    if plugin {
+                        hook_reply::plugin_deny(&n)
                     } else {
                         hook_reply::deny(&n)
                     }
@@ -773,12 +774,22 @@ impl Workbench {
                         })
                     });
                     reply_with(reason.map(|reason| {
-                        if opencode {
-                            hook_reply::opencode_ask(&reason)
+                        if plugin {
+                            hook_reply::plugin_ask(&reason)
                         } else {
                             hook_reply::ask(&reason)
                         }
                     }));
+                })
+                .detach();
+            }
+            // Only with the setting on, and only where Impulse itself has
+            // something to say about the folder.
+            Reply::ProjectTrust if settings.agent_hook_project_trust => {
+                let trust = self.trust.clone();
+                let task = cx.background_spawn(async move { trust.verdict(&cwd) });
+                cx.spawn(async move |_, _| {
+                    reply_with(task.await.map(hook_reply::plugin_trust));
                 })
                 .detach();
             }

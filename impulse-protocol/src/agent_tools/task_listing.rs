@@ -224,7 +224,7 @@ impl TaskListing {
 }
 
 /// The JSON Claude Code hooks reply with, and the simpler JSON Impulse's
-/// opencode plugin reads.
+/// opencode plugin and Pi extension read.
 pub mod hook_reply {
     use super::*;
 
@@ -260,23 +260,29 @@ pub mod hook_reply {
         }))
     }
 
-    /// For the opencode plugin: text for the agent's context (a session's
-    /// summary goes beside opencode's instructions, a note after the tool's
-    /// output).
-    pub fn opencode_context(text: &str) -> String {
+    /// For the opencode plugin and the Pi extension: text for the agent's
+    /// context (a session's summary goes beside the agent's instructions, a
+    /// note after the tool's output).
+    pub fn plugin_context(text: &str) -> String {
         encode(json!({"context": text}))
     }
 
-    /// For the opencode plugin: have opencode ask the user before running
-    /// the command, with the reason shown in its permission prompt.
-    pub fn opencode_ask(reason: &str) -> String {
+    /// For the opencode plugin and the Pi extension: have the agent ask the
+    /// user before running the command, with the reason shown in its prompt.
+    pub fn plugin_ask(reason: &str) -> String {
         encode(json!({"ask": reason}))
     }
 
     /// For the opencode plugin: stop the tool call before it runs, telling
     /// the agent why (the plugin throws it as the tool's error).
-    pub fn opencode_deny(reason: &str) -> String {
+    pub fn plugin_deny(reason: &str) -> String {
         encode(json!({"deny": reason}))
+    }
+
+    /// For the Pi extension: whether Pi loads the folder's own extensions
+    /// and settings (`Some(true)` yes, `Some(false)` no).
+    pub fn plugin_trust(trusted: bool) -> String {
+        encode(json!({"trusted": if trusted { "yes" } else { "no" }}))
     }
 
     fn encode(value: serde_json::Value) -> String {

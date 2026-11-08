@@ -252,10 +252,10 @@ fn project_summary_lists_commands_only_when_trusted() {
 
 #[test]
 fn create_task_names_every_known_agent() {
-    // The Swift `KnownAgents.builtIn` ids.
+    // The built-in agents' ids (the Swift `KnownAgents.builtIn` ones, and Pi).
     let known = [
         "claude", "codex", "gemini", "aider", "opencode", "amp", "copilot", "cursor", "goose",
-        "qwen", "crush",
+        "qwen", "crush", "pi",
     ];
     let tool = tools::named("create_task").unwrap();
     let description = tool.input_schema["properties"]["agent"]["description"]

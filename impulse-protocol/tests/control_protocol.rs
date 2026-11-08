@@ -131,6 +131,48 @@ fn claude_hooks_read_stdin() {
 }
 
 #[test]
+fn pi_extension_events_read_stdin() {
+    // The event is the extension's argument; what it's about, stdin.
+    let start = parse_stdin(
+        &["hook", "pi", "SessionStart"],
+        r#"{"session_id":"0193f5a2-7c1e","cwd":"/repo","source":"startup"}"#,
+    )
+    .unwrap();
+    assert_eq!(start.argument("agent"), Some("pi"));
+    assert_eq!(start.argument("event"), Some("SessionStart"));
+    assert_eq!(start.argument("session"), Some("0193f5a2-7c1e"));
+    assert_eq!(start.argument("hookCwd"), Some("/repo"));
+    let asking = parse_stdin(
+        &["hook", "pi", "prompt.start"],
+        r#"{"message":"Impulse asks before this merge"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        asking.argument("message"),
+        Some("Impulse asks before this merge")
+    );
+    let failure = parse_stdin(
+        &["hook", "pi", "StopFailure"],
+        r#"{"error":"429 rate limited","last_assistant_message":"429 rate limited"}"#,
+    )
+    .unwrap();
+    assert_eq!(failure.argument("message"), Some("429 rate limited"));
+    let shell = parse_stdin(
+        &["hook", "pi", "PreToolUse"],
+        r#"{"tool_name":"bash","tool_input":{"command":"git merge upgrade"}}"#,
+    )
+    .unwrap();
+    assert_eq!(shell.argument("tool"), Some("bash"));
+    assert_eq!(shell.argument("toolCommand"), Some("git merge upgrade"));
+    let write = parse_stdin(
+        &["hook", "pi", "PostToolUse"],
+        r#"{"tool_name":"write","tool_input":{"file_path":"/repo/src/a.ts"}}"#,
+    )
+    .unwrap();
+    assert_eq!(write.argument("toolFile"), Some("/repo/src/a.ts"));
+}
+
+#[test]
 fn tool_hooks_carry_the_tool_and_what_it_acts_on() {
     let bash = parse_stdin(
         &["hook", "claude"],

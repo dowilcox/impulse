@@ -153,18 +153,18 @@ pub enum ShellType {
 }
 
 /// How the command lines that take a first prompt and stay interactive
-/// take it: after `--` (Claude Code, Codex), or as the value of opencode's
-/// `--prompt` (its bare argument is the folder to open).
+/// take it: after `--` (Claude Code, Codex, Pi), or as the value of
+/// opencode's `--prompt` (its bare argument is the folder to open).
 pub fn prompt_argument(agent_id: &str) -> Option<&'static str> {
     match agent_id {
-        "claude" | "codex" => Some("-- "),
+        "claude" | "codex" | "pi" => Some("-- "),
         "opencode" => Some("--prompt="),
         _ => None,
     }
 }
 
 /// Agents whose command line takes a first prompt and stays interactive.
-pub const TAKES_PROMPT: [&str; 3] = ["claude", "codex", "opencode"];
+pub const TAKES_PROMPT: [&str; 4] = ["claude", "codex", "opencode", "pi"];
 
 /// The first terminal's command for a task started with `agent`, with the
 /// brief saved at `brief_path` as its first prompt for the agents whose

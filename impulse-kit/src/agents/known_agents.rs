@@ -45,6 +45,7 @@ pub fn resume_command(agent_id: &str, session: &str) -> Option<String> {
         "claude" => Some(format!("claude --resume {session}")),
         "codex" => Some(format!("codex resume {session}")),
         "opencode" => Some(format!("opencode --session {session}")),
+        "pi" => Some(format!("pi --session {session}")),
         _ => None,
     }
 }
@@ -67,6 +68,17 @@ static BUILT_IN: LazyLock<Vec<AgentKind>> = LazyLock::new(|| {
         AgentKind::new("goose", "Goose", &["goose"], &[]),
         AgentKind::new("qwen", "Qwen Code", &["qwen"], &["@qwen-code/qwen-code"]),
         AgentKind::new("crush", "Crush", &["crush"], &[]),
+        // Pi, as npm installs it (the older package name too) or as the
+        // single binary its releases ship.
+        AgentKind::new(
+            "pi",
+            "Pi",
+            &["pi"],
+            &[
+                "@earendil-works/pi-coding-agent",
+                "@mariozechner/pi-coding-agent",
+            ],
+        ),
     ]
 });
 
@@ -258,6 +270,43 @@ mod tests {
     }
 
     #[test]
+    fn matches_pi_however_its_installed() {
+        // npm: a node script in its package.
+        assert_eq!(
+            id(
+                "/usr/local/bin/node",
+                &[
+                    "node",
+                    "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+                ]
+            )
+            .as_deref(),
+            Some("pi")
+        );
+        assert_eq!(
+            id(
+                "/Users/me/.nvm/versions/node/v22/bin/node",
+                &[
+                    "node",
+                    "/Users/me/.nvm/versions/node/v22/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js",
+                    "--continue"
+                ]
+            )
+            .as_deref(),
+            Some("pi")
+        );
+        // Through its bin link, and the release binary.
+        assert_eq!(
+            id("/usr/local/bin/node", &["node", "/usr/local/bin/pi"]).as_deref(),
+            Some("pi")
+        );
+        assert_eq!(
+            id("/Users/me/.local/bin/pi", &["pi", "--session", "a1"]).as_deref(),
+            Some("pi")
+        );
+    }
+
+    #[test]
     fn ignores_ordinary_programs() {
         assert_eq!(id("/usr/bin/vim", &["vim", "claude.md"]), None);
         assert_eq!(id("/usr/local/bin/node", &["node", "server.js"]), None);
@@ -277,6 +326,10 @@ mod tests {
         assert_eq!(
             resume_command("opencode", "ses_3a1f9c2e7ffeQ2xVbN8kLm4pRt").as_deref(),
             Some("opencode --session ses_3a1f9c2e7ffeQ2xVbN8kLm4pRt")
+        );
+        assert_eq!(
+            resume_command("pi", "0193f5a2-7c1e-7b3d-9a4f-2e8c1d6b5a90").as_deref(),
+            Some("pi --session 0193f5a2-7c1e-7b3d-9a4f-2e8c1d6b5a90")
         );
         assert_eq!(resume_command("claude", "x; rm -rf ~"), None);
         assert_eq!(resume_command("aider", "s"), None);

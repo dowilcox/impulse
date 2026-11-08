@@ -164,6 +164,9 @@ settings! {
     agent_hook_subagents: bool = "agent_hook_subagents" => true,
     agent_hook_merge_guard: bool = "agent_hook_merge_guard" => true,
     agent_hook_dependencies: bool = "agent_hook_dependencies" => true,
+    /// Pi loads a project's own extensions and settings as Impulse trusts
+    /// the folder.
+    agent_hook_project_trust: bool = "agent_hook_project_trust" => true,
     /// ask, trusted_projects or off.
     agent_task_creation: String = "agent_task_creation" => "ask".into(),
     /// Open tasks agents asked for, per repository (0: no limit).
@@ -1015,15 +1018,17 @@ pub fn catalog() -> Vec<SettingItem> {
         toggle("task_overlap_notify", "Notify when tasks change the same files", Terminal, "Agents",
             Some("Once per pair of workspaces, when the main checkout or a task starts changing files another one changes.")),
         toggle("agent_hook_task_summary", "Tell agents about other tasks when they start", Terminal, "Agents",
-            Some("Claude Code and opencode (with Impulse's hooks) get a short summary of the repository's other workspaces.")),
+            Some("Claude Code, opencode and Pi (with Impulse's hooks) get a short summary of the repository's other workspaces.")),
         toggle("agent_hook_shared_files", "Tell agents when they edit a file another task changes", Terminal, "Agents",
             Some("Once per file, naming the other workspace and its agent.")),
         toggle("agent_hook_subagents", "Tell agents when subagents share a checkout", Terminal, "Agents",
             Some("Claude Code and opencode, as it starts a subagent beside others that edit the same checkout, and when two of them (or the agent and one) edit the same file at the same time: the edit that would overwrite the other's is stopped once, so it reads the file again.")),
         toggle("agent_hook_merge_guard", "Ask before an agent merges a branch still being worked on", Terminal, "Agents",
-            Some("When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files. Claude Code and opencode ask you, with the reason, before running it.")),
+            Some("When an agent runs git merge, rebase or pull on a task's branch while that task's agent is working or it has uncommitted files. Claude Code, opencode and Pi ask you, with the reason, before running it.")),
         toggle("agent_hook_dependencies", "Tell agents when dependency files changed", Terminal, "Agents",
             Some("After an agent's git pull, merge or checkout brings in a changed lock file or Dockerfile.")),
+        toggle("agent_hook_project_trust", "Pi trusts the folders Impulse trusts", Terminal, "Agents",
+            Some("With Impulse's extension, Pi loads a project's own extensions and settings without asking in a folder you trust in Impulse, and never in one Impulse keeps restricted (a task made from someone else's branch). Elsewhere Pi asks, as it does.")),
         choice("agent_task_creation", "When an agent asks to start a task", Terminal, "Agents",
             &[("ask", "Ask me"), ("trusted_projects", "Start it in trusted projects"), ("off", "Don't allow it")],
             Some("From impulse tasks new or the MCP server's create_task. Asking shows New Task filled in. Trusted projects: a trusted repository whose project settings you trusted, otherwise ask; moving your changes, and a task asked for from inside an agent's task, always ask.")),

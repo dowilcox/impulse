@@ -7,7 +7,7 @@
 Impulse is a terminal IDE for macOS and Linux, written in Rust: one Cargo workspace, one codebase for both platforms.
 
 - `impulse-app/` — the app on GPUI + GPUI Kit (pinned exactly; `vendor/gpui-kit/` holds its patched `gpui-base` and `gpui-component`): workspaces and tabs, terminal and input bar, editor tabs with language servers (shared app-wide), Review and History, git panels, tasks, agents and the control socket.
-- `impulse-kit/` — pure logic with no UI, testable on any OS. Its built-in files (themes, shell integration, the opencode plugin) are in `resources/`, compiled in; its golden fixtures are in `tests/fixtures/`.
+- `impulse-kit/` — pure logic with no UI, testable on any OS. Its built-in files (themes, shell integration, the opencode plugin, the Pi extension) are in `resources/`, compiled in; its golden fixtures are in `tests/fixtures/`.
 - `impulse-git/` — the git layer: libgit2 for reads, the `git` CLI for writes, safety snapshots under `refs/impulse/`; golden fixtures in `tests/fixtures/`.
 - `impulse-lsp/` — the language-server client.
 - `impulse-protocol/` and `impulse-cli/` — the control-socket protocol, the MCP server, and the `impulse` CLI (`impulse`, `impulse mcp`).
@@ -22,7 +22,7 @@ Use the scripts; don't replicate their steps by hand.
 
 - `./scripts/build.sh --dev` — debug build of the app and CLI (`target/debug/impulse-app`, with its own `impulse-dev` settings and data, so it runs beside an installed release). Without `--dev` it makes the release packages: `scripts/package-linux.sh` on Linux, `scripts/package-macos.sh` on macOS (`--sign --notarize --dmg` passed on).
 - `cargo test --workspace`, `cargo fmt`, `cargo clippy`.
-- `python3 scripts/smoke/run.py` — smoke checks of the debug build (editor, shells, CLI, agents, language servers, tasks, session restore), headless (Linux: under Xvfb; the Mac build needs `--features impulse-app/snapshot`, which `build.sh --dev` adds); run before a release. The opencode scenario needs `node`.
+- `python3 scripts/smoke/run.py` — smoke checks of the debug build (editor, shells, CLI, agents, language servers, tasks, session restore), headless (Linux: under Xvfb; the Mac build needs `--features impulse-app/snapshot`, which `build.sh --dev` adds); run before a release. The opencode and pi scenarios need `node`.
 - `scripts/check-macos.sh` — `cargo check` of the app for macOS from Linux, so Mac-only code compiles; nothing is linked or run.
 - `scripts/package-linux.sh`: release build packaged into `dist/` as a tarball, plus a `.deb` (with `dpkg-deb`) and an Arch package (with `makepkg`); icons and fonts in `share/impulse/`, found by `impulse-app/src/resources.rs`.
 - `scripts/package-macos.sh [--sign --notarize --dmg]`: release build bundled into `dist/Impulse.app` (the CLI in `Contents/Resources/bin`, the Info.plist from `assets/macos/Info.plist.in`), optionally signed, notarized and put in a `.dmg`.

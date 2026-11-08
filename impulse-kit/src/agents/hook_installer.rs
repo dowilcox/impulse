@@ -1,8 +1,9 @@
 //! Edits agent configuration so the agent tells Impulse what it's doing:
 //! Claude Code hooks in settings.json, Codex's `notify` program in
-//! config.toml, and a plugin folder in opencode's plugins folder. Every
-//! hook calls the bundled CLI through $IMPULSE_CLI, which only Impulse
-//! terminals set: anywhere else the hook is a no-op.
+//! config.toml, a plugin folder in opencode's plugins folder, and an
+//! extension file in Pi's extensions folder. Every hook calls the bundled
+//! CLI through $IMPULSE_CLI, which only Impulse terminals set: anywhere
+//! else the hook is a no-op.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -411,6 +412,69 @@ pub fn opencode_plugin_text(found: &OpencodePlugin) -> String {
     parts.join("\n")
 }
 
+// Pi (an extension file)
+
+/// Impulse's extension, in Pi's extensions folder (`<Pi's folder>/extensions`,
+/// `pi_agent_directory`): Pi loads it in each terminal running Pi. It
+/// reports Pi's state, reads Impulse's answers, and gives Pi Impulse's
+/// tools as its own, so Pi needs no MCP server entry.
+pub const PI_EXTENSION_NAME: &str = "impulse.js";
+
+/// Its first line, which tells an older version of it from a file that
+/// isn't Impulse's.
+pub const PI_EXTENSION_MARKER: &str = "// Impulse's Pi extension";
+
+/// The extension, from `resources/agents/pi-extension/`.
+pub const PI_EXTENSION: &str = include_str!("../../resources/agents/pi-extension/impulse.js");
+
+/// Pi's own folder: `$PI_CODING_AGENT_DIR` (a leading `~` is the home
+/// folder), else `~/.pi/agent`.
+pub fn pi_agent_directory(
+    environment: &std::collections::HashMap<String, String>,
+    home: &str,
+) -> String {
+    match environment
+        .get("PI_CODING_AGENT_DIR")
+        .map(|d| d.trim())
+        .filter(|d| !d.is_empty())
+    {
+        Some("~") => home.to_string(),
+        Some(dir) => match dir.strip_prefix("~/") {
+            Some(rest) => format!("{}/{rest}", home.trim_end_matches('/')),
+            None => dir.to_string(),
+        },
+        None => format!("{}/.pi/agent", home.trim_end_matches('/')),
+    }
+}
+
+/// Whether a file is Impulse's extension (this version's or an older one's).
+pub fn is_pi_extension(text: &str) -> bool {
+    text.starts_with(PI_EXTENSION_MARKER)
+}
+
+/// Whether `found` (the file where Impulse's extension goes) is this
+/// version of it, an older one, or not there (or not Impulse's).
+pub fn pi_extension_status(found: Option<&str>) -> Status {
+    match found {
+        Some(PI_EXTENSION) => Status::Installed,
+        Some(text) if is_pi_extension(text) => Status::Outdated,
+        _ => Status::NotInstalled,
+    }
+}
+
+/// The extension to write; refuses a file of the same name that isn't
+/// Impulse's.
+pub fn installing_pi_extension(found: Option<&str>) -> Result<&'static str, InstallError> {
+    match found {
+        Some(text) if !text.is_empty() && !is_pi_extension(text) => {
+            Err(InstallError::InUse(format!(
+                "{PI_EXTENSION_NAME} in Pi's extensions folder isn't Impulse's; rename or remove it first"
+            )))
+        }
+        _ => Ok(PI_EXTENSION),
+    }
+}
+
 // Preview
 
 /// A unified-style line diff of a config change, for confirmation: kept
@@ -473,6 +537,44 @@ mod tests {
 
     fn object(data: &[u8]) -> Map<String, Value> {
         settings_object(Some(data)).unwrap_or_default()
+    }
+
+    #[test]
+    fn pi_extension_is_one_file_of_impulses_own() {
+        assert!(is_pi_extension(PI_EXTENSION));
+        assert_eq!(pi_extension_status(None), Status::NotInstalled);
+        assert_eq!(pi_extension_status(Some(PI_EXTENSION)), Status::Installed);
+        let older = format!("{PI_EXTENSION_MARKER}.\nexport default () => {{}}\n");
+        assert_eq!(pi_extension_status(Some(&older)), Status::Outdated);
+        assert_eq!(installing_pi_extension(Some(&older)), Ok(PI_EXTENSION));
+        assert_eq!(installing_pi_extension(None), Ok(PI_EXTENSION));
+        let theirs = "export default function (pi) {}\n";
+        assert_eq!(pi_extension_status(Some(theirs)), Status::NotInstalled);
+        assert!(matches!(
+            installing_pi_extension(Some(theirs)),
+            Err(InstallError::InUse(_))
+        ));
+    }
+
+    #[test]
+    fn pi_keeps_its_files_where_its_variable_says() {
+        let mut environment = std::collections::HashMap::new();
+        assert_eq!(
+            pi_agent_directory(&environment, "/home/me"),
+            "/home/me/.pi/agent"
+        );
+        environment.insert("PI_CODING_AGENT_DIR".into(), "~/dotfiles/pi".into());
+        assert_eq!(
+            pi_agent_directory(&environment, "/home/me"),
+            "/home/me/dotfiles/pi"
+        );
+        environment.insert("PI_CODING_AGENT_DIR".into(), "/opt/pi".into());
+        assert_eq!(pi_agent_directory(&environment, "/home/me"), "/opt/pi");
+        environment.insert("PI_CODING_AGENT_DIR".into(), " ".into());
+        assert_eq!(
+            pi_agent_directory(&environment, "/home/me/"),
+            "/home/me/.pi/agent"
+        );
     }
 
     #[test]
