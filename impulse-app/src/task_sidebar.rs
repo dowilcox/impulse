@@ -141,8 +141,24 @@ impl Workbench {
         self.collapsed_repositories.contains(key)
     }
 
+    /// The sidebar shows the workspace you switched to, however you did (a
+    /// click, the palette, a notification, `impulse open`): its
+    /// repository's rows come out from under a collapsed header. Only when
+    /// the active workspace changes, so collapsing the one you're in sticks.
+    pub(crate) fn follow_active_repository(&mut self) {
+        let Some(workspace) = self.workspaces.get(self.active) else {
+            return;
+        };
+        if self.collapse_follows == Some(workspace.id) {
+            return;
+        }
+        self.collapse_follows = Some(workspace.id);
+        self.collapsed_repositories
+            .remove(&tasks::group_key(workspace));
+    }
+
     /// Collapse or expand a repository's group in the sidebar
-    /// (`show_workspace` expands the one it switches into).
+    /// (`follow_active_repository` expands the one you switch into).
     pub(crate) fn toggle_repository(&mut self, key: &str, cx: &mut Context<Self>) {
         if !self.collapsed_repositories.remove(key) {
             self.collapsed_repositories.insert(key.to_string());
@@ -151,7 +167,8 @@ impl Workbench {
     }
 
     /// A repository's header over its workspaces; a click collapses or
-    /// expands them. `group` is its workspaces: a collapsed one says how
+    /// expands them. `group` is its workspaces, `collapsed` whether they're
+    /// hidden (`repository_collapsed`): a collapsed one says how
     /// many there are and how many of their terminals need attention, and
     /// carries the selection mark while the active workspace is one of
     /// them. A right-click offers Archive Merged Tasks… while the
@@ -160,12 +177,12 @@ impl Workbench {
         &self,
         name: String,
         group: &[usize],
+        collapsed: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = &self.palette;
         let first = group[0];
         let key = tasks::group_key(&self.workspaces[first]);
-        let collapsed = self.repository_collapsed(&key);
         let holds_active = collapsed && group.contains(&self.active);
         let attention: usize = if collapsed {
             group
@@ -177,7 +194,7 @@ impl Workbench {
             0
         };
         let header = div()
-            .id(gpui_kit::SharedString::from(format!("repository-{name}")))
+            .id(gpui_kit::SharedString::from(format!("repository-{key}")))
             .role(gpui_kit::Role::Button)
             .aria_label(format!("{name}, {} workspaces", group.len()))
             .aria_expanded(!collapsed)

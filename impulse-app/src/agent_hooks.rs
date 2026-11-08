@@ -829,8 +829,14 @@ impl Workbench {
             // Only with the setting on, and only where Impulse itself has
             // something to say about the folder.
             Reply::ProjectTrust if settings.agent_hook_project_trust => {
+                // Only for the folder Pi asked about: from outside the
+                // pane's shell (tmux, say) that folder is dropped, and the
+                // pane's own is no answer for it.
+                let Some(asked) = args.get("hookCwd").cloned() else {
+                    return reply_with(None);
+                };
                 let trust = self.trust.clone();
-                let task = cx.background_spawn(async move { trust.verdict(&cwd) });
+                let task = cx.background_spawn(async move { trust.verdict(&asked) });
                 cx.spawn(async move |_, _| {
                     reply_with(task.await.map(hook_reply::plugin_trust));
                 })

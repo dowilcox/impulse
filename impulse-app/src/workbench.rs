@@ -157,6 +157,9 @@ pub struct Workbench {
     /// The repositories whose workspaces the sidebar hides under their
     /// header (by `tasks::group_key`), saved with the session.
     pub(crate) collapsed_repositories: std::collections::HashSet<String>,
+    /// The active workspace the sidebar last expanded the repository of
+    /// (`Workbench::follow_active_repository`).
+    pub(crate) collapse_follows: Option<u64>,
     pub(crate) workspaces_drag: Option<(f32, f32)>,
     pub(crate) workspaces_scroll: gpui_kit::ScrollHandle,
     pub(crate) split_bounds: crate::workbench_panes::SplitBounds,
@@ -316,6 +319,7 @@ impl Workbench {
             sidebar_drag: None,
             workspaces_height: None,
             collapsed_repositories: Default::default(),
+            collapse_follows: None,
             workspaces_drag: None,
             workspaces_scroll: gpui_kit::ScrollHandle::new(),
             split_bounds: Default::default(),
@@ -743,10 +747,7 @@ impl Workbench {
             return;
         }
         self.active = index;
-        // The sidebar shows the workspace you switched to: its repository's
-        // rows come out from under a collapsed header.
-        self.collapsed_repositories
-            .remove(&crate::tasks::group_key(&self.workspaces[index]));
+        self.follow_active_repository();
         let id = self.workspaces[index].id;
         self.recent_workspaces.retain(|w| *w != id);
         self.recent_workspaces.push(id);
@@ -1901,6 +1902,7 @@ impl Render for Workbench {
         self.sync_git(cx);
         self.sync_editor_watch(cx);
         self.sync_tree_watch();
+        self.follow_active_repository();
         let sidebar = self.sidebar_shown;
         let root = self.menu_actions(div().id("workbench"), cx);
         let p = &self.palette;

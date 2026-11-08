@@ -219,8 +219,20 @@ export default function (pi) {
   let tools = [];
 
   const startTools = async () => {
+    mcp?.stop();
     mcp = mcpServer();
-    const catalog = await mcp.start().catch(() => ({ tools: [] }));
+    // Pi waits for this to start: never long, as with the hooks.
+    const server = mcp;
+    const catalog = await Promise.race([
+      server.start(),
+      new Promise((done) => setTimeout(done, 10_000, { tools: [] })),
+    ]).catch(() => ({ tools: [] }));
+    if (catalog.tools.length === 0) {
+      tools = [];
+      server.stop();
+      if (mcp === server) mcp = undefined;
+      return;
+    }
     tools = catalog.tools.filter((tool) => typeof tool?.name === "string");
     if (tools.length === 0) return;
     instructions = renamed(catalog.instructions, tools);
@@ -230,7 +242,6 @@ export default function (pi) {
         "Impulse, the terminal IDE Pi is running in: tasks, review comments, problems, terminals' output, unsaved files and project scripts.",
       instructions,
     };
-    const server = mcp;
     for (const tool of tools) {
       const { title, ...annotations } = tool.annotations ?? {};
       pi.registerTool({

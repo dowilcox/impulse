@@ -2073,11 +2073,13 @@ impl Workbench {
         for (name, group) in self.workspace_groups() {
             let indented = name.is_some();
             if let Some(name) = name {
+                let collapsed =
+                    self.repository_collapsed(&crate::tasks::group_key(&self.workspaces[group[0]]));
                 add(
-                    self.repository_header(name, &group, cx),
+                    self.repository_header(name, &group, collapsed, cx),
                     &[crate::task_sidebar::REPOSITORY_HEADER_HEIGHT],
                 );
-                if self.repository_collapsed(&crate::tasks::group_key(&self.workspaces[group[0]])) {
+                if collapsed {
                     continue;
                 }
             }

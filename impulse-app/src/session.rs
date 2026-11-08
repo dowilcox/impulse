@@ -402,7 +402,7 @@ impl Workbench {
             .filter(|key| {
                 self.workspaces
                     .iter()
-                    .any(|w| w.task.common_dir.as_ref() == Some(*key))
+                    .any(|w| &crate::tasks::group_key(w) == *key)
             })
             .cloned()
             .collect();
@@ -482,6 +482,7 @@ impl Workbench {
             .unwrap_or_default()
             .into_iter()
             .collect();
+        self.collapse_follows = self.workspaces.get(self.active).map(|w| w.id);
     }
 
     /// A saved workspace with its tabs; `None` for a folder that's gone.
