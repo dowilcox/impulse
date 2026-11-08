@@ -1267,6 +1267,7 @@ SESSION_ACTIONS = [
     "until=prompt", "run=echo restore-marker-42", "until=blocks:1",
     "run=impulse split", "until=panes:2", "until=prompt",
     f"open={PROJECT / 'README.md'}", "until=editor",
+    "toggle-repository=trailhead", "dump=collapsed",
     f"workspace={HOME / 'Code' / 'trail-ui'}", "sleep=2",
     "save-session", "sleep=1", "dump=before",
 ]
@@ -1284,6 +1285,15 @@ def check_session(run) -> None:
                {"before": shape(before), "after": shape(after)})
     restored = [t for t in surfaces(after, "terminal") if "restore-marker-42" in plain(t["transcript"])]
     run.expect(bool(restored), "terminal output comes back")
+
+    def collapsed(dump: dict) -> list:
+        return [w["name"] for w in dump["workspaces"] if w["collapsed"]]
+
+    run.expect(collapsed(run.dump("collapsed")) == ["trailhead"], "the repository's header collapses it",
+               collapsed(run.dump("collapsed")))
+    run.expect(collapsed(after) == ["trailhead"], "a collapsed repository stays collapsed", collapsed(after))
+    switched = run.dump("switched", launch=2)
+    run.expect(collapsed(switched) == [], "switching to its workspace expands it", collapsed(switched))
 
 
 # ---------------------------------------------------------------------------
@@ -1326,6 +1336,6 @@ SCENARIOS = [
      "session": folder_session(REPO_ROOT), "setup": setup_mcp, "actions": MCP_ACTIONS, "check": check_mcp,
      "timeout": 360},
     {"name": "session", "about": "workspaces, tabs, splits, editors and output survive a relaunch",
-     "session": ONE, "persist": True, "actions": SESSION_ACTIONS, "relaunch": ["sleep=4", "dump=after"],
+     "session": ONE, "persist": True, "actions": SESSION_ACTIONS, "relaunch": ["sleep=4", "dump=after", "select-workspace=trailhead", "dump=switched"],
      "check": check_session},
 ]

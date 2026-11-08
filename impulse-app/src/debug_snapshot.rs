@@ -1396,6 +1396,7 @@ fn dump(name: &str, workbench: &mut Workbench, window: &mut Window, cx: &mut Con
                 "active": index == workbench.active,
                 "trusted": workbench.trust.is_trusted(&w.root.to_string_lossy()),
                 "tabs": w.tabs.len(),
+                "collapsed": workbench.repository_collapsed(&crate::tasks::group_key(w)),
                 "subagent": w.subagent(cx).map(|s| json!({
                     "id": s.id, "running": s.is_running(),
                 })),

@@ -178,6 +178,8 @@ An agent that's working in the main checkout can't follow its files: the move wa
 
 A task appears in the Workspaces section at the top of the sidebar like any other workspace, named after its folder (`fix-elevation`). When two or more open workspaces belong to the same repository (the main checkout and its tasks, or several tasks), Impulse groups them under a header with the repository's name (`trailhead`) and indents their rows. With only one workspace open from a repository, there is no header. Click the header to collapse its workspaces under it, and again to bring them back; a collapsed header shows how many workspaces it holds, or the attention badge when any of their terminals needs you, and carries the selection mark while the workspace you're in is one of them. Switching to a workspace in a collapsed repository (from the palette, a shortcut or a notification) expands it again. Which repositories are collapsed is kept with the session.
 
+![The trailhead group collapsed: its header, with a right-pointing chevron, the repository's name in bold because the workspace you're in is one of its own, and an attention badge with 1, over the Scratch workspace's row](images/tasks-sidebar-collapsed.png)
+
 Each row shows, from left to right:
 
 - The workspace name, and the branch when it differs from the name. A task named after its branch (`fix-elevation` on branch `fix-elevation`) shows the name once.

@@ -190,9 +190,16 @@ impl Workbench {
             .flex_none()
             .items_center()
             .gap(px(5.))
-            .pl(px(6.))
+            // Lined up with the rows' contents and hover tint.
+            .pl(px(8.))
             .pr(px(6.))
             .h(px(REPOSITORY_HEADER_HEIGHT))
+            .cursor_pointer()
+            .child(crate::workbench_chrome::row_background(
+                false,
+                "repository",
+                p,
+            ))
             .when(holds_active, |d| {
                 d.child(
                     div()
