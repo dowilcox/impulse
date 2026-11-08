@@ -42,6 +42,9 @@ pub enum AgentHook {
     /// approval, even one given without Return; otherwise no change.
     UsedTool(Option<String>),
     Stopped,
+    /// The user stopped the turn (Esc): back to idle with nothing to flag,
+    /// as when Claude Code's hooks fall silent after one.
+    Interrupted,
     /// The turn ended with subagents still running in the background: the
     /// agent takes another turn when they finish, so it's still working.
     AwaitingSubagents,
@@ -211,6 +214,7 @@ impl AgentStateMachine {
                     AgentHook::Stopped | AgentHook::Failed(_) => {
                         self.transition(AgentState::Done, now)
                     }
+                    AgentHook::Interrupted => self.transition(AgentState::Idle, now),
                     AgentHook::UsedTool(tool) => {
                         // Tools also run in parallel subagents and after Stop
                         // (background tasks): only the one that was waiting
@@ -986,6 +990,23 @@ mod tests {
         hook(&mut quiet, AgentHook::PromptSubmitted, c.at(600.0));
         assert!(!quiet.tick(c.at(601.0)));
         assert_eq!(quiet.next_deadline(), Some(c.at(900.0)));
+    }
+
+    #[test]
+    fn an_interrupted_hook_ends_the_turn_at_idle() {
+        // Pi's extension says so at once, where Claude Code falls silent.
+        let c = clock();
+        let mut machine = AgentStateMachine::new(c.at(0.0));
+        hook(&mut machine, AgentHook::PromptSubmitted, c.at(1.0));
+        assert_eq!(machine.state(), AgentState::Working);
+        hook(&mut machine, AgentHook::Interrupted, c.at(5.0));
+        assert_eq!(
+            machine.state(),
+            AgentState::Idle,
+            "interrupted, not finished: nothing to flag"
+        );
+        hook(&mut machine, AgentHook::PromptSubmitted, c.at(9.0));
+        assert_eq!(machine.state(), AgentState::Working);
     }
 
     #[test]

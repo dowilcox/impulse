@@ -312,7 +312,10 @@ export default function (pi) {
   pi.on("agent_settled", async (event) => {
     if (!working) return;
     working = false;
-    if (failed && !event.aborted) {
+    // Stopped with Esc: back to idle, as Claude Code's turns end then.
+    if (event.aborted) {
+      await send("Interrupted");
+    } else if (failed) {
       await send("StopFailure", { error: failed, last_assistant_message: failed });
     } else {
       await send("Stop");

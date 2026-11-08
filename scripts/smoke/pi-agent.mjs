@@ -16,6 +16,7 @@
 //   pi merge    a prompt, then git merge of a busy task's branch: asked
 //               about, approved, run
 //   pi failed   a prompt whose run ends on the provider's error
+//   pi aborted  a prompt stopped with Esc
 //   pi nested   a Pi started by the pane's Pi: tools, and no reports
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -98,9 +99,9 @@ const toolResult = async (toolName, input, text) => {
   return event.content.map((part) => part.text).join("\n\n");
 };
 // A run that ends with the model's last message.
-const settle = async (message) => {
+const settle = async (message, aborted = false) => {
   await emit("agent_end", { messages: [message] });
-  await emit("agent_settled", { aborted: false });
+  await emit("agent_settled", { aborted });
 };
 
 if (mode === "nested") {
@@ -159,6 +160,11 @@ if (mode === "turn" || mode === "nested") {
     errorMessage: "429 Too Many Requests: rate limited",
   });
   console.log("Error: 429 Too Many Requests: rate limited");
+} else if (mode === "aborted") {
+  // Pi's own words for a run stopped with Esc.
+  await pause(2);
+  await settle({ role: "assistant", stopReason: "aborted", errorMessage: "Operation aborted" }, true);
+  console.log("Operation aborted");
 }
 
 mkdirSync(join(home, "pi"), { recursive: true });

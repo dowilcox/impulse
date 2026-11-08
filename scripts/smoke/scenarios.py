@@ -1011,7 +1011,7 @@ MCP_DIR = HOME / "mcp"
 # Pi: Agent Integration replaces an older Impulse's extension with this
 # one, which also brings Impulse's tools. A stand-in Pi (pi-agent.mjs)
 # loads it as Pi's extension runner would and plays turns through it, so
-# the states, the folder's trust, the other tasks' summary, a note about a
+# the states (Esc's back to idle), the folder's trust, the other tasks' summary, a note about a
 # shared file, the merge it asks about, an error ending a run, Impulse's
 # tools and the session to resume all come from the real extension
 # talking to the real app.
@@ -1055,6 +1055,8 @@ PI_ACTIONS = [
     f"until=40:file:{PI_OUT / 'merge.json'}", "until=20:agent:done", "dump=pi-merge",
     "newtab", "until=prompt", "run=pi failed", f"until=40:file:{PI_OUT / 'failed.json'}",
     "until=20:agent:done", "dump=pi-failed",
+    "newtab", "until=prompt", "run=pi aborted", "until=30:agent:working", "dump=pi-aborting",
+    f"until=40:file:{PI_OUT / 'aborted.json'}", "sleep=1", "dump=pi-aborted",
     "newtab", "until=prompt", "run=pi nested", f"until=40:file:{PI_OUT / 'nested.json'}", "sleep=1",
     "dump=pi-nested",
 ]
@@ -1086,7 +1088,8 @@ def check_pi(run) -> None:
         return json.loads(file.read_text()) if file.exists() else {}
 
     for name, mode, state in (("pi-turn", "turn", "done"), ("pi-merge-asked", "merge", "needsInput"),
-                              ("pi-merge", "merge", "done"), ("pi-failed", "failed", "done")):
+                              ("pi-merge", "merge", "done"), ("pi-failed", "failed", "done"),
+                              ("pi-aborting", "aborted", "working"), ("pi-aborted", "aborted", "idle")):
         found = stand_in(run.dump(name), mode)
         if run.expect(found is not None and found["agent"] == "pi", f"it's recognized as Pi ({name})",
                       found and found["agent"]):

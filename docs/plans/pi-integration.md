@@ -26,7 +26,7 @@ Full smoke run (8 Nov 2026, Linux, Xvfb with software Vulkan, zsh 5.9, bash, fis
 
 ## Real Pi run (8 Nov 2026)
 
-Pi 1.5.0 (`@earendil-works/pi-coding-agent`) in this branch's dev build under Xvfb, the extension loaded with `pi -e`, the model Gemma 4 E4B served locally by Hob's `llama-server` (no cloud account). Items marked verified below come from this run. Found: Esc mid-turn shows Finished (see below), and the summary said "(or Impulse's impulse_list_tasks tool, if you have its MCP server)" in Pi, where the tools are always there (since reworded for every agent: "Run `impulse tasks` or Impulse's list_tasks tool before merging…").
+Pi 1.5.0 (`@earendil-works/pi-coding-agent`) in this branch's dev build under Xvfb, the extension loaded with `pi -e`, the model Gemma 4 E4B served locally by Hob's `llama-server` (no cloud account). Items marked verified below come from this run. Found: Esc mid-turn showed Finished (since changed to Idle, below), and the summary said "(or Impulse's impulse_list_tasks tool, if you have its MCP server)" in Pi, where the tools are always there (since reworded for every agent: "Run `impulse tasks` or Impulse's list_tasks tool before merging…").
 
 ## Needs another environment
 
@@ -36,7 +36,7 @@ Installing Pi from npm wasn't allowed in the container, so the extension has onl
 
 - [ ] Agent Integration ▸ Hooks ▸ Pi ▸ Install Extension, then `pi` in an Impulse terminal: Pi loads it without errors (`/extensions` or the startup list shows it); outside Impulse it does nothing.
 - [x] A prompt: the tab shows Working, then Finished, with a notification. A retried or compacted run stays one turn. **Verified 8 Nov** (Working, then Finished; no notification checked: the run was under Xvfb without D-Bus).
-- [x] Esc mid-turn: Pi sends `agent_settled` with `aborted`, which the extension reports as `Stop`, so the agent shows Finished (opencode does the same; Claude Code shows Idle). Decide whether aborted should be Idle instead (a new event name mapped to `AgentHook::Status(Idle)` or similar). **Verified 8 Nov**: Finished, as predicted. Still to decide: Finished or Idle.
+- [x] Esc mid-turn: Pi sends `agent_settled` with `aborted`, which the extension reports as `Stop`, so the agent shows Finished (opencode does the same; Claude Code shows Idle). Decide whether aborted should be Idle instead (a new event name mapped to `AgentHook::Status(Idle)` or similar). **Verified 8 Nov**: it showed Finished; **decided** to match Claude Code: the extension now sends `Interrupted` when `agent_settled` is `aborted`, which `hook_events` maps to `AgentHook::Interrupted`, back to Idle with no notification (smoke: `pi aborted`).
 - [x] An error (bad API key, rate limit): Finished, with the provider's message in the notification. **Verified 8 Nov** (a bad OpenAI key: Finished, the 401 in the transcript).
 - [x] `git merge <branch of a busy task>` asked of Pi: Pi's confirm dialog shows Impulse's reason; the tab shows Needs your input while it's open; declining blocks the command with the reason. **Verified 8 Nov**: the dialog read "Impulse asks before this merge — busy is still being worked on: … 1 uncommitted file …", the tab showed Needs your input, Yes ran it. Declining not tried.
 - [ ] Impulse's tools: Pi lists `impulse_list_tasks` and the rest; `impulse_create_task` opens New Task in Impulse and waits; Esc while it waits cancels the call (`notifications/cancelled`). **Partly verified 8 Nov**: `impulse_list_tasks` called and answered; `impulse_create_task` not tried.

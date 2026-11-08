@@ -37,6 +37,8 @@ pub fn hook(
                 title => format!("Pi needs your input: {title}"),
             }),
             "prompt.end" => AgentHook::UsedTool(None),
+            // Stopped with Esc: nothing to flag, as when Claude Code is.
+            "Interrupted" => AgentHook::Interrupted,
             _ => return None,
         });
     }
@@ -295,6 +297,8 @@ mod tests {
             Some(AgentHook::PromptSubmitted)
         );
         assert_eq!(pi("Stop", None), Some(AgentHook::Stopped));
+        assert_eq!(pi("Interrupted", None), Some(AgentHook::Interrupted));
+        assert_eq!(hook(Some("claude"), "Interrupted", None, None), None);
         assert_eq!(
             hook(Some("pi"), "StopFailure", None, Some("429 rate limited")),
             Some(AgentHook::Failed("429 rate limited".into()))
