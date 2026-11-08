@@ -1128,6 +1128,18 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.present_agent_integration_for(part, None, window, cx)
+    }
+
+    /// Agent Integration, on the hooks or the MCP server, with `agent`
+    /// chosen (Claude Code when `None`).
+    pub(crate) fn present_agent_integration_for(
+        &mut self,
+        part: Part,
+        agent: Option<Agent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let dir = self
             .focused_surface()
             .and_then(|s| s.directory(cx))
@@ -1141,7 +1153,7 @@ impl Workbench {
         let fallback_cli = crate::control_server::cli_path()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| mcp::DEFAULT_CLI.to_string());
-        let model = Model::new(
+        let mut model = Model::new(
             part,
             project_root,
             main_checkout,
@@ -1149,6 +1161,9 @@ impl Workbench {
             crate::workspace::home(),
             std::env::vars().collect(),
         );
+        if let Some(agent) = agent {
+            model.set_agent(agent);
+        }
         let palette = self.palette.clone();
         let workbench = cx.entity().downgrade();
         let scope = crate::settings_view::choice_select(

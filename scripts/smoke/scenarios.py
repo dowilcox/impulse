@@ -1018,7 +1018,18 @@ MCP_DIR = HOME / "mcp"
 
 PI_EXTENSIONS = HOME / ".pi" / "agent" / "extensions"
 PI_OUT = HOME / "pi"
-PI_OLD_EXTENSION = "// Impulse's Pi extension.\nexport default function () {}\n"
+# An older Impulse's extension: it reports a session starting, so Impulse
+# can say it's out of date.
+PI_OLD_EXTENSION = """// Impulse's Pi extension.
+import { spawnSync } from "node:child_process";
+export default function (pi) {
+  const cli = process.env.IMPULSE_CLI;
+  if (!cli) return;
+  pi.on("session_start", () => {
+    spawnSync(cli, ["hook", "pi", "SessionStart"], { input: "{}" });
+  });
+}
+"""
 PI_EXTENSION_SOURCE = (Path(__file__).resolve().parents[2] / "impulse-kit" / "resources" / "agents"
                        / "pi-extension" / "impulse.js")
 
@@ -1036,7 +1047,8 @@ def setup_pi() -> None:
 PI_ACTIONS = [
     # Snapshots don't ask about folders unless told to.
     "trust-on",
-    "agent-sheet=hooks:pi", "sleep=1", "dump=pi-hooks-preview", "agent-sheet-apply", "sleep=1",
+    "until=prompt", "run=pi idle", f"until=40:file:{PI_OUT / 'idle.json'}", "sleep=2", "dump=pi-outdated",
+    "newtab", "agent-sheet=hooks:pi", "sleep=1", "dump=pi-hooks-preview", "agent-sheet-apply", "sleep=1",
     "agent-sheet=mcp:pi", "sleep=1", "dump=pi-mcp", "agent-sheet-close", "sleep=1",
     "until=prompt", "run=pi turn", "until=40:agent:done", "sleep=1", "dump=pi-turn",
     "newtab", "until=prompt", "run=pi merge", "until=30:agent:needsInput", "dump=pi-merge-asked",
@@ -1049,6 +1061,9 @@ PI_ACTIONS = [
 
 
 def check_pi(run) -> None:
+    toasts = toast_messages(run.dump("pi-outdated"))
+    run.expect(any("Pi extension is out of date" in t for t in toasts),
+               "a Pi with an older extension gets the out-of-date note", toasts)
     hooks = run.dump("pi-hooks-preview").get("agentSheet") or {}
     run.expect(hooks.get("agent") == "Pi" and hooks.get("outdated")
                and hooks.get("path", "").endswith("/.pi/agent/extensions/impulse.js"),

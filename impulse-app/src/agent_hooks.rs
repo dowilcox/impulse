@@ -484,6 +484,9 @@ impl Workbench {
                         self.check_claude_hooks(cwd, window, cx);
                     }
                 }
+                if agent == Some("pi") && event == "SessionStart" {
+                    self.check_pi_extension(window, cx);
+                }
                 let tool = args.get("tool").map(String::as_str);
                 let Some(reply) = hook_events::reply(agent, event, tool) else {
                     answer(ControlResponse::ok());
@@ -552,10 +555,6 @@ impl Workbench {
         true
     }
 
-    /// What Impulse answers a Claude Code hook, or an event from its
-    /// opencode plugin or Pi extension, with (nothing: an empty ok). `clash`: the note for
-    /// an edit made beside a subagent editing the same file, or for one
-    /// about to be, why it's stopped.
     /// Claude Code's hooks as an older Impulse installed them miss events
     /// or tools this one listens to, which Agent Integration updates: said
     /// once a run, as a session starts. `cwd`: the session's terminal's
@@ -598,6 +597,50 @@ impl Workbench {
         .detach();
     }
 
+    /// Impulse's Pi extension as an older Impulse installed it, which Agent
+    /// Integration replaces: said once a run, as a Pi session starts.
+    fn check_pi_extension(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        static CHECKED: AtomicBool = AtomicBool::new(false);
+        if CHECKED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let home = crate::workspace::home();
+        let outdated = cx.background_spawn(async move {
+            let environment = std::env::vars().collect();
+            let folder = hook_installer::pi_agent_directory(&environment, &home.to_string_lossy());
+            let file = Path::new(&folder)
+                .join("extensions")
+                .join(hook_installer::PI_EXTENSION_NAME);
+            let text = std::fs::read_to_string(file).ok();
+            hook_installer::pi_extension_status(text.as_deref()) == hook_installer::Status::Outdated
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            if !outdated.await {
+                return;
+            }
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                let note = Toast::warning(
+                    "This version of Impulse's Pi extension tells Pi and Impulse more. Update it, then /reload in a running Pi.",
+                )
+                .title("Impulse's Pi extension is out of date")
+                .lifetime(None);
+                workbench.note_with_action(note, "Update…", window, cx, |workbench, window, cx| {
+                    workbench.present_agent_integration_for(
+                        crate::agent_integration::Part::Hooks,
+                        Some(crate::agent_integration::Agent::Pi),
+                        window,
+                        cx,
+                    )
+                });
+            });
+        })
+        .detach();
+    }
+
+    /// What Impulse answers a Claude Code hook, or an event from its
+    /// opencode plugin or Pi extension, with (nothing: an empty ok).
+    /// `clash`: the note for an edit made beside a subagent editing the
+    /// same file, or for one about to be, why it's stopped.
     fn agent_hook_reply(
         &mut self,
         reply: Reply,
