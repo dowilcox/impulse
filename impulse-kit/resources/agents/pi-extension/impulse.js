@@ -166,11 +166,15 @@ function text(content) {
 // the place of another extension's tool.
 const piName = (name) => `impulse_${name}`;
 
-// `words` with each of Impulse's tool names as Pi knows it.
+// `words` with each of Impulse's tool names as Pi knows it. A name like
+// list_tasks wherever it stands; one that's an ordinary word too (notify)
+// only as code, `notify`, so a sentence or `impulse notify` keeps it.
 function renamed(words, tools) {
   let out = words ?? "";
   for (const tool of tools) {
-    out = out.replace(new RegExp(`\\b${tool.name}\\b`, "g"), piName(tool.name));
+    const name = tool.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = tool.name.includes("_") ? `\\b${name}\\b` : `(?<=\`)${name}(?=\`)`;
+    out = out.replace(new RegExp(pattern, "g"), piName(tool.name));
   }
   return out;
 }
