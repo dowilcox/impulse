@@ -1034,6 +1034,8 @@ def setup_pi() -> None:
 
 
 PI_ACTIONS = [
+    # Snapshots don't ask about folders unless told to.
+    "trust-on",
     "agent-sheet=hooks:pi", "sleep=1", "dump=pi-hooks-preview", "agent-sheet-apply", "sleep=1",
     "agent-sheet=mcp:pi", "sleep=1", "dump=pi-mcp", "agent-sheet-close", "sleep=1",
     "until=prompt", "run=pi turn", "until=40:agent:done", "sleep=1", "dump=pi-turn",
@@ -1302,7 +1304,7 @@ SCENARIOS = [
     {"name": "pi", "about": "Agent Integration replaces an older Pi extension; the extension drives states, the "
                             "folder's trust, the summary, notes, the merge question, an error, Impulse's tools, "
                             "nested Pis and resume",
-     "session": ONE, "settings": {"workspace_trust": True}, "setup": setup_pi,
+     "session": ONE, "setup": setup_pi,
      "actions": PI_ACTIONS, "check": check_pi},
     {"name": "mcp", "about": "impulse mcp: initialize, tools/list, list_tasks, create_task through the New Task sheet, "
                              "an agent finishing its own task",
