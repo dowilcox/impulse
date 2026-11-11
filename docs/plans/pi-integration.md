@@ -54,10 +54,10 @@ Installing Pi from npm wasn't allowed in the container, so the extension has onl
 
 `check-macos.sh` only type-checks. On a Mac:
 
-- [ ] `scripts/build.sh --dev`, then `python3 scripts/smoke/run.py pi opencode agents agent-integration` (needs `node`).
-- [ ] The Agent Integration sheet in SF Pro: the MCP Server side shows five agents at 88 points each beside Claude Code's 170-point scope pop-up (fits on Linux with a few points to spare); check "Claude Code" isn't clipped.
-- [ ] Regenerate `docs/images/agents-hooks-sheet.png` (`python3 scripts/docs/capture.py agents-hooks-sheet`): it shows three agents, the sheet now has four on Hooks. The shots are made on the Mac (window buttons, SF Pro), so it wasn't regenerated on Linux.
-- [ ] Regenerate `docs/images/tasks-sidebar-group.png` and `tasks-sidebar-collapsed.png` (`python3 scripts/docs/capture.py tasks-sidebar`): the repository header moved 2 points and got a hover tint, and the collapsed shot was first made on Linux at 1x.
+- [x] `scripts/build.sh --dev`, then `python3 scripts/smoke/run.py pi opencode agents agent-integration` (needs `node`). **Verified 11 Nov**: every scenario passed, 111 checks (agents 39, agent-integration 11, opencode 32, pi 29).
+- [ ] The Agent Integration sheet in SF Pro: the MCP Server side shows five agents at 88 points each beside Claude Code's 170-point scope pop-up (fits on Linux with a few points to spare); check "Claude Code" isn't clipped. **Verified 11 Nov**: not clipped, though its label nearly fills the selected segment.
+- [x] Regenerate `docs/images/agents-hooks-sheet.png` (`python3 scripts/docs/capture.py agents-hooks-sheet`): it shows three agents, the sheet now has four on Hooks. The shots are made on the Mac (window buttons, SF Pro), so it wasn't regenerated on Linux. **Done 11 Nov.** `capture.py` needs Pillow on the Mac too, for the dialog crop.
+- [x] Regenerate `docs/images/tasks-sidebar-group.png` and `tasks-sidebar-collapsed.png` (`python3 scripts/docs/capture.py tasks-sidebar`): the repository header moved 2 points and got a hover tint, and the collapsed shot was first made on Linux at 1x. **Done 11 Nov.**
 - [ ] A desktop notification for a finished and a failed Pi turn, and the Dock badge while Pi needs input.
 
 ### CI
