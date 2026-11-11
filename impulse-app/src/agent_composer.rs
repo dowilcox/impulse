@@ -208,7 +208,7 @@ impl AgentComposer {
         cx.notify();
     }
 
-    fn send(&mut self, submit: bool, cx: &mut Context<Self>) {
+    pub(crate) fn send(&mut self, submit: bool, cx: &mut Context<Self>) {
         let message = self.text(cx).trim().to_string();
         if message.is_empty() {
             return;

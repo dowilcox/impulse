@@ -952,6 +952,24 @@ fn perform_now(action: &str, cx: &mut App) {
                     }
                 }
             }
+            ("pty", Some(text)) => match workbench.active_terminal().cloned() {
+                // Bytes typed straight into the terminal: \e is Esc, \r Return.
+                Some(terminal) => terminal.update(cx, |t, _| {
+                    t.backend
+                        .write(text.replace("\\e", "\x1b").replace("\\r", "\r").as_bytes())
+                }),
+                None => fail(format!("pty: no terminal is selected ({text})")),
+            },
+            ("composer-send", None) => {
+                // Return in the agent composer: its text pasted and submitted.
+                let composer = workbench
+                    .active_terminal()
+                    .and_then(|t| t.read(cx).agent.composer.clone());
+                match composer {
+                    Some(composer) => composer.update(cx, |c, cx| c.send(true, cx)),
+                    None => fail("composer-send: no agent composer is open".to_string()),
+                }
+            }
             ("find", Some(text)) => {
                 if let Some(terminal) = workbench.active_terminal().cloned() {
                     terminal.update(cx, |t, cx| t.find_text(text, window, cx));
