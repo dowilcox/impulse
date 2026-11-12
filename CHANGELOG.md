@@ -2,6 +2,13 @@
 
 All notable changes to Impulse are documented in this file.
 
+## Unreleased
+
+### Fixes
+
+- On Linux, **Copy on select** copies to the clipboard, as its setting says, so Ctrl+Shift+V and other apps paste what you selected: it only set the primary selection before. A selection is also always the primary selection, for the middle button, as in other Linux terminals. On both platforms, a selection dragged past the terminal's edge is copied when you let go there, instead of only when the mouse was back over the terminal.
+- Agent Integration's notes wrap inside the sheet instead of running off its edge, as Pi's did.
+
 ## 1.2.0
 
 ### Improvements
