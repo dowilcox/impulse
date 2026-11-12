@@ -465,7 +465,7 @@ Hints cover only what's visible on screen. When there's nothing to label, a noti
 ## Selecting, copying and pasting
 
 - **Select** text by dragging. Double-click selects a word and triple-click a line. **Select All** (⌘A while the grid has the keyboard, or from the right-click menu) selects the visible screen.
-- **Copy on select** (`terminal_copy_on_select`, on by default) copies a selection to the clipboard as soon as you release the mouse. ⌘C copies the selection too.
+- **Copy on select** (`terminal_copy_on_select`, on by default) copies a selection to the clipboard as soon as you release the mouse, even past the terminal's edge. ⌘C copies the selection too. On Linux a selection is also the primary selection, whatever this setting says, so the middle button pastes it, as in other X and Wayland terminals.
 - **Programs and the clipboard.** Programs can set the clipboard with OSC 52, as tmux, vim and ssh sessions do (**Programs may set the clipboard**, on by default). Reading the clipboard is off by default (**Programs may read the clipboard**); when you turn it on, Impulse answers the program's request with the clipboard's contents. A write of more than about 3 MB is ignored.
 - **Pasting** follows the input bar rules: at a prompt, text goes into the input bar; while a program owns the grid, it's sent to the program, as a bracketed paste when the program asks for one. Trailing newlines are removed, and control characters are stripped from bracketed pastes so pasted text can't end the paste early.
 - **Mouse reporting.** When a program turns on mouse reporting (htop, vim with `mouse=a`), clicks, drags and the scroll wheel go to the program instead of selecting text. Hold Shift or Option while you drag to select text anyway.

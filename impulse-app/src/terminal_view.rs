@@ -1721,13 +1721,16 @@ impl TerminalView {
         self.selecting = false;
         // Only a drag or a double or triple click gets here: a plain click
         // leaves the clipboard alone.
+        let Some(text) = self.backend.selected_text().filter(|t| !t.is_empty()) else {
+            return;
+        };
+        // On Linux a selection is always the primary selection, for the
+        // middle button, as in X terminals; copy on select puts it on the
+        // clipboard as well.
+        #[cfg(target_os = "linux")]
+        cx.write_to_primary(ClipboardItem::new_string(text.clone()));
         if SettingsStore::get(cx).terminal_copy_on_select {
-            if let Some(text) = self.backend.selected_text().filter(|t| !t.is_empty()) {
-                #[cfg(target_os = "linux")]
-                cx.write_to_primary(ClipboardItem::new_string(text.clone()));
-                #[cfg(target_os = "macos")]
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-            }
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
 
@@ -3881,7 +3884,11 @@ impl Render for TerminalView {
         let link_cursor = self.hover_link.is_some();
         let toolbar = self.block_toolbar(cx);
         let bounds_cell = std::rc::Rc::new(std::cell::Cell::new(Bounds::<Pixels>::default()));
-        let (middle_bounds, middle_up_bounds) = (bounds_cell.clone(), bounds_cell.clone());
+        let (middle_bounds, middle_up_bounds, up_out_bounds) = (
+            bounds_cell.clone(),
+            bounds_cell.clone(),
+            bounds_cell.clone(),
+        );
         let (down_bounds, move_bounds, up_bounds, wheel_bounds, menu_bounds) = (
             bounds_cell.clone(),
             bounds_cell.clone(),
@@ -3951,6 +3958,14 @@ impl Render for TerminalView {
                 MouseButton::Left,
                 cx.listener(move |view, e: &MouseUpEvent, _, cx| {
                     view.mouse_up(e, up_bounds.get(), cx)
+                }),
+            )
+            // A drag that ends past the terminal's edge (scrolling the
+            // selection) still finishes it and copies.
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |view, e: &MouseUpEvent, _, cx| {
+                    view.mouse_up(e, up_out_bounds.get(), cx)
                 }),
             )
             .on_scroll_wheel(cx.listener(move |view, e: &ScrollWheelEvent, _, cx| {
