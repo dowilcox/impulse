@@ -849,8 +849,11 @@ impl Render for AgentIntegration {
                     if warning { p.warning } else { p.text_secondary },
                 )))
                 .child(
+                    // min_w_0, or the row is as wide as the unwrapped text
+                    // and the end of a long note is cut off.
                     div()
                         .flex_1()
+                        .min_w_0()
                         .text_size(px(11.5))
                         .text_color(hsla(p.text_secondary))
                         .child(text),
